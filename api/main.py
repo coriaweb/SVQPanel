@@ -51,8 +51,9 @@ async def root():
 async def health_check(db: Session = Depends(get_db)):
     """Health check con verificación de BD"""
     try:
+        from sqlalchemy import text
         # Verificar conexión a BD
-        db.execute("SELECT 1")
+        db.execute(text("SELECT 1"))
         return {
             "status": "ok",
             "database": "connected",
