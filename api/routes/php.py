@@ -7,6 +7,8 @@ from pydantic import BaseModel
 from sqlalchemy.orm import Session
 from api.models.database import get_db
 from api.models.models_domain import Domain
+from scripts.php_manager import PHPManager
+from scripts.domain_manager import DomainManager
 
 router = APIRouter()
 
@@ -35,6 +37,9 @@ async def update_domain_php(
     db: Session = Depends(get_db)
 ):
     """Cambiar versión de PHP para un dominio"""
+    domain_manager = DomainManager()
+    php_manager = PHPManager()
+
     try:
         if request.php_version not in PHP_VERSIONS:
             raise HTTPException(
@@ -48,6 +53,16 @@ async def update_domain_php(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail="Dominio no encontrado"
             )
+
+        # Verify PHP version is installed
+        if not php_manager.php_version_installed(request.php_version):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"PHP {request.php_version} no está instalado en el servidor"
+            )
+
+        # Change PHP version in system
+        domain_manager.change_php_version(domain.domain_name, request.php_version)
 
         domain.php_version = request.php_version
         db.commit()
@@ -68,5 +83,5 @@ async def update_domain_php(
         db.rollback()
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=str(e)
+            detail=f"Error al cambiar PHP: {str(e)}"
         )

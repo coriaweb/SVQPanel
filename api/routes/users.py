@@ -8,6 +8,7 @@ from sqlalchemy.exc import IntegrityError
 from api.models.database import get_db
 from api.models.models_user import User
 from api.schemas.user_schemas import UserCreate, UserUpdate, UserResponse
+from scripts.user_manager import UserManager
 
 router = APIRouter()
 
@@ -15,7 +16,13 @@ router = APIRouter()
 @router.post("/users", response_model=UserResponse, status_code=status.HTTP_201_CREATED)
 async def create_user(user: UserCreate, db: Session = Depends(get_db)):
     """Crear un nuevo usuario"""
+    user_manager = UserManager()
+
     try:
+        # Create system user first
+        user_manager.create_user(user.username, user.email, user.password)
+
+        # Create database user
         db_user = User(
             username=user.username,
             email=user.email,
@@ -29,6 +36,11 @@ async def create_user(user: UserCreate, db: Session = Depends(get_db)):
         return db_user
     except IntegrityError:
         db.rollback()
+        # Try to clean up system user if DB insertion failed
+        try:
+            user_manager.delete_user(user.username)
+        except:
+            pass
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail="El nombre de usuario o email ya existe"
@@ -37,7 +49,7 @@ async def create_user(user: UserCreate, db: Session = Depends(get_db)):
         db.rollback()
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=str(e)
+            detail=f"Error al crear usuario: {str(e)}"
         )
 
 
@@ -118,6 +130,8 @@ async def update_user(user_id: int, user_update: UserUpdate, db: Session = Depen
 @router.delete("/users/{user_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_user(user_id: int, db: Session = Depends(get_db)):
     """Eliminar un usuario"""
+    user_manager = UserManager()
+
     try:
         db_user = db.query(User).filter(User.id == user_id).first()
         if not db_user:
@@ -126,6 +140,10 @@ async def delete_user(user_id: int, db: Session = Depends(get_db)):
                 detail="Usuario no encontrado"
             )
 
+        # Delete system user
+        user_manager.delete_user(db_user.username)
+
+        # Delete from database
         db.delete(db_user)
         db.commit()
         return None
@@ -135,5 +153,5 @@ async def delete_user(user_id: int, db: Session = Depends(get_db)):
         db.rollback()
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=str(e)
+            detail=f"Error al eliminar usuario: {str(e)}"
         )

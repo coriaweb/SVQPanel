@@ -9,6 +9,7 @@ from api.models.database import get_db
 from api.models.models_user import User
 from api.models.models_domain import Domain
 from api.schemas.domain_schemas import DomainCreate, DomainUpdate, DomainResponse
+from scripts.domain_manager import DomainManager
 
 router = APIRouter()
 
@@ -16,6 +17,8 @@ router = APIRouter()
 @router.post("/domains", response_model=DomainResponse, status_code=status.HTTP_201_CREATED)
 async def create_domain(domain: DomainCreate, db: Session = Depends(get_db)):
     """Crear un nuevo dominio"""
+    domain_manager = DomainManager()
+
     try:
         user = db.query(User).filter(User.id == domain.user_id).first()
         if not user:
@@ -24,11 +27,18 @@ async def create_domain(domain: DomainCreate, db: Session = Depends(get_db)):
                 detail="Usuario no encontrado"
             )
 
+        # Create domain in system (Nginx, directories, etc)
+        domain_manager.create_domain(
+            user.username,
+            domain.domain_name,
+            domain.php_version or "8.2"
+        )
+
         db_domain = Domain(
             user_id=domain.user_id,
             domain_name=domain.domain_name,
             php_version=domain.php_version or "8.2",
-            public_html=f"/home/user/public_html/{domain.domain_name}"
+            public_html=f"/home/{user.username}/public_html/{domain.domain_name}"
         )
         db.add(db_domain)
         db.commit()
@@ -46,7 +56,7 @@ async def create_domain(domain: DomainCreate, db: Session = Depends(get_db)):
         db.rollback()
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=str(e)
+            detail=f"Error al crear dominio: {str(e)}"
         )
 
 
@@ -108,6 +118,8 @@ async def update_domain(
     db: Session = Depends(get_db)
 ):
     """Actualizar un dominio"""
+    domain_manager = DomainManager()
+
     try:
         db_domain = db.query(Domain).filter(Domain.id == domain_id).first()
         if not db_domain:
@@ -116,8 +128,11 @@ async def update_domain(
                 detail="Dominio no encontrado"
             )
 
-        if domain_update.php_version is not None:
+        if domain_update.php_version is not None and domain_update.php_version != db_domain.php_version:
+            # Change PHP version in system
+            domain_manager.change_php_version(db_domain.domain_name, domain_update.php_version)
             db_domain.php_version = domain_update.php_version
+
         if domain_update.is_active is not None:
             db_domain.is_active = domain_update.is_active
         if domain_update.ipv4 is not None:
@@ -134,13 +149,15 @@ async def update_domain(
         db.rollback()
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=str(e)
+            detail=f"Error al actualizar dominio: {str(e)}"
         )
 
 
 @router.delete("/domains/{domain_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_domain(domain_id: int, db: Session = Depends(get_db)):
     """Eliminar un dominio"""
+    domain_manager = DomainManager()
+
     try:
         db_domain = db.query(Domain).filter(Domain.id == domain_id).first()
         if not db_domain:
@@ -148,6 +165,9 @@ async def delete_domain(domain_id: int, db: Session = Depends(get_db)):
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail="Dominio no encontrado"
             )
+
+        # Delete domain from system
+        domain_manager.delete_domain(db_domain.domain_name)
 
         db.delete(db_domain)
         db.commit()
@@ -158,5 +178,5 @@ async def delete_domain(domain_id: int, db: Session = Depends(get_db)):
         db.rollback()
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=str(e)
+            detail=f"Error al eliminar dominio: {str(e)}"
         )
