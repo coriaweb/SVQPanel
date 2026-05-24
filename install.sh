@@ -112,8 +112,10 @@ apt-get install -y -qq \
     python3 \
     python3-pip \
     python3-venv \
+    python3-dev \
     postgresql \
     postgresql-contrib \
+    postgresql-server-dev-all \
     certbot
 
 echo -e "${GREEN}✓ Dependencias instaladas${NC}\n"
