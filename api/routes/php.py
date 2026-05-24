@@ -6,7 +6,9 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 from api.models.database import get_db
+from api.models.models_user import User
 from api.models.models_domain import Domain
+from api.dependencies import require_auth
 from scripts.php_manager import PHPManager
 from scripts.domain_manager import DomainManager
 
@@ -25,7 +27,7 @@ class PHPUpdateRequest(BaseModel):
 
 
 @router.get("/php/versions", response_model=PHPVersionsResponse)
-async def get_php_versions():
+async def get_php_versions(current_user: User = Depends(require_auth)):
     """Obtener versiones de PHP disponibles"""
     return {"versions": PHP_VERSIONS}
 
@@ -34,6 +36,7 @@ async def get_php_versions():
 async def update_domain_php(
     domain_id: int,
     request: PHPUpdateRequest,
+    current_user: User = Depends(require_auth),
     db: Session = Depends(get_db)
 ):
     """Cambiar versión de PHP para un dominio"""

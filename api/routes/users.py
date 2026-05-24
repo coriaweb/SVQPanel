@@ -8,13 +8,18 @@ from sqlalchemy.exc import IntegrityError
 from api.models.database import get_db
 from api.models.models_user import User
 from api.schemas.user_schemas import UserCreate, UserUpdate, UserResponse
+from api.dependencies import require_admin, require_auth
 from scripts.user_manager import UserManager
 
 router = APIRouter()
 
 
 @router.post("/users", response_model=UserResponse, status_code=status.HTTP_201_CREATED)
-async def create_user(user: UserCreate, db: Session = Depends(get_db)):
+async def create_user(
+    user: UserCreate,
+    current_user: User = Depends(require_admin),
+    db: Session = Depends(get_db)
+):
     """Crear un nuevo usuario"""
     user_manager = UserManager()
 
@@ -54,7 +59,12 @@ async def create_user(user: UserCreate, db: Session = Depends(get_db)):
 
 
 @router.get("/users", response_model=list[UserResponse])
-async def list_users(skip: int = 0, limit: int = 10, db: Session = Depends(get_db)):
+async def list_users(
+    skip: int = 0,
+    limit: int = 10,
+    current_user: User = Depends(require_admin),
+    db: Session = Depends(get_db)
+):
     """Listar todos los usuarios"""
     try:
         users = db.query(User).offset(skip).limit(limit).all()
@@ -67,7 +77,11 @@ async def list_users(skip: int = 0, limit: int = 10, db: Session = Depends(get_d
 
 
 @router.get("/users/{user_id}", response_model=UserResponse)
-async def get_user(user_id: int, db: Session = Depends(get_db)):
+async def get_user(
+    user_id: int,
+    current_user: User = Depends(require_admin),
+    db: Session = Depends(get_db)
+):
     """Obtener un usuario por ID"""
     try:
         user = db.query(User).filter(User.id == user_id).first()
@@ -87,7 +101,12 @@ async def get_user(user_id: int, db: Session = Depends(get_db)):
 
 
 @router.put("/users/{user_id}", response_model=UserResponse)
-async def update_user(user_id: int, user_update: UserUpdate, db: Session = Depends(get_db)):
+async def update_user(
+    user_id: int,
+    user_update: UserUpdate,
+    current_user: User = Depends(require_admin),
+    db: Session = Depends(get_db)
+):
     """Actualizar un usuario"""
     try:
         db_user = db.query(User).filter(User.id == user_id).first()
@@ -128,7 +147,11 @@ async def update_user(user_id: int, user_update: UserUpdate, db: Session = Depen
 
 
 @router.delete("/users/{user_id}", status_code=status.HTTP_204_NO_CONTENT)
-async def delete_user(user_id: int, db: Session = Depends(get_db)):
+async def delete_user(
+    user_id: int,
+    current_user: User = Depends(require_admin),
+    db: Session = Depends(get_db)
+):
     """Eliminar un usuario"""
     user_manager = UserManager()
 

@@ -14,8 +14,9 @@ class APIClient {
     const headers = {
       'Content-Type': 'application/json'
     }
-    if (this.token) {
-      headers['Authorization'] = `Bearer ${this.token}`
+    const token = localStorage.getItem('token') || this.token
+    if (token) {
+      headers['Authorization'] = `Bearer ${token}`
     }
     return headers
   }
@@ -32,6 +33,13 @@ class APIClient {
       const data = await response.json()
 
       if (!response.ok) {
+        // Si es 401, limpiar token y redirigir a login
+        if (response.status === 401) {
+          localStorage.removeItem('token')
+          localStorage.removeItem('user')
+          window.location.href = '/login'
+          throw new Error('Sesión expirada. Por favor inicia sesión nuevamente.')
+        }
         throw new Error(data.detail || 'API Error')
       }
 
@@ -154,6 +162,23 @@ class APIClient {
   // Health check
   health() {
     return this.get('/api/health')
+  }
+
+  // Authentication
+  login(credentials) {
+    return this.post('/api/auth/login', credentials)
+  }
+
+  logout() {
+    return this.post('/api/auth/logout', {})
+  }
+
+  getCurrentUser() {
+    return this.get('/api/auth/me')
+  }
+
+  changePassword(data) {
+    return this.post('/api/auth/change-password', data)
   }
 }
 

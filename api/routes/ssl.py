@@ -6,15 +6,22 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 from datetime import datetime, timedelta
 from api.models.database import get_db
+from api.models.models_user import User
 from api.models.models_domain import Domain
 from api.schemas.ssl_schemas import SSLCreate, SSLResponse
+from api.dependencies import require_auth
 from scripts.ssl_manager import SSLManager
 
 router = APIRouter()
 
 
 @router.post("/domains/{domain_id}/ssl", response_model=SSLResponse, status_code=status.HTTP_201_CREATED)
-async def create_ssl(domain_id: int, ssl: SSLCreate, db: Session = Depends(get_db)):
+async def create_ssl(
+    domain_id: int,
+    ssl: SSLCreate,
+    current_user: User = Depends(require_auth),
+    db: Session = Depends(get_db)
+):
     """Crear certificado SSL para un dominio"""
     ssl_manager = SSLManager()
 
@@ -59,7 +66,11 @@ async def create_ssl(domain_id: int, ssl: SSLCreate, db: Session = Depends(get_d
 
 
 @router.get("/domains/{domain_id}/ssl", response_model=SSLResponse)
-async def get_ssl(domain_id: int, db: Session = Depends(get_db)):
+async def get_ssl(
+    domain_id: int,
+    current_user: User = Depends(require_auth),
+    db: Session = Depends(get_db)
+):
     """Obtener detalles SSL de un dominio"""
     try:
         domain = db.query(Domain).filter(Domain.id == domain_id).first()
@@ -86,7 +97,11 @@ async def get_ssl(domain_id: int, db: Session = Depends(get_db)):
 
 
 @router.delete("/domains/{domain_id}/ssl", status_code=status.HTTP_204_NO_CONTENT)
-async def delete_ssl(domain_id: int, db: Session = Depends(get_db)):
+async def delete_ssl(
+    domain_id: int,
+    current_user: User = Depends(require_auth),
+    db: Session = Depends(get_db)
+):
     """Revocar certificado SSL de un dominio"""
     ssl_manager = SSLManager()
 

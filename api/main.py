@@ -12,7 +12,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from api.models.database import create_tables, get_db
 from config.config import PANEL_NAME, PANEL_VERSION
 
-from api.routes import users, domains, php, ssl, ipv6
+from api.routes import users, domains, php, ssl, ipv6, auth
 
 # Crear app FastAPI
 app = FastAPI(
@@ -65,6 +65,7 @@ async def health_check(db: Session = Depends(get_db)):
             content={"status": "error", "message": str(e)}
         )
 
+app.include_router(auth.router, prefix="/api", tags=["Authentication"])
 app.include_router(users.router, prefix="/api", tags=["Users"])
 app.include_router(domains.router, prefix="/api", tags=["Domains"])
 app.include_router(php.router, prefix="/api", tags=["PHP"])

@@ -9,13 +9,18 @@ from api.models.database import get_db
 from api.models.models_user import User
 from api.models.models_domain import Domain
 from api.schemas.domain_schemas import DomainCreate, DomainUpdate, DomainResponse
+from api.dependencies import require_admin, require_auth
 from scripts.domain_manager import DomainManager
 
 router = APIRouter()
 
 
 @router.post("/domains", response_model=DomainResponse, status_code=status.HTTP_201_CREATED)
-async def create_domain(domain: DomainCreate, db: Session = Depends(get_db)):
+async def create_domain(
+    domain: DomainCreate,
+    current_user: User = Depends(require_auth),
+    db: Session = Depends(get_db)
+):
     """Crear un nuevo dominio"""
     domain_manager = DomainManager()
 
@@ -65,20 +70,31 @@ async def list_domains(
     user_id: int = Query(None),
     skip: int = 0,
     limit: int = 10,
+    current_user: User = Depends(require_auth),
     db: Session = Depends(get_db)
 ):
-    """Listar dominios (filtrar por user_id si se proporciona)"""
+    """Listar dominios según el rol del usuario"""
     try:
         query = db.query(Domain)
 
-        if user_id is not None:
-            user = db.query(User).filter(User.id == user_id).first()
-            if not user:
-                raise HTTPException(
-                    status_code=status.HTTP_404_NOT_FOUND,
-                    detail="Usuario no encontrado"
-                )
-            query = query.filter(Domain.user_id == user_id)
+        # Filtrar según el rol
+        if current_user.role == "admin":
+            # Admin ve todos
+            if user_id is not None:
+                user = db.query(User).filter(User.id == user_id).first()
+                if not user:
+                    raise HTTPException(
+                        status_code=status.HTTP_404_NOT_FOUND,
+                        detail="Usuario no encontrado"
+                    )
+                query = query.filter(Domain.user_id == user_id)
+        elif current_user.role == "reseller":
+            # Reseller ve solo sus usuarios y dominios
+            # (por ahora, solo ve sus propios dominios - mejora futura)
+            query = query.filter(Domain.user_id == current_user.id)
+        else:
+            # User regular ve solo sus dominios
+            query = query.filter(Domain.user_id == current_user.id)
 
         domains = query.offset(skip).limit(limit).all()
         return domains
@@ -92,7 +108,11 @@ async def list_domains(
 
 
 @router.get("/domains/{domain_id}", response_model=DomainResponse)
-async def get_domain(domain_id: int, db: Session = Depends(get_db)):
+async def get_domain(
+    domain_id: int,
+    current_user: User = Depends(require_auth),
+    db: Session = Depends(get_db)
+):
     """Obtener un dominio por ID"""
     try:
         domain = db.query(Domain).filter(Domain.id == domain_id).first()
@@ -115,6 +135,7 @@ async def get_domain(domain_id: int, db: Session = Depends(get_db)):
 async def update_domain(
     domain_id: int,
     domain_update: DomainUpdate,
+    current_user: User = Depends(require_auth),
     db: Session = Depends(get_db)
 ):
     """Actualizar un dominio"""
@@ -154,7 +175,11 @@ async def update_domain(
 
 
 @router.delete("/domains/{domain_id}", status_code=status.HTTP_204_NO_CONTENT)
-async def delete_domain(domain_id: int, db: Session = Depends(get_db)):
+async def delete_domain(
+    domain_id: int,
+    current_user: User = Depends(require_auth),
+    db: Session = Depends(get_db)
+):
     """Eliminar un dominio"""
     domain_manager = DomainManager()
 

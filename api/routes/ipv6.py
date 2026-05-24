@@ -5,15 +5,22 @@ Rutas API para gestión de IPv6
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 from api.models.database import get_db
+from api.models.models_user import User
 from api.models.models_domain import Domain
 from api.schemas.ipv6_schemas import IPv6Create, IPv6Response
+from api.dependencies import require_auth
 from scripts.ipv6_manager import IPv6Manager
 
 router = APIRouter()
 
 
 @router.post("/domains/{domain_id}/ipv6", response_model=IPv6Response, status_code=status.HTTP_201_CREATED)
-async def assign_ipv6(domain_id: int, ipv6: IPv6Create, db: Session = Depends(get_db)):
+async def assign_ipv6(
+    domain_id: int,
+    ipv6: IPv6Create,
+    current_user: User = Depends(require_auth),
+    db: Session = Depends(get_db)
+):
     """Asignar una dirección IPv6 a un dominio"""
     ipv6_manager = IPv6Manager()
 
@@ -54,7 +61,11 @@ async def assign_ipv6(domain_id: int, ipv6: IPv6Create, db: Session = Depends(ge
 
 
 @router.get("/domains/{domain_id}/ipv6", response_model=IPv6Response)
-async def get_ipv6(domain_id: int, db: Session = Depends(get_db)):
+async def get_ipv6(
+    domain_id: int,
+    current_user: User = Depends(require_auth),
+    db: Session = Depends(get_db)
+):
     """Obtener dirección IPv6 de un dominio"""
     try:
         domain = db.query(Domain).filter(Domain.id == domain_id).first()
@@ -86,7 +97,11 @@ async def get_ipv6(domain_id: int, db: Session = Depends(get_db)):
 
 
 @router.delete("/domains/{domain_id}/ipv6", status_code=status.HTTP_204_NO_CONTENT)
-async def delete_ipv6(domain_id: int, db: Session = Depends(get_db)):
+async def delete_ipv6(
+    domain_id: int,
+    current_user: User = Depends(require_auth),
+    db: Session = Depends(get_db)
+):
     """Remover dirección IPv6 de un dominio"""
     ipv6_manager = IPv6Manager()
 
