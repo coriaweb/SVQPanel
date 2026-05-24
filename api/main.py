@@ -21,10 +21,10 @@ app = FastAPI(
     version=PANEL_VERSION,
 )
 
-# CORS
+# CORS - Permitir requests desde frontend
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost", "http://localhost:3000", "127.0.0.1"],
+    allow_origins=["*"],  # Desarrollo: permitir todas las origins
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
