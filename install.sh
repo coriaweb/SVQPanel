@@ -325,6 +325,71 @@ NGINXEOF
 fi
 
 ###############################################################################
+# 12. CREAR USUARIO ADMIN AUTOMÁTICO
+###############################################################################
+echo -e "${YELLOW}Creando usuario administrador...${NC}"
+
+cd /opt/svqpanel
+source venv/bin/activate
+
+# Generar contraseña aleatoria de 16 caracteres (A-Z, a-z, 0-9)
+ADMIN_PASSWORD=$(python3 << 'PASSWDEOF'
+import random
+import string
+chars = string.ascii_letters + string.digits
+print(''.join(random.choice(chars) for _ in range(16)))
+PASSWDEOF
+)
+
+# Crear usuario admin en la BD
+python3 << 'PYTHONEOF'
+import sys
+sys.path.insert(0, '/opt/svqpanel')
+
+from sqlalchemy import create_engine
+from sqlalchemy.orm import sessionmaker
+from api.models.models_user import User
+from api.models.models_database import Base
+
+DATABASE_URL = "postgresql://panel_user:panel_password_123@localhost/panel_db"
+engine = create_engine(DATABASE_URL)
+Session = sessionmaker(bind=engine)
+session = Session()
+
+try:
+    # Verificar si el admin ya existe
+    existing_admin = session.query(User).filter(User.username == "admin").first()
+    if existing_admin:
+        print("Admin user already exists")
+        sys.exit(0)
+
+    # Crear usuario admin
+    admin_user = User(
+        username="admin",
+        email="admin@localhost",
+        is_admin=True,
+        is_active=True
+    )
+    admin_user.set_password("$ADMIN_PASSWORD")
+
+    session.add(admin_user)
+    session.commit()
+    print("Admin user created successfully")
+except Exception as e:
+    print(f"Error creating admin user: {e}")
+    session.rollback()
+finally:
+    session.close()
+PYTHONEOF
+
+# Guardar credenciales en archivo seguro
+mkdir -p /opt/svqpanel/.credentials
+echo "admin:$ADMIN_PASSWORD" > /opt/svqpanel/.credentials/admin.txt
+chmod 600 /opt/svqpanel/.credentials/admin.txt
+
+echo -e "${GREEN}✓ Usuario administrador creado${NC}\n"
+
+###############################################################################
 # RESUMEN FINAL
 ###############################################################################
 echo -e "${GREEN}════════════════════════════════════════${NC}"
@@ -337,17 +402,31 @@ echo "  Webserver: $WEBSERVER"
 echo "  PHP versions: ${PHP_ARRAY[*]}"
 echo "  Directorio: /opt/svqpanel"
 echo "  Base de datos: panel_db (PostgreSQL)"
-echo -e "\nProximos pasos:"
+echo -e "\n${GREEN}╔════════════════════════════════════════════════════════════╗${NC}"
+echo -e "${GREEN}║   SVQPanel - Credenciales de Administrador                 ║${NC}"
+echo -e "${GREEN}╠════════════════════════════════════════════════════════════╣${NC}"
+echo -e "${GREEN}║${NC} Usuario:    ${YELLOW}admin${NC}"
+echo -e "${GREEN}║${NC} Contraseña: ${YELLOW}$ADMIN_PASSWORD${NC}"
+echo -e "${GREEN}║${NC} Email:      ${YELLOW}admin@localhost${NC}"
+echo -e "${GREEN}╚════════════════════════════════════════════════════════════╝${NC}\n"
+echo -e "Proximos pasos:"
 echo "  1. Inicia el servicio: systemctl start svqpanel"
 echo "  2. Verifica el estado: systemctl status svqpanel"
 echo "  3. Ver logs: journalctl -u svqpanel -f"
 echo -e "\n${GREEN}SVQPanel estará disponible en:${NC}"
+echo "  • Panel Web: http://IP_DEL_SERVIDOR"
 echo "  • API: http://IP_DEL_SERVIDOR:8001"
-echo "  • Docs: http://IP_DEL_SERVIDOR:8001/docs"
-echo "  • Nginx proxy: http://IP_DEL_SERVIDOR"
+echo "  • API Docs: http://IP_DEL_SERVIDOR:8001/docs"
 echo -e "\n${YELLOW}Base de datos:${NC}"
 echo "  • Host: localhost"
 echo "  • User: panel_user"
 echo "  • Password: panel_password_123"
 echo "  • Database: panel_db"
-echo -e "\n${YELLOW}⚠ Importante: Cambia las credenciales en .env antes de ir a producción${NC}\n"
+echo -e "\n${YELLOW}Archivos importantes:${NC}"
+echo "  • Configuración: /opt/svqpanel/.env"
+echo "  • Credenciales admin: /opt/svqpanel/.credentials/admin.txt"
+echo -e "\n${RED}⚠ IMPORTANTE:${NC}"
+echo "  • Las credenciales se guardaron en: /opt/svqpanel/.credentials/admin.txt"
+echo "  • Cambia la contraseña después de la primera sesión"
+echo "  • Cambia las credenciales de BD en .env antes de ir a producción"
+echo "  • Asegúrate de usar HTTPS en producción\n"
