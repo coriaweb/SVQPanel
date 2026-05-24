@@ -12,8 +12,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from api.models.database import create_tables, get_db
 from config.config import PANEL_NAME, PANEL_VERSION
 
-# Importar rutas (las crearemos después)
-# from api.routes import users, domains, php, ssl, ipv6
+from api.routes import users, domains, php, ssl, ipv6
 
 # Crear app FastAPI
 app = FastAPI(
@@ -65,12 +64,11 @@ async def health_check(db: Session = Depends(get_db)):
             content={"status": "error", "message": str(e)}
         )
 
-# Incluir rutas (cuando las creemos)
-# app.include_router(users.router, prefix="/api/users", tags=["Users"])
-# app.include_router(domains.router, prefix="/api/domains", tags=["Domains"])
-# app.include_router(php.router, prefix="/api/php", tags=["PHP"])
-# app.include_router(ssl.router, prefix="/api/ssl", tags=["SSL"])
-# app.include_router(ipv6.router, prefix="/api/ipv6", tags=["IPv6"])
+app.include_router(users.router, prefix="/api", tags=["Users"])
+app.include_router(domains.router, prefix="/api", tags=["Domains"])
+app.include_router(php.router, prefix="/api", tags=["PHP"])
+app.include_router(ssl.router, prefix="/api", tags=["SSL"])
+app.include_router(ipv6.router, prefix="/api", tags=["IPv6"])
 
 # Manejo de errores global
 @app.exception_handler(Exception)

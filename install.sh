@@ -1,9 +1,9 @@
 #!/bin/bash
 
 ###############################################################################
-# Panel Control - Installation Script
-# Instala el panel en un servidor Ubuntu limpio
-# Uso: curl https://raw.github.com/tu-empresa/panel/main/install.sh | bash
+# SVQPanel - Installation Script
+# Instala SVQPanel en un servidor Debian 12/13 limpio
+# Uso: curl https://raw.githubusercontent.com/coriaweb/SVQPanel/main/install.sh | bash
 ###############################################################################
 
 set -e  # Salir si hay error
@@ -14,7 +14,7 @@ GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
 NC='\033[0m'
 
-echo -e "${YELLOW}=== Panel Control - Instalación ===${NC}\n"
+echo -e "${YELLOW}=== SVQPanel - Instalación ===${NC}\n"
 
 # Detectar SO
 if [[ ! -f /etc/os-release ]]; then
@@ -77,8 +77,8 @@ if [[ -z "$PHP_VERSIONS" ]]; then
 fi
 
 # Convertir a array
-PHP_ARRAY=($PHP_VERSIONS)
-echo -e "${GREEN}✓ PHP versions: ${PHP_ARRAY[@]}${NC}\n"
+mapfile -t PHP_ARRAY <<< "$(echo "$PHP_VERSIONS" | tr ' ' '\n')"
+echo -e "${GREEN}✓ PHP versions: ${PHP_ARRAY[*]}${NC}\n"
 
 ###############################################################################
 # 3. ACTUALIZAR SISTEMA
@@ -101,7 +101,6 @@ apt-get install -y -qq \
     htop \
     net-tools \
     build-essential \
-    software-properties-common \
     apt-transport-https \
     ca-certificates \
     gnupg \
@@ -146,33 +145,35 @@ fi
 ###############################################################################
 echo -e "${YELLOW}Instalando PHP y extensiones...${NC}"
 
-# Añadir PPA de Sury (para múltiples versiones PHP)
-add-apt-repository -y ppa:ondrej/php > /dev/null 2>&1
-apt-get update -qq
+# Para Debian 13, agregar repo de Sury si es necesario
+if [[ "$OS_VERSION" == "13" ]]; then
+    echo -e "${YELLOW}  → Agregando repositorio de Sury para PHP múltiple...${NC}"
+    curl -sSL https://packages.sury.org/php/apt.gpg | gpg --dearmor -o /usr/share/keyrings/deb.sury.org-php.gpg 2>/dev/null || true
+    echo "deb [signed-by=/usr/share/keyrings/deb.sury.org-php.gpg] https://packages.sury.org/php/ bookworm main" | tee /etc/apt/sources.list.d/sury-php.list > /dev/null
+    apt-get update -qq
+fi
 
 for PHP_VER in "${PHP_ARRAY[@]}"; do
     echo "  → Instalando PHP $PHP_VER..."
-    
+
     apt-get install -y -qq \
         php${PHP_VER} \
         php${PHP_VER}-cli \
         php${PHP_VER}-fpm \
-        php${PHP_VER}-mysql \
         php${PHP_VER}-pgsql \
         php${PHP_VER}-curl \
         php${PHP_VER}-gd \
-        php${PHP_VER}-json \
         php${PHP_VER}-mbstring \
         php${PHP_VER}-xml \
         php${PHP_VER}-zip \
         php${PHP_VER}-bcmath \
-        php${PHP_VER}-opcache
-    
-    systemctl enable php${PHP_VER}-fpm
-    systemctl start php${PHP_VER}-fpm
+        php${PHP_VER}-opcache || echo "  ⚠ PHP $PHP_VER puede no estar disponible"
+
+    systemctl enable php${PHP_VER}-fpm 2>/dev/null || true
+    systemctl start php${PHP_VER}-fpm 2>/dev/null || true
 done
 
-echo -e "${GREEN}✓ PHP instalado (versiones: ${PHP_ARRAY[@]})${NC}\n"
+echo -e "${GREEN}✓ PHP instalado (versiones: ${PHP_ARRAY[*]})${NC}\n"
 
 ###############################################################################
 # 7. CONFIGURAR POSTGRESQL
@@ -199,76 +200,126 @@ echo -e "${GREEN}✓ PostgreSQL configurado${NC}\n"
 ###############################################################################
 # 8. CLONAR REPO Y SETUP PYTHON
 ###############################################################################
-echo -e "${YELLOW}Clonando repositorio del panel...${NC}"
+echo -e "${YELLOW}Clonando repositorio SVQPanel...${NC}"
 
-# Clonar repo público (cambiar URL por tu repo)
-REPO_URL="https://github.com/tu-usuario/panel.git"
-git clone "$REPO_URL" /opt/panel 2>/dev/null || {
+# Clonar repo público
+REPO_URL="https://github.com/coriaweb/SVQPanel.git"
+git clone "$REPO_URL" /opt/svqpanel 2>/dev/null || {
     echo -e "${YELLOW}⚠ No se pudo clonar el repo. Creando estructura básica...${NC}"
-    mkdir -p /opt/panel
+    mkdir -p /opt/svqpanel
 }
 
-cd /opt/panel
+cd /opt/svqpanel
 
 # Crear carpetas si no existen
 mkdir -p {scripts,api,config,logs,data}
 
-echo -e "${GREEN}✓ Panel listo en: /opt/panel${NC}\n"
+echo -e "${GREEN}✓ SVQPanel listo en: /opt/svqpanel${NC}\n"
 
 echo -e "${YELLOW}Configurando entorno Python...${NC}"
 
-cd /opt/panel
+cd /opt/svqpanel
 python3 -m venv venv
 source venv/bin/activate
 
-# Instalar dependencias Python (se crearán luego)
+# Instalar dependencias Python
 pip install --upgrade pip setuptools wheel -q
+pip install -r requirements.txt -q || {
+    echo -e "${YELLOW}⚠ Error instalando requirements.txt, instalando manualmente...${NC}"
+    pip install fastapi uvicorn sqlalchemy psycopg2 pydantic python-dotenv -q
+}
 
 echo -e "${GREEN}✓ Entorno Python creado${NC}\n"
 
 ###############################################################################
-# 9. CREAR ARCHIVO DE CONFIGURACIÓN
+# 9. CREAR ARCHIVO .ENV
 ###############################################################################
-echo -e "${YELLOW}Creando archivo de configuración...${NC}"
+echo -e "${YELLOW}Creando archivo de configuración .env...${NC}"
 
-cat > /opt/panel/config/config.py << 'CONFIGEOF'
-import os
+cat > /opt/svqpanel/.env << 'ENVEOF'
+# SVQPanel Configuration
+DATABASE_URL=postgresql://panel_user:panel_password_123@localhost/panel_db
+PANEL_NAME=SVQPanel
+PANEL_VERSION=0.1.0
+PANEL_HOST=0.0.0.0
+PANEL_PORT=8001
+DEBUG=False
+SECRET_KEY=change-this-in-production-to-a-random-key
+ENVEOF
 
-# Panel Settings
-PANEL_NAME = "Tu Panel"
-PANEL_VERSION = "1.0.0"
-PANEL_PORT = 8001
-PANEL_HOST = "127.0.0.1"
+echo -e "${GREEN}✓ Archivo .env creado${NC}\n"
 
-# Database
-DATABASE_URL = "postgresql://panel_user:panel_password_123@localhost/panel_db"
+###############################################################################
+# 10. CREAR SYSTEMD SERVICE
+###############################################################################
+echo -e "${YELLOW}Creando servicio systemd para SVQPanel...${NC}"
 
-# Paths
-BASE_DIR = "/opt/panel"
-SCRIPTS_DIR = os.path.join(BASE_DIR, "scripts")
-LOGS_DIR = os.path.join(BASE_DIR, "logs")
-DATA_DIR = os.path.join(BASE_DIR, "data")
+cat > /etc/systemd/system/svqpanel.service << 'SERVICEEOF'
+[Unit]
+Description=SVQPanel Web Control Panel
+After=network.target postgresql.service
 
-# Webserver
-WEBSERVER = "WEBSERVER_PLACEHOLDER"
-PHP_VERSIONS = [PHP_VERSIONS_PLACEHOLDER]
-DEFAULT_PHP = "DEFAULT_PHP_PLACEHOLDER"
+[Service]
+Type=notify
+User=root
+WorkingDirectory=/opt/svqpanel
+Environment="PATH=/opt/svqpanel/venv/bin"
+ExecStart=/opt/svqpanel/venv/bin/uvicorn api.main:app --host 0.0.0.0 --port 8001
+Restart=always
+RestartSec=10
 
-# Security
-SECRET_KEY = "change-this-in-production"
-API_TOKEN = "generate-this-token"
+[Install]
+WantedBy=multi-user.target
+SERVICEEOF
 
-# Logging
-LOG_LEVEL = "INFO"
-LOG_FILE = os.path.join(LOGS_DIR, "panel.log")
-CONFIGEOF
+systemctl daemon-reload
+systemctl enable svqpanel
 
-# Reemplazar placeholders
-sed -i "s/WEBSERVER_PLACEHOLDER/$WEBSERVER/" /opt/panel/config/config.py
-sed -i "s/PHP_VERSIONS_PLACEHOLDER/$(echo \"'${PHP_ARRAY[0]}'\" | sed 's/ /, /g')/" /opt/panel/config/config.py
-sed -i "s/DEFAULT_PHP_PLACEHOLDER/${PHP_ARRAY[0]}/" /opt/panel/config/config.py
+echo -e "${GREEN}✓ Servicio systemd creado${NC}\n"
 
-echo -e "${GREEN}✓ Configuración creada${NC}\n"
+###############################################################################
+# 11. CREAR NGINX CONFIG
+###############################################################################
+if [[ "$WEBSERVER" == "nginx" || "$WEBSERVER" == "apache+nginx" ]]; then
+    echo -e "${YELLOW}Creando configuración de Nginx...${NC}"
+
+    cat > /etc/nginx/sites-available/svqpanel << 'NGINXEOF'
+upstream svqpanel_backend {
+    server 127.0.0.1:8001;
+}
+
+server {
+    listen 80;
+    server_name _;
+
+    client_max_body_size 100M;
+
+    location / {
+        proxy_pass http://svqpanel_backend;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+
+    location /docs {
+        proxy_pass http://svqpanel_backend/docs;
+        proxy_set_header Host $host;
+    }
+
+    location /openapi.json {
+        proxy_pass http://svqpanel_backend/openapi.json;
+        proxy_set_header Host $host;
+    }
+}
+NGINXEOF
+
+    ln -sf /etc/nginx/sites-available/svqpanel /etc/nginx/sites-enabled/svqpanel
+    rm -f /etc/nginx/sites-enabled/default
+    nginx -t && systemctl restart nginx
+
+    echo -e "${GREEN}✓ Nginx configurado${NC}\n"
+fi
 
 ###############################################################################
 # RESUMEN FINAL
@@ -280,12 +331,20 @@ echo -e "${GREEN}═════════════════════
 echo "Sistema Operativo: $OS_NAME $OS_VERSION"
 echo "Configuración:"
 echo "  Webserver: $WEBSERVER"
-echo "  PHP versions: ${PHP_ARRAY[@]}"
-echo "  Directorio: /opt/panel"
+echo "  PHP versions: ${PHP_ARRAY[*]}"
+echo "  Directorio: /opt/svqpanel"
 echo "  Base de datos: panel_db (PostgreSQL)"
-echo -e "\nPróximos pasos:"
-echo "  1. cd /opt/panel"
-echo "  2. source venv/bin/activate"
-echo "  3. pip install -r requirements.txt (cuando se cree)"
-echo "  4. python api/main.py"
-echo -e "\n${YELLOW}El panel estará disponible en: http://localhost:8001${NC}\n"
+echo -e "\nProximos pasos:"
+echo "  1. Inicia el servicio: systemctl start svqpanel"
+echo "  2. Verifica el estado: systemctl status svqpanel"
+echo "  3. Ver logs: journalctl -u svqpanel -f"
+echo -e "\n${GREEN}SVQPanel estará disponible en:${NC}"
+echo "  • API: http://IP_DEL_SERVIDOR:8001"
+echo "  • Docs: http://IP_DEL_SERVIDOR:8001/docs"
+echo "  • Nginx proxy: http://IP_DEL_SERVIDOR"
+echo -e "\n${YELLOW}Base de datos:${NC}"
+echo "  • Host: localhost"
+echo "  • User: panel_user"
+echo "  • Password: panel_password_123"
+echo "  • Database: panel_db"
+echo -e "\n${YELLOW}⚠ Importante: Cambia las credenciales en .env antes de ir a producción${NC}\n"
