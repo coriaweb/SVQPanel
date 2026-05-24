@@ -262,13 +262,14 @@ Description=SVQPanel Web Control Panel
 After=network.target postgresql.service
 
 [Service]
-Type=notify
+Type=simple
 User=root
 WorkingDirectory=/opt/svqpanel
 Environment="PATH=/opt/svqpanel/venv/bin"
 ExecStart=/opt/svqpanel/venv/bin/uvicorn api.main:app --host 0.0.0.0 --port 8001
 Restart=always
 RestartSec=10
+TimeoutStartSec=30
 
 [Install]
 WantedBy=multi-user.target
