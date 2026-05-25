@@ -138,14 +138,20 @@ apt-get install -y -qq \
     postgresql \
     postgresql-contrib \
     postgresql-server-dev-all \
-    certbot \
-    nodejs \
-    npm
+    certbot
 
 echo -e "${GREEN}✓ Dependencias instaladas${NC}\n"
 
 ###############################################################################
-# 5. INSTALAR WEBSERVER
+# 5. INSTALAR NODEJS (desde NodeSource para versión moderna)
+###############################################################################
+echo -e "${YELLOW}Instalando Node.js 20...${NC}"
+curl -fsSL https://deb.nodesource.com/setup_20.x | bash - > /dev/null 2>&1
+apt-get install -y -qq nodejs
+echo -e "${GREEN}✓ Node.js $(node -v) instalado${NC}\n"
+
+###############################################################################
+# 6. INSTALAR WEBSERVER
 ###############################################################################
 if [[ "$WEBSERVER" == "nginx" || "$WEBSERVER" == "apache+nginx" ]]; then
     echo -e "${YELLOW}Instalando Nginx...${NC}"
@@ -314,23 +320,24 @@ echo -e "${GREEN}✓ Entorno Python creado${NC}\n"
 ###############################################################################
 echo -e "${YELLOW}Compilando frontend Vue3...${NC}"
 
-if [[ -d "frontend" ]]; then
+if [[ -d "/opt/svqpanel/frontend" ]]; then
     cd /opt/svqpanel/frontend
 
-    # Instalar dependencias npm
-    if command -v npm &> /dev/null; then
-        npm install -q 2>/dev/null || true
+    # Limpiar node_modules anteriores (evitar conflictos Windows/Linux)
+    rm -rf node_modules package-lock.json
 
-        # Compilar para producción
-        npm run build -q 2>/dev/null || true
+    # Instalar dependencias en Linux limpio
+    npm install --silent 2>/dev/null || npm install
 
-        if [[ -d "dist" ]]; then
-            echo -e "${GREEN}✓ Frontend compilado${NC}\n"
-        else
-            echo -e "${YELLOW}⚠ Frontend no se compiló, se servirá código fuente${NC}\n"
-        fi
+    # Compilar para producción
+    npm run build 2>/dev/null || true
+
+    if [[ -d "dist" ]]; then
+        # Arreglar permisos para nginx
+        chmod -R 755 /opt/svqpanel/frontend/dist/
+        echo -e "${GREEN}✓ Frontend compilado${NC}\n"
     else
-        echo -e "${YELLOW}⚠ npm no instalado, saltando compilación frontend${NC}\n"
+        echo -e "${RED}✗ Error: Frontend no se compiló${NC}\n"
     fi
 
     cd /opt/svqpanel
