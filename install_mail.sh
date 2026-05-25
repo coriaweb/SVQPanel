@@ -37,6 +37,16 @@ if [[ "$OS_ID" != "Debian" ]]; then
     echo -e "${YELLOW}⚠ Este script está pensado para Debian. Continuar bajo tu responsabilidad.${NC}"
 fi
 
+# ── Detectar soporte SSSE3 (necesario para Rspamd/hyperscan) ─────────────────
+if grep -q "ssse3" /proc/cpuinfo; then
+    INSTALL_RSPAMD=true
+else
+    INSTALL_RSPAMD=false
+    echo -e "${YELLOW}⚠ CPU sin instrucciones SSSE3 — Rspamd no es compatible con este procesador${NC}"
+    echo -e "  ${YELLOW}Se instalará Postfix + Dovecot sin antispam (DKIM requiere Rspamd)${NC}"
+    echo ""
+fi
+
 echo ""
 echo "=== SVQPanel — Instalación del servidor de correo ==="
 echo ""
@@ -92,11 +102,17 @@ postconf -e "smtpd_tls_security_level = may"
 postconf -e "smtp_tls_security_level = may"
 postconf -e "smtpd_tls_protocols = !SSLv2,!SSLv3"
 
-# Rspamd milter
-postconf -e "smtpd_milters = inet:localhost:11332"
-postconf -e "non_smtpd_milters = inet:localhost:11332"
-postconf -e "milter_default_action = accept"
-postconf -e "milter_protocol = 6"
+# Rspamd milter (solo si el CPU soporta SSSE3)
+if [[ "$INSTALL_RSPAMD" == true ]]; then
+    postconf -e "smtpd_milters = inet:localhost:11332"
+    postconf -e "non_smtpd_milters = inet:localhost:11332"
+    postconf -e "milter_default_action = accept"
+    postconf -e "milter_protocol = 6"
+else
+    # Sin Rspamd: limpiar cualquier milter anterior
+    postconf -e "smtpd_milters ="
+    postconf -e "non_smtpd_milters ="
+fi
 
 # Hostname y origen
 postconf -e "myhostname = $(hostname -f)"
@@ -181,43 +197,43 @@ systemctl enable dovecot
 systemctl restart dovecot
 echo -e "${GREEN}✓ Dovecot configurado (IMAP 143/993, POP3 110/995)${NC}"
 
-# ── 4. REDIS ──────────────────────────────────────────────────────────────────
-echo -e "${YELLOW}→ Instalando Redis...${NC}"
-apt-get install -y -qq redis-server
-systemctl enable redis-server
-systemctl start redis-server
-echo -e "${GREEN}✓ Redis instalado (backend de Rspamd)${NC}"
+# ── 4. REDIS + RSPAMD (requieren SSSE3) ──────────────────────────────────────
+if [[ "$INSTALL_RSPAMD" == true ]]; then
+    echo -e "${YELLOW}→ Instalando Redis...${NC}"
+    apt-get install -y -qq redis-server
+    systemctl enable redis-server
+    systemctl start redis-server
+    echo -e "${GREEN}✓ Redis instalado (backend de Rspamd)${NC}"
 
-# ── 5. RSPAMD ─────────────────────────────────────────────────────────────────
-echo -e "${YELLOW}→ Instalando Rspamd...${NC}"
+    echo -e "${YELLOW}→ Instalando Rspamd...${NC}"
 
-RSPAMD_CODENAME="$(lsb_release -cs)"
-# Rspamd stable puede no tener trixie → fallback a bookworm
-if [[ "$RSPAMD_CODENAME" == "trixie" ]]; then
-    RSPAMD_CODENAME="bookworm"
-    echo -e "  ${YELLOW}(usando repositorio bookworm para Rspamd en Debian 13)${NC}"
-fi
+    RSPAMD_CODENAME="$(lsb_release -cs)"
+    # Rspamd stable puede no tener trixie → fallback a bookworm
+    if [[ "$RSPAMD_CODENAME" == "trixie" ]]; then
+        RSPAMD_CODENAME="bookworm"
+        echo -e "  ${YELLOW}(usando repositorio bookworm para Rspamd en Debian 13)${NC}"
+    fi
 
-curl -fsSL https://rspamd.com/apt-stable/gpg.key 2>/dev/null \
-    | gpg --dearmor > /usr/share/keyrings/rspamd-archive-keyring.gpg
-echo "deb [signed-by=/usr/share/keyrings/rspamd-archive-keyring.gpg] https://rspamd.com/apt-stable/ ${RSPAMD_CODENAME} main" \
-    > /etc/apt/sources.list.d/rspamd.list
-apt-get update -qq
-apt-get install -y -qq rspamd
+    curl -fsSL https://rspamd.com/apt-stable/gpg.key 2>/dev/null \
+        | gpg --dearmor > /usr/share/keyrings/rspamd-archive-keyring.gpg
+    echo "deb [signed-by=/usr/share/keyrings/rspamd-archive-keyring.gpg] https://rspamd.com/apt-stable/ ${RSPAMD_CODENAME} main" \
+        > /etc/apt/sources.list.d/rspamd.list
+    apt-get update -qq
+    apt-get install -y -qq rspamd
 
-# Directorio para claves DKIM
-mkdir -p /etc/rspamd/dkim
-chown -R _rspamd:_rspamd /etc/rspamd/dkim 2>/dev/null || \
-    chown -R rspamd:rspamd /etc/rspamd/dkim 2>/dev/null || true
-chmod 700 /etc/rspamd/dkim
+    # Directorio para claves DKIM
+    mkdir -p /etc/rspamd/dkim
+    chown -R _rspamd:_rspamd /etc/rspamd/dkim 2>/dev/null || \
+        chown -R rspamd:rspamd /etc/rspamd/dkim 2>/dev/null || true
+    chmod 700 /etc/rspamd/dkim
 
-# Backend Redis
-cat > /etc/rspamd/local.d/redis.conf << 'RSPAMDREDISEOF'
+    # Backend Redis
+    cat > /etc/rspamd/local.d/redis.conf << 'RSPAMDREDISEOF'
 servers = "127.0.0.1";
 RSPAMDREDISEOF
 
-# DKIM signing dinámico por dominio
-cat > /etc/rspamd/local.d/dkim_signing.conf << 'RSPAMDKIMEOF'
+    # DKIM signing dinámico por dominio
+    cat > /etc/rspamd/local.d/dkim_signing.conf << 'RSPAMDKIMEOF'
 path = "/etc/rspamd/dkim/$domain.$selector.key";
 selector_map = "/etc/rspamd/dkim/selectors.map";
 use_domain = "header";
@@ -226,26 +242,30 @@ sign_local = true;
 sign_authenticated = true;
 RSPAMDKIMEOF
 
-touch /etc/rspamd/dkim/selectors.map
+    touch /etc/rspamd/dkim/selectors.map
 
-# Cabeceras de autenticación en mensajes entrantes
-cat > /etc/rspamd/local.d/milter_headers.conf << 'RSPAMDMILTEREOF'
+    # Cabeceras de autenticación en mensajes entrantes
+    cat > /etc/rspamd/local.d/milter_headers.conf << 'RSPAMDMILTEREOF'
 use = ["x-spam-status", "x-spam-score", "x-rspamd-score", "authentication-results"];
 RSPAMDMILTEREOF
 
-# Bayes con Redis
-cat > /etc/rspamd/local.d/classifier-bayes.conf << 'RSPAMDBAYESEOF'
+    # Bayes con Redis
+    cat > /etc/rspamd/local.d/classifier-bayes.conf << 'RSPAMDBAYESEOF'
 backend = "redis";
 RSPAMDBAYESEOF
 
-# Greylisting activado
-cat > /etc/rspamd/local.d/greylisting.conf << 'RSPAMDGREYEOF'
+    # Greylisting activado
+    cat > /etc/rspamd/local.d/greylisting.conf << 'RSPAMDGREYEOF'
 enabled = true;
 RSPAMDGREYEOF
 
-systemctl enable rspamd
-systemctl restart rspamd
-echo -e "${GREEN}✓ Rspamd configurado (antispam + DKIM + greylisting + Bayes)${NC}"
+    systemctl enable rspamd
+    systemctl restart rspamd
+    echo -e "${GREEN}✓ Rspamd configurado (antispam + DKIM + greylisting + Bayes)${NC}"
+else
+    echo -e "${YELLOW}⚠ Rspamd y Redis omitidos (CPU sin SSSE3)${NC}"
+    echo -e "  ${YELLOW}El servidor de correo funcionará sin antispam ni firma DKIM automática${NC}"
+fi
 
 # ── 6. ACTIVAR EN .env ────────────────────────────────────────────────────────
 echo -e "${YELLOW}→ Actualizando .env...${NC}"
@@ -275,13 +295,24 @@ echo -e "${GREEN}║       Módulo de correo instalado correctamente           �
 echo -e "${GREEN}╚══════════════════════════════════════════════════════════╝${NC}"
 echo ""
 echo "  Estado de servicios:"
-for SVC in postfix dovecot rspamd redis-server; do
+for SVC in postfix dovecot; do
     if systemctl is-active --quiet "$SVC"; then
         echo -e "    ${GREEN}✓ $SVC${NC}"
     else
         echo -e "    ${RED}✗ $SVC  ← revisar: journalctl -u $SVC${NC}"
     fi
 done
+if [[ "$INSTALL_RSPAMD" == true ]]; then
+    for SVC in rspamd redis-server; do
+        if systemctl is-active --quiet "$SVC"; then
+            echo -e "    ${GREEN}✓ $SVC${NC}"
+        else
+            echo -e "    ${RED}✗ $SVC  ← revisar: journalctl -u $SVC${NC}"
+        fi
+    done
+else
+    echo -e "    ${YELLOW}⚠ rspamd — no instalado (CPU sin SSSE3, sin antispam/DKIM)${NC}"
+fi
 echo ""
 echo "  Puertos:"
 echo "    • 25   — SMTP entrada (necesita rDNS + MX)"
