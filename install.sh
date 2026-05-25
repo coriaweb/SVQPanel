@@ -153,7 +153,9 @@ apt-get install -y -qq \
     postgresql \
     postgresql-contrib \
     postgresql-server-dev-all \
-    certbot
+    certbot \
+    rsyslog \
+    mailutils
 
 echo -e "${GREEN}✓ Dependencias instaladas${NC}\n"
 
@@ -273,6 +275,7 @@ if [[ "$INSTALL_MAIL" == true ]]; then
     postconf -e "milter_protocol = 6"
 
     # Hostname y origen
+    hostname -f > /etc/mailname
     postconf -e "myhostname = $(hostname -f)"
     postconf -e "myorigin = /etc/mailname"
 

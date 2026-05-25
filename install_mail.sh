@@ -115,6 +115,7 @@ else
 fi
 
 # Hostname y origen
+hostname -f > /etc/mailname
 postconf -e "myhostname = $(hostname -f)"
 postconf -e "myorigin = /etc/mailname"
 
