@@ -63,6 +63,21 @@ case $WEBSERVER_CHOICE in
 esac
 
 ###############################################################################
+# 2b. SERVIDOR DE CORREO (OPCIONAL)
+###############################################################################
+echo -e "${YELLOW}¿Instalar servidor de correo electrónico?${NC}"
+echo "  Stack: Postfix (SMTP) + Dovecot (IMAP/POP3) + Rspamd (antispam/DKIM) + Redis"
+echo -e "  ${YELLOW}Requisitos: IP con rDNS configurado, puerto 25 desbloqueado, registro MX${NC}"
+read -p "¿Instalar correo? (s/N): " _MAIL_INPUT
+INSTALL_MAIL=false
+if [[ "${_MAIL_INPUT,,}" =~ ^(s|si|y|yes)$ ]]; then
+    INSTALL_MAIL=true
+    echo -e "${GREEN}✓ Servidor de correo seleccionado${NC}\n"
+else
+    echo -e "${YELLOW}✗ Sin servidor de correo${NC}\n"
+fi
+
+###############################################################################
 # 2. ELEGIR VERSIONES PHP
 ###############################################################################
 echo -e "${YELLOW}¿Qué versiones PHP necesitas?${NC}"
@@ -203,6 +218,229 @@ systemctl enable bind9
 systemctl restart bind9
 
 echo -e "${GREEN}✓ BIND9 instalado y configurado${NC}\n"
+
+###############################################################################
+# 6c. SERVIDOR DE CORREO — Postfix + Dovecot + Rspamd + Redis
+###############################################################################
+if [[ "$INSTALL_MAIL" == true ]]; then
+    echo -e "${YELLOW}Instalando servidor de correo...${NC}"
+
+    # Instalar ssl-cert (certificado snakeoil para TLS inicial)
+    apt-get install -y -qq ssl-cert
+
+    # ── 1. POSTFIX ────────────────────────────────────────────────────────
+    echo -e "  ${YELLOW}→ Instalando Postfix...${NC}"
+
+    # Preseed para evitar el wizard interactivo
+    debconf-set-selections <<< "postfix postfix/mailname string $(hostname -f)"
+    debconf-set-selections <<< "postfix postfix/main_mailer_type string 'Internet Site'"
+    DEBIAN_FRONTEND=noninteractive apt-get install -y -qq postfix
+
+    # Crear ficheros de maps vacíos
+    touch /etc/postfix/virtual_domains \
+          /etc/postfix/virtual_mailbox \
+          /etc/postfix/virtual_alias
+    postmap /etc/postfix/virtual_domains
+    postmap /etc/postfix/virtual_mailbox
+    postmap /etc/postfix/virtual_alias
+
+    # Virtual mailboxes: buzones bajo /home/{usuario}/mail/{dominio}/{buzon}/
+    postconf -e "virtual_mailbox_domains = hash:/etc/postfix/virtual_domains"
+    postconf -e "virtual_mailbox_base = /home"
+    postconf -e "virtual_mailbox_maps = hash:/etc/postfix/virtual_mailbox"
+    postconf -e "virtual_alias_maps = hash:/etc/postfix/virtual_alias"
+    postconf -e "virtual_minimum_uid = 100"
+    postconf -e "virtual_uid_maps = static:5000"
+    postconf -e "virtual_gid_maps = static:5000"
+
+    # SASL auth vía Dovecot (socket compartido)
+    postconf -e "smtpd_sasl_auth_enable = yes"
+    postconf -e "smtpd_sasl_type = dovecot"
+    postconf -e "smtpd_sasl_path = private/auth"
+    postconf -e "smtpd_sasl_security_options = noanonymous"
+
+    # TLS (snakeoil por defecto — reemplazar con cert real en producción)
+    postconf -e "smtpd_tls_cert_file = /etc/ssl/certs/ssl-cert-snakeoil.pem"
+    postconf -e "smtpd_tls_key_file = /etc/ssl/private/ssl-cert-snakeoil.key"
+    postconf -e "smtpd_tls_security_level = may"
+    postconf -e "smtp_tls_security_level = may"
+    postconf -e "smtpd_tls_protocols = !SSLv2,!SSLv3"
+
+    # Rspamd milter
+    postconf -e "smtpd_milters = inet:localhost:11332"
+    postconf -e "non_smtpd_milters = inet:localhost:11332"
+    postconf -e "milter_default_action = accept"
+    postconf -e "milter_protocol = 6"
+
+    # Hostname y origen
+    postconf -e "myhostname = $(hostname -f)"
+    postconf -e "myorigin = /etc/mailname"
+
+    # Submission (puerto 587) para clientes de correo
+    if ! grep -q "^submission" /etc/postfix/master.cf; then
+        cat >> /etc/postfix/master.cf << 'MASTEREOF'
+
+submission inet n       -       y       -       -       smtpd
+  -o syslog_name=postfix/submission
+  -o smtpd_tls_security_level=encrypt
+  -o smtpd_sasl_auth_enable=yes
+  -o smtpd_reject_unlisted_recipient=no
+  -o smtpd_recipient_restrictions=permit_sasl_authenticated,reject
+  -o milter_macro_daemon_name=ORIGINATING
+MASTEREOF
+    fi
+
+    systemctl enable postfix
+    systemctl restart postfix
+    echo -e "  ${GREEN}✓ Postfix configurado (SMTP 25 + submission 587)${NC}"
+
+    # ── 2. DOVECOT ────────────────────────────────────────────────────────
+    echo -e "  ${YELLOW}→ Instalando Dovecot...${NC}"
+    apt-get install -y -qq dovecot-core dovecot-imapd dovecot-pop3d dovecot-lmtpd
+
+    # Usuario vmail uid/gid 5000 — propietario de todos los buzones
+    groupadd -g 5000 vmail 2>/dev/null || true
+    useradd -u 5000 -g vmail -d /var/mail -s /usr/sbin/nologin vmail 2>/dev/null || true
+
+    # Fichero de usuarios virtual (vacío al instalar, el panel lo gestiona)
+    touch /etc/dovecot/users
+    chmod 640 /etc/dovecot/users
+    chown root:dovecot /etc/dovecot/users
+
+    # Auth vía passwd-file con ruta completa por usuario
+    # Formato: user@domain:{SHA512-CRYPT}hash:5000:5000::/home/panel_user/mail/domain/user::
+    cat > /etc/dovecot/conf.d/auth-passwdfile.conf.ext << 'DOVEAUTHEOF'
+passdb {
+  driver = passwd-file
+  args = scheme=SHA512-CRYPT username_format=%u /etc/dovecot/users
+}
+userdb {
+  driver = passwd-file
+  username_format = %u
+  args = /etc/dovecot/users
+}
+DOVEAUTHEOF
+
+    # Deshabilitar auth del sistema, activar passwd-file
+    sed -i 's/^!include auth-system.conf.ext/#!include auth-system.conf.ext/' \
+        /etc/dovecot/conf.d/10-auth.conf
+    grep -q "auth-passwdfile.conf.ext" /etc/dovecot/conf.d/10-auth.conf || \
+        echo "!include auth-passwdfile.conf.ext" >> /etc/dovecot/conf.d/10-auth.conf
+
+    # Permitir auth en texto plano (clientes deben usar STARTTLS/TLS)
+    sed -i 's/^#\?disable_plaintext_auth = yes/disable_plaintext_auth = no/' \
+        /etc/dovecot/conf.d/10-auth.conf
+
+    # Mecanismos de auth: PLAIN y LOGIN (compatibles con todos los clientes)
+    grep -q "^auth_mechanisms" /etc/dovecot/conf.d/10-auth.conf || \
+        sed -i 's/^#auth_mechanisms = plain/auth_mechanisms = plain login/' \
+            /etc/dovecot/conf.d/10-auth.conf
+
+    # Mail location: maildir:~/ → el home del passwd-file ES la raíz del buzón
+    # El panel escribe el home como /home/{panel_user}/mail/{domain}/{mailbox}
+    grep -q "^mail_location = maildir" /etc/dovecot/conf.d/10-mail.conf || \
+        echo "mail_location = maildir:~/" >> /etc/dovecot/conf.d/10-mail.conf
+
+    # Socket SASL para que Postfix pueda autenticar usuarios via Dovecot
+    cat > /etc/dovecot/conf.d/99-svqpanel-postfix.conf << 'DOVESASLEOF'
+# SVQPanel: socket SASL para Postfix
+service auth {
+  unix_listener /var/spool/postfix/private/auth {
+    mode = 0660
+    user = postfix
+    group = postfix
+  }
+}
+DOVESASLEOF
+
+    systemctl enable dovecot
+    systemctl restart dovecot
+    echo -e "  ${GREEN}✓ Dovecot configurado (IMAP 143/993, POP3 110/995, SASL para Postfix)${NC}"
+
+    # ── 3. REDIS ──────────────────────────────────────────────────────────
+    echo -e "  ${YELLOW}→ Instalando Redis...${NC}"
+    apt-get install -y -qq redis-server
+    # Redis solo escucha en localhost por defecto (seguro)
+    systemctl enable redis-server
+    systemctl start redis-server
+    echo -e "  ${GREEN}✓ Redis instalado (backend de Rspamd)${NC}"
+
+    # ── 4. RSPAMD ─────────────────────────────────────────────────────────
+    echo -e "  ${YELLOW}→ Instalando Rspamd desde repositorio oficial...${NC}"
+
+    RSPAMD_CODENAME="$(lsb_release -cs)"
+    # Rspamd stable puede no tener trixie todavía → fallback a bookworm
+    if [[ "$RSPAMD_CODENAME" == "trixie" ]]; then
+        RSPAMD_CODENAME="bookworm"
+        echo -e "  ${YELLOW}  (usando repositorio bookworm para Rspamd en Debian 13)${NC}"
+    fi
+
+    curl -fsSL https://rspamd.com/apt-stable/gpg.key 2>/dev/null \
+        | gpg --dearmor > /usr/share/keyrings/rspamd-archive-keyring.gpg
+    echo "deb [signed-by=/usr/share/keyrings/rspamd-archive-keyring.gpg] https://rspamd.com/apt-stable/ ${RSPAMD_CODENAME} main" \
+        > /etc/apt/sources.list.d/rspamd.list
+    apt-get update -qq
+    apt-get install -y -qq rspamd
+
+    # Directorio para claves DKIM (el panel genera una clave por dominio)
+    mkdir -p /etc/rspamd/dkim
+    # Rspamd puede correr como _rspamd o rspamd según la versión
+    chown -R _rspamd:_rspamd /etc/rspamd/dkim 2>/dev/null || \
+        chown -R rspamd:rspamd /etc/rspamd/dkim 2>/dev/null || true
+    chmod 700 /etc/rspamd/dkim
+
+    # Backend Redis para Bayes, fuzzy hashes y greylisting
+    cat > /etc/rspamd/local.d/redis.conf << 'RSPAMDREDISEOF'
+servers = "127.0.0.1";
+RSPAMDREDISEOF
+
+    # DKIM signing dinámico por dominio
+    # Clave:     /etc/rspamd/dkim/{domain}.{selector}.key
+    # Selectores: /etc/rspamd/dkim/selectors.map  (domain → selector)
+    cat > /etc/rspamd/local.d/dkim_signing.conf << 'RSPAMDKIMEOF'
+path = "/etc/rspamd/dkim/$domain.$selector.key";
+selector_map = "/etc/rspamd/dkim/selectors.map";
+use_domain = "header";
+allow_username_mismatch = true;
+sign_local = true;
+sign_authenticated = true;
+RSPAMDKIMEOF
+
+    # Mapa de selectores vacío (el panel lo rellena al generar DKIM por dominio)
+    touch /etc/rspamd/dkim/selectors.map
+
+    # Cabeceras de autenticación añadidas a los mensajes
+    cat > /etc/rspamd/local.d/milter_headers.conf << 'RSPAMDMILTEREOF'
+use = ["x-spam-status", "x-spam-score", "x-rspamd-score", "authentication-results"];
+RSPAMDMILTEREOF
+
+    # Bayes con Redis
+    cat > /etc/rspamd/local.d/classifier-bayes.conf << 'RSPAMDBAYESEOF'
+backend = "redis";
+RSPAMDBAYESEOF
+
+    # Greylisting activado
+    cat > /etc/rspamd/local.d/greylisting.conf << 'RSPAMDGREYEOF'
+enabled = true;
+RSPAMDGREYEOF
+
+    systemctl enable rspamd
+    systemctl restart rspamd
+    echo -e "  ${GREEN}✓ Rspamd configurado (antispam + DKIM + greylisting + Bayes/Redis)${NC}"
+
+    # ── 5. VERIFICACIÓN FINAL ─────────────────────────────────────────────
+    echo ""
+    echo -e "  Estado de servicios de correo:"
+    for SVC in postfix dovecot rspamd redis-server; do
+        if systemctl is-active --quiet "$SVC"; then
+            echo -e "    ${GREEN}✓ $SVC — activo${NC}"
+        else
+            echo -e "    ${RED}✗ $SVC — NO activo (revisar: journalctl -u $SVC)${NC}"
+        fi
+    done
+
+    echo -e "\n${GREEN}✓ Servidor de correo instalado${NC}\n"
+fi
 
 ###############################################################################
 # 6. INSTALAR PHP
@@ -399,7 +637,13 @@ fi
 ###############################################################################
 echo -e "${YELLOW}Creando archivo de configuración .env...${NC}"
 
-cat > /opt/svqpanel/.env << 'ENVEOF'
+# MAIL_ENABLED depende de si se seleccionó instalar correo
+MAIL_ENABLED_VAL="false"
+if [[ "$INSTALL_MAIL" == true ]]; then
+    MAIL_ENABLED_VAL="true"
+fi
+
+cat > /opt/svqpanel/.env << ENVEOF
 # SVQPanel Configuration
 DATABASE_URL=postgresql://panel_user:panel_password_123@localhost/panel_db
 PANEL_NAME=SVQPanel
@@ -408,6 +652,7 @@ PANEL_HOST=0.0.0.0
 PANEL_PORT=8001
 DEBUG=False
 SECRET_KEY=change-this-in-production-to-a-random-key
+MAIL_ENABLED=${MAIL_ENABLED_VAL}
 ENVEOF
 
 echo -e "${GREEN}✓ Archivo .env creado${NC}\n"
@@ -575,9 +820,10 @@ echo -e "${GREEN}═════════════════════
 
 echo "Sistema Operativo: $OS_NAME $OS_VERSION"
 echo "Configuración:"
-echo "  Webserver: $WEBSERVER"
+echo "  Webserver:    $WEBSERVER"
 echo "  PHP versions: ${PHP_ARRAY[*]}"
-echo "  Directorio: /opt/svqpanel"
+echo "  Correo:       $( [[ "$INSTALL_MAIL" == true ]] && echo 'Postfix + Dovecot + Rspamd' || echo 'No instalado' )"
+echo "  Directorio:   /opt/svqpanel"
 echo "  Base de datos: panel_db (PostgreSQL)"
 echo -e "\n${GREEN}╔════════════════════════════════════════════════════════════╗${NC}"
 echo -e "${GREEN}║   SVQPanel - Credenciales de Administrador                 ║${NC}"
@@ -604,8 +850,22 @@ echo "  • Database: panel_db"
 echo -e "\n${YELLOW}Archivos importantes:${NC}"
 echo "  • Configuración: /opt/svqpanel/.env"
 echo "  • Credenciales admin: /opt/svqpanel/.credentials/admin.txt"
+if [[ "$INSTALL_MAIL" == true ]]; then
+    echo -e "\n${YELLOW}Servidor de correo:${NC}"
+    echo "  • SMTP entrada:  puerto 25   (MX de tus dominios)"
+    echo "  • SMTP envío:    puerto 587  (clientes con STARTTLS + auth)"
+    echo "  • IMAP:          puerto 143  (STARTTLS) / 993 (TLS)"
+    echo "  • POP3:          puerto 110  (STARTTLS) / 995 (TLS)"
+    echo "  • Rspamd UI:     http://IP_DEL_SERVIDOR:11334"
+    echo "  • Buzones en:    /home/{usuario}/mail/{dominio}/{buzon}/"
+    echo -e "  ${YELLOW}Configura por dominio: registro MX, rDNS (PTR), SPF, DKIM y DMARC${NC}"
+fi
+
 echo -e "\n${RED}⚠ IMPORTANTE:${NC}"
 echo "  • Las credenciales se guardaron en: /opt/svqpanel/.credentials/admin.txt"
 echo "  • Cambia la contraseña después de la primera sesión"
 echo "  • Cambia las credenciales de BD en .env antes de ir a producción"
-echo "  • Asegúrate de usar HTTPS en producción\n"
+echo "  • Asegúrate de usar HTTPS en producción"
+if [[ "$INSTALL_MAIL" == true ]]; then
+    echo "  • Correo: sustituye el certificado snakeoil por uno real (Let's Encrypt)"
+fi
