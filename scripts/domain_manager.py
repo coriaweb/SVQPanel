@@ -182,6 +182,60 @@ echo '<p>PHP ' . PHP_VERSION . '</p>';
             logger.error(f"Failed to delete domain: {str(e)}")
             raise
 
+    def update_nginx_ipv6(
+        self,
+        username: str,
+        domain_name: str,
+        php_version: str,
+        ipv6_address: str = None,
+        ssl_enabled: bool = False
+    ) -> dict:
+        """
+        Regenera el vhost nginx de un dominio con (o sin) IPv6.
+
+        Args:
+            username: Propietario del dominio
+            domain_name: Nombre del dominio
+            php_version: Versión PHP actual
+            ipv6_address: IPv6 a añadir al listen, o None para quitarla
+            ssl_enabled: Si SSL está activo
+
+        Returns:
+            {'success': True, 'domain': ..., 'ipv6': ...}
+        """
+        if not validate_domain(domain_name):
+            raise ValueError(f"Invalid domain: {domain_name}")
+
+        nginx_config = get_nginx_config_path(domain_name)
+
+        try:
+            logger.info(f"Regenerating nginx config for {domain_name} with IPv6={ipv6_address}")
+
+            config_content = generate_nginx_config(
+                domain_name,
+                username,
+                php_version,
+                ssl_enabled=ssl_enabled,
+                ipv6=ipv6_address
+            )
+
+            with open(nginx_config, "w") as f:
+                f.write(config_content)
+
+            if not reload_nginx():
+                raise RuntimeError("Nginx reload failed after IPv6 update")
+
+            logger.info(f"Nginx updated for {domain_name} with IPv6={ipv6_address}")
+            return {
+                "success": True,
+                "domain": domain_name,
+                "ipv6": ipv6_address
+            }
+
+        except Exception as e:
+            logger.error(f"Failed to update nginx IPv6: {str(e)}")
+            raise
+
     def change_php_version(
         self,
         domain_name: str,
