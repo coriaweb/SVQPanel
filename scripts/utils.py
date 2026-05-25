@@ -96,7 +96,7 @@ def generate_nginx_config(
 
 server {{
     listen 80;
-    {"listen [::]:" + "80;" if not ipv6 else "listen [" + ipv6 + "]:80;"}
+    {"listen [::]:" + "80;" if not ipv6 else "listen [" + ipv6 + "]:80 default_server;"}
     server_name {server_names};
     root {public_html};
 
@@ -131,7 +131,7 @@ server {{
         server_block += f"""
 server {{
     listen 443 ssl http2;
-    {"listen [::]:" + "443 ssl http2;" if not ipv6 else "listen [" + ipv6 + "]:443 ssl http2;"}
+    {"listen [::]:" + "443 ssl http2;" if not ipv6 else "listen [" + ipv6 + "]:443 ssl http2 default_server;"}
     server_name {server_names};
     root {public_html};
 
