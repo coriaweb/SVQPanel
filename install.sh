@@ -76,8 +76,30 @@ if [[ -z "$PHP_VERSIONS" ]]; then
     exit 1
 fi
 
-# Convertir a array
+# Convertir a array y validar
 mapfile -t PHP_ARRAY <<< "$(echo "$PHP_VERSIONS" | tr ' ' '\n')"
+VALID_VERSIONS=("7.4" "8.0" "8.1" "8.2" "8.3")
+INVALID_VERSIONS=()
+
+for VER in "${PHP_ARRAY[@]}"; do
+    FOUND=0
+    for VALID in "${VALID_VERSIONS[@]}"; do
+        if [[ "$VER" == "$VALID" ]]; then
+            FOUND=1
+            break
+        fi
+    done
+    if [[ $FOUND -eq 0 ]]; then
+        INVALID_VERSIONS+=("$VER")
+    fi
+done
+
+if [[ ${#INVALID_VERSIONS[@]} -gt 0 ]]; then
+    echo -e "${RED}Error: Versiones PHP inválidas: ${INVALID_VERSIONS[*]}${NC}"
+    echo -e "${YELLOW}Solo están disponibles: 7.4, 8.0, 8.1, 8.2, 8.3${NC}"
+    exit 1
+fi
+
 echo -e "${GREEN}✓ PHP versions: ${PHP_ARRAY[*]}${NC}\n"
 
 ###############################################################################
@@ -151,7 +173,7 @@ echo -e "${YELLOW}Instalando PHP y extensiones...${NC}"
 if [[ "$OS_VERSION" == "13" ]]; then
     echo -e "${YELLOW}  → Agregando repositorio de Sury para PHP múltiple...${NC}"
     curl -sSL https://packages.sury.org/php/apt.gpg | gpg --dearmor -o /usr/share/keyrings/deb.sury.org-php.gpg 2>/dev/null || true
-    echo "deb [signed-by=/usr/share/keyrings/deb.sury.org-php.gpg] https://packages.sury.org/php/ bookworm main" | tee /etc/apt/sources.list.d/sury-php.list > /dev/null
+    echo "deb [signed-by=/usr/share/keyrings/deb.sury.org-php.gpg] https://packages.sury.org/php/ trixie main" | tee /etc/apt/sources.list.d/sury-php.list > /dev/null
     apt-get update -qq
 fi
 
@@ -349,7 +371,8 @@ sys.path.insert(0, '/opt/svqpanel')
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 from api.models.models_user import User
-from api.models.models_database import Base
+from api.models.models_domain import Domain
+from api.models.database import Base
 
 DATABASE_URL = "postgresql://panel_user:panel_password_123@localhost/panel_db"
 engine = create_engine(DATABASE_URL)
