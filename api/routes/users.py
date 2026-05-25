@@ -2,13 +2,13 @@
 Rutas API para gestión de usuarios
 """
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, status, Query
 from sqlalchemy.orm import Session
 from sqlalchemy.exc import IntegrityError
 from api.models.database import get_db
 from api.models.models_user import User
 from api.schemas.user_schemas import UserCreate, UserUpdate, UserResponse
-from api.dependencies import require_admin, require_auth
+from api.dependencies import require_admin, require_auth, require_admin_or_reseller
 from scripts.user_manager import UserManager
 
 router = APIRouter()
@@ -17,18 +17,25 @@ router = APIRouter()
 @router.post("/users", response_model=UserResponse, status_code=status.HTTP_201_CREATED)
 async def create_user(
     user: UserCreate,
-    current_user: User = Depends(require_admin),
+    current_user: User = Depends(require_admin_or_reseller),
     db: Session = Depends(get_db)
 ):
-    """Crear un nuevo usuario"""
+    """Crear un nuevo usuario (admin: cualquier rol; reseller: solo usuarios regulares)"""
     user_manager = UserManager()
 
+    # Reseller solo puede crear usuarios regulares (no admins ni otros resellers)
+    role = user.role or "user"
+    if current_user.role == "reseller" and role != "user":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Los resellers solo pueden crear usuarios regulares"
+        )
+
     try:
-        # Create system user first
+        # Crear usuario del sistema
         user_manager.create_user(user.username, user.email, user.password)
 
-        # Create database user
-        role = user.role or "user"
+        # Crear usuario en BD
         db_user = User(
             username=user.username,
             email=user.email,
@@ -37,6 +44,8 @@ async def create_user(
             role=role,
             is_admin=(role == "admin"),
             domains_limit=user.domains_limit if user.domains_limit is not None else 10,
+            # Si lo crea un reseller, ese reseller es el parent
+            parent_id=current_user.id if current_user.role == "reseller" else None,
         )
         db_user.set_password(user.password)
         db.add(db_user)
@@ -45,7 +54,6 @@ async def create_user(
         return db_user
     except IntegrityError:
         db.rollback()
-        # Try to clean up system user if DB insertion failed
         try:
             user_manager.delete_user(user.username)
         except:
@@ -65,13 +73,28 @@ async def create_user(
 @router.get("/users", response_model=list[UserResponse])
 async def list_users(
     skip: int = 0,
-    limit: int = 10,
-    current_user: User = Depends(require_admin),
+    limit: int = 100,
+    parent_id: int = Query(None, description="Filtrar clientes de un reseller"),
+    current_user: User = Depends(require_admin_or_reseller),
     db: Session = Depends(get_db)
 ):
-    """Listar todos los usuarios"""
+    """
+    Listar usuarios.
+    - Admin: ve todos (o filtra por parent_id para ver clientes de un reseller)
+    - Reseller: ve solo sus propios clientes (parent_id = current_user.id)
+    """
     try:
-        users = db.query(User).offset(skip).limit(limit).all()
+        query = db.query(User)
+
+        if current_user.role == "admin":
+            if parent_id is not None:
+                # Admin filtrando clientes de un reseller concreto
+                query = query.filter(User.parent_id == parent_id)
+        else:
+            # Reseller solo ve sus clientes
+            query = query.filter(User.parent_id == current_user.id)
+
+        users = query.offset(skip).limit(limit).all()
         return users
     except Exception as e:
         raise HTTPException(

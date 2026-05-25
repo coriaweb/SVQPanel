@@ -34,8 +34,26 @@ app.add_middleware(
 @app.on_event("startup")
 async def startup():
     create_tables()
+    _run_migrations()
     print(f"✓ {PANEL_NAME} v{PANEL_VERSION} iniciado")
     print(f"✓ Base de datos sincronizada")
+
+
+def _run_migrations():
+    """Migraciones incrementales para instalaciones existentes"""
+    from api.models.database import engine
+    from sqlalchemy import text
+    migrations = [
+        # Fase 5+: columna parent_id para sistema reseller
+        "ALTER TABLE users ADD COLUMN IF NOT EXISTS parent_id INTEGER REFERENCES users(id) ON DELETE SET NULL",
+    ]
+    with engine.connect() as conn:
+        for sql in migrations:
+            try:
+                conn.execute(text(sql))
+                conn.commit()
+            except Exception as e:
+                print(f"⚠ Migration skipped: {e}")
 
 # Health check
 @app.get("/", tags=["Health"])

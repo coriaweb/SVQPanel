@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, Boolean, DateTime, Text, Enum
+from sqlalchemy import Column, Integer, String, Boolean, DateTime, Text, Enum, ForeignKey
 from sqlalchemy.orm import relationship
 from datetime import datetime, timedelta
 from api.models.database import Base
@@ -31,21 +31,27 @@ class User(Base):
     role = Column(String(50), default="user")  # admin, reseller, user
     is_admin = Column(Boolean, default=False)  # Para compatibilidad hacia atrás
     is_active = Column(Boolean, default=True)
-    
+
+    # Reseller: parent_id apunta al reseller propietario de este usuario
+    # NULL = cuenta de nivel superior (admin o reseller directo del sistema)
+    parent_id = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+
     # Límites
     domains_limit = Column(Integer, default=10)
-    
+
     # Timestamps
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
     last_login = Column(DateTime, nullable=True)
-    
+
     # Shell access
     shell_path = Column(String(255), default="/bin/bash")
     home_dir = Column(String(255), nullable=True)  # /home/usuario
-    
+
     # Relaciones
     domains = relationship("Domain", back_populates="user", cascade="all, delete-orphan")
+    # Clientes de este reseller
+    clients = relationship("User", foreign_keys=[parent_id], backref="reseller", lazy="dynamic")
     
     def set_password(self, password: str):
         """Hash y guarda la contraseña"""
@@ -91,9 +97,9 @@ class User(Base):
         """Verifica si puede editar otro usuario"""
         if self.role == "admin":
             return True
-        if self.role == "reseller" and other_user.role == "user":
-            # Los revendedores solo pueden editar usuarios, no otros revendedores o admins
-            return True
+        if self.role == "reseller":
+            # Reseller solo puede gestionar sus propios clientes (parent_id = self.id)
+            return other_user.parent_id == self.id
         if self.id == other_user.id:
             return True
         return False

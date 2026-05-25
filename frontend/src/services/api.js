@@ -82,8 +82,11 @@ class APIClient {
   }
 
   // Users
-  getUsers(skip = 0, limit = 10) {
-    return this.get(`/api/users?skip=${skip}&limit=${limit}`)
+  getUsers(skip = 0, limit = 100, userId = null, parentId = null) {
+    let url = `/api/users?skip=${skip}&limit=${limit}`
+    if (userId) url += `&user_id=${userId}`
+    if (parentId) url += `&parent_id=${parentId}`
+    return this.get(url)
   }
 
   getUser(userId) {

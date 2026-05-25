@@ -36,6 +36,7 @@ class UserResponse(BaseModel):
     is_admin: bool
     is_active: bool
     domains_limit: int
+    parent_id: Optional[int] = None
     created_at: Optional[datetime] = None
     updated_at: Optional[datetime] = None
     last_login: Optional[datetime] = None

@@ -1,8 +1,8 @@
 <template>
   <div>
-    <!-- Back button + header -->
+    <!-- Back + header -->
     <div class="d-flex align-items-center gap-3 mb-4">
-      <button class="btn btn-outline-secondary btn-sm" @click="$router.push('/users')">
+      <button class="btn btn-outline-secondary btn-sm" @click="$router.back()">
         <i class="bi bi-arrow-left"></i> Volver
       </button>
       <div v-if="user">
@@ -16,147 +16,183 @@
     </div>
 
     <div v-if="user" class="row g-4">
-      <!-- User Info Card -->
-      <div class="col-md-4">
-        <div class="card h-100">
-          <div class="card-header">
-            <i class="bi bi-info-circle me-1"></i> Información de la cuenta
-          </div>
-          <div class="card-body">
-            <dl class="row mb-0">
-              <dt class="col-5 text-muted">Usuario</dt>
-              <dd class="col-7">{{ user.username }}</dd>
-
-              <dt class="col-5 text-muted">Email</dt>
-              <dd class="col-7">{{ user.email }}</dd>
-
-              <dt class="col-5 text-muted">Nombre</dt>
-              <dd class="col-7">{{ [user.first_name, user.last_name].filter(Boolean).join(' ') || '—' }}</dd>
-
-              <dt class="col-5 text-muted">Rol</dt>
-              <dd class="col-7">
+      <!-- Info card -->
+      <div class="col-md-3">
+        <div class="card">
+          <div class="card-header"><i class="bi bi-info-circle me-1"></i> Información</div>
+          <div class="card-body p-0">
+            <ul class="list-group list-group-flush">
+              <li class="list-group-item d-flex justify-content-between">
+                <span class="text-muted">Rol</span>
                 <span :class="roleBadgeClass(user.role)" class="badge">{{ roleLabel(user.role) }}</span>
-              </dd>
-
-              <dt class="col-5 text-muted">Estado</dt>
-              <dd class="col-7">
-                <span v-if="user.is_active" class="badge bg-success">Activo</span>
-                <span v-else class="badge bg-danger">Inactivo</span>
-              </dd>
-
-              <dt class="col-5 text-muted">Dominios</dt>
-              <dd class="col-7">
-                {{ domains.length }} / {{ user.domains_limit === 0 ? '∞' : user.domains_limit }}
-              </dd>
-
-              <dt class="col-5 text-muted">Creado</dt>
-              <dd class="col-7">{{ formatDate(user.created_at) }}</dd>
-
-              <dt class="col-5 text-muted">Último login</dt>
-              <dd class="col-7">{{ user.last_login ? formatDate(user.last_login) : 'Nunca' }}</dd>
-            </dl>
+              </li>
+              <li class="list-group-item d-flex justify-content-between">
+                <span class="text-muted">Estado</span>
+                <span :class="user.is_active ? 'badge bg-success' : 'badge bg-danger'">
+                  {{ user.is_active ? 'Activo' : 'Inactivo' }}
+                </span>
+              </li>
+              <li v-if="user.role === 'reseller'" class="list-group-item d-flex justify-content-between">
+                <span class="text-muted">Clientes</span>
+                <strong>{{ clients.length }}</strong>
+              </li>
+              <li v-else class="list-group-item d-flex justify-content-between">
+                <span class="text-muted">Dominios</span>
+                <strong>{{ domains.length }} / {{ user.domains_limit === 0 ? '∞' : user.domains_limit }}</strong>
+              </li>
+              <li class="list-group-item d-flex justify-content-between">
+                <span class="text-muted">Creado</span>
+                <small>{{ formatDate(user.created_at) }}</small>
+              </li>
+            </ul>
           </div>
-          <div class="card-footer d-flex gap-2">
-            <button class="btn btn-sm btn-outline-warning flex-fill" @click="openEditUser">
-              <i class="bi bi-pencil me-1"></i> Editar
+          <div class="card-footer">
+            <button class="btn btn-sm btn-outline-warning w-100" @click="showEditUser = true">
+              <i class="bi bi-pencil me-1"></i> Editar usuario
             </button>
           </div>
         </div>
       </div>
 
-      <!-- Domains Card -->
-      <div class="col-md-8">
-        <div class="card">
-          <div class="card-header d-flex justify-content-between align-items-center">
-            <span><i class="bi bi-globe2 me-1"></i> Dominios de {{ user.username }}</span>
-            <button class="btn btn-sm btn-primary" @click="openAddDomain">
-              <i class="bi bi-plus-lg"></i> Añadir dominio
-            </button>
-          </div>
-          <div class="card-body">
-            <div v-if="loadingDomains" class="text-center py-3">
-              <div class="spinner-border spinner-border-sm"></div>
+      <!-- Panel principal: clientes (reseller) o dominios (user) -->
+      <div class="col-md-9">
+
+        <!-- ═══ RESELLER: lista de clientes ═══ -->
+        <template v-if="user.role === 'reseller'">
+          <div class="card">
+            <div class="card-header d-flex justify-content-between align-items-center">
+              <span><i class="bi bi-people me-1"></i> Clientes de {{ user.username }}</span>
+              <button class="btn btn-sm btn-primary" @click="showAddClient = true">
+                <i class="bi bi-person-plus"></i> Añadir cliente
+              </button>
             </div>
-            <div v-else-if="domains.length === 0" class="alert alert-info mb-0">
-              <i class="bi bi-info-circle me-1"></i> Este usuario no tiene dominios
-            </div>
-            <div v-else class="table-responsive">
-              <table class="table table-hover align-middle mb-0">
-                <thead class="table-light">
-                  <tr>
-                    <th>Dominio</th>
-                    <th>PHP</th>
-                    <th>SSL</th>
-                    <th>Estado</th>
-                    <th>Acciones</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  <tr v-for="domain in domains" :key="domain.id">
-                    <td>
-                      <i class="bi bi-globe text-primary me-1"></i>
-                      <a :href="'http://' + domain.domain_name" target="_blank" class="text-decoration-none">
-                        {{ domain.domain_name }}
-                      </a>
-                    </td>
-                    <td>
-                      <span class="badge bg-info text-dark">PHP {{ domain.php_version || '8.2' }}</span>
-                    </td>
-                    <td>
-                      <span v-if="domain.ssl_enabled" class="badge bg-success">
-                        <i class="bi bi-lock-fill"></i> SSL
-                      </span>
-                      <span v-else class="badge bg-secondary">
-                        <i class="bi bi-unlock"></i> Sin SSL
-                      </span>
-                    </td>
-                    <td>
-                      <span v-if="domain.is_active" class="badge bg-success">Activo</span>
-                      <span v-else class="badge bg-danger">Inactivo</span>
-                    </td>
-                    <td>
-                      <div class="btn-group btn-group-sm">
-                        <button class="btn btn-outline-info" @click="openChangePHP(domain)" title="Cambiar PHP">
-                          <i class="bi bi-filetype-php"></i>
-                        </button>
-                        <button class="btn btn-outline-success" @click="openSSL(domain)" title="Gestionar SSL">
-                          <i class="bi bi-lock"></i>
-                        </button>
-                        <button class="btn btn-outline-danger" @click="deleteDomainConfirm(domain)" title="Eliminar">
-                          <i class="bi bi-trash"></i>
-                        </button>
-                      </div>
-                    </td>
-                  </tr>
-                </tbody>
-              </table>
+            <div class="card-body">
+              <div v-if="loadingClients" class="text-center py-3">
+                <div class="spinner-border spinner-border-sm"></div>
+              </div>
+              <div v-else-if="clients.length === 0" class="alert alert-info mb-0">
+                <i class="bi bi-info-circle me-1"></i> Este reseller no tiene clientes aún
+              </div>
+              <div v-else class="table-responsive">
+                <table class="table table-hover align-middle mb-0">
+                  <thead class="table-light">
+                    <tr>
+                      <th>Usuario</th>
+                      <th>Email</th>
+                      <th>Dominios</th>
+                      <th>Estado</th>
+                      <th>Acciones</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <tr v-for="client in clients" :key="client.id">
+                      <td><i class="bi bi-person-circle text-secondary me-1"></i><strong>{{ client.username }}</strong></td>
+                      <td>{{ client.email }}</td>
+                      <td><i class="bi bi-globe2 me-1 text-muted"></i>{{ client.domains_limit === 0 ? '∞' : client.domains_limit }}</td>
+                      <td>
+                        <span :class="client.is_active ? 'badge bg-success' : 'badge bg-danger'">
+                          {{ client.is_active ? 'Activo' : 'Inactivo' }}
+                        </span>
+                      </td>
+                      <td>
+                        <div class="btn-group btn-group-sm">
+                          <button class="btn btn-outline-primary" @click="$router.push(`/users/${client.id}/account`)" title="Gestionar">
+                            <i class="bi bi-box-arrow-in-right"></i> Gestionar
+                          </button>
+                          <button class="btn btn-outline-danger" @click="deleteClientConfirm(client)" title="Eliminar">
+                            <i class="bi bi-trash"></i>
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
             </div>
           </div>
-        </div>
+        </template>
+
+        <!-- ═══ USER: lista de dominios ═══ -->
+        <template v-else>
+          <div class="card">
+            <div class="card-header d-flex justify-content-between align-items-center">
+              <span><i class="bi bi-globe2 me-1"></i> Dominios de {{ user.username }}</span>
+              <button class="btn btn-sm btn-primary" @click="showAddDomain = true">
+                <i class="bi bi-plus-lg"></i> Añadir dominio
+              </button>
+            </div>
+            <div class="card-body">
+              <div v-if="loadingDomains" class="text-center py-3">
+                <div class="spinner-border spinner-border-sm"></div>
+              </div>
+              <div v-else-if="domains.length === 0" class="alert alert-info mb-0">
+                <i class="bi bi-info-circle me-1"></i> Este usuario no tiene dominios
+              </div>
+              <div v-else class="table-responsive">
+                <table class="table table-hover align-middle mb-0">
+                  <thead class="table-light">
+                    <tr>
+                      <th>Dominio</th>
+                      <th>PHP</th>
+                      <th>SSL</th>
+                      <th>Estado</th>
+                      <th>Acciones</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <tr v-for="domain in domains" :key="domain.id">
+                      <td>
+                        <i class="bi bi-globe text-primary me-1"></i>
+                        <a :href="'http://' + domain.domain_name" target="_blank" class="text-decoration-none">
+                          {{ domain.domain_name }}
+                        </a>
+                      </td>
+                      <td><span class="badge bg-info text-dark">PHP {{ domain.php_version || '8.2' }}</span></td>
+                      <td>
+                        <span v-if="domain.ssl_enabled" class="badge bg-success"><i class="bi bi-lock-fill"></i> SSL</span>
+                        <span v-else class="badge bg-secondary"><i class="bi bi-unlock"></i> Sin SSL</span>
+                      </td>
+                      <td>
+                        <span :class="domain.is_active ? 'badge bg-success' : 'badge bg-danger'">
+                          {{ domain.is_active ? 'Activo' : 'Inactivo' }}
+                        </span>
+                      </td>
+                      <td>
+                        <div class="btn-group btn-group-sm">
+                          <button class="btn btn-outline-info" @click="openChangePHP(domain)" title="Cambiar PHP">
+                            <i class="bi bi-filetype-php"></i>
+                          </button>
+                          <button class="btn btn-outline-danger" @click="deleteDomainConfirm(domain)" title="Eliminar">
+                            <i class="bi bi-trash"></i>
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+        </template>
       </div>
     </div>
 
-    <!-- Edit User Modal -->
-    <Modal :isOpen="showEditUser" title="Editar Usuario" @close="closeEditUser">
-      <UserForm
-        :user="user"
-        @submit="handleUserUpdated"
-        @cancel="closeEditUser"
-      />
+    <!-- Modal: editar usuario -->
+    <Modal :isOpen="showEditUser" title="Editar Usuario" @close="showEditUser = false">
+      <UserForm :user="user" @submit="onUserUpdated" @cancel="showEditUser = false" />
     </Modal>
 
-    <!-- Add Domain Modal -->
+    <!-- Modal: añadir cliente (reseller) -->
+    <Modal :isOpen="showAddClient" title="Añadir Cliente" @close="showAddClient = false">
+      <UserForm :parentId="user?.id" @submit="onClientAdded" @cancel="showAddClient = false" />
+    </Modal>
+
+    <!-- Modal: añadir dominio -->
     <Modal :isOpen="showAddDomain" title="Añadir Dominio" @close="showAddDomain = false">
       <form @submit.prevent="handleAddDomain">
         <div class="mb-3">
           <label class="form-label">Nombre de dominio</label>
-          <input
-            v-model="newDomain.domain_name"
-            type="text"
-            class="form-control"
-            placeholder="ejemplo.com"
-            required
-          />
+          <input v-model="newDomain.domain_name" type="text" class="form-control" placeholder="ejemplo.com" required />
         </div>
         <div class="mb-3">
           <label class="form-label">Versión PHP</label>
@@ -164,7 +200,7 @@
             <option value="8.5">PHP 8.5</option>
             <option value="8.4">PHP 8.4</option>
             <option value="8.3">PHP 8.3</option>
-            <option value="8.2" selected>PHP 8.2</option>
+            <option value="8.2">PHP 8.2 (recomendado)</option>
             <option value="8.1">PHP 8.1</option>
             <option value="8.0">PHP 8.0</option>
             <option value="7.4">PHP 7.4</option>
@@ -180,8 +216,8 @@
       </form>
     </Modal>
 
-    <!-- Change PHP Modal -->
-    <Modal :isOpen="showChangePHP" :title="`Cambiar PHP — ${selectedDomain?.domain_name}`" @close="showChangePHP = false">
+    <!-- Modal: cambiar PHP -->
+    <Modal :isOpen="showChangePHP" :title="`PHP — ${selectedDomain?.domain_name}`" @close="showChangePHP = false">
       <form @submit.prevent="handleChangePHP">
         <div class="mb-3">
           <label class="form-label">Versión PHP</label>
@@ -224,42 +260,25 @@ export default {
     const userId = parseInt(route.params.id)
 
     const user = ref(null)
+    const clients = ref([])
     const domains = ref([])
     const loadingUser = ref(true)
-    const loadingDomains = ref(true)
+    const loadingClients = ref(false)
+    const loadingDomains = ref(false)
 
     const showEditUser = ref(false)
+    const showAddClient = ref(false)
     const showAddDomain = ref(false)
     const showChangePHP = ref(false)
     const selectedDomain = ref(null)
     const phpVersion = ref('8.2')
     const addingDomain = ref(false)
     const changingPHP = ref(false)
-
     const newDomain = ref({ domain_name: '', php_version: '8.2' })
 
-    const roleLabel = (role) => {
-      switch (role) {
-        case 'admin': return '🔑 Admin'
-        case 'reseller': return '🏪 Reseller'
-        default: return '👤 Usuario'
-      }
-    }
-
-    const roleBadgeClass = (role) => {
-      switch (role) {
-        case 'admin': return 'bg-danger'
-        case 'reseller': return 'bg-warning text-dark'
-        default: return 'bg-secondary'
-      }
-    }
-
-    const formatDate = (dateStr) => {
-      if (!dateStr) return '—'
-      return new Date(dateStr).toLocaleDateString('es-ES', {
-        year: 'numeric', month: 'short', day: 'numeric'
-      })
-    }
+    const roleLabel = (role) => ({ admin: '🔑 Admin', reseller: '🏪 Reseller', user: '👤 Usuario' }[role] ?? role)
+    const roleBadgeClass = (role) => ({ admin: 'bg-danger', reseller: 'bg-warning text-dark', user: 'bg-secondary' }[role] ?? 'bg-secondary')
+    const formatDate = (d) => d ? new Date(d).toLocaleDateString('es-ES', { year: 'numeric', month: 'short', day: 'numeric' }) : '—'
 
     const loadUser = async () => {
       loadingUser.value = true
@@ -269,6 +288,18 @@ export default {
         store.showNotification('Error al cargar usuario', 'danger')
       } finally {
         loadingUser.value = false
+      }
+    }
+
+    const loadClients = async () => {
+      loadingClients.value = true
+      try {
+        const data = await api.getUsers(0, 100, null, userId)
+        clients.value = Array.isArray(data) ? data : []
+      } catch (e) {
+        store.showNotification('Error al cargar clientes', 'danger')
+      } finally {
+        loadingClients.value = false
       }
     }
 
@@ -284,32 +315,33 @@ export default {
       }
     }
 
-    const openEditUser = () => { showEditUser.value = true }
-    const closeEditUser = () => { showEditUser.value = false }
-    const handleUserUpdated = async () => {
+    const onUserUpdated = async () => {
+      showEditUser.value = false
       await loadUser()
-      closeEditUser()
-      store.showNotification('Usuario actualizado', 'success')
     }
 
-    const openAddDomain = () => {
-      newDomain.value = { domain_name: '', php_version: '8.2' }
-      showAddDomain.value = true
+    const onClientAdded = async () => {
+      showAddClient.value = false
+      await loadClients()
+    }
+
+    const deleteClientConfirm = (client) => {
+      if (confirm(`¿Eliminar cliente "${client.username}"?\nEsto eliminará también sus dominios y archivos.`)) {
+        api.deleteUser(client.id)
+          .then(() => { store.showNotification('Cliente eliminado', 'success'); loadClients() })
+          .catch(e => store.showNotification('Error: ' + e.message, 'danger'))
+      }
     }
 
     const handleAddDomain = async () => {
       addingDomain.value = true
       try {
-        await api.createDomain({
-          user_id: userId,
-          domain_name: newDomain.value.domain_name,
-          php_version: newDomain.value.php_version
-        })
-        store.showNotification('Dominio creado correctamente', 'success')
+        await api.createDomain({ user_id: userId, domain_name: newDomain.value.domain_name, php_version: newDomain.value.php_version })
+        store.showNotification('Dominio creado', 'success')
         showAddDomain.value = false
         await loadDomains()
       } catch (e) {
-        store.showNotification('Error al crear dominio: ' + e.message, 'danger')
+        store.showNotification('Error: ' + e.message, 'danger')
       } finally {
         addingDomain.value = false
       }
@@ -325,66 +357,41 @@ export default {
       changingPHP.value = true
       try {
         await api.changePHPVersion(selectedDomain.value.id, phpVersion.value)
-        store.showNotification('Versión PHP cambiada', 'success')
+        store.showNotification('PHP actualizado', 'success')
         showChangePHP.value = false
         await loadDomains()
       } catch (e) {
-        store.showNotification('Error al cambiar PHP: ' + e.message, 'danger')
+        store.showNotification('Error: ' + e.message, 'danger')
       } finally {
         changingPHP.value = false
       }
     }
 
-    const openSSL = (domain) => {
-      store.showNotification('Gestión SSL — próximamente disponible', 'info')
-    }
-
     const deleteDomainConfirm = (domain) => {
-      if (confirm(`¿Eliminar dominio "${domain.domain_name}"?\n\nEsto eliminará la configuración de Nginx y los archivos del dominio.`)) {
-        deleteDomain(domain.id)
-      }
-    }
-
-    const deleteDomain = async (domainId) => {
-      try {
-        await api.deleteDomain(domainId)
-        store.showNotification('Dominio eliminado', 'success')
-        await loadDomains()
-      } catch (e) {
-        store.showNotification('Error al eliminar dominio: ' + e.message, 'danger')
+      if (confirm(`¿Eliminar dominio "${domain.domain_name}"?`)) {
+        api.deleteDomain(domain.id)
+          .then(() => { store.showNotification('Dominio eliminado', 'success'); loadDomains() })
+          .catch(e => store.showNotification('Error: ' + e.message, 'danger'))
       }
     }
 
     onMounted(async () => {
       await loadUser()
-      await loadDomains()
+      if (user.value?.role === 'reseller') {
+        await loadClients()
+      } else {
+        await loadDomains()
+      }
     })
 
     return {
-      user,
-      domains,
-      loadingUser,
-      loadingDomains,
-      showEditUser,
-      showAddDomain,
-      showChangePHP,
-      selectedDomain,
-      phpVersion,
-      newDomain,
-      addingDomain,
-      changingPHP,
-      roleLabel,
-      roleBadgeClass,
-      formatDate,
-      openEditUser,
-      closeEditUser,
-      handleUserUpdated,
-      openAddDomain,
-      handleAddDomain,
-      openChangePHP,
-      handleChangePHP,
-      openSSL,
-      deleteDomainConfirm
+      user, clients, domains,
+      loadingUser, loadingClients, loadingDomains,
+      showEditUser, showAddClient, showAddDomain, showChangePHP,
+      selectedDomain, phpVersion, newDomain, addingDomain, changingPHP,
+      roleLabel, roleBadgeClass, formatDate,
+      onUserUpdated, onClientAdded, deleteClientConfirm,
+      handleAddDomain, openChangePHP, handleChangePHP, deleteDomainConfirm
     }
   }
 }
