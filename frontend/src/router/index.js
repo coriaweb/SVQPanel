@@ -4,6 +4,7 @@ import Users from '../views/Users.vue'
 import UserAccount from '../views/UserAccount.vue'
 import Domains from '../views/Domains.vue'
 import DNS from '../views/DNS.vue'
+import Mail from '../views/Mail.vue'
 import Settings from '../views/Settings.vue'
 import SystemServices from '../views/SystemServices.vue'
 import Login from '../views/Login.vue'
@@ -53,6 +54,12 @@ const routes = [
     path: '/dns',
     name: 'DNS',
     component: DNS,
+    meta: { requiresAuth: true }
+  },
+  {
+    path: '/mail',
+    name: 'Mail',
+    component: Mail,
     meta: { requiresAuth: true }
   },
   {

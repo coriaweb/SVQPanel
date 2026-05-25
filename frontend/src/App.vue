@@ -30,6 +30,11 @@
               <i class="bi bi-diagram-3"></i> DNS
             </router-link>
           </li>
+          <li>
+            <router-link to="/mail" :class="{active: route.path === '/mail'}">
+              <i class="bi bi-envelope"></i> Correo
+            </router-link>
+          </li>
           <li v-if="currentUser?.is_admin">
             <router-link to="/system" :class="{active: route.path === '/system'}">
               <i class="bi bi-hdd-rack"></i> Sistema
