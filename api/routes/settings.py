@@ -9,7 +9,7 @@ from api.models.database import get_db
 from api.models.models_settings import Settings
 from api.models.models_domain import Domain
 from api.schemas.settings_schemas import SettingsUpdate, SettingsResponse
-from api.dependencies import require_admin
+from api.dependencies import require_admin, require_auth
 
 router = APIRouter()
 
@@ -98,7 +98,7 @@ async def update_settings(
 
 @router.get("/settings/next-ipv6")
 async def get_next_ipv6(
-    current_user=Depends(require_admin),
+    current_user=Depends(require_auth),
     db: Session = Depends(get_db)
 ):
     """
