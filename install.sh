@@ -213,8 +213,8 @@ systemctl start postgresql
 
 # Crear BD panel
 sudo -u postgres psql << EOF
-CREATE DATABASE panel_db;
-CREATE USER panel_user WITH PASSWORD 'panel_password_123';
+CREATE DATABASE IF NOT EXISTS panel_db;
+CREATE USER IF NOT EXISTS panel_user WITH PASSWORD 'panel_password_123';
 ALTER ROLE panel_user SET client_encoding TO 'utf8';
 ALTER ROLE panel_user SET default_transaction_isolation TO 'read committed';
 ALTER ROLE panel_user SET default_transaction_deferrable TO on;
@@ -222,6 +222,48 @@ ALTER ROLE panel_user SET default_transaction_deferrable TO off;
 ALTER ROLE panel_user SET timezone TO 'UTC';
 GRANT ALL PRIVILEGES ON DATABASE panel_db TO panel_user;
 EOF
+
+# Crear tablas (como postgres para evitar problemas de permisos)
+sudo -u postgres psql -d panel_db << 'SQLEOF'
+CREATE TABLE IF NOT EXISTS users (
+    id SERIAL PRIMARY KEY,
+    username VARCHAR(255) UNIQUE NOT NULL,
+    email VARCHAR(255) UNIQUE NOT NULL,
+    password_hash VARCHAR(255) NOT NULL,
+    first_name VARCHAR(255),
+    last_name VARCHAR(255),
+    role VARCHAR(50) DEFAULT 'user',
+    is_admin BOOLEAN DEFAULT FALSE,
+    is_active BOOLEAN DEFAULT TRUE,
+    domains_limit INTEGER DEFAULT 10,
+    created_at TIMESTAMP,
+    updated_at TIMESTAMP,
+    last_login TIMESTAMP,
+    shell_path VARCHAR(255),
+    home_dir VARCHAR(255)
+);
+
+CREATE TABLE IF NOT EXISTS domains (
+    id SERIAL PRIMARY KEY,
+    user_id INTEGER NOT NULL REFERENCES users(id),
+    domain_name VARCHAR(255) UNIQUE NOT NULL,
+    public_html VARCHAR(255),
+    php_version VARCHAR(50),
+    ssl_enabled BOOLEAN DEFAULT FALSE,
+    ssl_certificate TEXT,
+    ssl_key TEXT,
+    ssl_expires TIMESTAMP,
+    ipv4 VARCHAR(255),
+    ipv6 VARCHAR(255),
+    is_active BOOLEAN DEFAULT TRUE,
+    disk_usage BIGINT DEFAULT 0,
+    created_at TIMESTAMP,
+    updated_at TIMESTAMP
+);
+
+GRANT ALL PRIVILEGES ON users, domains TO panel_user;
+GRANT ALL PRIVILEGES ON users_id_seq, domains_id_seq TO panel_user;
+SQLEOF
 
 echo -e "${GREEN}✓ PostgreSQL configurado${NC}\n"
 
@@ -260,7 +302,36 @@ pip install -r requirements.txt -q || {
 echo -e "${GREEN}✓ Entorno Python creado${NC}\n"
 
 ###############################################################################
-# 9. CREAR ARCHIVO .ENV
+# 9. COMPILAR FRONTEND
+###############################################################################
+echo -e "${YELLOW}Compilando frontend Vue3...${NC}"
+
+if [[ -d "frontend" ]]; then
+    cd /opt/svqpanel/frontend
+
+    # Instalar dependencias npm
+    if command -v npm &> /dev/null; then
+        npm install -q 2>/dev/null || true
+
+        # Compilar para producción
+        npm run build -q 2>/dev/null || true
+
+        if [[ -d "dist" ]]; then
+            echo -e "${GREEN}✓ Frontend compilado${NC}\n"
+        else
+            echo -e "${YELLOW}⚠ Frontend no se compiló, se servirá código fuente${NC}\n"
+        fi
+    else
+        echo -e "${YELLOW}⚠ npm no instalado, saltando compilación frontend${NC}\n"
+    fi
+
+    cd /opt/svqpanel
+else
+    echo -e "${YELLOW}⚠ Carpeta frontend no encontrada${NC}\n"
+fi
+
+###############################################################################
+# 10. CREAR ARCHIVO .ENV
 ###############################################################################
 echo -e "${YELLOW}Creando archivo de configuración .env...${NC}"
 
@@ -278,7 +349,7 @@ ENVEOF
 echo -e "${GREEN}✓ Archivo .env creado${NC}\n"
 
 ###############################################################################
-# 10. CREAR SYSTEMD SERVICE
+# 11. CREAR SYSTEMD SERVICE
 ###############################################################################
 echo -e "${YELLOW}Creando servicio systemd para SVQPanel...${NC}"
 
@@ -307,7 +378,7 @@ systemctl enable svqpanel
 echo -e "${GREEN}✓ Servicio systemd creado${NC}\n"
 
 ###############################################################################
-# 11. CREAR NGINX CONFIG
+# 12. CREAR NGINX CONFIG
 ###############################################################################
 if [[ "$WEBSERVER" == "nginx" || "$WEBSERVER" == "apache+nginx" ]]; then
     echo -e "${YELLOW}Creando configuración de Nginx...${NC}"
@@ -351,7 +422,7 @@ NGINXEOF
 fi
 
 ###############################################################################
-# 12. CREAR USUARIO ADMIN AUTOMÁTICO
+# 13. CREAR USUARIO ADMIN AUTOMÁTICO
 ###############################################################################
 echo -e "${YELLOW}Creando usuario administrador...${NC}"
 
@@ -376,6 +447,7 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 from api.models.models_user import User
 from api.models.models_domain import Domain
+from api.models.database import Base
 from api.models.database import Base
 
 DATABASE_URL = "postgresql://panel_user:panel_password_123@localhost/panel_db"
