@@ -75,34 +75,6 @@ async def list_services(
         )
 
 
-@router.get("/system/debug")
-async def debug_services(current_user=Depends(require_admin)):
-    """Debug: comprueba si systemctl funciona desde el proceso uvicorn"""
-    import subprocess, shutil, sys as _sys
-    result = {
-        "python_version": _sys.version,
-        "systemctl_path": shutil.which("systemctl"),
-        "systemctl_test": None,
-        "nginx_test":     None,
-        "error":          None,
-    }
-    try:
-        r = subprocess.run(["systemctl", "is-active", "nginx"],
-                           capture_output=True, text=True, timeout=5)
-        result["systemctl_test"] = {"rc": r.returncode, "out": r.stdout.strip(), "err": r.stderr.strip()}
-    except Exception as e:
-        result["error"] = str(e)
-
-    try:
-        r2 = subprocess.run(["/usr/bin/systemctl", "show", "nginx",
-                             "--property=LoadState,ActiveState"],
-                            capture_output=True, text=True, timeout=5)
-        result["nginx_test"] = {"rc": r2.returncode, "out": r2.stdout.strip(), "err": r2.stderr.strip()}
-    except Exception as e:
-        result["nginx_test"] = {"error": str(e)}
-
-    return result
-
 
 @router.post("/system/services/{service_name}/{action}")
 async def control_service(

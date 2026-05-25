@@ -137,10 +137,8 @@
         <table v-else class="table table-hover mb-0 align-middle">
           <thead class="table-light">
             <tr>
-              <th style="width:16px"></th>
               <th>Servicio</th>
               <th>Descripción</th>
-              <th>Estado</th>
               <th>Tiempo activo</th>
               <th class="text-end">CPU %</th>
               <th class="text-end">Memoria</th>
@@ -149,28 +147,26 @@
           </thead>
           <tbody>
             <tr v-for="svc in services" :key="svc.name">
-              <!-- Indicador de estado -->
+
               <td>
-                <span
-                  :class="svc.is_running ? 'bg-success' : 'bg-danger'"
-                  style="display:inline-block;width:10px;height:10px;border-radius:50%;"
-                  :title="svc.state"
-                ></span>
+                <div class="d-flex align-items-center gap-2">
+                  <span
+                    :class="svc.is_running ? 'bg-success' : (svc.state === 'failed' ? 'bg-danger' : 'bg-secondary')"
+                    style="display:inline-block;width:9px;height:9px;border-radius:50%;flex-shrink:0"
+                    :title="svc.state"
+                  ></span>
+                  <span class="fw-semibold font-monospace small">{{ svc.name }}</span>
+                  <span v-if="!svc.is_running" :class="svc.state === 'failed' ? 'badge bg-danger' : 'badge bg-secondary'" class="ms-1">
+                    {{ svc.state }}
+                  </span>
+                </div>
               </td>
 
-              <td class="fw-semibold font-monospace small">{{ svc.name }}</td>
               <td class="text-muted small">{{ svc.description }}</td>
-
-              <td>
-                <span :class="svc.is_running ? 'badge bg-success' : 'badge bg-danger'">
-                  {{ svc.is_running ? 'Activo' : svc.state }}
-                </span>
-              </td>
-
               <td class="small text-muted">{{ svc.uptime }}</td>
 
               <td class="text-end small">
-                <span :class="svc.cpu > 10 ? 'text-warning fw-bold' : (svc.cpu > 50 ? 'text-danger fw-bold' : '')">
+                <span :class="svc.cpu > 50 ? 'text-danger fw-bold' : svc.cpu > 10 ? 'text-warning fw-bold' : ''">
                   {{ svc.cpu.toFixed(1) }}
                 </span>
               </td>
