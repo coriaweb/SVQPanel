@@ -198,6 +198,39 @@ class APIClient {
     return this.delete(`/api/domains/${domainId}/ipv6`)
   }
 
+  // DNS
+  getDnsZones() {
+    return this.get('/api/dns')
+  }
+
+  createDnsZone(data) {
+    return this.post('/api/dns', data)
+  }
+
+  getDnsZone(zoneId) {
+    return this.get(`/api/dns/${zoneId}`)
+  }
+
+  deleteDnsZone(zoneId) {
+    return this.delete(`/api/dns/${zoneId}`)
+  }
+
+  getDnsRecords(zoneId) {
+    return this.get(`/api/dns/${zoneId}/records`)
+  }
+
+  addDnsRecord(zoneId, data) {
+    return this.post(`/api/dns/${zoneId}/records`, data)
+  }
+
+  updateDnsRecord(zoneId, recordId, data) {
+    return this.put(`/api/dns/${zoneId}/records/${recordId}`, data)
+  }
+
+  deleteDnsRecord(zoneId, recordId) {
+    return this.delete(`/api/dns/${zoneId}/records/${recordId}`)
+  }
+
   // Settings
   getSettings() {
     return this.get('/api/settings')

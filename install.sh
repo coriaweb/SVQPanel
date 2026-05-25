@@ -173,6 +173,38 @@ if [[ "$WEBSERVER" == "apache+nginx" ]]; then
 fi
 
 ###############################################################################
+# 6b. INSTALAR BIND9 (DNS)
+###############################################################################
+echo -e "${YELLOW}Instalando BIND9 (servidor DNS)...${NC}"
+
+apt-get install -y -qq bind9 bind9-utils bind9-doc dnsutils
+
+# Crear directorio de zonas
+mkdir -p /etc/bind/zones
+chown root:bind /etc/bind/zones
+chmod 775 /etc/bind/zones
+
+# Crear named.conf.zones vacío (para SVQPanel)
+if [[ ! -f /etc/bind/named.conf.zones ]]; then
+    echo "# SVQPanel DNS zones — generado automáticamente" > /etc/bind/named.conf.zones
+    chown root:bind /etc/bind/named.conf.zones
+fi
+
+# Añadir include a named.conf.local si no está ya
+NAMED_LOCAL="/etc/bind/named.conf.local"
+if [[ -f "$NAMED_LOCAL" ]]; then
+    if ! grep -q "named.conf.zones" "$NAMED_LOCAL"; then
+        echo -e '\ninclude "/etc/bind/named.conf.zones";' >> "$NAMED_LOCAL"
+        echo -e "    ${GREEN}✓ Include añadido a named.conf.local${NC}"
+    fi
+fi
+
+systemctl enable bind9
+systemctl restart bind9
+
+echo -e "${GREEN}✓ BIND9 instalado y configurado${NC}\n"
+
+###############################################################################
 # 6. INSTALAR PHP
 ###############################################################################
 echo -e "${YELLOW}Instalando PHP y extensiones...${NC}"
@@ -321,6 +353,8 @@ from sqlalchemy import create_engine
 from api.models.database import Base
 from api.models.models_user import User
 from api.models.models_domain import Domain
+from api.models.models_settings import Settings
+from api.models.models_dns import DnsZone, DnsRecord
 
 DATABASE_URL = "postgresql://panel_user:panel_password_123@localhost/panel_db"
 engine = create_engine(DATABASE_URL)

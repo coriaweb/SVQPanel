@@ -25,6 +25,11 @@
               <i class="bi bi-globe"></i> Dominios
             </router-link>
           </li>
+          <li>
+            <router-link to="/dns" :class="{active: route.path === '/dns'}">
+              <i class="bi bi-diagram-3"></i> DNS
+            </router-link>
+          </li>
           <li v-if="currentUser?.is_admin">
             <router-link to="/settings" :class="{active: route.path === '/settings'}">
               <i class="bi bi-gear"></i> Configuración

@@ -11,6 +11,7 @@ class DomainCreate(BaseModel):
     user_id: int
     domain_name: str = Field(..., min_length=5, max_length=255)
     php_version: Optional[str] = Field("8.2", pattern="^(7\\.4|8\\.[0-5])$")
+    dns_enabled: Optional[bool] = False
 
 
 class DomainUpdate(BaseModel):

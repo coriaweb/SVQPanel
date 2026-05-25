@@ -41,6 +41,28 @@
       <label for="is_active" class="form-check-label">Dominio activo</label>
     </div>
 
+    <!-- Opciones extras (solo en creación) -->
+    <template v-if="!isEditing">
+      <hr class="my-3" />
+      <p class="fw-semibold mb-2 text-muted small text-uppercase">Servicios adicionales</p>
+
+      <div class="mb-2 form-check">
+        <input id="dns_enabled" v-model="form.dns_enabled" type="checkbox" class="form-check-input" />
+        <label for="dns_enabled" class="form-check-label">
+          <i class="bi bi-diagram-3 me-1"></i> Soporte DNS
+          <small class="text-muted">(Crear zona en servidor DNS)</small>
+        </label>
+      </div>
+
+      <div class="mb-3 form-check text-muted">
+        <input id="mail_enabled" type="checkbox" class="form-check-input" disabled />
+        <label for="mail_enabled" class="form-check-label">
+          <i class="bi bi-envelope me-1"></i> Soporte Correo
+          <small>(Próximamente)</small>
+        </label>
+      </div>
+    </template>
+
     <div class="d-flex gap-2">
       <button type="submit" class="btn btn-primary" :disabled="loading">
         <span v-if="loading" class="spinner-border spinner-border-sm me-2"></span>
@@ -87,6 +109,7 @@ export default {
       user_id:     props.domain?.user_id     || (isAdminOrReseller.value ? '' : store.currentUser?.id),
       php_version: props.domain?.php_version || '',
       is_active:   props.domain?.is_active   ?? true,
+      dns_enabled: false,
     })
 
     const loadUsers = async () => {
@@ -129,6 +152,7 @@ export default {
             user_id:     userId,
             php_version: form.value.php_version,
             is_active:   form.value.is_active,
+            dns_enabled: form.value.dns_enabled,
           })
           store.showNotification('Dominio creado correctamente', 'success')
         }

@@ -12,7 +12,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from api.models.database import create_tables, get_db
 from config.config import PANEL_NAME, PANEL_VERSION
 
-from api.routes import users, domains, php, ssl, ipv6, auth, settings
+from api.routes import users, domains, php, ssl, ipv6, auth, settings, dns
 
 # Crear app FastAPI
 app = FastAPI(
@@ -48,6 +48,24 @@ def _run_migrations():
         "ALTER TABLE users ADD COLUMN IF NOT EXISTS parent_id INTEGER REFERENCES users(id) ON DELETE SET NULL",
         # Fase 6: interfaz de red en settings
         "ALTER TABLE settings ADD COLUMN IF NOT EXISTS network_interface VARCHAR(20) DEFAULT 'eth0'",
+        # Fase 7: DNS — tablas dns_zones y dns_records (ya las crea create_all, pero por si acaso)
+        """CREATE TABLE IF NOT EXISTS dns_zones (
+            id SERIAL PRIMARY KEY,
+            domain_name VARCHAR(255) UNIQUE NOT NULL,
+            serial INTEGER DEFAULT 2026052501,
+            is_active BOOLEAN DEFAULT TRUE,
+            created_at TIMESTAMP DEFAULT NOW(),
+            updated_at TIMESTAMP DEFAULT NOW()
+        )""",
+        """CREATE TABLE IF NOT EXISTS dns_records (
+            id SERIAL PRIMARY KEY,
+            zone_id INTEGER NOT NULL REFERENCES dns_zones(id) ON DELETE CASCADE,
+            record_type VARCHAR(10) NOT NULL,
+            name VARCHAR(255) NOT NULL,
+            content TEXT NOT NULL,
+            ttl INTEGER DEFAULT 14400,
+            priority INTEGER DEFAULT 0
+        )""",
     ]
     with engine.connect() as conn:
         for sql in migrations:
@@ -92,6 +110,7 @@ app.include_router(php.router, prefix="/api", tags=["PHP"])
 app.include_router(ssl.router, prefix="/api", tags=["SSL"])
 app.include_router(ipv6.router, prefix="/api", tags=["IPv6"])
 app.include_router(settings.router, prefix="/api", tags=["Settings"])
+app.include_router(dns.router, prefix="/api", tags=["DNS"])
 
 # Manejo de errores global
 @app.exception_handler(Exception)

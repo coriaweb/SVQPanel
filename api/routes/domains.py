@@ -48,6 +48,45 @@ async def create_domain(
         db.add(db_domain)
         db.commit()
         db.refresh(db_domain)
+
+        # Crear zona DNS automáticamente si se solicitó
+        if domain.dns_enabled:
+            try:
+                from api.models.models_dns import DnsZone, DnsRecord
+                from api.models.models_settings import Settings
+                from api.routes.dns import _build_template_records, _get_server_ipv4
+                from scripts.dns_manager import DNSManager
+
+                existing_zone = db.query(DnsZone).filter(
+                    DnsZone.domain_name == domain.domain_name
+                ).first()
+
+                if not existing_zone:
+                    ipv4 = _get_server_ipv4(db)
+                    try:
+                        dns_mgr = DNSManager()
+                        serial = dns_mgr.create_zone(domain.domain_name, ipv4=ipv4)
+                    except PermissionError:
+                        serial = 2026052501
+
+                    zone = DnsZone(domain_name=domain.domain_name, serial=serial)
+                    db.add(zone)
+                    db.commit()
+                    db.refresh(zone)
+
+                    default_records = _build_template_records(domain.domain_name, ipv4)
+                    for r in default_records:
+                        db.add(DnsRecord(zone_id=zone.id, **r))
+                    db.commit()
+
+                    try:
+                        all_zones = [z.domain_name for z in db.query(DnsZone).filter(DnsZone.is_active == True).all()]
+                        DNSManager().reload_zone(domain.domain_name, all_zones)
+                    except PermissionError:
+                        pass
+            except Exception:
+                pass  # DNS no bloquea la creación del dominio
+
         return db_domain
     except HTTPException:
         raise
