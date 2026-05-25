@@ -214,8 +214,8 @@ if [[ -f "$NAMED_LOCAL" ]]; then
     fi
 fi
 
-systemctl enable bind9
-systemctl restart bind9
+systemctl enable named
+systemctl restart named
 
 echo -e "${GREEN}✓ BIND9 instalado y configurado${NC}\n"
 
