@@ -211,6 +211,10 @@ class APIClient {
     return this.get(`/api/dns/${zoneId}`)
   }
 
+  updateDnsZone(zoneId, data) {
+    return this.put(`/api/dns/${zoneId}`, data)
+  }
+
   deleteDnsZone(zoneId) {
     return this.delete(`/api/dns/${zoneId}`)
   }

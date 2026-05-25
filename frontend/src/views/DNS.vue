@@ -1,5 +1,6 @@
 <template>
   <div class="container-fluid py-4">
+
     <!-- Cabecera -->
     <div class="d-flex justify-content-between align-items-center mb-4">
       <div>
@@ -13,9 +14,7 @@
 
     <!-- Lista de zonas -->
     <div class="card shadow-sm mb-4">
-      <div class="card-header">
-        <h5 class="mb-0">Zonas DNS</h5>
-      </div>
+      <div class="card-header"><h5 class="mb-0">Zonas DNS</h5></div>
       <div class="card-body p-0">
         <div v-if="loadingZones" class="text-center py-5">
           <div class="spinner-border text-primary"></div>
@@ -31,31 +30,35 @@
           <thead class="table-light">
             <tr>
               <th>Dominio</th>
-              <th>Serial</th>
+              <th>IP</th>
+              <th>SOA NS</th>
+              <th>Plantilla</th>
+              <th>DNSSEC</th>
               <th>Registros</th>
-              <th>Estado</th>
-              <th>Creada</th>
+              <th>Serial</th>
               <th class="text-end">Acciones</th>
             </tr>
           </thead>
           <tbody>
-            <tr v-for="zone in zones" :key="zone.id">
+            <tr v-for="zone in zones" :key="zone.id" :class="selectedZone?.id === zone.id ? 'table-primary' : ''">
               <td class="fw-semibold">{{ zone.domain_name }}</td>
+              <td class="font-monospace small">{{ zone.ip_address || '—' }}</td>
+              <td class="small text-muted">{{ zone.soa_ns || '—' }}</td>
+              <td><span class="badge bg-secondary">{{ zone.template || 'default' }}</span></td>
+              <td>
+                <span v-if="zone.dnssec_enabled" class="badge bg-success"><i class="bi bi-shield-lock me-1"></i>Activo</span>
+                <span v-else class="badge bg-light text-muted border">No</span>
+              </td>
+              <td><span class="badge bg-secondary">{{ zone.record_count }}</span></td>
               <td><code class="text-muted small">{{ zone.serial }}</code></td>
-              <td>
-                <span class="badge bg-secondary">{{ zone.record_count }} registros</span>
-              </td>
-              <td>
-                <span :class="zone.is_active ? 'badge bg-success' : 'badge bg-warning text-dark'">
-                  {{ zone.is_active ? 'Activa' : 'Inactiva' }}
-                </span>
-              </td>
-              <td class="text-muted small">{{ formatDate(zone.created_at) }}</td>
               <td class="text-end">
-                <button class="btn btn-sm btn-outline-primary me-1" @click="openZone(zone)">
-                  <i class="bi bi-pencil"></i> Editar
+                <button v-if="isAdmin" class="btn btn-sm btn-outline-secondary me-1" @click="openEditZone(zone)" title="Editar zona">
+                  <i class="bi bi-pencil"></i>
                 </button>
-                <button v-if="isAdmin" class="btn btn-sm btn-outline-danger" @click="confirmDeleteZone(zone)">
+                <button class="btn btn-sm btn-outline-primary me-1" @click="openZoneRecords(zone)" title="Ver registros">
+                  <i class="bi bi-list-ul"></i>
+                </button>
+                <button v-if="isAdmin" class="btn btn-sm btn-outline-danger" @click="confirmDeleteZone(zone)" title="Eliminar zona">
                   <i class="bi bi-trash"></i>
                 </button>
               </td>
@@ -100,9 +103,7 @@
           <tbody>
             <tr v-for="rec in records" :key="rec.id">
               <td>{{ rec.name }}</td>
-              <td>
-                <span :class="typeClass(rec.record_type)" class="badge">{{ rec.record_type }}</span>
-              </td>
+              <td><span :class="typeClass(rec.record_type)" class="badge">{{ rec.record_type }}</span></td>
               <td class="text-break" style="max-width:280px;">{{ rec.content }}</td>
               <td class="text-muted">{{ rec.ttl }}</td>
               <td class="text-muted">{{ rec.priority || '—' }}</td>
@@ -116,47 +117,141 @@
               </td>
             </tr>
             <tr v-if="!records.length">
-              <td :colspan="isAdmin ? 6 : 5" class="text-center text-muted py-3">
-                Sin registros
-              </td>
+              <td :colspan="isAdmin ? 6 : 5" class="text-center text-muted py-3">Sin registros</td>
             </tr>
           </tbody>
         </table>
       </div>
     </div>
 
-    <!-- ──────── Modal: Crear Zona ──────── -->
-    <div v-if="showCreateZoneModal" class="modal d-block" tabindex="-1" style="background:rgba(0,0,0,.5)">
-      <div class="modal-dialog">
+
+    <!-- ═══════════════ Modal: Crear / Editar Zona ═══════════════ -->
+    <div v-if="showZoneModal" class="modal d-block" tabindex="-1" style="background:rgba(0,0,0,.5)">
+      <div class="modal-dialog modal-lg">
         <div class="modal-content">
           <div class="modal-header">
-            <h5 class="modal-title"><i class="bi bi-plus-circle me-2"></i>Nueva Zona DNS</h5>
-            <button class="btn-close" @click="showCreateZoneModal = false"></button>
+            <h5 class="modal-title">
+              <i class="bi bi-diagram-3 me-2"></i>
+              {{ editingZone ? 'Editar Dominio DNS' : 'Nueva Zona DNS' }}
+            </h5>
+            <button class="btn-close" @click="showZoneModal = false"></button>
           </div>
           <div class="modal-body">
-            <label class="form-label">Nombre de dominio</label>
-            <input v-model="newZoneName" type="text" class="form-control" placeholder="ejemplo.com" />
-            <small class="text-muted">Se creará una zona con registros por defecto (NS, A, MX, SPF).</small>
+            <div class="row g-3">
+
+              <!-- Dominio -->
+              <div class="col-12">
+                <label class="form-label fw-semibold">Dominio</label>
+                <input
+                  v-model="zoneForm.domain_name"
+                  type="text"
+                  class="form-control"
+                  placeholder="ejemplo.com"
+                  :disabled="!!editingZone"
+                />
+              </div>
+
+              <!-- IP -->
+              <div class="col-md-6">
+                <label class="form-label fw-semibold">Dirección IP</label>
+                <input
+                  v-model="zoneForm.ip_address"
+                  type="text"
+                  class="form-control font-monospace"
+                  placeholder="185.104.188.53"
+                />
+                <div class="form-text">IP del servidor para los registros A de la zona.</div>
+              </div>
+
+              <!-- Plantilla -->
+              <div class="col-md-6">
+                <label class="form-label fw-semibold">Plantilla</label>
+                <select v-model="zoneForm.template" class="form-select">
+                  <option value="default">BIND9 (default)</option>
+                  <option value="minimal">Mínima (solo NS + A)</option>
+                  <option value="mail">Con correo (NS + A + MX + SPF)</option>
+                </select>
+              </div>
+
+              <!-- SOA NS -->
+              <div class="col-md-6">
+                <label class="form-label fw-semibold">SOA — Nameserver primario</label>
+                <input
+                  v-model="zoneForm.soa_ns"
+                  type="text"
+                  class="form-control font-monospace"
+                  placeholder="ns1.svqpanel.local"
+                />
+                <div class="form-text">Se actualiza también el registro NS primario.</div>
+              </div>
+
+              <!-- TTL -->
+              <div class="col-md-6">
+                <label class="form-label fw-semibold">TTL <small class="text-muted">(segundos)</small></label>
+                <select v-model.number="zoneForm.ttl" class="form-select">
+                  <option :value="300">300 (5 min — propagación rápida)</option>
+                  <option :value="3600">3600 (1 hora)</option>
+                  <option :value="14400">14400 (4 horas — recomendado)</option>
+                  <option :value="86400">86400 (24 horas)</option>
+                </select>
+              </div>
+
+              <!-- DNSSEC -->
+              <div class="col-md-6">
+                <label class="form-label fw-semibold">DNSSEC</label>
+                <div class="form-check form-switch mt-1">
+                  <input
+                    id="dnssecSwitch"
+                    v-model="zoneForm.dnssec_enabled"
+                    class="form-check-input"
+                    type="checkbox"
+                    role="switch"
+                  />
+                  <label for="dnssecSwitch" class="form-check-label">
+                    {{ zoneForm.dnssec_enabled ? 'Habilitado' : 'Deshabilitado' }}
+                  </label>
+                </div>
+                <div class="form-text text-warning small" v-if="zoneForm.dnssec_enabled">
+                  <i class="bi bi-exclamation-triangle me-1"></i>
+                  Requiere configuración adicional en BIND9.
+                </div>
+              </div>
+
+              <!-- Fecha expiración -->
+              <div class="col-md-6">
+                <label class="form-label fw-semibold">Fecha de Expiración <small class="text-muted">(DD-MM-AAAA)</small></label>
+                <input
+                  v-model="zoneForm.expires_at"
+                  type="date"
+                  class="form-control"
+                />
+                <div class="form-text">Fecha de renovación del dominio (solo referencia).</div>
+              </div>
+
+            </div>
           </div>
           <div class="modal-footer">
-            <button class="btn btn-secondary" @click="showCreateZoneModal = false">Cancelar</button>
-            <button class="btn btn-primary" :disabled="savingZone || !newZoneName" @click="createZone">
+            <button class="btn btn-secondary" @click="showZoneModal = false">Cancelar</button>
+            <button
+              class="btn btn-primary"
+              :disabled="savingZone || !zoneForm.domain_name"
+              @click="saveZone"
+            >
               <span v-if="savingZone" class="spinner-border spinner-border-sm me-2"></span>
-              Crear Zona
+              {{ editingZone ? 'Guardar cambios' : 'Crear Zona' }}
             </button>
           </div>
         </div>
       </div>
     </div>
 
-    <!-- ──────── Modal: Añadir / Editar Registro ──────── -->
+
+    <!-- ═══════════════ Modal: Añadir / Editar Registro ═══════════════ -->
     <div v-if="showRecordModal" class="modal d-block" tabindex="-1" style="background:rgba(0,0,0,.5)">
       <div class="modal-dialog">
         <div class="modal-content">
           <div class="modal-header">
-            <h5 class="modal-title">
-              {{ editingRecord ? 'Editar Registro' : 'Añadir Registro' }}
-            </h5>
+            <h5 class="modal-title">{{ editingRecord ? 'Editar Registro DNS' : 'Añadir Registro DNS' }}</h5>
             <button class="btn-close" @click="showRecordModal = false"></button>
           </div>
           <div class="modal-body">
@@ -169,17 +264,34 @@
               </div>
               <div class="mb-3">
                 <label class="form-label">Nombre <small class="text-muted">(@ para raíz, o subdominio)</small></label>
-                <input v-model="recordForm.name" type="text" class="form-control" placeholder="@" />
+                <input v-model="recordForm.name" type="text" class="form-control font-monospace" placeholder="@" />
+              </div>
+            </template>
+            <template v-else>
+              <div class="mb-3">
+                <label class="form-label">Tipo / Nombre <small class="text-muted">(no editable)</small></label>
+                <input :value="editingRecord.record_type + ' — ' + editingRecord.name" type="text" class="form-control font-monospace" disabled />
               </div>
             </template>
             <div class="mb-3">
               <label class="form-label">Contenido</label>
-              <input v-model="recordForm.content" type="text" class="form-control" placeholder="IP, hostname, texto..." />
+              <input v-model="recordForm.content" type="text" class="form-control font-monospace" placeholder="IP, hostname, texto..." />
+              <div class="form-text" v-if="recordForm.record_type === 'NS'">
+                Recuerda añadir el punto final: <code>ns1.tuservidor.com<strong>.</strong></code>
+              </div>
+              <div class="form-text" v-if="recordForm.record_type === 'MX'">
+                Recuerda añadir el punto final: <code>mail.tudominio.com<strong>.</strong></code>
+              </div>
             </div>
             <div class="row g-2">
               <div class="col-6">
                 <label class="form-label">TTL</label>
-                <input v-model.number="recordForm.ttl" type="number" class="form-control" min="60" max="86400" />
+                <select v-model.number="recordForm.ttl" class="form-select">
+                  <option :value="300">300</option>
+                  <option :value="3600">3600</option>
+                  <option :value="14400">14400</option>
+                  <option :value="86400">86400</option>
+                </select>
               </div>
               <div v-if="['MX','SRV'].includes(recordForm.record_type)" class="col-6">
                 <label class="form-label">Prioridad</label>
@@ -198,7 +310,8 @@
       </div>
     </div>
 
-    <!-- ──────── Modal: Confirmar borrado zona ──────── -->
+
+    <!-- ═══════════════ Modal: Confirmar borrado zona ═══════════════ -->
     <div v-if="zoneToDelete" class="modal d-block" tabindex="-1" style="background:rgba(0,0,0,.5)">
       <div class="modal-dialog">
         <div class="modal-content">
@@ -221,7 +334,8 @@
       </div>
     </div>
 
-    <!-- ──────── Modal: Confirmar borrado registro ──────── -->
+
+    <!-- ═══════════════ Modal: Confirmar borrado registro ═══════════════ -->
     <div v-if="recordToDelete" class="modal d-block" tabindex="-1" style="background:rgba(0,0,0,.5)">
       <div class="modal-dialog">
         <div class="modal-content">
@@ -232,7 +346,7 @@
           <div class="modal-body">
             ¿Eliminar el registro
             <strong>{{ recordToDelete.record_type }} {{ recordToDelete.name }}</strong>
-            → {{ recordToDelete.content }}?
+            → <code>{{ recordToDelete.content }}</code>?
           </div>
           <div class="modal-footer">
             <button class="btn btn-secondary" @click="recordToDelete = null">Cancelar</button>
@@ -266,13 +380,23 @@ const TYPE_CLASSES = {
   CAA:   'bg-danger',
 }
 
+const emptyZoneForm = () => ({
+  domain_name:    '',
+  ip_address:     '',
+  soa_ns:         'ns1.svqpanel.local',
+  ttl:            14400,
+  template:       'default',
+  dnssec_enabled: false,
+  expires_at:     '',
+})
+
 export default {
   name: 'DNS',
   setup() {
-    const store = useMainStore()
+    const store   = useMainStore()
     const isAdmin = computed(() => store.currentUser?.role === 'admin')
 
-    // Zones list
+    // Zones
     const zones        = ref([])
     const loadingZones = ref(false)
 
@@ -281,10 +405,11 @@ export default {
     const records        = ref([])
     const loadingRecords = ref(false)
 
-    // Create zone modal
-    const showCreateZoneModal = ref(false)
-    const newZoneName         = ref('')
-    const savingZone          = ref(false)
+    // Zone modal (create + edit)
+    const showZoneModal = ref(false)
+    const editingZone   = ref(null)   // null = crear, object = editar
+    const zoneForm      = ref(emptyZoneForm())
+    const savingZone    = ref(false)
 
     // Record modal
     const showRecordModal = ref(false)
@@ -306,12 +431,7 @@ export default {
 
     const typeClass = (t) => TYPE_CLASSES[t] || 'bg-secondary'
 
-    const formatDate = (d) => {
-      if (!d) return '—'
-      return new Date(d).toLocaleDateString('es-ES', { day: '2-digit', month: 'short', year: 'numeric' })
-    }
-
-    // ─── Load zones ───────────────────────────────────────────────────────────
+    // ─── Load ─────────────────────────────────────────────────────────────────
 
     const loadZones = async () => {
       loadingZones.value = true
@@ -323,8 +443,6 @@ export default {
         loadingZones.value = false
       }
     }
-
-    // ─── Load records ─────────────────────────────────────────────────────────
 
     const loadRecords = async (zoneId) => {
       loadingRecords.value = true
@@ -338,9 +456,9 @@ export default {
       }
     }
 
-    // ─── Open zone detail ─────────────────────────────────────────────────────
+    // ─── Zone records panel ───────────────────────────────────────────────────
 
-    const openZone = async (zone) => {
+    const openZoneRecords = async (zone) => {
       selectedZone.value = zone
       await loadRecords(zone.id)
     }
@@ -348,19 +466,56 @@ export default {
     // ─── Create zone ──────────────────────────────────────────────────────────
 
     const openCreateZone = () => {
-      newZoneName.value = ''
-      showCreateZoneModal.value = true
+      editingZone.value = null
+      zoneForm.value = emptyZoneForm()
+      showZoneModal.value = true
     }
 
-    const createZone = async () => {
-      if (!newZoneName.value.trim()) return
+    // ─── Edit zone ────────────────────────────────────────────────────────────
+
+    const openEditZone = (zone) => {
+      editingZone.value = zone
+      zoneForm.value = {
+        domain_name:    zone.domain_name,
+        ip_address:     zone.ip_address   || '',
+        soa_ns:         zone.soa_ns       || 'ns1.svqpanel.local',
+        ttl:            zone.ttl          || 14400,
+        template:       zone.template     || 'default',
+        dnssec_enabled: zone.dnssec_enabled || false,
+        expires_at:     zone.expires_at   || '',
+      }
+      showZoneModal.value = true
+    }
+
+    const saveZone = async () => {
       savingZone.value = true
       try {
-        const zone = await api.createDnsZone({ domain_name: newZoneName.value.trim() })
-        store.showNotification(`Zona ${zone.domain_name} creada`, 'success')
-        showCreateZoneModal.value = false
+        const payload = {
+          ip_address:     zoneForm.value.ip_address     || null,
+          soa_ns:         zoneForm.value.soa_ns         || null,
+          ttl:            zoneForm.value.ttl,
+          template:       zoneForm.value.template,
+          dnssec_enabled: zoneForm.value.dnssec_enabled,
+          expires_at:     zoneForm.value.expires_at     || null,
+        }
+
+        if (editingZone.value) {
+          // PUT /dns/{id}
+          const updated = await api.updateDnsZone(editingZone.value.id, payload)
+          store.showNotification(`Zona ${updated.domain_name} actualizada`, 'success')
+          // Refrescar zona seleccionada si está abierta
+          if (selectedZone.value?.id === editingZone.value.id) {
+            selectedZone.value = { ...selectedZone.value, ...updated }
+          }
+        } else {
+          // POST /dns
+          const zone = await api.createDnsZone({ domain_name: zoneForm.value.domain_name, ...payload })
+          store.showNotification(`Zona ${zone.domain_name} creada`, 'success')
+          await openZoneRecords(zone)
+        }
+
+        showZoneModal.value = false
         await loadZones()
-        await openZone(zone)
       } catch (e) {
         store.showNotification('Error: ' + e.message, 'danger')
       } finally {
@@ -388,7 +543,7 @@ export default {
       }
     }
 
-    // ─── Add record ───────────────────────────────────────────────────────────
+    // ─── Records ──────────────────────────────────────────────────────────────
 
     const openAddRecord = () => {
       editingRecord.value = null
@@ -424,7 +579,6 @@ export default {
           store.showNotification('Registro añadido', 'success')
         }
         showRecordModal.value = false
-        // Refresh zone (serial updated) + records
         const updatedZone = await api.getDnsZone(selectedZone.value.id)
         selectedZone.value = { ...selectedZone.value, serial: updatedZone.serial }
         await loadRecords(selectedZone.value.id)
@@ -435,8 +589,6 @@ export default {
         savingRecord.value = false
       }
     }
-
-    // ─── Delete record ────────────────────────────────────────────────────────
 
     const confirmDeleteRecord = (rec) => { recordToDelete.value = rec }
 
@@ -462,12 +614,12 @@ export default {
       isAdmin,
       zones, loadingZones,
       selectedZone, records, loadingRecords,
-      showCreateZoneModal, newZoneName, savingZone,
+      showZoneModal, editingZone, zoneForm, savingZone,
       showRecordModal, editingRecord, savingRecord, recordForm, recordTypes,
       zoneToDelete, deletingZone,
       recordToDelete, deletingRecord,
-      typeClass, formatDate,
-      openZone, openCreateZone, createZone, confirmDeleteZone, deleteZone,
+      typeClass,
+      openZoneRecords, openCreateZone, openEditZone, saveZone, confirmDeleteZone, deleteZone,
       openAddRecord, openEditRecord, saveRecord, confirmDeleteRecord, deleteRecord,
     }
   }

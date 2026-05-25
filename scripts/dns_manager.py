@@ -75,6 +75,7 @@ class DNSManager(SystemManager):
         ns1: Optional[str] = None,
         ns2: Optional[str] = None,
         serial: int = None,
+        ttl: int = 14400,
     ) -> int:
         """
         Crea zone file con plantilla Hestia-style.
@@ -84,13 +85,13 @@ class DNSManager(SystemManager):
 
         serial = serial or self._next_serial()
         hostname = ns1 or "ns1.svqpanel.local"
-        ns2_host = ns2 or "ns2.svqpanel.local"
+        ns2_host = ns2 or hostname.replace("ns1.", "ns2.", 1) if "ns1." in (ns1 or "") else "ns2.svqpanel.local"
 
         records = []
 
         # SOA
         records.append(
-            f"$TTL 14400\n"
+            f"$TTL {ttl}\n"
             f"@\tIN\tSOA\t{hostname}. hostmaster.{domain}. (\n"
             f"\t\t\t{serial}\t; serial\n"
             f"\t\t\t28800\t\t; refresh\n"
@@ -139,16 +140,19 @@ class DNSManager(SystemManager):
         serial: int,
         records: List[Dict],
         ns1: Optional[str] = None,
+        soa_ns: Optional[str] = None,
+        ttl: int = 14400,
     ) -> bool:
         """
         Regenera zone file completo desde la lista de registros de BD.
         Cada dict: {record_type, name, content, ttl, priority}
         """
         os.makedirs(ZONES_DIR, exist_ok=True)
-        hostname = ns1 or "ns1.svqpanel.local"
+        hostname = soa_ns or ns1 or "ns1.svqpanel.local"
+        hostname = hostname.rstrip(".")
 
         lines = [
-            f"$TTL 14400\n",
+            f"$TTL {ttl}\n",
             f"@\tIN\tSOA\t{hostname}. hostmaster.{domain}. (\n",
             f"\t\t\t{serial}\t; serial\n",
             f"\t\t\t28800\t\t; refresh\n",
