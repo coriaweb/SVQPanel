@@ -50,6 +50,21 @@
                 </div>
 
                 <div class="mt-3" :class="{ 'opacity-50': !form.ipv6_enabled }">
+                  <label class="form-label">Interfaz de red</label>
+                  <input
+                    v-model="form.network_interface"
+                    type="text"
+                    class="form-control font-monospace"
+                    placeholder="eth0"
+                    :disabled="!form.ipv6_enabled"
+                  />
+                  <div class="form-text">
+                    Interfaz donde se añadirán las IPs (<code>ip a</code> para verlas).
+                    Normalmente <code>eth0</code> o <code>ens3</code>.
+                  </div>
+                </div>
+
+                <div class="mt-3" :class="{ 'opacity-50': !form.ipv6_enabled }">
                   <label class="form-label">Gateway IPv6
                     <span class="text-muted small">(opcional)</span>
                   </label>
@@ -191,6 +206,7 @@ export default {
       ipv6_enabled: false,
       ipv6_range: '',
       ipv6_gateway: '',
+      network_interface: 'eth0',
       php_default_version: '8.2',
     })
 
@@ -233,6 +249,7 @@ export default {
         form.ipv6_enabled = data.ipv6_enabled || false
         form.ipv6_range = data.ipv6_range || ''
         form.ipv6_gateway = data.ipv6_gateway || ''
+        form.network_interface = data.network_interface || 'eth0'
         form.php_default_version = data.php_default_version || '8.2'
       } catch (e) {
         store.showNotification('Error al cargar configuración', 'danger')
@@ -249,6 +266,7 @@ export default {
           ipv6_enabled: form.ipv6_enabled,
           ipv6_range: form.ipv6_range || null,
           ipv6_gateway: form.ipv6_gateway || null,
+          network_interface: form.network_interface || 'eth0',
           php_default_version: form.php_default_version,
         }
         const data = await api.updateSettings(payload)

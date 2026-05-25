@@ -23,6 +23,7 @@ class Settings(Base):
     ipv6_enabled = Column(Boolean, default=False)             # IPv6 activado
     ipv6_range = Column(String(50), nullable=True)            # Rango /64, ej: 2a01:4f8:1:2::/64
     ipv6_gateway = Column(String(50), nullable=True)          # Gateway IPv6 (opcional)
+    network_interface = Column(String(20), default="eth0")    # Interfaz de red (eth0, ens3…)
 
     # PHP
     php_default_version = Column(String(10), default="8.2")

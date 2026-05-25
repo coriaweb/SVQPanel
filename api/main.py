@@ -46,6 +46,8 @@ def _run_migrations():
     migrations = [
         # Fase 5+: columna parent_id para sistema reseller
         "ALTER TABLE users ADD COLUMN IF NOT EXISTS parent_id INTEGER REFERENCES users(id) ON DELETE SET NULL",
+        # Fase 6: interfaz de red en settings
+        "ALTER TABLE settings ADD COLUMN IF NOT EXISTS network_interface VARCHAR(20) DEFAULT 'eth0'",
     ]
     with engine.connect() as conn:
         for sql in migrations:

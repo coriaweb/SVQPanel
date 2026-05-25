@@ -14,6 +14,7 @@ class SettingsUpdate(BaseModel):
     ipv6_enabled: Optional[bool] = None
     ipv6_range: Optional[str] = Field(None, max_length=50)
     ipv6_gateway: Optional[str] = Field(None, max_length=50)
+    network_interface: Optional[str] = Field(None, max_length=20)
     php_default_version: Optional[str] = Field(None, pattern="^(7\\.4|8\\.[0-5])$")
 
     @field_validator("ipv6_range")
@@ -49,6 +50,7 @@ class SettingsResponse(BaseModel):
     ipv6_enabled: bool
     ipv6_range: Optional[str] = None
     ipv6_gateway: Optional[str] = None
+    network_interface: Optional[str] = "eth0"
     php_default_version: str
     updated_at: Optional[datetime] = None
 

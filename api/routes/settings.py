@@ -153,5 +153,6 @@ async def get_next_ipv6(
     return {
         "next_ipv6": next_ip,
         "range": settings.ipv6_range,
+        "network_interface": settings.network_interface or "eth0",
         "used_count": len(used)
     }
