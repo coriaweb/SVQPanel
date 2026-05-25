@@ -140,13 +140,30 @@ class APIClient {
     return this.delete(`/api/domains/${domainId}`)
   }
 
-  changePHPVersion(domainId, phpVersion) {
-    return this.put(`/api/domains/${domainId}/php`, { php_version: phpVersion })
-  }
-
-  // PHP
+  // PHP versions (available/running — used in domain PHP selector)
   getPHPVersions() {
     return this.get('/api/php/versions')
+  }
+
+  // PHP management (admin) — install/enable/disable/uninstall
+  getPHPVersionsStatus() {
+    return this.get('/api/php/versions/status')
+  }
+
+  installPHPVersion(version) {
+    return this.post(`/api/php/versions/${version}/install`, {})
+  }
+
+  enablePHPVersion(version) {
+    return this.post(`/api/php/versions/${version}/enable`, {})
+  }
+
+  disablePHPVersion(version) {
+    return this.post(`/api/php/versions/${version}/disable`, {})
+  }
+
+  uninstallPHPVersion(version) {
+    return this.delete(`/api/php/versions/${version}`)
   }
 
   changePHPVersion(domainId, phpVersion) {

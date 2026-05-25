@@ -66,8 +66,8 @@ esac
 # 2. ELEGIR VERSIONES PHP
 ###############################################################################
 echo -e "${YELLOW}¿Qué versiones PHP necesitas?${NC}"
-echo "Disponibles: 7.4, 8.0, 8.1, 8.2, 8.3, 8.5"
-echo "Ejemplos: '8.1 8.2' o '8.5' (mínimo 1, máximo 5)"
+echo "Disponibles: 7.4, 8.0, 8.1, 8.2, 8.3, 8.4, 8.5"
+echo "Ejemplos: '8.1 8.2' o '8.5' (mínimo 1, máximo 6)"
 read -p "Versiones PHP (separadas por espacio): " PHP_VERSIONS
 
 # Validar que haya al menos una versión
@@ -78,7 +78,7 @@ fi
 
 # Convertir a array y validar
 mapfile -t PHP_ARRAY <<< "$(echo "$PHP_VERSIONS" | tr ' ' '\n')"
-VALID_VERSIONS=("7.4" "8.0" "8.1" "8.2" "8.3" "8.5")
+VALID_VERSIONS=("7.4" "8.0" "8.1" "8.2" "8.3" "8.4" "8.5")
 INVALID_VERSIONS=()
 
 for VER in "${PHP_ARRAY[@]}"; do
@@ -189,27 +189,53 @@ fi
 
 apt-get update -qq
 
+PHP_INSTALLED=()
+
 for PHP_VER in "${PHP_ARRAY[@]}"; do
     echo "  → Instalando PHP $PHP_VER..."
 
-    apt-get install -y -qq \
+    # Paquetes base (obligatorios)
+    if apt-get install -y -q \
         php${PHP_VER} \
         php${PHP_VER}-cli \
         php${PHP_VER}-fpm \
         php${PHP_VER}-pgsql \
+        php${PHP_VER}-mysql \
         php${PHP_VER}-curl \
         php${PHP_VER}-gd \
         php${PHP_VER}-mbstring \
         php${PHP_VER}-xml \
         php${PHP_VER}-zip \
-        php${PHP_VER}-bcmath \
-        php${PHP_VER}-opcache || echo "  ⚠ PHP $PHP_VER puede no estar disponible"
+        php${PHP_VER}-bcmath; then
 
-    systemctl enable php${PHP_VER}-fpm 2>/dev/null || true
-    systemctl start php${PHP_VER}-fpm 2>/dev/null || true
+        echo -e "    ${GREEN}✓ PHP ${PHP_VER} paquetes base instalados${NC}"
+
+        # Extensiones opcionales (fallos ignorados)
+        for EXT in opcache intl soap readline; do
+            apt-get install -y -q "php${PHP_VER}-${EXT}" 2>/dev/null && \
+                echo "    ✓ php${PHP_VER}-${EXT}" || \
+                echo "    ⚠ php${PHP_VER}-${EXT} no disponible (ignorado)"
+        done
+
+        # Habilitar y arrancar FPM
+        systemctl enable "php${PHP_VER}-fpm" 2>/dev/null && \
+        systemctl start  "php${PHP_VER}-fpm" 2>/dev/null
+
+        # Verificar que FPM arrancó (socket debe existir)
+        sleep 1
+        if [[ -S "/run/php/php${PHP_VER}-fpm.sock" ]]; then
+            echo -e "    ${GREEN}✓ PHP ${PHP_VER}-fpm arrancado y socket activo${NC}"
+            PHP_INSTALLED+=("$PHP_VER")
+        else
+            echo -e "    ${YELLOW}⚠ PHP ${PHP_VER}-fpm instalado pero socket no activo${NC}"
+            PHP_INSTALLED+=("$PHP_VER")   # Lo marcamos igual — el panel puede arrancarlo
+        fi
+    else
+        echo -e "    ${RED}✗ PHP ${PHP_VER} no disponible en este sistema${NC}"
+    fi
 done
 
-echo -e "${GREEN}✓ PHP instalado (versiones: ${PHP_ARRAY[*]})${NC}\n"
+echo -e "${GREEN}✓ PHP instalado: ${PHP_INSTALLED[*]:-ninguno}${NC}\n"
 
 ###############################################################################
 # 7. CONFIGURAR POSTGRESQL

@@ -129,10 +129,10 @@
         </div>
       </div>
 
-      <!-- PHP -->
+      <!-- PHP Default -->
       <div class="col-md-6">
         <div class="card">
-          <div class="card-header"><i class="bi bi-filetype-php me-1"></i> PHP</div>
+          <div class="card-header"><i class="bi bi-filetype-php me-1"></i> PHP por defecto</div>
           <div class="card-body">
             <label class="form-label">Versión PHP por defecto</label>
             <select v-model="form.php_default_version" class="form-select">
@@ -145,6 +145,133 @@
               <option value="7.4">PHP 7.4</option>
             </select>
             <div class="form-text">Se usará al crear nuevos dominios.</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- PHP Versions Management -->
+      <div class="col-12">
+        <div class="card">
+          <div class="card-header d-flex justify-content-between align-items-center">
+            <span><i class="bi bi-filetype-php me-2"></i> Versiones PHP instaladas</span>
+            <button class="btn btn-sm btn-outline-secondary" @click="loadPHPStatus" :disabled="phpLoading">
+              <span v-if="phpLoading" class="spinner-border spinner-border-sm"></span>
+              <i v-else class="bi bi-arrow-repeat"></i>
+            </button>
+          </div>
+          <div class="card-body p-0">
+
+            <div v-if="phpLoading" class="text-center py-4">
+              <div class="spinner-border spinner-border-sm me-2"></div>
+              <span class="text-muted small">Comprobando versiones PHP...</span>
+            </div>
+
+            <div v-else-if="phpError" class="alert alert-warning m-3 mb-2">
+              <i class="bi bi-exclamation-triangle me-2"></i>
+              {{ phpError }}
+            </div>
+
+            <div v-else>
+              <div class="table-responsive">
+                <table class="table table-hover mb-0">
+                  <thead class="table-light">
+                    <tr>
+                      <th>Versión</th>
+                      <th>Estado</th>
+                      <th>FPM Socket</th>
+                      <th class="text-end">Acciones</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <tr v-for="php in phpVersions" :key="php.version">
+                      <td>
+                        <strong class="font-monospace">PHP {{ php.version }}</strong>
+                        <span v-if="php.version === form.php_default_version" class="badge bg-info ms-2 small">por defecto</span>
+                      </td>
+                      <td>
+                        <!-- Installed + Running -->
+                        <span v-if="php.running" class="badge bg-success">
+                          <i class="bi bi-check-circle me-1"></i> Activo
+                        </span>
+                        <!-- Installed but stopped -->
+                        <span v-else-if="php.installed" class="badge bg-warning text-dark">
+                          <i class="bi bi-pause-circle me-1"></i> Detenido
+                        </span>
+                        <!-- Not installed -->
+                        <span v-else class="badge bg-secondary">
+                          <i class="bi bi-x-circle me-1"></i> No instalado
+                        </span>
+                      </td>
+                      <td class="font-monospace small text-muted">
+                        {{ php.socket || '—' }}
+                      </td>
+                      <td class="text-end">
+                        <!-- Not installed → install button -->
+                        <button
+                          v-if="!php.installed"
+                          class="btn btn-sm btn-outline-primary"
+                          @click="installPHP(php.version)"
+                          :disabled="phpActionLoading === php.version"
+                        >
+                          <span v-if="phpActionLoading === php.version" class="spinner-border spinner-border-sm me-1"></span>
+                          <i v-else class="bi bi-download me-1"></i>
+                          Instalar
+                        </button>
+
+                        <!-- Installed + stopped → enable button + uninstall -->
+                        <template v-else-if="!php.running">
+                          <button
+                            class="btn btn-sm btn-outline-success me-1"
+                            @click="enablePHP(php.version)"
+                            :disabled="phpActionLoading === php.version"
+                          >
+                            <span v-if="phpActionLoading === php.version" class="spinner-border spinner-border-sm me-1"></span>
+                            <i v-else class="bi bi-play-circle me-1"></i>
+                            Habilitar
+                          </button>
+                          <button
+                            class="btn btn-sm btn-outline-danger"
+                            @click="confirmUninstall(php.version)"
+                            :disabled="phpActionLoading === php.version"
+                          >
+                            <i class="bi bi-trash me-1"></i>
+                            Desinstalar
+                          </button>
+                        </template>
+
+                        <!-- Installed + running → disable + uninstall -->
+                        <template v-else>
+                          <button
+                            class="btn btn-sm btn-outline-warning me-1"
+                            @click="disablePHP(php.version)"
+                            :disabled="phpActionLoading === php.version"
+                          >
+                            <span v-if="phpActionLoading === php.version" class="spinner-border spinner-border-sm me-1"></span>
+                            <i v-else class="bi bi-pause-circle me-1"></i>
+                            Deshabilitar
+                          </button>
+                          <button
+                            class="btn btn-sm btn-outline-danger"
+                            @click="confirmUninstall(php.version)"
+                            :disabled="phpActionLoading === php.version"
+                          >
+                            <i class="bi bi-trash me-1"></i>
+                            Desinstalar
+                          </button>
+                        </template>
+                      </td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+
+              <div class="p-3 border-top bg-light small text-muted">
+                <i class="bi bi-info-circle me-1"></i>
+                <strong>Habilitar</strong> = instala los paquetes y arranca PHP-FPM.
+                <strong>Deshabilitar</strong> = para el servicio FPM (los paquetes se conservan).
+                <strong>Desinstalar</strong> = elimina completamente los paquetes.
+              </div>
+            </div>
           </div>
         </div>
       </div>
@@ -176,7 +303,7 @@
         </div>
       </div>
 
-      <!-- Guardar -->
+      <!-- Guardar configuración general -->
       <div class="col-12">
         <button class="btn btn-primary px-4" @click="saveSettings" :disabled="saving">
           <span v-if="saving" class="spinner-border spinner-border-sm me-2"></span>
@@ -185,6 +312,37 @@
         </button>
       </div>
     </div>
+
+    <!-- Modal de confirmación para desinstalar PHP -->
+    <div v-if="uninstallTarget" class="modal d-block" tabindex="-1" style="background:rgba(0,0,0,.5)">
+      <div class="modal-dialog modal-dialog-centered">
+        <div class="modal-content">
+          <div class="modal-header bg-danger text-white">
+            <h5 class="modal-title"><i class="bi bi-exclamation-triangle me-2"></i> Desinstalar PHP {{ uninstallTarget }}</h5>
+            <button type="button" class="btn-close btn-close-white" @click="uninstallTarget = null"></button>
+          </div>
+          <div class="modal-body">
+            <p>¿Estás seguro de que quieres <strong>desinstalar PHP {{ uninstallTarget }}</strong>?</p>
+            <p class="text-muted small mb-0">
+              Esta acción eliminará todos los paquetes de PHP {{ uninstallTarget }} del servidor.
+              Los dominios que usen esta versión dejarán de funcionar.
+            </p>
+          </div>
+          <div class="modal-footer">
+            <button class="btn btn-secondary" @click="uninstallTarget = null">Cancelar</button>
+            <button
+              class="btn btn-danger"
+              @click="uninstallPHP(uninstallTarget)"
+              :disabled="phpActionLoading === uninstallTarget"
+            >
+              <span v-if="phpActionLoading === uninstallTarget" class="spinner-border spinner-border-sm me-1"></span>
+              Confirmar desinstalación
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+
   </div>
 </template>
 
@@ -201,6 +359,13 @@ export default {
     const saving = ref(false)
     const settings = ref(null)
 
+    // PHP state
+    const phpVersions = ref([])
+    const phpLoading = ref(false)
+    const phpError = ref(null)
+    const phpActionLoading = ref(null)   // version string being acted on
+    const uninstallTarget = ref(null)    // version pending uninstall confirmation
+
     const form = reactive({
       server_ipv4: '',
       ipv6_enabled: false,
@@ -213,7 +378,6 @@ export default {
     const parsedRange = computed(() => {
       if (!form.ipv6_range) return null
       try {
-        // Validar formato básico
         const parts = form.ipv6_range.split('/')
         if (parts.length !== 2) return null
         const prefixlen = parseInt(parts[1])
@@ -225,7 +389,6 @@ export default {
           ? `${Math.pow(2, 64 - prefixlen).toLocaleString('es-ES')} × 10¹⁹`
           : available.toLocaleString('es-ES')
 
-        // Generar ejemplos de IPs
         const base = prefix.replace(/::$/, '')
         const examples = [
           `${base}::1`,
@@ -239,6 +402,8 @@ export default {
         return null
       }
     })
+
+    // ─── Settings ────────────────────────────────────────────────────────────
 
     const loadSettings = async () => {
       loading.value = true
@@ -279,9 +444,90 @@ export default {
       }
     }
 
-    onMounted(loadSettings)
+    // ─── PHP Management ───────────────────────────────────────────────────────
 
-    return { loading, saving, settings, form, parsedRange, saveSettings }
+    const loadPHPStatus = async () => {
+      phpLoading.value = true
+      phpError.value = null
+      try {
+        const data = await api.getPHPVersionsStatus()
+        phpVersions.value = data.versions
+      } catch (e) {
+        phpError.value = `No se pudo obtener el estado de PHP: ${e.message}`
+      } finally {
+        phpLoading.value = false
+      }
+    }
+
+    const installPHP = async (version) => {
+      phpActionLoading.value = version
+      try {
+        await api.installPHPVersion(version)
+        store.showNotification(`PHP ${version} instalado correctamente`, 'success')
+        await loadPHPStatus()
+      } catch (e) {
+        store.showNotification(`Error al instalar PHP ${version}: ${e.message}`, 'danger')
+      } finally {
+        phpActionLoading.value = null
+      }
+    }
+
+    const enablePHP = async (version) => {
+      phpActionLoading.value = version
+      try {
+        await api.enablePHPVersion(version)
+        store.showNotification(`PHP ${version}-fpm habilitado`, 'success')
+        await loadPHPStatus()
+      } catch (e) {
+        store.showNotification(`Error al habilitar PHP ${version}: ${e.message}`, 'danger')
+      } finally {
+        phpActionLoading.value = null
+      }
+    }
+
+    const disablePHP = async (version) => {
+      phpActionLoading.value = version
+      try {
+        await api.disablePHPVersion(version)
+        store.showNotification(`PHP ${version}-fpm detenido`, 'success')
+        await loadPHPStatus()
+      } catch (e) {
+        store.showNotification(`Error al deshabilitar PHP ${version}: ${e.message}`, 'danger')
+      } finally {
+        phpActionLoading.value = null
+      }
+    }
+
+    const confirmUninstall = (version) => {
+      uninstallTarget.value = version
+    }
+
+    const uninstallPHP = async (version) => {
+      phpActionLoading.value = version
+      try {
+        await api.uninstallPHPVersion(version)
+        store.showNotification(`PHP ${version} desinstalado`, 'success')
+        uninstallTarget.value = null
+        await loadPHPStatus()
+      } catch (e) {
+        store.showNotification(`Error al desinstalar PHP ${version}: ${e.message}`, 'danger')
+      } finally {
+        phpActionLoading.value = null
+      }
+    }
+
+    onMounted(async () => {
+      await loadSettings()
+      await loadPHPStatus()
+    })
+
+    return {
+      loading, saving, settings, form, parsedRange, saveSettings,
+      phpVersions, phpLoading, phpError, phpActionLoading,
+      uninstallTarget,
+      loadPHPStatus, installPHP, enablePHP, disablePHP,
+      confirmUninstall, uninstallPHP,
+    }
   }
 }
 </script>
