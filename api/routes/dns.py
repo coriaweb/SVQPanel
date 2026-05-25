@@ -19,7 +19,26 @@ from scripts.dns_manager import DNSManager
 router = APIRouter()
 
 
-# ──────────────────────── helpers ────────────────────────────────────────────
+# ──────────────────────── helpers de permisos ────────────────────────────────
+
+def _user_can_edit_zone(zone: DnsZone, current_user, db: Session) -> bool:
+    """True si el usuario puede editar esta zona (es admin o es propietario del dominio)"""
+    if current_user.role == "admin":
+        return True
+    domain = db.query(Domain).filter(Domain.domain_name == zone.domain_name).first()
+    return domain is not None and domain.user_id == current_user.id
+
+
+def _require_zone_access(zone: DnsZone, current_user, db: Session):
+    """Lanza 403 si el usuario no puede editar la zona"""
+    if not _user_can_edit_zone(zone, current_user, db):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="No tienes permisos para modificar esta zona DNS"
+        )
+
+
+# ──────────────────────── helpers técnicos ───────────────────────────────────
 
 def _get_all_active_zones(db: Session) -> list:
     return [z.domain_name for z in db.query(DnsZone).filter(DnsZone.is_active == True).all()]
@@ -53,6 +72,27 @@ def _sync_zone_to_bind(zone: DnsZone, db: Session):
         pass  # entorno dev sin root
 
 
+def _zone_to_list_item(zone: DnsZone, record_count: int, can_edit: bool) -> DnsZoneListItem:
+    return DnsZoneListItem(
+        id=zone.id, domain_name=zone.domain_name, serial=zone.serial,
+        is_active=zone.is_active, record_count=record_count, created_at=zone.created_at,
+        ip_address=zone.ip_address, soa_ns=zone.soa_ns, ttl=zone.ttl,
+        template=zone.template, dnssec_enabled=zone.dnssec_enabled, expires_at=zone.expires_at,
+        can_edit=can_edit,
+    )
+
+
+def _zone_to_response(zone: DnsZone, records: list, can_edit: bool) -> DnsZoneResponse:
+    return DnsZoneResponse(
+        id=zone.id, domain_name=zone.domain_name, serial=zone.serial,
+        is_active=zone.is_active, created_at=zone.created_at,
+        ip_address=zone.ip_address, soa_ns=zone.soa_ns, ttl=zone.ttl,
+        template=zone.template, dnssec_enabled=zone.dnssec_enabled, expires_at=zone.expires_at,
+        can_edit=can_edit,
+        records=[DnsRecordResponse.model_validate(r) for r in records]
+    )
+
+
 # ──────────────────────── Zonas ──────────────────────────────────────────────
 
 @router.get("/dns", response_model=List[DnsZoneListItem])
@@ -60,48 +100,56 @@ async def list_zones(
     current_user=Depends(require_auth),
     db: Session = Depends(get_db)
 ):
-    """Listar todas las zonas DNS"""
-    zones = db.query(DnsZone).order_by(DnsZone.domain_name).all()
+    """Listar zonas DNS (admin ve todas, usuario solo las de sus dominios)"""
+    if current_user.role == "admin":
+        zones = db.query(DnsZone).order_by(DnsZone.domain_name).all()
+    else:
+        # Solo zonas de dominios que pertenecen al usuario
+        user_domains = db.query(Domain.domain_name).filter(Domain.user_id == current_user.id).all()
+        user_domain_names = [d.domain_name for d in user_domains]
+        zones = db.query(DnsZone).filter(
+            DnsZone.domain_name.in_(user_domain_names)
+        ).order_by(DnsZone.domain_name).all()
+
     result = []
     for z in zones:
         count = db.query(DnsRecord).filter(DnsRecord.zone_id == z.id).count()
-        result.append(DnsZoneListItem(
-            id=z.id, domain_name=z.domain_name, serial=z.serial,
-            is_active=z.is_active, record_count=count, created_at=z.created_at,
-            ip_address=z.ip_address, soa_ns=z.soa_ns, ttl=z.ttl,
-            template=z.template, dnssec_enabled=z.dnssec_enabled, expires_at=z.expires_at,
-        ))
+        result.append(_zone_to_list_item(z, count, can_edit=True))
     return result
 
 
 @router.post("/dns", response_model=DnsZoneResponse, status_code=status.HTTP_201_CREATED)
 async def create_zone(
     data: DnsZoneCreate,
-    current_user=Depends(require_admin),
+    current_user=Depends(require_auth),
     db: Session = Depends(get_db)
 ):
-    """[Admin] Crear zona DNS con plantilla por defecto"""
+    """Crear zona DNS. Admin: cualquier dominio. Usuario: solo sus propios dominios."""
+    # Verificar permisos: admin puede todo, usuario solo sus dominios
+    if current_user.role != "admin":
+        domain = db.query(Domain).filter(Domain.domain_name == data.domain_name).first()
+        if not domain or domain.user_id != current_user.id:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Solo puedes crear zonas DNS para tus propios dominios"
+            )
+
     existing = db.query(DnsZone).filter(DnsZone.domain_name == data.domain_name).first()
     if existing:
         raise HTTPException(status_code=409, detail="La zona ya existe")
 
-    # IP: usar la indicada, o la del servidor si no se especificó
     ipv4 = data.ip_address or _get_server_ipv4(db)
     soa_ns = data.soa_ns or "ns1.svqpanel.local"
     ttl    = data.ttl or 14400
 
-    # Obtener IPv6 del dominio si existe
-    domain = db.query(Domain).filter(Domain.domain_name == data.domain_name).first()
-    ipv6 = domain.ipv6 if domain else None
+    domain_obj = db.query(Domain).filter(Domain.domain_name == data.domain_name).first()
+    ipv6 = domain_obj.ipv6 if domain_obj else None
 
     try:
         manager = DNSManager()
-        serial = manager.create_zone(
-            data.domain_name, ipv4=ipv4, ipv6=ipv6,
-            ns1=soa_ns, ttl=ttl,
-        )
+        serial = manager.create_zone(data.domain_name, ipv4=ipv4, ipv6=ipv6, ns1=soa_ns, ttl=ttl)
     except PermissionError:
-        serial = 2026052501  # dev
+        serial = 2026052501
 
     zone = DnsZone(
         domain_name=data.domain_name, serial=serial,
@@ -114,29 +162,20 @@ async def create_zone(
     db.commit()
     db.refresh(zone)
 
-    # Insertar registros de la plantilla en BD
     default_records = _build_template_records(data.domain_name, ipv4, ipv6, soa_ns)
     for r in default_records:
         db.add(DnsRecord(zone_id=zone.id, **r))
     db.commit()
 
-    # Reload BIND9
     try:
-        manager = DNSManager()
         all_zones = _get_all_active_zones(db)
-        manager.reload_zone(data.domain_name, all_zones)
+        DNSManager().reload_zone(data.domain_name, all_zones)
     except PermissionError:
         pass
 
     db.refresh(zone)
     records = db.query(DnsRecord).filter(DnsRecord.zone_id == zone.id).all()
-    return DnsZoneResponse(
-        id=zone.id, domain_name=zone.domain_name, serial=zone.serial,
-        is_active=zone.is_active, created_at=zone.created_at,
-        ip_address=zone.ip_address, soa_ns=zone.soa_ns, ttl=zone.ttl,
-        template=zone.template, dnssec_enabled=zone.dnssec_enabled, expires_at=zone.expires_at,
-        records=[DnsRecordResponse.model_validate(r) for r in records]
-    )
+    return _zone_to_response(zone, records, can_edit=True)
 
 
 @router.get("/dns/{zone_id}", response_model=DnsZoneResponse)
@@ -149,50 +188,42 @@ async def get_zone(
     zone = db.query(DnsZone).filter(DnsZone.id == zone_id).first()
     if not zone:
         raise HTTPException(status_code=404, detail="Zona no encontrada")
+
+    can_edit = _user_can_edit_zone(zone, current_user, db)
     records = db.query(DnsRecord).filter(DnsRecord.zone_id == zone_id).all()
-    return DnsZoneResponse(
-        id=zone.id, domain_name=zone.domain_name, serial=zone.serial,
-        is_active=zone.is_active, created_at=zone.created_at,
-        ip_address=zone.ip_address, soa_ns=zone.soa_ns, ttl=zone.ttl,
-        template=zone.template, dnssec_enabled=zone.dnssec_enabled, expires_at=zone.expires_at,
-        records=[DnsRecordResponse.model_validate(r) for r in records]
-    )
+    return _zone_to_response(zone, records, can_edit=can_edit)
 
 
 @router.put("/dns/{zone_id}", response_model=DnsZoneResponse)
 async def update_zone(
     zone_id: int,
     data: DnsZoneUpdate,
-    current_user=Depends(require_admin),
+    current_user=Depends(require_auth),
     db: Session = Depends(get_db)
 ):
-    """[Admin] Editar configuración de una zona DNS (IP, SOA, TTL, DNSSEC, plantilla...)"""
+    """Editar configuración de una zona DNS (IP, SOA, TTL, DNSSEC, plantilla...)"""
     zone = db.query(DnsZone).filter(DnsZone.id == zone_id).first()
     if not zone:
         raise HTTPException(status_code=404, detail="Zona no encontrada")
+
+    _require_zone_access(zone, current_user, db)
 
     changed = False
 
     if data.ip_address is not None:
         zone.ip_address = data.ip_address
-        # Actualizar registros A que apuntaban a la IP anterior
-        old_a_records = db.query(DnsRecord).filter(
-            DnsRecord.zone_id == zone_id,
-            DnsRecord.record_type == "A"
-        ).all()
-        for r in old_a_records:
+        for r in db.query(DnsRecord).filter(DnsRecord.zone_id == zone_id, DnsRecord.record_type == "A").all():
             r.content = data.ip_address
         changed = True
 
     if data.soa_ns is not None:
-        # Actualizar registros NS que apuntaban al SOA anterior
-        old_ns = db.query(DnsRecord).filter(
-            DnsRecord.zone_id == zone_id,
-            DnsRecord.record_type == "NS",
-            DnsRecord.name == "@"
+        old_ns_dot = (zone.soa_ns or "ns1.svqpanel.local").rstrip(".") + "."
+        old_ns_rec = db.query(DnsRecord).filter(
+            DnsRecord.zone_id == zone_id, DnsRecord.record_type == "NS",
+            DnsRecord.name == "@", DnsRecord.content == old_ns_dot
         ).first()
-        if old_ns and old_ns.content == (zone.soa_ns or "ns1.svqpanel.local") + ".":
-            old_ns.content = data.soa_ns.rstrip(".") + "."
+        if old_ns_rec:
+            old_ns_rec.content = data.soa_ns.rstrip(".") + "."
         zone.soa_ns = data.soa_ns
         changed = True
 
@@ -219,34 +250,28 @@ async def update_zone(
         _sync_zone_to_bind(zone, db)
 
     records = db.query(DnsRecord).filter(DnsRecord.zone_id == zone_id).all()
-    return DnsZoneResponse(
-        id=zone.id, domain_name=zone.domain_name, serial=zone.serial,
-        is_active=zone.is_active, created_at=zone.created_at,
-        ip_address=zone.ip_address, soa_ns=zone.soa_ns, ttl=zone.ttl,
-        template=zone.template, dnssec_enabled=zone.dnssec_enabled, expires_at=zone.expires_at,
-        records=[DnsRecordResponse.model_validate(r) for r in records]
-    )
+    return _zone_to_response(zone, records, can_edit=True)
 
 
 @router.post("/dns/{zone_id}/regenerate", response_model=DnsZoneResponse)
 async def regenerate_zone(
     zone_id: int,
-    current_user=Depends(require_admin),
+    current_user=Depends(require_auth),
     db: Session = Depends(get_db)
 ):
-    """[Admin] Regenera los registros de la zona con la plantilla actual (borra los existentes)"""
+    """Regenera los registros de la zona con la plantilla actual"""
     zone = db.query(DnsZone).filter(DnsZone.id == zone_id).first()
     if not zone:
         raise HTTPException(status_code=404, detail="Zona no encontrada")
+
+    _require_zone_access(zone, current_user, db)
 
     ipv4 = zone.ip_address or _get_server_ipv4(db)
     domain_obj = db.query(Domain).filter(Domain.domain_name == zone.domain_name).first()
     ipv6 = domain_obj.ipv6 if domain_obj else None
 
-    # Borrar registros actuales y regenerar con plantilla
     db.query(DnsRecord).filter(DnsRecord.zone_id == zone_id).delete()
-    default_records = _build_template_records(zone.domain_name, ipv4, ipv6, zone.soa_ns)
-    for r in default_records:
+    for r in _build_template_records(zone.domain_name, ipv4, ipv6, zone.soa_ns):
         db.add(DnsRecord(zone_id=zone.id, **r))
 
     zone.serial = _bump_serial(zone.serial)
@@ -255,25 +280,21 @@ async def regenerate_zone(
     _sync_zone_to_bind(zone, db)
 
     records = db.query(DnsRecord).filter(DnsRecord.zone_id == zone_id).all()
-    return DnsZoneResponse(
-        id=zone.id, domain_name=zone.domain_name, serial=zone.serial,
-        is_active=zone.is_active, created_at=zone.created_at,
-        ip_address=zone.ip_address, soa_ns=zone.soa_ns, ttl=zone.ttl,
-        template=zone.template, dnssec_enabled=zone.dnssec_enabled, expires_at=zone.expires_at,
-        records=[DnsRecordResponse.model_validate(r) for r in records]
-    )
+    return _zone_to_response(zone, records, can_edit=True)
 
 
 @router.delete("/dns/{zone_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_zone(
     zone_id: int,
-    current_user=Depends(require_admin),
+    current_user=Depends(require_auth),
     db: Session = Depends(get_db)
 ):
-    """[Admin] Eliminar zona y sus registros"""
+    """Eliminar zona y sus registros"""
     zone = db.query(DnsZone).filter(DnsZone.id == zone_id).first()
     if not zone:
         raise HTTPException(status_code=404, detail="Zona no encontrada")
+
+    _require_zone_access(zone, current_user, db)
 
     domain_name = zone.domain_name
     db.query(DnsRecord).filter(DnsRecord.zone_id == zone_id).delete()
@@ -307,28 +328,25 @@ async def list_records(
 async def add_record(
     zone_id: int,
     data: DnsRecordCreate,
-    current_user=Depends(require_admin),
+    current_user=Depends(require_auth),
     db: Session = Depends(get_db)
 ):
-    """[Admin] Añadir registro a una zona"""
+    """Añadir registro a una zona"""
     zone = db.query(DnsZone).filter(DnsZone.id == zone_id).first()
     if not zone:
         raise HTTPException(status_code=404, detail="Zona no encontrada")
 
+    _require_zone_access(zone, current_user, db)
+
     record = DnsRecord(
-        zone_id=zone_id,
-        record_type=data.record_type,
-        name=data.name,
-        content=data.content,
-        ttl=data.ttl,
-        priority=data.priority,
+        zone_id=zone_id, record_type=data.record_type,
+        name=data.name, content=data.content,
+        ttl=data.ttl, priority=data.priority,
     )
     db.add(record)
-
     zone.serial = _bump_serial(zone.serial)
     db.commit()
     db.refresh(record)
-
     _sync_zone_to_bind(zone, db)
     return record
 
@@ -338,13 +356,16 @@ async def update_record(
     zone_id: int,
     record_id: int,
     data: DnsRecordUpdate,
-    current_user=Depends(require_admin),
+    current_user=Depends(require_auth),
     db: Session = Depends(get_db)
 ):
-    """[Admin] Editar un registro DNS"""
+    """Editar un registro DNS"""
     zone = db.query(DnsZone).filter(DnsZone.id == zone_id).first()
     if not zone:
         raise HTTPException(status_code=404, detail="Zona no encontrada")
+
+    _require_zone_access(zone, current_user, db)
+
     record = db.query(DnsRecord).filter(
         DnsRecord.id == record_id, DnsRecord.zone_id == zone_id
     ).first()
@@ -358,7 +379,6 @@ async def update_record(
     zone.serial = _bump_serial(zone.serial)
     db.commit()
     db.refresh(record)
-
     _sync_zone_to_bind(zone, db)
     return record
 
@@ -367,13 +387,16 @@ async def update_record(
 async def delete_record(
     zone_id: int,
     record_id: int,
-    current_user=Depends(require_admin),
+    current_user=Depends(require_auth),
     db: Session = Depends(get_db)
 ):
-    """[Admin] Eliminar un registro DNS"""
+    """Eliminar un registro DNS"""
     zone = db.query(DnsZone).filter(DnsZone.id == zone_id).first()
     if not zone:
         raise HTTPException(status_code=404, detail="Zona no encontrada")
+
+    _require_zone_access(zone, current_user, db)
+
     record = db.query(DnsRecord).filter(
         DnsRecord.id == record_id, DnsRecord.zone_id == zone_id
     ).first()
@@ -383,7 +406,6 @@ async def delete_record(
     db.delete(record)
     zone.serial = _bump_serial(zone.serial)
     db.commit()
-
     _sync_zone_to_bind(zone, db)
     return None
 
@@ -409,32 +431,30 @@ def _build_template_records(domain: str, ipv4: str, ipv6: str = None, soa_ns: st
     records.append({"record_type": "NS", "name": "@", "content": f"{ns1}.", "ttl": 86400, "priority": 0})
     records.append({"record_type": "NS", "name": "@", "content": f"{ns2}.", "ttl": 86400, "priority": 0})
 
-    # A records
+    # A
     if ipv4:
-        records.append({"record_type": "A",     "name": "@",    "content": ipv4, "ttl": 14400, "priority": 0})
-        records.append({"record_type": "A",     "name": "mail", "content": ipv4, "ttl": 14400, "priority": 0})
+        records.append({"record_type": "A",    "name": "@",    "content": ipv4, "ttl": 14400, "priority": 0})
+        records.append({"record_type": "A",    "name": "mail", "content": ipv4, "ttl": 14400, "priority": 0})
 
     # AAAA
     if ipv6:
-        records.append({"record_type": "AAAA",  "name": "@",    "content": ipv6, "ttl": 14400, "priority": 0})
-        records.append({"record_type": "AAAA",  "name": "mail", "content": ipv6, "ttl": 14400, "priority": 0})
+        records.append({"record_type": "AAAA", "name": "@",    "content": ipv6, "ttl": 14400, "priority": 0})
+        records.append({"record_type": "AAAA", "name": "mail", "content": ipv6, "ttl": 14400, "priority": 0})
 
-    # CNAME (como Hestia: www y ftp apuntan al dominio raíz)
-    records.append({"record_type": "CNAME", "name": "www",     "content": f"{domain}.", "ttl": 14400, "priority": 0})
-    records.append({"record_type": "CNAME", "name": "ftp",     "content": f"{domain}.", "ttl": 14400, "priority": 0})
+    # CNAME
+    records.append({"record_type": "CNAME", "name": "www",     "content": f"{domain}.",      "ttl": 14400, "priority": 0})
+    records.append({"record_type": "CNAME", "name": "ftp",     "content": f"{domain}.",      "ttl": 14400, "priority": 0})
     records.append({"record_type": "CNAME", "name": "webmail", "content": f"mail.{domain}.", "ttl": 14400, "priority": 0})
 
     # MX
     records.append({"record_type": "MX", "name": "@", "content": f"mail.{domain}.", "ttl": 14400, "priority": 0})
 
-    # TXT — SPF (con ip4 explícita como Hestia)
+    # TXT SPF + DMARC
     spf = f"v=spf1 a mx ip4:{ipv4} -all" if ipv4 else "v=spf1 a mx -all"
-    records.append({"record_type": "TXT", "name": "@",    "content": spf,                              "ttl": 14400, "priority": 0})
+    records.append({"record_type": "TXT", "name": "@",     "content": spf,                               "ttl": 14400, "priority": 0})
+    records.append({"record_type": "TXT", "name": "_dmarc","content": "v=DMARC1; p=quarantine; pct=100", "ttl": 14400, "priority": 0})
 
-    # TXT — DMARC
-    records.append({"record_type": "TXT", "name": "_dmarc", "content": "v=DMARC1; p=quarantine; pct=100", "ttl": 14400, "priority": 0})
-
-    # SRV — servicios de correo (para futura integración de servidor de correo)
+    # SRV mail
     records.append({"record_type": "SRV", "name": "_submission._tcp", "content": f"0 587 mail.{domain}.", "ttl": 14400, "priority": 1})
     records.append({"record_type": "SRV", "name": "_imap._tcp",       "content": f"0 143 mail.{domain}.", "ttl": 14400, "priority": 1})
     records.append({"record_type": "SRV", "name": "_imaps._tcp",      "content": f"0 993 mail.{domain}.", "ttl": 14400, "priority": 1})

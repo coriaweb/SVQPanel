@@ -7,7 +7,7 @@
         <h2 class="mb-1"><i class="bi bi-diagram-3 me-2"></i>DNS</h2>
         <p class="text-muted mb-0">Gestión de zonas y registros DNS (BIND9)</p>
       </div>
-      <button v-if="isAdmin" class="btn btn-primary" @click="openCreateZone">
+      <button class="btn btn-primary" @click="openCreateZone">
         <i class="bi bi-plus-lg me-1"></i> Nueva Zona
       </button>
     </div>
@@ -22,7 +22,7 @@
         <div v-else-if="!zones.length" class="text-center py-5 text-muted">
           <i class="bi bi-diagram-3 display-4"></i>
           <p class="mt-2">No hay zonas DNS configuradas.</p>
-          <button v-if="isAdmin" class="btn btn-outline-primary btn-sm" @click="openCreateZone">
+          <button class="btn btn-outline-primary btn-sm" @click="openCreateZone">
             Crear primera zona
           </button>
         </div>
@@ -52,13 +52,13 @@
               <td><span class="badge bg-secondary">{{ zone.record_count }}</span></td>
               <td><code class="text-muted small">{{ zone.serial }}</code></td>
               <td class="text-end">
-                <button v-if="isAdmin" class="btn btn-sm btn-outline-secondary me-1" @click="openEditZone(zone)" title="Editar zona">
+                <button v-if="zone.can_edit" class="btn btn-sm btn-outline-secondary me-1" @click="openEditZone(zone)" title="Editar zona">
                   <i class="bi bi-pencil"></i>
                 </button>
                 <button class="btn btn-sm btn-outline-primary me-1" @click="openZoneRecords(zone)" title="Ver registros">
                   <i class="bi bi-list-ul"></i>
                 </button>
-                <button v-if="isAdmin" class="btn btn-sm btn-outline-danger" @click="confirmDeleteZone(zone)" title="Eliminar zona">
+                <button v-if="zone.can_edit" class="btn btn-sm btn-outline-danger" @click="confirmDeleteZone(zone)" title="Eliminar zona">
                   <i class="bi bi-trash"></i>
                 </button>
               </td>
@@ -77,10 +77,10 @@
           <code class="ms-2 small text-muted">serial {{ selectedZone.serial }}</code>
         </h5>
         <div class="d-flex gap-2">
-          <button v-if="isAdmin" class="btn btn-sm btn-success" @click="openAddRecord">
+          <button v-if="selectedZone.can_edit" class="btn btn-sm btn-success" @click="openAddRecord">
             <i class="bi bi-plus-lg me-1"></i> Añadir Registro
           </button>
-          <button v-if="isAdmin" class="btn btn-sm btn-outline-warning" @click="confirmRegenerate" :title="'Regenerar registros con plantilla ' + (selectedZone.template || 'default')">
+          <button v-if="selectedZone.can_edit" class="btn btn-sm btn-outline-warning" @click="confirmRegenerate" :title="'Regenerar registros con plantilla ' + (selectedZone.template || 'default')">
             <i class="bi bi-arrow-repeat me-1"></i> Regenerar plantilla
           </button>
           <button class="btn btn-sm btn-outline-secondary" @click="selectedZone = null">
@@ -100,7 +100,7 @@
               <th>Contenido</th>
               <th>TTL</th>
               <th>Prio</th>
-              <th v-if="isAdmin" class="text-end">Acciones</th>
+              <th v-if="selectedZone.can_edit" class="text-end">Acciones</th>
             </tr>
           </thead>
           <tbody>
@@ -110,7 +110,7 @@
               <td class="text-break" style="max-width:280px;">{{ rec.content }}</td>
               <td class="text-muted">{{ rec.ttl }}</td>
               <td class="text-muted">{{ rec.priority || '—' }}</td>
-              <td v-if="isAdmin" class="text-end">
+              <td v-if="selectedZone.can_edit" class="text-end">
                 <button class="btn btn-sm btn-outline-secondary me-1" @click="openEditRecord(rec)">
                   <i class="bi bi-pencil"></i>
                 </button>
@@ -120,7 +120,7 @@
               </td>
             </tr>
             <tr v-if="!records.length">
-              <td :colspan="isAdmin ? 6 : 5" class="text-center text-muted py-3">Sin registros</td>
+              <td :colspan="selectedZone.can_edit ? 6 : 5" class="text-center text-muted py-3">Sin registros</td>
             </tr>
           </tbody>
         </table>

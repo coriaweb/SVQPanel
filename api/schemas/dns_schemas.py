@@ -74,6 +74,7 @@ class DnsZoneResponse(BaseModel):
     template:       Optional[str]  = "default"
     dnssec_enabled: Optional[bool] = False
     expires_at:     Optional[date] = None
+    can_edit:       bool = False
     records:        List[DnsRecordResponse] = []
     created_at:     Optional[datetime] = None
 
@@ -92,6 +93,7 @@ class DnsZoneListItem(BaseModel):
     template:       Optional[str]  = "default"
     dnssec_enabled: Optional[bool] = False
     expires_at:     Optional[date] = None
+    can_edit:       bool = False
     record_count:   int = 0
     created_at:     Optional[datetime] = None
 
