@@ -49,7 +49,8 @@ class User(Base):
     home_dir = Column(String(255), nullable=True)  # /home/usuario
 
     # Relaciones
-    domains = relationship("Domain", back_populates="user", cascade="all, delete-orphan")
+    domains      = relationship("Domain",     back_populates="user", cascade="all, delete-orphan")
+    mail_domains = relationship("MailDomain", back_populates="user", cascade="all, delete-orphan")
     # Nota: los clientes de un reseller se consultan por parent_id directamente en las rutas
     
     def set_password(self, password: str):

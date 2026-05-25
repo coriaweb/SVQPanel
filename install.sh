@@ -593,6 +593,7 @@ from api.models.models_user import User
 from api.models.models_domain import Domain
 from api.models.models_settings import Settings
 from api.models.models_dns import DnsZone, DnsRecord
+from api.models.models_mail import MailDomain, Mailbox, MailAlias
 
 DATABASE_URL = "postgresql://panel_user:panel_password_123@localhost/panel_db"
 engine = create_engine(DATABASE_URL)

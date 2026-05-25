@@ -73,6 +73,45 @@ def _run_migrations():
         "ALTER TABLE dns_zones ADD COLUMN IF NOT EXISTS template VARCHAR(50) DEFAULT 'default'",
         "ALTER TABLE dns_zones ADD COLUMN IF NOT EXISTS dnssec_enabled BOOLEAN DEFAULT FALSE",
         "ALTER TABLE dns_zones ADD COLUMN IF NOT EXISTS expires_at DATE",
+        # Fase 9b: tablas de correo
+        """CREATE TABLE IF NOT EXISTS mail_domains (
+            id            SERIAL PRIMARY KEY,
+            user_id       INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+            domain_id     INTEGER REFERENCES domains(id) ON DELETE SET NULL,
+            domain_name   VARCHAR(255) UNIQUE NOT NULL,
+            is_active     BOOLEAN DEFAULT TRUE,
+            dkim_enabled  BOOLEAN DEFAULT FALSE,
+            dkim_selector VARCHAR(50) DEFAULT 'mail',
+            dkim_public_key TEXT,
+            catch_all     VARCHAR(255),
+            max_mailboxes INTEGER DEFAULT 0,
+            created_at    TIMESTAMP DEFAULT NOW(),
+            updated_at    TIMESTAMP DEFAULT NOW()
+        )""",
+        """CREATE TABLE IF NOT EXISTS mailboxes (
+            id             SERIAL PRIMARY KEY,
+            mail_domain_id INTEGER NOT NULL REFERENCES mail_domains(id) ON DELETE CASCADE,
+            username       VARCHAR(255) NOT NULL,
+            password_hash  VARCHAR(255) NOT NULL,
+            quota_mb       INTEGER DEFAULT 1024,
+            is_active      BOOLEAN DEFAULT TRUE,
+            created_at     TIMESTAMP DEFAULT NOW(),
+            updated_at     TIMESTAMP DEFAULT NOW(),
+            UNIQUE (mail_domain_id, username)
+        )""",
+        """CREATE TABLE IF NOT EXISTS mail_aliases (
+            id             SERIAL PRIMARY KEY,
+            mail_domain_id INTEGER NOT NULL REFERENCES mail_domains(id) ON DELETE CASCADE,
+            source         VARCHAR(255) NOT NULL,
+            destination    VARCHAR(255) NOT NULL,
+            is_active      BOOLEAN DEFAULT TRUE,
+            created_at     TIMESTAMP DEFAULT NOW(),
+            UNIQUE (mail_domain_id, source)
+        )""",
+        # Índices de correo para consultas frecuentes
+        "CREATE INDEX IF NOT EXISTS ix_mail_domains_user_id ON mail_domains(user_id)",
+        "CREATE INDEX IF NOT EXISTS ix_mailboxes_mail_domain_id ON mailboxes(mail_domain_id)",
+        "CREATE INDEX IF NOT EXISTS ix_mail_aliases_mail_domain_id ON mail_aliases(mail_domain_id)",
     ]
     with engine.connect() as conn:
         for sql in migrations:
