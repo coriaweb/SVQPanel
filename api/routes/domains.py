@@ -43,7 +43,7 @@ async def create_domain(
             user_id=domain.user_id,
             domain_name=domain.domain_name,
             php_version=domain.php_version or "8.2",
-            public_html=f"/home/{user.username}/public_html/{domain.domain_name}"
+            public_html=f"/home/{user.username}/web/{domain.domain_name}/public_html"
         )
         db.add(db_domain)
         db.commit()
@@ -191,8 +191,12 @@ async def delete_domain(
                 detail="Dominio no encontrado"
             )
 
+        # Obtener username del propietario para borrar el directorio
+        owner = db.query(User).filter(User.id == db_domain.user_id).first()
+        username = owner.username if owner else None
+
         # Delete domain from system
-        domain_manager.delete_domain(db_domain.domain_name)
+        domain_manager.delete_domain(db_domain.domain_name, username=username)
 
         db.delete(db_domain)
         db.commit()

@@ -37,13 +37,33 @@ def validate_email(email: str) -> bool:
 
 
 def get_home_directory(username: str) -> str:
-    """Get home directory for a user"""
+    """Get home directory for a user — /home/username"""
     return f"/home/{username}"
 
 
+def get_web_root(username: str) -> str:
+    """Get web root for a user — /home/username/web"""
+    return f"/home/{username}/web"
+
+
+def get_domain_root(username: str, domain: str) -> str:
+    """Get domain root directory — /home/username/web/domain.com"""
+    return f"/home/{username}/web/{domain}"
+
+
 def get_public_html(username: str, domain: str) -> str:
-    """Get public_html path for a domain"""
-    return f"/home/{username}/public_html/{domain}"
+    """Get public_html path — /home/username/web/domain.com/public_html"""
+    return f"/home/{username}/web/{domain}/public_html"
+
+
+def get_domain_logs(username: str, domain: str) -> str:
+    """Get domain logs directory — /home/username/web/domain.com/logs"""
+    return f"/home/{username}/web/{domain}/logs"
+
+
+def get_domain_private(username: str, domain: str) -> str:
+    """Get domain private directory — /home/username/web/domain.com/private"""
+    return f"/home/{username}/web/{domain}/private"
 
 
 def get_nginx_config_path(domain: str) -> str:
@@ -58,28 +78,32 @@ def generate_nginx_config(
     ssl_enabled: bool = False,
     ipv6: Optional[str] = None
 ) -> str:
-    """Generate Nginx vhost configuration"""
+    """Generate Nginx vhost configuration (Hestia-style paths)"""
 
     public_html = get_public_html(user, domain)
+    logs_dir = get_domain_logs(user, domain)
     php_socket = f"/run/php/php{php_version}-fpm.sock"
+    backend_name = domain.replace('.', '_').replace('-', '_')
 
-    # Server blocks
-    server_block = f"""
-upstream php_backend_{domain.replace('.', '_')} {{
+    server_block = f"""upstream php_{backend_name} {{
     server unix:{php_socket};
 }}
 
 server {{
     listen 80;
-    {"listen [" + ipv6 + "]:80;" if ipv6 else ""}
+    {"listen [::]:" + "80;" if not ipv6 else "listen [" + ipv6 + "]:80;"}
     server_name {domain} www.{domain};
     root {public_html};
 
-    index index.php index.html;
+    index index.php index.html index.htm;
+
+    location / {{
+        try_files $uri $uri/ /index.php?$query_string;
+    }}
 
     location ~ \\.php$ {{
         try_files $uri =404;
-        fastcgi_pass php_backend_{domain.replace('.', '_')};
+        fastcgi_pass php_{backend_name};
         fastcgi_index index.php;
         fastcgi_param SCRIPT_FILENAME $document_root$fastcgi_script_name;
         include fastcgi_params;
@@ -89,8 +113,12 @@ server {{
         deny all;
     }}
 
-    error_log /var/log/nginx/{domain}_error.log;
-    access_log /var/log/nginx/{domain}_access.log;
+    location ~ /\\.well-known {{
+        allow all;
+    }}
+
+    error_log {logs_dir}/nginx.error.log;
+    access_log {logs_dir}/nginx.access.log;
 }}
 """
 
@@ -98,18 +126,24 @@ server {{
         server_block += f"""
 server {{
     listen 443 ssl http2;
-    {"listen [" + ipv6 + "]:443 ssl http2;" if ipv6 else ""}
+    {"listen [::]:" + "443 ssl http2;" if not ipv6 else "listen [" + ipv6 + "]:443 ssl http2;"}
     server_name {domain} www.{domain};
     root {public_html};
 
     ssl_certificate /etc/letsencrypt/live/{domain}/fullchain.pem;
     ssl_certificate_key /etc/letsencrypt/live/{domain}/privkey.pem;
+    ssl_protocols TLSv1.2 TLSv1.3;
+    ssl_ciphers HIGH:!aNULL:!MD5;
 
-    index index.php index.html;
+    index index.php index.html index.htm;
+
+    location / {{
+        try_files $uri $uri/ /index.php?$query_string;
+    }}
 
     location ~ \\.php$ {{
         try_files $uri =404;
-        fastcgi_pass php_backend_{domain.replace('.', '_')};
+        fastcgi_pass php_{backend_name};
         fastcgi_index index.php;
         fastcgi_param SCRIPT_FILENAME $document_root$fastcgi_script_name;
         include fastcgi_params;
@@ -119,8 +153,8 @@ server {{
         deny all;
     }}
 
-    error_log /var/log/nginx/{domain}_error.log;
-    access_log /var/log/nginx/{domain}_access.log;
+    error_log {logs_dir}/nginx.error.log;
+    access_log {logs_dir}/nginx.access.log;
 }}
 """
 

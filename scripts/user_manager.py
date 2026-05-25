@@ -2,7 +2,7 @@
 
 import logging
 from .base import SystemManager
-from .utils import validate_username, validate_email, get_home_directory
+from .utils import validate_username, validate_email, get_home_directory, get_web_root
 
 logger = logging.getLogger(__name__)
 
@@ -56,12 +56,18 @@ class UserManager(SystemManager):
                     f"echo '{username}:{password}' | chpasswd"
                 )
 
-            # Create public_html directory
-            public_html = f"{home_dir}/public_html"
-            self.create_directory(public_html, mode=0o755)
-            self.change_ownership(public_html, username)
+            # Estructura de directorios estilo Hestia:
+            # /home/username/
+            #   web/          → dominios (creados al añadir cada dominio)
+            #   tmp/          → archivos temporales
+            web_root = get_web_root(username)
+            tmp_dir = f"{home_dir}/tmp"
 
-            # Create .bashrc if not exists
+            for directory in [web_root, tmp_dir]:
+                self.create_directory(directory, mode=0o750)
+                self.change_ownership(directory, username)
+
+            # .bashrc si no existe
             bashrc_path = f"{home_dir}/.bashrc"
             if not self.file_exists(bashrc_path):
                 self.execute_command(["touch", bashrc_path])
@@ -73,7 +79,7 @@ class UserManager(SystemManager):
                 "username": username,
                 "email": email,
                 "home_dir": home_dir,
-                "public_html": public_html
+                "web_root": web_root,
             }
 
         except Exception as e:
