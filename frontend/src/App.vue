@@ -31,6 +31,11 @@
             </router-link>
           </li>
           <li v-if="currentUser?.is_admin">
+            <router-link to="/system" :class="{active: route.path === '/system'}">
+              <i class="bi bi-hdd-rack"></i> Sistema
+            </router-link>
+          </li>
+          <li v-if="currentUser?.is_admin">
             <router-link to="/settings" :class="{active: route.path === '/settings'}">
               <i class="bi bi-gear"></i> Configuración
             </router-link>

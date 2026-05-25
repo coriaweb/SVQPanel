@@ -252,6 +252,19 @@ class APIClient {
     return this.get('/api/settings/next-ipv6')
   }
 
+  // System
+  getSystemStats() {
+    return this.get('/api/system/stats')
+  }
+
+  getSystemServices() {
+    return this.get('/api/system/services')
+  }
+
+  controlService(serviceName, action) {
+    return this.post(`/api/system/services/${serviceName}/${action}`, {})
+  }
+
   // Health check
   health() {
     return this.get('/api/health')

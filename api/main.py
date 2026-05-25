@@ -12,7 +12,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from api.models.database import create_tables, get_db
 from config.config import PANEL_NAME, PANEL_VERSION
 
-from api.routes import users, domains, php, ssl, ipv6, auth, settings, dns
+from api.routes import users, domains, php, ssl, ipv6, auth, settings, dns, system
 
 # Crear app FastAPI
 app = FastAPI(
@@ -118,6 +118,7 @@ app.include_router(ssl.router, prefix="/api", tags=["SSL"])
 app.include_router(ipv6.router, prefix="/api", tags=["IPv6"])
 app.include_router(settings.router, prefix="/api", tags=["Settings"])
 app.include_router(dns.router, prefix="/api", tags=["DNS"])
+app.include_router(system.router, prefix="/api", tags=["System"])
 
 # Manejo de errores global
 @app.exception_handler(Exception)

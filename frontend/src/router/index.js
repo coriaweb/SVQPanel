@@ -5,6 +5,7 @@ import UserAccount from '../views/UserAccount.vue'
 import Domains from '../views/Domains.vue'
 import DNS from '../views/DNS.vue'
 import Settings from '../views/Settings.vue'
+import SystemServices from '../views/SystemServices.vue'
 import Login from '../views/Login.vue'
 
 const isAuthenticated = () => {
@@ -58,6 +59,12 @@ const routes = [
     path: '/settings',
     name: 'Settings',
     component: Settings,
+    meta: { requiresAuth: true, requiresAdmin: true }
+  },
+  {
+    path: '/system',
+    name: 'SystemServices',
+    component: SystemServices,
     meta: { requiresAuth: true, requiresAdmin: true }
   }
 ]
