@@ -42,7 +42,14 @@ class APIClient {
           window.location.href = '/login'
           throw new Error('Sesión expirada. Por favor inicia sesión nuevamente.')
         }
-        throw new Error(data.detail || 'API Error')
+        // data.detail puede ser string (error normal) o array (errores de validación Pydantic)
+        let errorMessage
+        if (Array.isArray(data?.detail)) {
+          errorMessage = data.detail.map(e => `${e.loc?.slice(-1)[0] ?? ''}: ${e.msg}`).join(' | ')
+        } else {
+          errorMessage = data?.detail || `Error ${response.status}`
+        }
+        throw new Error(errorMessage)
       }
 
       return data
