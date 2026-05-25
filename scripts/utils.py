@@ -85,6 +85,11 @@ def generate_nginx_config(
     php_socket = f"/run/php/php{php_version}-fpm.sock"
     backend_name = domain.replace('.', '_').replace('-', '_')
 
+    # server_name incluye IPv6 cuando está asignada (para acceso por IP directa)
+    server_names = f"{domain} www.{domain}"
+    if ipv6:
+        server_names += f" {ipv6}"   # nginx acepta IPv6 sin corchetes en server_name
+
     server_block = f"""upstream php_{backend_name} {{
     server unix:{php_socket};
 }}
@@ -92,7 +97,7 @@ def generate_nginx_config(
 server {{
     listen 80;
     {"listen [::]:" + "80;" if not ipv6 else "listen [" + ipv6 + "]:80;"}
-    server_name {domain} www.{domain};
+    server_name {server_names};
     root {public_html};
 
     index index.php index.html index.htm;
@@ -127,7 +132,7 @@ server {{
 server {{
     listen 443 ssl http2;
     {"listen [::]:" + "443 ssl http2;" if not ipv6 else "listen [" + ipv6 + "]:443 ssl http2;"}
-    server_name {domain} www.{domain};
+    server_name {server_names};
     root {public_html};
 
     ssl_certificate /etc/letsencrypt/live/{domain}/fullchain.pem;

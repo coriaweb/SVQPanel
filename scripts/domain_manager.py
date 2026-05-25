@@ -75,13 +75,64 @@ class DomainManager(SystemManager):
                 self.create_directory(directory, mode=mode)
                 self.change_ownership(directory, username)
 
-            # index.php de bienvenida
-            index_file = f"{public_html}/index.php"
+            # Página de bienvenida por defecto
+            index_file = f"{public_html}/index.html"
             with open(index_file, "w") as f:
-                f.write(f"""<?php
-// SVQPanel — {domain_name}
-echo '<h1>¡Bienvenido a {domain_name}!</h1>';
-echo '<p>PHP ' . PHP_VERSION . '</p>';
+                f.write(f"""<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>{domain_name}</title>
+  <style>
+    * {{ box-sizing: border-box; margin: 0; padding: 0; }}
+    body {{
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+      background: #f0f2f5;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      min-height: 100vh;
+    }}
+    .card {{
+      background: #fff;
+      border-radius: 12px;
+      box-shadow: 0 4px 24px rgba(0,0,0,.10);
+      padding: 48px 56px;
+      text-align: center;
+      max-width: 480px;
+      width: 90%;
+    }}
+    .icon {{ font-size: 64px; margin-bottom: 16px; }}
+    h1 {{ font-size: 1.7rem; color: #1e2a38; margin-bottom: 8px; }}
+    .domain {{ color: #2563eb; font-weight: 600; font-size: 1.1rem; }}
+    p {{ color: #6b7280; margin-top: 12px; line-height: 1.6; }}
+    .badge {{
+      display: inline-block;
+      margin-top: 24px;
+      padding: 6px 14px;
+      background: #f0f9ff;
+      color: #0369a1;
+      border-radius: 999px;
+      font-size: .8rem;
+      font-weight: 500;
+      border: 1px solid #bae6fd;
+    }}
+  </style>
+</head>
+<body>
+  <div class="card">
+    <div class="icon">🌐</div>
+    <h1>¡Dominio configurado!</h1>
+    <div class="domain">{domain_name}</div>
+    <p>
+      Este dominio está correctamente configurado en el servidor.<br>
+      Sube tus archivos a <code>public_html/</code> para publicar tu sitio web.
+    </p>
+    <div class="badge">Gestionado con SVQPanel</div>
+  </div>
+</body>
+</html>
 """)
             self.change_ownership(index_file, username)
 
