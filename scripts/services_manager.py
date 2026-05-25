@@ -39,8 +39,15 @@ PHP_VERSIONS = ["5.6", "7.0", "7.1", "7.2", "7.3", "7.4",
                 "8.0", "8.1", "8.2", "8.3", "8.4", "8.5"]
 
 
-def _run(cmd: list) -> tuple[int, str, str]:
+def _run(cmd):
     """Ejecuta un comando y devuelve (returncode, stdout, stderr)"""
+    # Intentar con path completo si el comando es systemctl
+    if cmd and cmd[0] == "systemctl":
+        for path in ("/usr/bin/systemctl", "/bin/systemctl", "systemctl"):
+            import shutil
+            if shutil.which(path) or path.startswith("/"):
+                cmd = [path] + cmd[1:]
+                break
     try:
         r = subprocess.run(cmd, capture_output=True, text=True, timeout=5)
         return r.returncode, r.stdout.strip(), r.stderr.strip()

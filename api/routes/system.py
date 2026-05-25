@@ -19,7 +19,10 @@ async def get_system_stats(
     db: Session = Depends(get_db)
 ):
     """Estadísticas del sistema + contadores del panel"""
-    from scripts.services_manager import get_system_stats
+    try:
+        from scripts.services_manager import get_system_stats
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error importando services_manager: {str(e)}")
 
     sys = get_system_stats()
 
@@ -62,8 +65,43 @@ async def list_services(
     current_user=Depends(require_admin),
 ):
     """Lista todos los servicios detectados en el sistema"""
-    from scripts.services_manager import get_all_services
-    return get_all_services()
+    try:
+        from scripts.services_manager import get_all_services
+        return get_all_services()
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error al detectar servicios: {str(e)}"
+        )
+
+
+@router.get("/system/debug")
+async def debug_services(current_user=Depends(require_admin)):
+    """Debug: comprueba si systemctl funciona desde el proceso uvicorn"""
+    import subprocess, shutil, sys as _sys
+    result = {
+        "python_version": _sys.version,
+        "systemctl_path": shutil.which("systemctl"),
+        "systemctl_test": None,
+        "nginx_test":     None,
+        "error":          None,
+    }
+    try:
+        r = subprocess.run(["systemctl", "is-active", "nginx"],
+                           capture_output=True, text=True, timeout=5)
+        result["systemctl_test"] = {"rc": r.returncode, "out": r.stdout.strip(), "err": r.stderr.strip()}
+    except Exception as e:
+        result["error"] = str(e)
+
+    try:
+        r2 = subprocess.run(["/usr/bin/systemctl", "show", "nginx",
+                             "--property=LoadState,ActiveState"],
+                            capture_output=True, text=True, timeout=5)
+        result["nginx_test"] = {"rc": r2.returncode, "out": r2.stdout.strip(), "err": r2.stderr.strip()}
+    except Exception as e:
+        result["nginx_test"] = {"error": str(e)}
+
+    return result
 
 
 @router.post("/system/services/{service_name}/{action}")
