@@ -453,9 +453,10 @@ print(''.join(random.choice(chars) for _ in range(16)))
 PASSWDEOF
 )
 
-# Crear usuario admin en la BD
-python3 << 'PYTHONEOF'
+# Crear usuario admin en la BD (pasar contraseña via variable de entorno)
+SVQPANEL_ADMIN_PASS="$ADMIN_PASSWORD" python3 << 'PYTHONEOF'
 import sys
+import os
 sys.path.insert(0, '/opt/svqpanel')
 
 from sqlalchemy import create_engine
@@ -467,6 +468,9 @@ DATABASE_URL = "postgresql://panel_user:panel_password_123@localhost/panel_db"
 engine = create_engine(DATABASE_URL)
 Session = sessionmaker(bind=engine)
 session = Session()
+
+# Leer contraseña desde variable de entorno
+admin_password = os.environ.get('SVQPANEL_ADMIN_PASS', 'changeme123')
 
 try:
     # Verificar si el admin ya existe
@@ -483,7 +487,7 @@ try:
         is_admin=True,
         is_active=True
     )
-    admin_user.set_password("$ADMIN_PASSWORD")
+    admin_user.set_password(admin_password)
 
     session.add(admin_user)
     session.commit()
