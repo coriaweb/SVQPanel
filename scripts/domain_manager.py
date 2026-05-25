@@ -66,14 +66,17 @@ class DomainManager(SystemManager):
             logger.info(f"Creating domain: {domain_name} for user: {username}")
 
             # Estructura de directorios Hestia-style
-            for directory, mode in [
-                (domain_root, 0o750),
-                (public_html, 0o755),
-                (private_dir, 0o750),
-                (logs_dir, 0o750),
+            # domain_root grupo=www-data para que nginx pueda atravesarlo (750 r-x para www-data)
+            # public_html grupo=username con 755 (others pueden leer — nginx es "other" aquí)
+            # private y logs: solo el usuario y www-data para logs
+            for directory, mode, grp in [
+                (domain_root, 0o750, "www-data"),   # nginx (www-data) puede atravesar
+                (public_html, 0o755, username),      # lectura pública → nginx puede leer
+                (private_dir, 0o750, username),      # privado: solo el usuario
+                (logs_dir,    0o750, "www-data"),    # nginx escribe los logs
             ]:
                 self.create_directory(directory, mode=mode)
-                self.change_ownership(directory, username)
+                self.change_ownership(directory, username, grp)
 
             # Página de bienvenida por defecto
             index_file = f"{public_html}/index.html"
