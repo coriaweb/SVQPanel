@@ -4,8 +4,10 @@ Rutas API para gestión de correo electrónico
 """
 
 import os
+import socket
 import logging
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi.responses import Response
 from sqlalchemy.orm import Session
 from typing import List
 
@@ -786,3 +788,119 @@ async def delete_alias(
         logger.error(f"Error eliminando alias de Postfix: {e}")
 
     return None
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Autoconfig / Autodiscover (sin autenticación — clientes de correo)
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _mail_server_hostname() -> str:
+    """Hostname del servidor de correo (de /etc/mailname o FQDN del sistema)"""
+    try:
+        with open("/etc/mailname") as f:
+            h = f.read().strip()
+            if h:
+                return h
+    except Exception:
+        pass
+    return socket.getfqdn()
+
+
+def _domain_from_request(request: Request) -> str:
+    """Extrae el dominio del Host header, quitando prefijos autoconfig./autodiscover."""
+    host = request.headers.get("host", "").split(":")[0].lower()
+    for prefix in ("autoconfig.", "autodiscover.", "mail."):
+        if host.startswith(prefix):
+            return host[len(prefix):]
+    return host
+
+
+def _autoconfig_xml(domain: str, mail_host: str) -> str:
+    return f"""<?xml version="1.0" encoding="UTF-8"?>
+<clientConfig version="1.1">
+  <emailProvider id="{domain}">
+    <domain>{domain}</domain>
+    <displayName>Correo en {domain}</displayName>
+    <displayShortName>{domain}</displayShortName>
+    <incomingServer type="imap">
+      <hostname>{mail_host}</hostname>
+      <port>993</port>
+      <socketType>SSL</socketType>
+      <authentication>password-cleartext</authentication>
+      <username>%EMAILADDRESS%</username>
+    </incomingServer>
+    <incomingServer type="imap">
+      <hostname>{mail_host}</hostname>
+      <port>143</port>
+      <socketType>STARTTLS</socketType>
+      <authentication>password-cleartext</authentication>
+      <username>%EMAILADDRESS%</username>
+    </incomingServer>
+    <incomingServer type="pop3">
+      <hostname>{mail_host}</hostname>
+      <port>995</port>
+      <socketType>SSL</socketType>
+      <authentication>password-cleartext</authentication>
+      <username>%EMAILADDRESS%</username>
+    </incomingServer>
+    <outgoingServer type="smtp">
+      <hostname>{mail_host}</hostname>
+      <port>587</port>
+      <socketType>STARTTLS</socketType>
+      <authentication>password-cleartext</authentication>
+      <username>%EMAILADDRESS%</username>
+    </outgoingServer>
+  </emailProvider>
+</clientConfig>"""
+
+
+def _autodiscover_xml(domain: str, mail_host: str) -> str:
+    return f"""<?xml version="1.0" encoding="utf-8"?>
+<Autodiscover xmlns="http://schemas.microsoft.com/exchange/autodiscover/responseschema/2006">
+  <Response xmlns="http://schemas.microsoft.com/exchange/autodiscover/outlook/responseschema/2006a">
+    <Account>
+      <AccountType>email</AccountType>
+      <Action>settings</Action>
+      <Protocol>
+        <Type>IMAP</Type>
+        <Server>{mail_host}</Server>
+        <Port>993</Port>
+        <LoginName>%EMAILADDRESS%</LoginName>
+        <DomainRequired>off</DomainRequired>
+        <SPA>off</SPA>
+        <SSL>on</SSL>
+        <AuthRequired>on</AuthRequired>
+      </Protocol>
+      <Protocol>
+        <Type>SMTP</Type>
+        <Server>{mail_host}</Server>
+        <Port>587</Port>
+        <LoginName>%EMAILADDRESS%</LoginName>
+        <DomainRequired>off</DomainRequired>
+        <SPA>off</SPA>
+        <SSL>off</SSL>
+        <AuthRequired>on</AuthRequired>
+      </Protocol>
+    </Account>
+  </Response>
+</Autodiscover>"""
+
+
+@router.get("/.well-known/autoconfig/mail/config-v1.1.xml", include_in_schema=False)
+@router.get("/mail/config-v1.1.xml", include_in_schema=False)
+async def thunderbird_autoconfig(request: Request, db: Session = Depends(get_db)):
+    """Autoconfig para Thunderbird y clientes compatibles Mozilla"""
+    domain = _domain_from_request(request)
+    xml = _autoconfig_xml(domain, _mail_server_hostname())
+    return Response(content=xml, media_type="application/xml; charset=utf-8")
+
+
+@router.post("/autodiscover/autodiscover.xml", include_in_schema=False)
+@router.get("/autodiscover/autodiscover.xml", include_in_schema=False)
+@router.post("/Autodiscover/Autodiscover.xml", include_in_schema=False)
+@router.get("/Autodiscover/Autodiscover.xml", include_in_schema=False)
+async def outlook_autodiscover(request: Request, db: Session = Depends(get_db)):
+    """Autodiscover para Outlook y clientes Microsoft"""
+    domain = _domain_from_request(request)
+    xml = _autodiscover_xml(domain, _mail_server_hostname())
+    return Response(content=xml, media_type="application/xml; charset=utf-8")

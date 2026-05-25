@@ -111,6 +111,31 @@ async def create_domain(
             except Exception:
                 pass  # DNS no bloquea la creación del dominio
 
+        # Crear dominio de correo si se solicitó y el módulo está activo
+        if domain.mail_enabled:
+            import os
+            if os.getenv("MAIL_ENABLED", "false").lower() == "true":
+                try:
+                    from api.models.models_mail import MailDomain
+                    from scripts.mail_manager import MailManager
+                    existing_mail = db.query(MailDomain).filter(
+                        MailDomain.domain_name == domain.domain_name
+                    ).first()
+                    if not existing_mail:
+                        mail_domain = MailDomain(
+                            user_id=domain.user_id,
+                            domain_id=db_domain.id,
+                            domain_name=domain.domain_name,
+                        )
+                        db.add(mail_domain)
+                        db.commit()
+                        try:
+                            MailManager().create_mail_domain(domain.domain_name, user.username)
+                        except PermissionError:
+                            pass
+                except Exception:
+                    pass  # Correo no bloquea la creación del dominio
+
         return db_domain
     except HTTPException:
         raise

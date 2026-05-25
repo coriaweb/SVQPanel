@@ -731,6 +731,33 @@ server {
         proxy_set_header Host $host;
     }
 
+    # Autoconfig — Thunderbird y clientes Mozilla
+    location /.well-known/autoconfig/ {
+        proxy_pass http://svqpanel_backend;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+    }
+
+    # Autodiscover — Outlook y clientes Microsoft
+    location /autodiscover/ {
+        proxy_pass http://svqpanel_backend;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+    }
+    location /Autodiscover/ {
+        proxy_pass http://svqpanel_backend;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+    }
+
+    # Rspamd web UI
+    location /rspamd/ {
+        proxy_pass http://127.0.0.1:11334/;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    }
+
     # Frontend → servir archivos estáticos, fallback a index.html (SPA)
     location / {
         try_files $uri $uri/ /index.html;

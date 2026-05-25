@@ -159,6 +159,8 @@ app.include_router(settings.router, prefix="/api", tags=["Settings"])
 app.include_router(dns.router, prefix="/api", tags=["DNS"])
 app.include_router(system.router, prefix="/api", tags=["System"])
 app.include_router(mail.router, prefix="/api", tags=["Mail"])
+# Autoconfig/Autodiscover sin prefijo (clientes de correo los buscan en rutas raíz)
+app.include_router(mail.router, prefix="", include_in_schema=False)
 
 # Manejo de errores global
 @app.exception_handler(Exception)

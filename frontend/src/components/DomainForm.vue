@@ -54,11 +54,11 @@
         </label>
       </div>
 
-      <div class="mb-3 form-check text-muted">
-        <input id="mail_enabled" type="checkbox" class="form-check-input" disabled />
+      <div class="mb-3 form-check">
+        <input id="mail_enabled" v-model="form.mail_enabled" type="checkbox" class="form-check-input" />
         <label for="mail_enabled" class="form-check-label">
           <i class="bi bi-envelope me-1"></i> Soporte Correo
-          <small>(Próximamente)</small>
+          <small class="text-muted">(Crear dominio de correo)</small>
         </label>
       </div>
     </template>
@@ -109,7 +109,8 @@ export default {
       user_id:     props.domain?.user_id     || (isAdminOrReseller.value ? '' : store.currentUser?.id),
       php_version: props.domain?.php_version || '',
       is_active:   props.domain?.is_active   ?? true,
-      dns_enabled: false,
+      dns_enabled:  false,
+      mail_enabled: false,
     })
 
     const loadUsers = async () => {
@@ -152,7 +153,8 @@ export default {
             user_id:     userId,
             php_version: form.value.php_version,
             is_active:   form.value.is_active,
-            dns_enabled: form.value.dns_enabled,
+            dns_enabled:  form.value.dns_enabled,
+            mail_enabled: form.value.mail_enabled,
           })
           store.showNotification('Dominio creado correctamente', 'success')
         }
