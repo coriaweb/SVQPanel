@@ -167,6 +167,18 @@ async def update_user(
             db_user.role = user_update.role
             db_user.is_admin = (user_update.role == "admin")
 
+        # Cambio de contraseña (opcional)
+        if user_update.new_password:
+            db_user.set_password(user_update.new_password)
+            # Cambiar también en el sistema operativo
+            try:
+                user_manager = UserManager()
+                user_manager.change_password(db_user.username, user_update.new_password)
+            except Exception as e:
+                # Si falla el cambio en el SO, avisamos pero no revertimos la BD
+                import logging
+                logging.getLogger(__name__).warning(f"OS password change failed for {db_user.username}: {e}")
+
         db.commit()
         db.refresh(db_user)
         return db_user

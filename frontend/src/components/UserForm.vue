@@ -49,6 +49,7 @@
       </div>
     </div>
 
+    <!-- Contraseña al crear -->
     <div v-if="!isEditing" class="mb-3">
       <label for="password" class="form-label">Contraseña</label>
       <input
@@ -60,6 +61,44 @@
         required
         minlength="8"
       />
+    </div>
+
+    <!-- Cambiar contraseña al editar -->
+    <div v-if="isEditing" class="mb-3">
+      <div
+        class="d-flex align-items-center gap-2 mb-2 cursor-pointer"
+        style="cursor:pointer"
+        @click="showPasswordChange = !showPasswordChange"
+      >
+        <i :class="showPasswordChange ? 'bi bi-chevron-down' : 'bi bi-chevron-right'" class="text-muted"></i>
+        <span class="fw-semibold small text-muted text-uppercase">Cambiar contraseña</span>
+        <span v-if="showPasswordChange" class="badge bg-warning text-dark small">opcional</span>
+      </div>
+
+      <div v-if="showPasswordChange" class="border rounded p-3 bg-light">
+        <div class="mb-2">
+          <label class="form-label small mb-1">Nueva contraseña</label>
+          <input
+            v-model="form.new_password"
+            type="password"
+            class="form-control form-control-sm"
+            :class="passwordError ? 'is-invalid' : ''"
+            placeholder="Mínimo 8 caracteres"
+            minlength="8"
+          />
+        </div>
+        <div class="mb-1">
+          <label class="form-label small mb-1">Confirmar contraseña</label>
+          <input
+            v-model="form.new_password_confirm"
+            type="password"
+            class="form-control form-control-sm"
+            :class="passwordError ? 'is-invalid' : ''"
+            placeholder="Repite la contraseña"
+          />
+          <div v-if="passwordError" class="invalid-feedback d-block">{{ passwordError }}</div>
+        </div>
+      </div>
     </div>
 
     <div class="row">
@@ -118,64 +157,76 @@ import api from '../services/api'
 export default {
   name: 'UserForm',
   props: {
-    user: {
-      type: Object,
-      default: null
-    },
-    parentId: {
-      type: Number,
-      default: null
-    }
+    user:     { type: Object, default: null },
+    parentId: { type: Number, default: null }
   },
   emits: ['submit', 'cancel'],
   setup(props, { emit }) {
     const store = useMainStore()
     const loading = ref(false)
     const isEditing = ref(!!props.user)
+    const showPasswordChange = ref(false)
 
     const form = ref({
-      username: props.user?.username || '',
-      email: props.user?.email || '',
-      first_name: props.user?.first_name || '',
-      last_name: props.user?.last_name || '',
-      password: '',
-      role: props.user?.role || 'user',
-      domains_limit: props.user?.domains_limit ?? 10,
-      is_active: props.user?.is_active ?? true
+      username:            props.user?.username    || '',
+      email:               props.user?.email       || '',
+      first_name:          props.user?.first_name  || '',
+      last_name:           props.user?.last_name   || '',
+      password:            '',
+      new_password:        '',
+      new_password_confirm:'',
+      role:                props.user?.role        || 'user',
+      domains_limit:       props.user?.domains_limit ?? 10,
+      is_active:           props.user?.is_active   ?? true,
     })
 
-    const roleDescription = computed(() => {
-      switch (form.value.role) {
-        case 'admin': return 'Acceso total al panel'
-        case 'reseller': return 'Puede gestionar sus propios usuarios'
-        case 'user': return 'Solo gestiona sus propios dominios'
-        default: return ''
-      }
+    const roleDescription = computed(() => ({
+      admin:    'Acceso total al panel',
+      reseller: 'Puede gestionar sus propios usuarios',
+      user:     'Solo gestiona sus propios dominios',
+    }[form.value.role] ?? ''))
+
+    const passwordError = computed(() => {
+      if (!form.value.new_password && !form.value.new_password_confirm) return null
+      if (form.value.new_password.length < 8) return 'Mínimo 8 caracteres'
+      if (form.value.new_password !== form.value.new_password_confirm) return 'Las contraseñas no coinciden'
+      return null
     })
 
     const handleSubmit = async () => {
+      // Validar contraseña si se está cambiando
+      if (isEditing.value && form.value.new_password && passwordError.value) {
+        store.showNotification(passwordError.value, 'danger')
+        return
+      }
+
       loading.value = true
       try {
         if (isEditing.value) {
-          await api.updateUser(props.user.id, {
-            email: form.value.email,
-            first_name: form.value.first_name,
-            last_name: form.value.last_name,
-            role: form.value.role,
+          const payload = {
+            email:         form.value.email,
+            first_name:    form.value.first_name,
+            last_name:     form.value.last_name,
+            role:          form.value.role,
             domains_limit: form.value.domains_limit,
-            is_active: form.value.is_active
-          })
+            is_active:     form.value.is_active,
+          }
+          // Solo incluir new_password si se rellenó y es válida
+          if (form.value.new_password && !passwordError.value) {
+            payload.new_password = form.value.new_password
+          }
+          await api.updateUser(props.user.id, payload)
           store.showNotification('Usuario actualizado correctamente', 'success')
         } else {
           await api.createUser({
-            username: form.value.username,
-            email: form.value.email,
-            first_name: form.value.first_name,
-            last_name: form.value.last_name,
-            password: form.value.password,
-            role: form.value.role,
+            username:      form.value.username,
+            email:         form.value.email,
+            first_name:    form.value.first_name,
+            last_name:     form.value.last_name,
+            password:      form.value.password,
+            role:          form.value.role,
             domains_limit: form.value.domains_limit,
-            is_active: form.value.is_active,
+            is_active:     form.value.is_active,
             ...(props.parentId ? { parent_id: props.parentId } : {})
           })
           store.showNotification('Usuario creado correctamente', 'success')
@@ -189,11 +240,9 @@ export default {
     }
 
     return {
-      form,
-      loading,
-      isEditing,
-      roleDescription,
-      handleSubmit
+      form, loading, isEditing,
+      showPasswordChange, passwordError,
+      roleDescription, handleSubmit,
     }
   }
 }
