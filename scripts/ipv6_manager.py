@@ -30,15 +30,16 @@ class IPv6Manager(SystemManager):
         try:
             logger.info(f"Assigning IPv6 {ipv6_address} to {interface}")
 
-            # Add IPv6 address
-            self.execute_command([
-                "ip",
-                "addr",
-                "add",
-                ipv6_address,
-                "dev",
-                interface
-            ])
+            # Add IPv6 address — si ya existe (exit 2 = RTNETLINK: File exists) lo ignoramos
+            try:
+                self.execute_command(["ip", "addr", "add", ipv6_address, "dev", interface])
+            except Exception as e:
+                err = str(e)
+                if "exit status 2" in err or "File exists" in err or "RTNETLINK" in err:
+                    # La IP ya está asignada a la interfaz — no es un error real
+                    logger.warning(f"IPv6 {ipv6_address} ya existía en {interface}, continuando")
+                else:
+                    raise
 
             logger.info(f"IPv6 assigned: {ipv6_address} on {interface}")
             return {

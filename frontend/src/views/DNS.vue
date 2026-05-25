@@ -402,7 +402,7 @@ const TYPE_CLASSES = {
   MX:    'bg-warning text-dark',
   TXT:   'bg-light text-dark border',
   NS:    'bg-dark',
-  SRV:   'bg-purple',
+  SRV:   'bg-success',
   CAA:   'bg-danger',
 }
 
