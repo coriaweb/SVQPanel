@@ -234,7 +234,19 @@ async def delete_domain(
         owner = db.query(User).filter(User.id == db_domain.user_id).first()
         username = owner.username if owner else None
 
-        # Delete domain from system
+        # Si tiene IPv6, quitarla de la interfaz de red antes de borrar
+        if db_domain.ipv6:
+            try:
+                from scripts.ipv6_manager import IPv6Manager
+                from api.models.models_settings import Settings
+                settings = db.query(Settings).filter(Settings.id == 1).first()
+                interface = (settings.network_interface if settings and settings.network_interface else "eth0")
+                IPv6Manager().remove_ipv6(interface, db_domain.ipv6)
+            except Exception as e:
+                # No bloqueamos el borrado si falla quitar la IPv6
+                print(f"Warning: no se pudo quitar IPv6 {db_domain.ipv6} de la interfaz: {e}")
+
+        # Delete domain from system (nginx config + directorios)
         domain_manager.delete_domain(db_domain.domain_name, username=username)
 
         db.delete(db_domain)
