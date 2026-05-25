@@ -80,6 +80,9 @@
           <button v-if="isAdmin" class="btn btn-sm btn-success" @click="openAddRecord">
             <i class="bi bi-plus-lg me-1"></i> Añadir Registro
           </button>
+          <button v-if="isAdmin" class="btn btn-sm btn-outline-warning" @click="confirmRegenerate" :title="'Regenerar registros con plantilla ' + (selectedZone.template || 'default')">
+            <i class="bi bi-arrow-repeat me-1"></i> Regenerar plantilla
+          </button>
           <button class="btn btn-sm btn-outline-secondary" @click="selectedZone = null">
             <i class="bi bi-x"></i> Cerrar
           </button>
@@ -311,6 +314,29 @@
     </div>
 
 
+    <!-- ═══════════════ Modal: Confirmar regenerar plantilla ═══════════════ -->
+    <div v-if="showRegenerateConfirm" class="modal d-block" tabindex="-1" style="background:rgba(0,0,0,.5)">
+      <div class="modal-dialog">
+        <div class="modal-content">
+          <div class="modal-header bg-warning">
+            <h5 class="modal-title"><i class="bi bi-arrow-repeat me-2"></i>Regenerar plantilla DNS</h5>
+            <button class="btn-close" @click="showRegenerateConfirm = false"></button>
+          </div>
+          <div class="modal-body">
+            <p>¿Regenerar los registros de <strong>{{ selectedZone?.domain_name }}</strong> con la plantilla <strong>{{ selectedZone?.template || 'default' }}</strong>?</p>
+            <p class="text-warning small"><i class="bi bi-exclamation-triangle me-1"></i>Se borrarán todos los registros actuales y se crearán de nuevo con la plantilla Hestia.</p>
+          </div>
+          <div class="modal-footer">
+            <button class="btn btn-secondary" @click="showRegenerateConfirm = false">Cancelar</button>
+            <button class="btn btn-warning" :disabled="regenerating" @click="regenerateZone">
+              <span v-if="regenerating" class="spinner-border spinner-border-sm me-2"></span>
+              Regenerar
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+
     <!-- ═══════════════ Modal: Confirmar borrado zona ═══════════════ -->
     <div v-if="zoneToDelete" class="modal d-block" tabindex="-1" style="background:rgba(0,0,0,.5)">
       <div class="modal-dialog">
@@ -394,7 +420,10 @@ export default {
   name: 'DNS',
   setup() {
     const store   = useMainStore()
-    const isAdmin = computed(() => store.currentUser?.role === 'admin')
+    // Doble check: por role (nuevo) o por is_admin (por si el localStorage es antiguo)
+    const isAdmin = computed(() =>
+      store.currentUser?.role === 'admin' || store.currentUser?.is_admin === true
+    )
 
     // Zones
     const zones        = ref([])
@@ -416,6 +445,10 @@ export default {
     const editingRecord   = ref(null)
     const savingRecord    = ref(false)
     const recordForm      = ref({ record_type: 'A', name: '@', content: '', ttl: 14400, priority: 0 })
+
+    // Regenerate zone
+    const showRegenerateConfirm = ref(false)
+    const regenerating          = ref(false)
 
     // Delete zone
     const zoneToDelete  = ref(null)
@@ -608,6 +641,27 @@ export default {
       }
     }
 
+    // ─── Regenerate zone ──────────────────────────────────────────────────────
+
+    const confirmRegenerate = () => { showRegenerateConfirm.value = true }
+
+    const regenerateZone = async () => {
+      if (!selectedZone.value) return
+      regenerating.value = true
+      try {
+        const updated = await api.regenerateDnsZone(selectedZone.value.id)
+        store.showNotification(`Registros de ${selectedZone.value.domain_name} regenerados`, 'success')
+        showRegenerateConfirm.value = false
+        selectedZone.value = { ...selectedZone.value, serial: updated.serial }
+        await loadRecords(selectedZone.value.id)
+        await loadZones()
+      } catch (e) {
+        store.showNotification('Error: ' + e.message, 'danger')
+      } finally {
+        regenerating.value = false
+      }
+    }
+
     onMounted(loadZones)
 
     return {
@@ -616,11 +670,13 @@ export default {
       selectedZone, records, loadingRecords,
       showZoneModal, editingZone, zoneForm, savingZone,
       showRecordModal, editingRecord, savingRecord, recordForm, recordTypes,
+      showRegenerateConfirm, regenerating,
       zoneToDelete, deletingZone,
       recordToDelete, deletingRecord,
       typeClass,
       openZoneRecords, openCreateZone, openEditZone, saveZone, confirmDeleteZone, deleteZone,
       openAddRecord, openEditRecord, saveRecord, confirmDeleteRecord, deleteRecord,
+      confirmRegenerate, regenerateZone,
     }
   }
 }

@@ -228,6 +228,42 @@ async def update_zone(
     )
 
 
+@router.post("/dns/{zone_id}/regenerate", response_model=DnsZoneResponse)
+async def regenerate_zone(
+    zone_id: int,
+    current_user=Depends(require_admin),
+    db: Session = Depends(get_db)
+):
+    """[Admin] Regenera los registros de la zona con la plantilla actual (borra los existentes)"""
+    zone = db.query(DnsZone).filter(DnsZone.id == zone_id).first()
+    if not zone:
+        raise HTTPException(status_code=404, detail="Zona no encontrada")
+
+    ipv4 = zone.ip_address or _get_server_ipv4(db)
+    domain_obj = db.query(Domain).filter(Domain.domain_name == zone.domain_name).first()
+    ipv6 = domain_obj.ipv6 if domain_obj else None
+
+    # Borrar registros actuales y regenerar con plantilla
+    db.query(DnsRecord).filter(DnsRecord.zone_id == zone_id).delete()
+    default_records = _build_template_records(zone.domain_name, ipv4, ipv6, zone.soa_ns)
+    for r in default_records:
+        db.add(DnsRecord(zone_id=zone.id, **r))
+
+    zone.serial = _bump_serial(zone.serial)
+    db.commit()
+    db.refresh(zone)
+    _sync_zone_to_bind(zone, db)
+
+    records = db.query(DnsRecord).filter(DnsRecord.zone_id == zone_id).all()
+    return DnsZoneResponse(
+        id=zone.id, domain_name=zone.domain_name, serial=zone.serial,
+        is_active=zone.is_active, created_at=zone.created_at,
+        ip_address=zone.ip_address, soa_ns=zone.soa_ns, ttl=zone.ttl,
+        template=zone.template, dnssec_enabled=zone.dnssec_enabled, expires_at=zone.expires_at,
+        records=[DnsRecordResponse.model_validate(r) for r in records]
+    )
+
+
 @router.delete("/dns/{zone_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_zone(
     zone_id: int,

@@ -219,6 +219,10 @@ class APIClient {
     return this.delete(`/api/dns/${zoneId}`)
   }
 
+  regenerateDnsZone(zoneId) {
+    return this.post(`/api/dns/${zoneId}/regenerate`, {})
+  }
+
   getDnsRecords(zoneId) {
     return this.get(`/api/dns/${zoneId}/records`)
   }
