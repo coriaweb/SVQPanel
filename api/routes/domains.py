@@ -2,6 +2,7 @@
 Rutas API para gestión de dominios
 """
 
+import socket
 from fastapi import APIRouter, Depends, HTTPException, status, Query
 from sqlalchemy.orm import Session
 from sqlalchemy.exc import IntegrityError
@@ -15,6 +16,21 @@ from scripts.domain_manager import DomainManager
 router = APIRouter()
 
 
+def _get_reserved_domains():
+    """Dominios reservados que no se pueden registrar como dominios web"""
+    reserved = {"localhost", "localhost.localdomain"}
+    try:
+        fqdn = socket.getfqdn()
+        hostname = socket.gethostname()
+        if fqdn:
+            reserved.add(fqdn.lower())
+        if hostname:
+            reserved.add(hostname.lower())
+    except Exception:
+        pass
+    return reserved
+
+
 @router.post("/domains", response_model=DomainResponse, status_code=status.HTTP_201_CREATED)
 async def create_domain(
     domain: DomainCreate,
@@ -23,6 +39,14 @@ async def create_domain(
 ):
     """Crear un nuevo dominio"""
     domain_manager = DomainManager()
+
+    # Protección: no permitir el hostname del servidor como dominio web
+    reserved = _get_reserved_domains()
+    if domain.domain_name.lower() in reserved:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"'{domain.domain_name}' es el hostname del servidor y no puede usarse como dominio web"
+        )
 
     try:
         user = db.query(User).filter(User.id == domain.user_id).first()
