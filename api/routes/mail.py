@@ -1,0 +1,788 @@
+"""
+Rutas API para gestión de correo electrónico
+(dominios, buzones, alias, DKIM)
+"""
+
+import os
+import logging
+from fastapi import APIRouter, Depends, HTTPException, status
+from sqlalchemy.orm import Session
+from typing import List
+
+from api.models.database import get_db
+from api.models.models_mail import MailDomain, Mailbox, MailAlias
+from api.models.models_dns import DnsZone, DnsRecord
+from api.schemas.mail_schemas import (
+    MailDomainCreate, MailDomainUpdate, MailDomainResponse, MailDomainListItem,
+    MailboxCreate, MailboxUpdate, MailboxResponse,
+    MailAliasCreate, MailAliasResponse,
+    DkimGenerateRequest, DkimResponse,
+)
+from api.dependencies import require_auth
+
+router = APIRouter()
+logger = logging.getLogger(__name__)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Dependencias
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _require_mail_enabled():
+    """Devuelve 503 si MAIL_ENABLED no está en true en el .env"""
+    if os.getenv("MAIL_ENABLED", "false").lower() != "true":
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="El servidor de correo no está instalado en este servidor. "
+                   "Reinstala SVQPanel con la opción de correo activada."
+        )
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Helpers de permisos
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _can_edit(mail_domain: MailDomain, current_user) -> bool:
+    """True si el usuario tiene permiso para gestionar este dominio de correo"""
+    if current_user.role == "admin":
+        return True
+    if current_user.role == "reseller":
+        # El reseller puede gestionar los dominios de correo de sus usuarios
+        owner = mail_domain.user
+        return (mail_domain.user_id == current_user.id or
+                (owner is not None and owner.parent_id == current_user.id))
+    # Usuario regular: solo sus propios dominios
+    return mail_domain.user_id == current_user.id
+
+
+def _require_edit(mail_domain: MailDomain, current_user):
+    if not _can_edit(mail_domain, current_user):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="No tienes permisos para gestionar este dominio de correo"
+        )
+
+
+def _get_mail_domain_or_404(domain_id: int, db: Session) -> MailDomain:
+    md = db.query(MailDomain).filter(MailDomain.id == domain_id).first()
+    if not md:
+        raise HTTPException(status_code=404, detail="Dominio de correo no encontrado")
+    return md
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Helpers de serialización (evita DetachedInstanceError con propiedades lazy)
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _mail_domain_to_dict(md: MailDomain, current_user) -> dict:
+    return {
+        "id":            md.id,
+        "user_id":       md.user_id,
+        "domain_id":     md.domain_id,
+        "domain_name":   md.domain_name,
+        "is_active":     md.is_active,
+        "dkim_enabled":  md.dkim_enabled,
+        "dkim_selector": md.dkim_selector,
+        "catch_all":     md.catch_all,
+        "max_mailboxes": md.max_mailboxes,
+        "mailbox_count": len(md.mailboxes),
+        "alias_count":   len(md.aliases),
+        "created_at":    md.created_at,
+        "updated_at":    md.updated_at,
+        "can_edit":      _can_edit(md, current_user),
+    }
+
+
+def _mailbox_to_dict(mb: Mailbox) -> dict:
+    return {
+        "id":             mb.id,
+        "mail_domain_id": mb.mail_domain_id,
+        "username":       mb.username,
+        "quota_mb":       mb.quota_mb,
+        "is_active":      mb.is_active,
+        "full_email":     f"{mb.username}@{mb.mail_domain.domain_name}",
+        "disk_usage_mb":  0.0,   # calculado aparte para no ralentizar el listado
+        "created_at":     mb.created_at,
+        "updated_at":     mb.updated_at,
+    }
+
+
+def _alias_to_dict(al: MailAlias) -> dict:
+    source_str = (f"@{al.mail_domain.domain_name}"
+                  if al.source == "@"
+                  else f"{al.source}@{al.mail_domain.domain_name}")
+    return {
+        "id":             al.id,
+        "mail_domain_id": al.mail_domain_id,
+        "source":         al.source,
+        "destination":    al.destination,
+        "is_active":      al.is_active,
+        "full_source":    source_str,
+        "created_at":     al.created_at,
+    }
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# DKIM: helper para auto-añadir TXT record al DNS de SVQPanel
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _dns_add_dkim_record(domain_name: str, selector: str,
+                         dns_value: str, db: Session) -> bool:
+    """
+    Si existe una zona DNS de SVQPanel para el dominio, añade/actualiza
+    el registro TXT del DKIM automáticamente.
+    Devuelve True si se añadió, False si no hay zona DNS.
+    """
+    zone = db.query(DnsZone).filter(DnsZone.domain_name == domain_name).first()
+    if not zone:
+        return False
+
+    dkim_name = f"{selector}._domainkey"
+    existing = db.query(DnsRecord).filter(
+        DnsRecord.zone_id == zone.id,
+        DnsRecord.record_type == "TXT",
+        DnsRecord.name == dkim_name,
+    ).first()
+
+    if existing:
+        existing.content = dns_value
+        logger.info(f"DKIM TXT actualizado en zona DNS: {dkim_name}.{domain_name}")
+    else:
+        db.add(DnsRecord(
+            zone_id=zone.id,
+            record_type="TXT",
+            name=dkim_name,
+            content=dns_value,
+            ttl=3600,
+            priority=0,
+        ))
+        logger.info(f"DKIM TXT añadido a zona DNS: {dkim_name}.{domain_name}")
+
+    db.commit()
+
+    # Regenerar el fichero de zona BIND9 si está disponible
+    try:
+        from scripts.dns_manager import DNSManager
+        from api.models.models_dns import DnsRecord as DR
+        records = db.query(DR).filter(DR.zone_id == zone.id).all()
+        record_dicts = [
+            {"record_type": r.record_type, "name": r.name,
+             "content": r.content, "ttl": r.ttl, "priority": r.priority}
+            for r in records
+        ]
+        dns_mgr = DNSManager()
+        dns_mgr.write_zone_from_records(
+            domain_name, zone.serial, record_dicts,
+            soa_ns=zone.soa_ns, ttl=zone.ttl or 14400
+        )
+    except Exception as e:
+        logger.warning(f"No se pudo regenerar zona BIND9 tras DKIM: {e}")
+
+    return True
+
+
+def _dns_remove_dkim_record(domain_name: str, selector: str, db: Session):
+    """Elimina el registro TXT DKIM de la zona DNS de SVQPanel si existe"""
+    zone = db.query(DnsZone).filter(DnsZone.domain_name == domain_name).first()
+    if not zone:
+        return
+
+    dkim_name = f"{selector}._domainkey"
+    db.query(DnsRecord).filter(
+        DnsRecord.zone_id == zone.id,
+        DnsRecord.record_type == "TXT",
+        DnsRecord.name == dkim_name,
+    ).delete()
+    db.commit()
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Dominios de correo
+# ─────────────────────────────────────────────────────────────────────────────
+
+@router.get("/mail/domains", response_model=List[MailDomainListItem])
+async def list_mail_domains(
+    current_user=Depends(require_auth),
+    db: Session = Depends(get_db),
+):
+    """
+    Lista los dominios de correo.
+    - Admin: todos
+    - Reseller: los de sus usuarios + los propios
+    - Usuario: solo los suyos
+    """
+    query = db.query(MailDomain)
+
+    if current_user.role == "admin":
+        domains = query.all()
+    elif current_user.role == "reseller":
+        from api.models.models_user import User
+        client_ids = [
+            u.id for u in db.query(User).filter(User.parent_id == current_user.id).all()
+        ]
+        domains = query.filter(
+            MailDomain.user_id.in_(client_ids + [current_user.id])
+        ).all()
+    else:
+        domains = query.filter(MailDomain.user_id == current_user.id).all()
+
+    return [_mail_domain_to_dict(md, current_user) for md in domains]
+
+
+@router.post("/mail/domains", response_model=MailDomainResponse,
+             status_code=status.HTTP_201_CREATED)
+async def create_mail_domain(
+    data: MailDomainCreate,
+    current_user=Depends(require_auth),
+    db: Session = Depends(get_db),
+):
+    """Crea un nuevo dominio de correo y lo registra en Postfix"""
+    _require_mail_enabled()
+
+    # Verificar que el dominio no existe ya como dominio de correo
+    if db.query(MailDomain).filter(
+            MailDomain.domain_name == data.domain_name).first():
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f"'{data.domain_name}' ya es un dominio de correo"
+        )
+
+    # El usuario regular solo puede crear dominios de correo para sí mismo
+    if current_user.role == "user":
+        user_id = current_user.id
+    else:
+        user_id = current_user.id  # admin/reseller crea bajo sí mismo por defecto
+
+    md = MailDomain(
+        user_id       = user_id,
+        domain_id     = data.domain_id,
+        domain_name   = data.domain_name,
+        catch_all     = data.catch_all,
+        max_mailboxes = data.max_mailboxes,
+    )
+    db.add(md)
+    db.commit()
+    db.refresh(md)
+
+    # Registrar en Postfix
+    try:
+        from scripts.mail_manager import MailManager
+        MailManager().create_mail_domain(data.domain_name, current_user.username)
+    except PermissionError:
+        logger.warning("Sin permisos root para crear dominio en Postfix (¿entorno dev?)")
+    except Exception as e:
+        logger.error(f"Error registrando dominio de correo en Postfix: {e}")
+        # No revertimos la BD — el admin puede corregir manualmente
+
+    return _mail_domain_to_dict(md, current_user)
+
+
+@router.get("/mail/domains/{domain_id}", response_model=MailDomainResponse)
+async def get_mail_domain(
+    domain_id: int,
+    current_user=Depends(require_auth),
+    db: Session = Depends(get_db),
+):
+    """Devuelve los detalles de un dominio de correo"""
+    md = _get_mail_domain_or_404(domain_id, db)
+    _require_edit(md, current_user)
+    return _mail_domain_to_dict(md, current_user)
+
+
+@router.put("/mail/domains/{domain_id}", response_model=MailDomainResponse)
+async def update_mail_domain(
+    domain_id: int,
+    data: MailDomainUpdate,
+    current_user=Depends(require_auth),
+    db: Session = Depends(get_db),
+):
+    """Actualiza configuración de un dominio de correo (catch-all, límites, activo)"""
+    _require_mail_enabled()
+    md = _get_mail_domain_or_404(domain_id, db)
+    _require_edit(md, current_user)
+
+    old_catch_all = md.catch_all
+
+    if data.catch_all is not None:
+        md.catch_all = data.catch_all or None
+    if data.max_mailboxes is not None:
+        md.max_mailboxes = data.max_mailboxes
+    if data.is_active is not None:
+        md.is_active = data.is_active
+
+    db.commit()
+    db.refresh(md)
+
+    # Sincronizar catch-all en Postfix
+    if data.catch_all is not None and data.catch_all != old_catch_all:
+        try:
+            from scripts.mail_manager import MailManager
+            mgr = MailManager()
+            if md.catch_all:
+                mgr.set_catch_all(md.domain_name, md.catch_all)
+            else:
+                mgr.remove_catch_all(md.domain_name)
+        except Exception as e:
+            logger.warning(f"Error actualizando catch-all en Postfix: {e}")
+
+    return _mail_domain_to_dict(md, current_user)
+
+
+@router.delete("/mail/domains/{domain_id}",
+               status_code=status.HTTP_204_NO_CONTENT)
+async def delete_mail_domain(
+    domain_id: int,
+    current_user=Depends(require_auth),
+    db: Session = Depends(get_db),
+):
+    """
+    Elimina un dominio de correo y TODOS sus datos:
+    buzones, alias, claves DKIM y los Maildir del disco.
+    """
+    _require_mail_enabled()
+    md = _get_mail_domain_or_404(domain_id, db)
+    _require_edit(md, current_user)
+
+    domain_name    = md.domain_name
+    panel_username = md.user.username if md.user else current_user.username
+    dkim_selector  = md.dkim_selector
+
+    # Eliminar registros DNS DKIM si existen
+    if md.dkim_enabled:
+        _dns_remove_dkim_record(domain_name, dkim_selector, db)
+
+    # Eliminar de la BD (cascade elimina mailboxes y aliases)
+    db.delete(md)
+    db.commit()
+
+    # Limpiar Postfix + Dovecot + disco
+    try:
+        from scripts.mail_manager import MailManager
+        MailManager().delete_mail_domain(domain_name, panel_username)
+    except PermissionError:
+        logger.warning("Sin permisos root para limpiar dominio de correo (¿entorno dev?)")
+    except Exception as e:
+        logger.error(f"Error eliminando dominio de correo del sistema: {e}")
+
+    # Eliminar clave DKIM
+    try:
+        from scripts.dkim_manager import DkimManager
+        DkimManager().remove_key(domain_name, dkim_selector)
+    except Exception as e:
+        logger.warning(f"No se pudo eliminar clave DKIM: {e}")
+
+    return None
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# DKIM
+# ─────────────────────────────────────────────────────────────────────────────
+
+@router.post("/mail/domains/{domain_id}/dkim", response_model=DkimResponse)
+async def generate_dkim(
+    domain_id: int,
+    data: DkimGenerateRequest = DkimGenerateRequest(),
+    current_user=Depends(require_auth),
+    db: Session = Depends(get_db),
+):
+    """
+    Genera (o rota) la clave DKIM para el dominio.
+    Si existe zona DNS en SVQPanel, añade el TXT record automáticamente.
+    """
+    _require_mail_enabled()
+    md = _get_mail_domain_or_404(domain_id, db)
+    _require_edit(md, current_user)
+
+    try:
+        from scripts.dkim_manager import DkimManager
+        result = DkimManager().generate_key(md.domain_name, data.selector)
+    except PermissionError:
+        raise HTTPException(403, "Se necesitan permisos de root para generar claves DKIM")
+    except Exception as e:
+        raise HTTPException(500, f"Error generando clave DKIM: {e}")
+
+    # Actualizar BD
+    md.dkim_enabled    = True
+    md.dkim_selector   = data.selector
+    md.dkim_public_key = result["public_key_b64"]
+    db.commit()
+
+    # Añadir automáticamente a la zona DNS de SVQPanel si existe
+    dns_added = _dns_add_dkim_record(
+        md.domain_name, data.selector, result["dns_record_value"], db
+    )
+
+    msg = "Clave DKIM generada correctamente"
+    if dns_added:
+        msg += ". Registro TXT añadido automáticamente a la zona DNS."
+    else:
+        msg += (f". Añade manualmente este TXT a tu DNS: "
+                f"{result['dns_record_name']}  →  {result['dns_record_value'][:40]}...")
+
+    return DkimResponse(
+        enabled          = True,
+        selector         = data.selector,
+        dns_record_name  = result["dns_record_name"],
+        dns_record_value = result["dns_record_value"],
+        public_key_pem   = result["public_key_pem"],
+        dns_auto_added   = dns_added,
+        message          = msg,
+    )
+
+
+@router.delete("/mail/domains/{domain_id}/dkim",
+               status_code=status.HTTP_204_NO_CONTENT)
+async def remove_dkim(
+    domain_id: int,
+    current_user=Depends(require_auth),
+    db: Session = Depends(get_db),
+):
+    """Elimina la clave DKIM del dominio"""
+    _require_mail_enabled()
+    md = _get_mail_domain_or_404(domain_id, db)
+    _require_edit(md, current_user)
+
+    _dns_remove_dkim_record(md.domain_name, md.dkim_selector, db)
+
+    try:
+        from scripts.dkim_manager import DkimManager
+        DkimManager().remove_key(md.domain_name, md.dkim_selector)
+    except Exception as e:
+        logger.warning(f"No se pudo eliminar clave DKIM del disco: {e}")
+
+    md.dkim_enabled    = False
+    md.dkim_public_key = None
+    db.commit()
+
+    return None
+
+
+@router.get("/mail/domains/{domain_id}/dkim", response_model=DkimResponse)
+async def get_dkim_info(
+    domain_id: int,
+    current_user=Depends(require_auth),
+    db: Session = Depends(get_db),
+):
+    """Devuelve el estado y el registro DNS de la clave DKIM del dominio"""
+    md = _get_mail_domain_or_404(domain_id, db)
+    _require_edit(md, current_user)
+
+    if not md.dkim_enabled or not md.dkim_public_key:
+        return DkimResponse(enabled=False, selector=md.dkim_selector or "mail",
+                            message="DKIM no configurado para este dominio")
+
+    dns_name  = f"{md.dkim_selector}._domainkey.{md.domain_name}"
+    dns_value = f"v=DKIM1; k=rsa; p={md.dkim_public_key}"
+
+    return DkimResponse(
+        enabled          = True,
+        selector         = md.dkim_selector,
+        dns_record_name  = dns_name,
+        dns_record_value = dns_value,
+        public_key_pem   = None,   # no almacenamos la clave privada en BD
+        message          = "DKIM activo",
+    )
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Buzones
+# ─────────────────────────────────────────────────────────────────────────────
+
+@router.get("/mail/domains/{domain_id}/mailboxes",
+            response_model=List[MailboxResponse])
+async def list_mailboxes(
+    domain_id: int,
+    current_user=Depends(require_auth),
+    db: Session = Depends(get_db),
+):
+    """Lista los buzones de un dominio de correo"""
+    md = _get_mail_domain_or_404(domain_id, db)
+    _require_edit(md, current_user)
+    return [_mailbox_to_dict(mb) for mb in md.mailboxes]
+
+
+@router.post("/mail/domains/{domain_id}/mailboxes",
+             response_model=MailboxResponse,
+             status_code=status.HTTP_201_CREATED)
+async def create_mailbox(
+    domain_id: int,
+    data: MailboxCreate,
+    current_user=Depends(require_auth),
+    db: Session = Depends(get_db),
+):
+    """Crea un nuevo buzón de correo"""
+    _require_mail_enabled()
+    md = _get_mail_domain_or_404(domain_id, db)
+    _require_edit(md, current_user)
+
+    # Comprobar límite de buzones
+    if md.max_mailboxes > 0:
+        current_count = db.query(Mailbox).filter(
+            Mailbox.mail_domain_id == md.id
+        ).count()
+        if current_count >= md.max_mailboxes:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Límite de {md.max_mailboxes} buzones alcanzado"
+            )
+
+    # Comprobar que el buzón no existe ya
+    existing = db.query(Mailbox).filter(
+        Mailbox.mail_domain_id == md.id,
+        Mailbox.username == data.username,
+    ).first()
+    if existing:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f"El buzón '{data.username}@{md.domain_name}' ya existe"
+        )
+
+    # Crear en el sistema (genera hash + Maildir + Postfix + Dovecot)
+    panel_username = md.user.username if md.user else current_user.username
+    pwd_hash = ""
+    try:
+        from scripts.mail_manager import MailManager
+        mgr = MailManager()
+        pwd_hash = mgr.hash_password(data.password)
+        mgr.create_mailbox(
+            panel_username, md.domain_name,
+            data.username, data.password, data.quota_mb
+        )
+    except PermissionError:
+        logger.warning("Sin permisos root para crear buzón (¿entorno dev?)")
+        # Generar hash de todas formas para no dejar BD vacía
+        try:
+            from scripts.mail_manager import MailManager
+            pwd_hash = MailManager().hash_password(data.password)
+        except Exception:
+            pwd_hash = f"{{PLAIN}}{data.password}"  # fallback solo en dev
+    except Exception as e:
+        raise HTTPException(500, f"Error creando buzón en el sistema: {e}")
+
+    # Crear en la BD
+    mb = Mailbox(
+        mail_domain_id = md.id,
+        username       = data.username,
+        password_hash  = pwd_hash,
+        quota_mb       = data.quota_mb,
+    )
+    db.add(mb)
+    db.commit()
+    db.refresh(mb)
+
+    return _mailbox_to_dict(mb)
+
+
+@router.put("/mail/domains/{domain_id}/mailboxes/{mailbox_id}",
+            response_model=MailboxResponse)
+async def update_mailbox(
+    domain_id:  int,
+    mailbox_id: int,
+    data:       MailboxUpdate,
+    current_user=Depends(require_auth),
+    db: Session = Depends(get_db),
+):
+    """Actualiza un buzón: contraseña, cuota o estado activo/suspendido"""
+    _require_mail_enabled()
+    md = _get_mail_domain_or_404(domain_id, db)
+    _require_edit(md, current_user)
+
+    mb = db.query(Mailbox).filter(
+        Mailbox.id == mailbox_id,
+        Mailbox.mail_domain_id == domain_id,
+    ).first()
+    if not mb:
+        raise HTTPException(404, "Buzón no encontrado")
+
+    panel_username = md.user.username if md.user else current_user.username
+
+    try:
+        from scripts.mail_manager import MailManager
+        mgr = MailManager()
+
+        if data.password is not None:
+            new_hash = mgr.hash_password(data.password)
+            mgr.change_mailbox_password(
+                panel_username, md.domain_name, mb.username,
+                data.password, data.quota_mb or mb.quota_mb
+            )
+            mb.password_hash = new_hash
+
+        if data.quota_mb is not None and data.quota_mb != mb.quota_mb:
+            mgr.update_mailbox_quota(
+                panel_username, md.domain_name, mb.username,
+                data.quota_mb, mb.password_hash
+            )
+            mb.quota_mb = data.quota_mb
+
+        if data.is_active is not None and data.is_active != mb.is_active:
+            mgr.set_mailbox_active(
+                panel_username, md.domain_name, mb.username,
+                data.is_active,
+                password_hash=mb.password_hash,
+                quota_mb=mb.quota_mb,
+            )
+            mb.is_active = data.is_active
+
+    except PermissionError:
+        logger.warning("Sin permisos root para modificar buzón (¿entorno dev?)")
+        # Actualizar solo la BD
+        if data.password is not None:
+            try:
+                from scripts.mail_manager import MailManager
+                mb.password_hash = MailManager().hash_password(data.password)
+            except Exception:
+                pass
+        if data.quota_mb is not None:
+            mb.quota_mb = data.quota_mb
+        if data.is_active is not None:
+            mb.is_active = data.is_active
+    except Exception as e:
+        raise HTTPException(500, f"Error actualizando buzón: {e}")
+
+    db.commit()
+    db.refresh(mb)
+    return _mailbox_to_dict(mb)
+
+
+@router.delete("/mail/domains/{domain_id}/mailboxes/{mailbox_id}",
+               status_code=status.HTTP_204_NO_CONTENT)
+async def delete_mailbox(
+    domain_id:  int,
+    mailbox_id: int,
+    current_user=Depends(require_auth),
+    db: Session = Depends(get_db),
+):
+    """Elimina un buzón y su Maildir del disco"""
+    _require_mail_enabled()
+    md = _get_mail_domain_or_404(domain_id, db)
+    _require_edit(md, current_user)
+
+    mb = db.query(Mailbox).filter(
+        Mailbox.id == mailbox_id,
+        Mailbox.mail_domain_id == domain_id,
+    ).first()
+    if not mb:
+        raise HTTPException(404, "Buzón no encontrado")
+
+    panel_username  = md.user.username if md.user else current_user.username
+    mailbox_username = mb.username
+
+    db.delete(mb)
+    db.commit()
+
+    try:
+        from scripts.mail_manager import MailManager
+        MailManager().delete_mailbox(panel_username, md.domain_name, mailbox_username)
+    except PermissionError:
+        logger.warning("Sin permisos root para eliminar buzón del sistema (¿entorno dev?)")
+    except Exception as e:
+        logger.error(f"Error eliminando buzón del sistema: {e}")
+
+    return None
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Alias
+# ─────────────────────────────────────────────────────────────────────────────
+
+@router.get("/mail/domains/{domain_id}/aliases",
+            response_model=List[MailAliasResponse])
+async def list_aliases(
+    domain_id: int,
+    current_user=Depends(require_auth),
+    db: Session = Depends(get_db),
+):
+    """Lista los alias de un dominio de correo"""
+    md = _get_mail_domain_or_404(domain_id, db)
+    _require_edit(md, current_user)
+    return [_alias_to_dict(al) for al in md.aliases]
+
+
+@router.post("/mail/domains/{domain_id}/aliases",
+             response_model=MailAliasResponse,
+             status_code=status.HTTP_201_CREATED)
+async def create_alias(
+    domain_id: int,
+    data: MailAliasCreate,
+    current_user=Depends(require_auth),
+    db: Session = Depends(get_db),
+):
+    """Crea un alias o catch-all para el dominio"""
+    _require_mail_enabled()
+    md = _get_mail_domain_or_404(domain_id, db)
+    _require_edit(md, current_user)
+
+    # Evitar duplicados
+    existing = db.query(MailAlias).filter(
+        MailAlias.mail_domain_id == md.id,
+        MailAlias.source == data.source,
+    ).first()
+    if existing:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f"El alias '{data.source}@{md.domain_name}' ya existe"
+        )
+
+    al = MailAlias(
+        mail_domain_id = md.id,
+        source         = data.source,
+        destination    = data.destination,
+    )
+    db.add(al)
+    db.commit()
+    db.refresh(al)
+
+    # Registrar en Postfix
+    try:
+        from scripts.mail_manager import MailManager
+        mgr = MailManager()
+        if data.source == "@":
+            mgr.set_catch_all(md.domain_name, data.destination)
+        else:
+            mgr.create_alias(md.domain_name, data.source, data.destination)
+    except PermissionError:
+        logger.warning("Sin permisos root para crear alias (¿entorno dev?)")
+    except Exception as e:
+        logger.error(f"Error creando alias en Postfix: {e}")
+
+    return _alias_to_dict(al)
+
+
+@router.delete("/mail/domains/{domain_id}/aliases/{alias_id}",
+               status_code=status.HTTP_204_NO_CONTENT)
+async def delete_alias(
+    domain_id: int,
+    alias_id:  int,
+    current_user=Depends(require_auth),
+    db: Session = Depends(get_db),
+):
+    """Elimina un alias"""
+    _require_mail_enabled()
+    md = _get_mail_domain_or_404(domain_id, db)
+    _require_edit(md, current_user)
+
+    al = db.query(MailAlias).filter(
+        MailAlias.id == alias_id,
+        MailAlias.mail_domain_id == domain_id,
+    ).first()
+    if not al:
+        raise HTTPException(404, "Alias no encontrado")
+
+    source = al.source
+    db.delete(al)
+    db.commit()
+
+    try:
+        from scripts.mail_manager import MailManager
+        mgr = MailManager()
+        if source == "@":
+            mgr.remove_catch_all(md.domain_name)
+        else:
+            mgr.delete_alias(md.domain_name, source)
+    except PermissionError:
+        logger.warning("Sin permisos root para eliminar alias (¿entorno dev?)")
+    except Exception as e:
+        logger.error(f"Error eliminando alias de Postfix: {e}")
+
+    return None

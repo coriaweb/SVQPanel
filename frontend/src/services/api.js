@@ -277,6 +277,70 @@ class APIClient {
     return this.put(`/api/system/services/${serviceName}/config/${encodeURIComponent(fileLabel)}`, { content })
   }
 
+  // Mail — dominios de correo
+  getMailDomains() {
+    return this.get('/api/mail/domains')
+  }
+
+  createMailDomain(data) {
+    return this.post('/api/mail/domains', data)
+  }
+
+  getMailDomain(domainId) {
+    return this.get(`/api/mail/domains/${domainId}`)
+  }
+
+  updateMailDomain(domainId, data) {
+    return this.put(`/api/mail/domains/${domainId}`, data)
+  }
+
+  deleteMailDomain(domainId) {
+    return this.delete(`/api/mail/domains/${domainId}`)
+  }
+
+  // Mail — DKIM
+  generateDkim(domainId, selector = 'mail') {
+    return this.post(`/api/mail/domains/${domainId}/dkim`, { selector })
+  }
+
+  getDkimInfo(domainId) {
+    return this.get(`/api/mail/domains/${domainId}/dkim`)
+  }
+
+  deleteDkim(domainId) {
+    return this.delete(`/api/mail/domains/${domainId}/dkim`)
+  }
+
+  // Mail — buzones
+  getMailboxes(domainId) {
+    return this.get(`/api/mail/domains/${domainId}/mailboxes`)
+  }
+
+  createMailbox(domainId, data) {
+    return this.post(`/api/mail/domains/${domainId}/mailboxes`, data)
+  }
+
+  updateMailbox(domainId, mailboxId, data) {
+    return this.put(`/api/mail/domains/${domainId}/mailboxes/${mailboxId}`, data)
+  }
+
+  deleteMailbox(domainId, mailboxId) {
+    return this.delete(`/api/mail/domains/${domainId}/mailboxes/${mailboxId}`)
+  }
+
+  // Mail — alias
+  getMailAliases(domainId) {
+    return this.get(`/api/mail/domains/${domainId}/aliases`)
+  }
+
+  createMailAlias(domainId, data) {
+    return this.post(`/api/mail/domains/${domainId}/aliases`, data)
+  }
+
+  deleteMailAlias(domainId, aliasId) {
+    return this.delete(`/api/mail/domains/${domainId}/aliases/${aliasId}`)
+  }
+
   // Health check
   health() {
     return this.get('/api/health')
