@@ -164,9 +164,14 @@ server {{
 def reload_nginx() -> bool:
     """Test and reload nginx configuration"""
     import subprocess
+    import os
+
+    env = os.environ.copy()
+    env["PATH"] = "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+
     try:
-        subprocess.run(["nginx", "-t"], check=True, capture_output=True)
-        subprocess.run(["systemctl", "reload", "nginx"], check=True, capture_output=True)
+        subprocess.run(["nginx", "-t"], check=True, capture_output=True, env=env)
+        subprocess.run(["systemctl", "reload", "nginx"], check=True, capture_output=True, env=env)
         logger.info("Nginx reloaded successfully")
         return True
     except subprocess.CalledProcessError as e:
