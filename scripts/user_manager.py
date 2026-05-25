@@ -36,28 +36,25 @@ class UserManager(SystemManager):
 
         try:
             # Check if user already exists
-            self.execute_command(["id", username], check=False)
-            existing_user, _, _ = self.execute_command(
-                ["id", username], check=False
-            )
-            if existing_user == 0:
+            ret, _, _ = self.execute_command(["id", username], check=False)
+            if ret == 0:
                 raise ValueError(f"User already exists: {username}")
 
             # Create user with home directory
             logger.info(f"Creating user: {username}")
             self.execute_command([
                 "useradd",
-                "-m",  # Create home directory
-                "-s", "/bin/bash",  # Shell
+                "-m",           # Create home directory
+                "-s", "/bin/bash",
                 "-d", home_dir,
                 username
             ])
 
-            # Set password if provided
+            # Set password if provided (usando chpasswd via stdin)
             if password:
-                self.execute_command([
-                    "chpasswd"
-                ], check=False)  # Will use stdin
+                self.execute_command(
+                    f"echo '{username}:{password}' | chpasswd"
+                )
 
             # Create public_html directory
             public_html = f"{home_dir}/public_html"
@@ -146,8 +143,7 @@ class UserManager(SystemManager):
             logger.info(f"Changing password for: {username}")
             # Use echo + chpasswd for non-interactive password change
             self.execute_command(
-                f"echo '{username}:{new_password}' | chpasswd",
-                shell=True
+                f"echo '{username}:{new_password}' | chpasswd"
             )
             logger.info(f"Password changed: {username}")
             return {

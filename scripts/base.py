@@ -21,24 +21,33 @@ class SystemManager:
         if os.geteuid() != 0:
             raise PermissionError("This operation requires root privileges")
 
-    def execute_command(self, cmd: list, check: bool = True) -> Tuple[int, str, str]:
+    # PATH completo para entornos systemd donde PATH es mínimo
+    _SYSTEM_PATH = "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+
+    def execute_command(self, cmd, check: bool = True) -> Tuple[int, str, str]:
         """
         Execute a system command safely.
 
         Args:
-            cmd: Command as list ['ls', '-la']
+            cmd: Command as list ['ls', '-la'] or string (with shell=True)
             check: Raise exception on non-zero exit
 
         Returns:
             (return_code, stdout, stderr)
         """
+        use_shell = isinstance(cmd, str)
+        env = os.environ.copy()
+        env["PATH"] = self._SYSTEM_PATH
+
         try:
-            logger.info(f"Executing: {' '.join(cmd)}")
+            logger.info(f"Executing: {cmd if use_shell else ' '.join(cmd)}")
             result = subprocess.run(
                 cmd,
                 capture_output=True,
                 text=True,
-                check=False
+                check=False,
+                shell=use_shell,
+                env=env
             )
 
             if check and result.returncode != 0:
