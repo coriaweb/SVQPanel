@@ -30,7 +30,9 @@ class APIClient {
 
     try {
       const response = await fetch(url, config)
-      const data = await response.json()
+
+      // 204 No Content no tiene body — no intentar parsear JSON
+      const data = response.status === 204 ? null : await response.json()
 
       if (!response.ok) {
         // Si es 401, limpiar token y redirigir a login
