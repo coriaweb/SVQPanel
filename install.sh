@@ -237,46 +237,11 @@ ALTER ROLE panel_user SET timezone TO 'UTC';
 GRANT ALL PRIVILEGES ON DATABASE panel_db TO panel_user;
 EOF
 
-# Crear tablas (como postgres para evitar problemas de permisos)
+# Dar permisos al schema public para que SQLAlchemy pueda crear tablas
 sudo -u postgres psql -d panel_db << 'SQLEOF'
-CREATE TABLE IF NOT EXISTS users (
-    id SERIAL PRIMARY KEY,
-    username VARCHAR(255) UNIQUE NOT NULL,
-    email VARCHAR(255) UNIQUE NOT NULL,
-    password_hash VARCHAR(255) NOT NULL,
-    first_name VARCHAR(255),
-    last_name VARCHAR(255),
-    role VARCHAR(50) DEFAULT 'user',
-    is_admin BOOLEAN DEFAULT FALSE,
-    is_active BOOLEAN DEFAULT TRUE,
-    domains_limit INTEGER DEFAULT 10,
-    created_at TIMESTAMP,
-    updated_at TIMESTAMP,
-    last_login TIMESTAMP,
-    shell_path VARCHAR(255),
-    home_dir VARCHAR(255)
-);
-
-CREATE TABLE IF NOT EXISTS domains (
-    id SERIAL PRIMARY KEY,
-    user_id INTEGER NOT NULL REFERENCES users(id),
-    domain_name VARCHAR(255) UNIQUE NOT NULL,
-    public_html VARCHAR(255),
-    php_version VARCHAR(50),
-    ssl_enabled BOOLEAN DEFAULT FALSE,
-    ssl_certificate TEXT,
-    ssl_key TEXT,
-    ssl_expires TIMESTAMP,
-    ipv4 VARCHAR(255),
-    ipv6 VARCHAR(255),
-    is_active BOOLEAN DEFAULT TRUE,
-    disk_usage BIGINT DEFAULT 0,
-    created_at TIMESTAMP,
-    updated_at TIMESTAMP
-);
-
-GRANT ALL PRIVILEGES ON users, domains TO panel_user;
-GRANT ALL PRIVILEGES ON users_id_seq, domains_id_seq TO panel_user;
+GRANT ALL PRIVILEGES ON SCHEMA public TO panel_user;
+ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON TABLES TO panel_user;
+ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON SEQUENCES TO panel_user;
 SQLEOF
 
 echo -e "${GREEN}✓ PostgreSQL configurado${NC}\n"
@@ -316,7 +281,31 @@ pip install -r requirements.txt -q || {
 echo -e "${GREEN}✓ Entorno Python creado${NC}\n"
 
 ###############################################################################
-# 9. COMPILAR FRONTEND
+# 9. CREAR TABLAS EN BASE DE DATOS (via SQLAlchemy)
+###############################################################################
+echo -e "${YELLOW}Creando tablas en base de datos...${NC}"
+
+cd /opt/svqpanel
+source venv/bin/activate
+
+python3 << 'PYEOF'
+import sys
+sys.path.insert(0, '/opt/svqpanel')
+from sqlalchemy import create_engine
+from api.models.database import Base
+from api.models.models_user import User
+from api.models.models_domain import Domain
+
+DATABASE_URL = "postgresql://panel_user:panel_password_123@localhost/panel_db"
+engine = create_engine(DATABASE_URL)
+Base.metadata.create_all(engine)
+print("✓ Tablas creadas correctamente")
+PYEOF
+
+echo -e "${GREEN}✓ Base de datos lista${NC}\n"
+
+###############################################################################
+# 10. COMPILAR FRONTEND
 ###############################################################################
 echo -e "${YELLOW}Compilando frontend Vue3...${NC}"
 
@@ -473,8 +462,6 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 from api.models.models_user import User
 from api.models.models_domain import Domain
-from api.models.database import Base
-from api.models.database import Base
 
 DATABASE_URL = "postgresql://panel_user:panel_password_123@localhost/panel_db"
 engine = create_engine(DATABASE_URL)
@@ -488,10 +475,11 @@ try:
         print("Admin user already exists")
         sys.exit(0)
 
-    # Crear usuario admin
+    # Crear usuario admin con rol correcto
     admin_user = User(
         username="admin",
         email="admin@localhost",
+        role="admin",
         is_admin=True,
         is_active=True
     )
