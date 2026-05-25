@@ -57,15 +57,17 @@ class UserManager(SystemManager):
                 )
 
             # Estructura de directorios estilo Hestia:
-            # /home/username/
-            #   web/          → dominios (creados al añadir cada dominio)
-            #   tmp/          → archivos temporales
+            # /home/username/         755 user:user   (adduser lo crea)
+            #   web/                  750 user:www-data  ← nginx puede atravesar
+            #   tmp/                  750 user:user
             web_root = get_web_root(username)
             tmp_dir = f"{home_dir}/tmp"
 
-            for directory in [web_root, tmp_dir]:
-                self.create_directory(directory, mode=0o750)
-                self.change_ownership(directory, username)
+            self.create_directory(web_root, mode=0o750)
+            self.change_ownership(web_root, username, "www-data")  # nginx puede atravesar
+
+            self.create_directory(tmp_dir, mode=0o750)
+            self.change_ownership(tmp_dir, username)
 
             # .bashrc si no existe
             bashrc_path = f"{home_dir}/.bashrc"
