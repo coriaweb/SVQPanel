@@ -31,8 +31,18 @@ class APIClient {
     try {
       const response = await fetch(url, config)
 
-      // 204 No Content no tiene body — no intentar parsear JSON
-      const data = response.status === 204 ? null : await response.json()
+      // 204 No Content no tiene body
+      let data = null
+      if (response.status !== 204) {
+        const contentType = response.headers.get('content-type') || ''
+        if (contentType.includes('application/json')) {
+          data = await response.json()
+        } else {
+          // El servidor devolvió HTML (nginx error, 502, etc.) en lugar de JSON
+          const text = await response.text()
+          throw new Error(`Error ${response.status}: el servidor no está disponible`)
+        }
+      }
 
       if (!response.ok) {
         // Si es 401, limpiar token y redirigir a login
