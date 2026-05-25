@@ -36,6 +36,17 @@ async def create_user(
         user_manager.create_user(user.username, user.email, user.password)
 
         # Crear usuario en BD
+        # Determinar parent_id:
+        # 1. Si el body lo especifica explícitamente → usarlo (admin creando cliente de un reseller)
+        # 2. Si quien crea es un reseller → se asigna a sí mismo
+        # 3. Si es admin sin parent_id → None (cuenta de nivel superior)
+        if user.parent_id is not None:
+            parent_id = user.parent_id
+        elif current_user.role == "reseller":
+            parent_id = current_user.id
+        else:
+            parent_id = None
+
         db_user = User(
             username=user.username,
             email=user.email,
@@ -44,8 +55,7 @@ async def create_user(
             role=role,
             is_admin=(role == "admin"),
             domains_limit=user.domains_limit if user.domains_limit is not None else 10,
-            # Si lo crea un reseller, ese reseller es el parent
-            parent_id=current_user.id if current_user.role == "reseller" else None,
+            parent_id=parent_id,
         )
         db_user.set_password(user.password)
         db.add(db_user)

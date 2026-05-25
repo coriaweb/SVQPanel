@@ -121,6 +121,10 @@ export default {
     user: {
       type: Object,
       default: null
+    },
+    parentId: {
+      type: Number,
+      default: null
     }
   },
   emits: ['submit', 'cancel'],
@@ -171,7 +175,8 @@ export default {
             password: form.value.password,
             role: form.value.role,
             domains_limit: form.value.domains_limit,
-            is_active: form.value.is_active
+            is_active: form.value.is_active,
+            ...(props.parentId ? { parent_id: props.parentId } : {})
           })
           store.showNotification('Usuario creado correctamente', 'success')
         }
