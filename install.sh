@@ -66,8 +66,8 @@ esac
 # 2. ELEGIR VERSIONES PHP
 ###############################################################################
 echo -e "${YELLOW}¿Qué versiones PHP necesitas?${NC}"
-echo "Disponibles: 7.4, 8.0, 8.1, 8.2, 8.3"
-echo "Ejemplos: '8.1 8.2' o '8.2' (mínimo 1, máximo 5)"
+echo "Disponibles: 7.4, 8.0, 8.1, 8.2, 8.3, 8.5"
+echo "Ejemplos: '8.1 8.2' o '8.5' (mínimo 1, máximo 5)"
 read -p "Versiones PHP (separadas por espacio): " PHP_VERSIONS
 
 # Validar que haya al menos una versión
@@ -78,7 +78,7 @@ fi
 
 # Convertir a array y validar
 mapfile -t PHP_ARRAY <<< "$(echo "$PHP_VERSIONS" | tr ' ' '\n')"
-VALID_VERSIONS=("7.4" "8.0" "8.1" "8.2" "8.3")
+VALID_VERSIONS=("7.4" "8.0" "8.1" "8.2" "8.3" "8.5")
 INVALID_VERSIONS=()
 
 for VER in "${PHP_ARRAY[@]}"; do
@@ -96,7 +96,7 @@ done
 
 if [[ ${#INVALID_VERSIONS[@]} -gt 0 ]]; then
     echo -e "${RED}Error: Versiones PHP inválidas: ${INVALID_VERSIONS[*]}${NC}"
-    echo -e "${YELLOW}Solo están disponibles: 7.4, 8.0, 8.1, 8.2, 8.3${NC}"
+    echo -e "${YELLOW}Solo están disponibles: 7.4, 8.0, 8.1, 8.2, 8.3, 8.5${NC}"
     exit 1
 fi
 
