@@ -43,7 +43,7 @@ class DomainManager(SystemManager):
         if not validate_domain(domain_name):
             raise ValueError(f"Invalid domain: {domain_name}")
 
-        valid_php = ["7.4", "8.0", "8.1", "8.2", "8.3"]
+        valid_php = ["7.4", "8.0", "8.1", "8.2", "8.3", "8.4", "8.5"]
         if php_version not in valid_php:
             raise ValueError(f"Invalid PHP version: {php_version}")
 
@@ -172,7 +172,7 @@ class DomainManager(SystemManager):
         if not validate_domain(domain_name):
             raise ValueError(f"Invalid domain: {domain_name}")
 
-        valid_php = ["7.4", "8.0", "8.1", "8.2", "8.3"]
+        valid_php = ["7.4", "8.0", "8.1", "8.2", "8.3", "8.4", "8.5"]
         if php_version not in valid_php:
             raise ValueError(f"Invalid PHP version: {php_version}")
 

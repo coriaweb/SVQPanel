@@ -28,11 +28,15 @@ async def create_user(
         user_manager.create_user(user.username, user.email, user.password)
 
         # Create database user
+        role = user.role or "user"
         db_user = User(
             username=user.username,
             email=user.email,
             first_name=user.first_name,
             last_name=user.last_name,
+            role=role,
+            is_admin=(role == "admin"),
+            domains_limit=user.domains_limit if user.domains_limit is not None else 10,
         )
         db_user.set_password(user.password)
         db.add(db_user)
@@ -126,6 +130,9 @@ async def update_user(
             db_user.is_active = user_update.is_active
         if user_update.domains_limit is not None:
             db_user.domains_limit = user_update.domains_limit
+        if user_update.role is not None:
+            db_user.role = user_update.role
+            db_user.is_admin = (user_update.role == "admin")
 
         db.commit()
         db.refresh(db_user)

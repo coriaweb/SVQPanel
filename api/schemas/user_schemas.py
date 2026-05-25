@@ -13,14 +13,17 @@ class UserCreate(BaseModel):
     password: str = Field(..., min_length=8)
     first_name: Optional[str] = Field(None, max_length=255)
     last_name: Optional[str] = Field(None, max_length=255)
+    role: Optional[str] = Field("user", pattern="^(admin|reseller|user)$")
+    domains_limit: Optional[int] = Field(10, ge=0)
 
 
 class UserUpdate(BaseModel):
     email: Optional[EmailStr] = None
     first_name: Optional[str] = Field(None, max_length=255)
     last_name: Optional[str] = Field(None, max_length=255)
+    role: Optional[str] = Field(None, pattern="^(admin|reseller|user)$")
     is_active: Optional[bool] = None
-    domains_limit: Optional[int] = None
+    domains_limit: Optional[int] = Field(None, ge=0)
 
 
 class UserResponse(BaseModel):
@@ -29,12 +32,13 @@ class UserResponse(BaseModel):
     email: str
     first_name: Optional[str]
     last_name: Optional[str]
+    role: Optional[str] = "user"
     is_admin: bool
     is_active: bool
     domains_limit: int
-    created_at: datetime
-    updated_at: datetime
-    last_login: Optional[datetime]
+    created_at: Optional[datetime] = None
+    updated_at: Optional[datetime] = None
+    last_login: Optional[datetime] = None
 
     class Config:
         from_attributes = True
