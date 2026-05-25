@@ -265,6 +265,18 @@ class APIClient {
     return this.post(`/api/system/services/${serviceName}/${action}`, {})
   }
 
+  getServiceConfigs(serviceName) {
+    return this.get(`/api/system/services/${serviceName}/configs`)
+  }
+
+  readServiceConfig(serviceName, fileLabel) {
+    return this.get(`/api/system/services/${serviceName}/config/${encodeURIComponent(fileLabel)}`)
+  }
+
+  writeServiceConfig(serviceName, fileLabel, content) {
+    return this.put(`/api/system/services/${serviceName}/config/${encodeURIComponent(fileLabel)}`, { content })
+  }
+
   // Health check
   health() {
     return this.get('/api/health')

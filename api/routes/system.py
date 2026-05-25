@@ -76,6 +76,64 @@ async def list_services(
 
 
 
+@router.get("/system/services/{service_name}/configs")
+async def get_service_config_list(
+    service_name: str,
+    current_user=Depends(require_admin),
+):
+    """Lista los ficheros de configuración disponibles para un servicio"""
+    try:
+        from scripts.config_manager import get_service_configs
+        configs = get_service_configs(service_name)
+        return [{"label": c["label"], "path": c["path"], "comment": c["comment"]} for c in configs]
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/system/services/{service_name}/config/{file_label:path}")
+async def read_service_config(
+    service_name: str,
+    file_label: str,
+    current_user=Depends(require_admin),
+):
+    """Lee el contenido de un fichero de configuración de un servicio"""
+    try:
+        from scripts.config_manager import read_config
+        return read_config(service_name, file_label)
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except PermissionError as e:
+        raise HTTPException(status_code=403, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.put("/system/services/{service_name}/config/{file_label:path}")
+async def write_service_config(
+    service_name: str,
+    file_label: str,
+    body: dict,
+    current_user=Depends(require_admin),
+):
+    """
+    Guarda un fichero de configuración.
+    Body: {"content": "..."}
+    Hace backup automático, test de sintaxis y recarga el servicio.
+    """
+    content = body.get("content")
+    if content is None:
+        raise HTTPException(status_code=400, detail="Falta el campo 'content'")
+    try:
+        from scripts.config_manager import write_config
+        return write_config(service_name, file_label, content)
+    except ValueError as e:
+        raise HTTPException(status_code=422, detail=str(e))
+    except PermissionError as e:
+        raise HTTPException(status_code=403, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @router.post("/system/services/{service_name}/{action}")
 async def control_service(
     service_name: str,
