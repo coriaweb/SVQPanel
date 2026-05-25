@@ -181,6 +181,19 @@ class APIClient {
     return this.delete(`/api/domains/${domainId}/ipv6`)
   }
 
+  // Settings
+  getSettings() {
+    return this.get('/api/settings')
+  }
+
+  updateSettings(data) {
+    return this.put('/api/settings', data)
+  }
+
+  getNextIPv6() {
+    return this.get('/api/settings/next-ipv6')
+  }
+
   // Health check
   health() {
     return this.get('/api/health')

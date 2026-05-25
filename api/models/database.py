@@ -36,4 +36,6 @@ def get_db():
 
 # Crear todas las tablas
 def create_tables():
+    # Importar modelos para que SQLAlchemy los registre en Base.metadata
+    from api.models import models_user, models_domain, models_settings  # noqa
     Base.metadata.create_all(bind=engine)

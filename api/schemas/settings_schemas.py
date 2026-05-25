@@ -1,0 +1,60 @@
+"""
+Esquemas Pydantic para configuración del panel
+"""
+
+from pydantic import BaseModel, Field, field_validator
+from typing import Optional
+from datetime import datetime
+import ipaddress
+
+
+class SettingsUpdate(BaseModel):
+    panel_name: Optional[str] = Field(None, max_length=255)
+    server_ipv4: Optional[str] = Field(None, max_length=45)
+    ipv6_enabled: Optional[bool] = None
+    ipv6_range: Optional[str] = Field(None, max_length=50)
+    ipv6_gateway: Optional[str] = Field(None, max_length=50)
+    php_default_version: Optional[str] = Field(None, pattern="^(7\\.4|8\\.[0-5])$")
+
+    @field_validator("ipv6_range")
+    @classmethod
+    def validate_ipv6_range(cls, v):
+        if v is None or v == "":
+            return None
+        try:
+            network = ipaddress.IPv6Network(v, strict=False)
+            if network.prefixlen > 64:
+                raise ValueError("El rango debe ser /64 o mayor (ej: /48, /64)")
+            return str(network)
+        except ValueError as e:
+            raise ValueError(f"Rango IPv6 inválido: {e}")
+
+    @field_validator("server_ipv4")
+    @classmethod
+    def validate_ipv4(cls, v):
+        if v is None or v == "":
+            return None
+        try:
+            ipaddress.IPv4Address(v)
+            return v
+        except ValueError:
+            raise ValueError("Dirección IPv4 inválida")
+
+
+class SettingsResponse(BaseModel):
+    id: int
+    panel_name: str
+    panel_version: str
+    server_ipv4: Optional[str] = None
+    ipv6_enabled: bool
+    ipv6_range: Optional[str] = None
+    ipv6_gateway: Optional[str] = None
+    php_default_version: str
+    updated_at: Optional[datetime] = None
+
+    # Información calculada
+    ipv6_total_ips: Optional[int] = None      # IPs disponibles en el rango
+    ipv6_used_ips: Optional[int] = None       # IPs ya asignadas a dominios
+
+    class Config:
+        from_attributes = True
