@@ -138,7 +138,9 @@ apt-get install -y -qq \
     postgresql \
     postgresql-contrib \
     postgresql-server-dev-all \
-    certbot
+    certbot \
+    nodejs \
+    npm
 
 echo -e "${GREEN}✓ Dependencias instaladas${NC}\n"
 
@@ -400,7 +402,12 @@ server {
 
     client_max_body_size 100M;
 
-    location / {
+    # Servir frontend estático (Vue3 dist)
+    root /opt/svqpanel/frontend/dist;
+    index index.html;
+
+    # API → proxy al backend
+    location /api/ {
         proxy_pass http://svqpanel_backend;
         proxy_set_header Host $host;
         proxy_set_header X-Real-IP $remote_addr;
@@ -408,6 +415,7 @@ server {
         proxy_set_header X-Forwarded-Proto $scheme;
     }
 
+    # Docs API → proxy al backend
     location /docs {
         proxy_pass http://svqpanel_backend/docs;
         proxy_set_header Host $host;
@@ -416,6 +424,11 @@ server {
     location /openapi.json {
         proxy_pass http://svqpanel_backend/openapi.json;
         proxy_set_header Host $host;
+    }
+
+    # Frontend → servir archivos estáticos, fallback a index.html (SPA)
+    location / {
+        try_files $uri $uri/ /index.html;
     }
 }
 NGINXEOF
@@ -514,10 +527,12 @@ echo -e "${GREEN}║${NC} Usuario:    ${YELLOW}admin${NC}"
 echo -e "${GREEN}║${NC} Contraseña: ${YELLOW}$ADMIN_PASSWORD${NC}"
 echo -e "${GREEN}║${NC} Email:      ${YELLOW}admin@localhost${NC}"
 echo -e "${GREEN}╚════════════════════════════════════════════════════════════╝${NC}\n"
+# Iniciar servicio automáticamente
+systemctl start svqpanel
+
 echo -e "Proximos pasos:"
-echo "  1. Inicia el servicio: systemctl start svqpanel"
-echo "  2. Verifica el estado: systemctl status svqpanel"
-echo "  3. Ver logs: journalctl -u svqpanel -f"
+echo "  1. Verifica el estado: systemctl status svqpanel"
+echo "  2. Ver logs: journalctl -u svqpanel -f"
 echo -e "\n${GREEN}SVQPanel estará disponible en:${NC}"
 echo "  • Panel Web: http://IP_DEL_SERVIDOR"
 echo "  • API: http://IP_DEL_SERVIDOR:8001"
