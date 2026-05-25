@@ -211,10 +211,16 @@ echo -e "${YELLOW}Configurando PostgreSQL...${NC}"
 systemctl enable postgresql
 systemctl start postgresql
 
-# Crear BD panel
+# Crear BD panel (ignorar errores si ya existen)
+sudo -u postgres psql << 'EOF' 2>/dev/null || true
+DROP DATABASE IF EXISTS panel_db;
+DROP ROLE IF EXISTS panel_user;
+EOF
+
+# Crear usuario y BD (sin IF NOT EXISTS para compatibilidad con PostgreSQL antiguo)
 sudo -u postgres psql << EOF
-CREATE DATABASE IF NOT EXISTS panel_db;
-CREATE USER IF NOT EXISTS panel_user WITH PASSWORD 'panel_password_123';
+CREATE DATABASE panel_db;
+CREATE USER panel_user WITH PASSWORD 'panel_password_123';
 ALTER ROLE panel_user SET client_encoding TO 'utf8';
 ALTER ROLE panel_user SET default_transaction_isolation TO 'read committed';
 ALTER ROLE panel_user SET default_transaction_deferrable TO on;
