@@ -158,7 +158,7 @@ async def control_service(
         "php", "postgresql", "mariadb", "mysql",
         "fail2ban", "ufw", "ssh", "vsftpd", "proftpd",
         "clamav", "dovecot", "exim4", "postfix",
-        "redis", "memcached", "cron", "spamassassin", "spamd",
+        "redis", "memcached", "cron", "spamassassin", "spamd", "rspamd",
         "svqpanel",
     )
     if not any(service_name.startswith(p) for p in allowed_prefixes):

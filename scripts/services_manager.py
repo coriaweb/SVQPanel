@@ -32,6 +32,7 @@ KNOWN_SERVICES = [
     ("dovecot",        "Servidor IMAP/POP3"),
     ("exim4",          "Servidor de correo Exim"),
     ("postfix",        "Servidor de correo Postfix"),
+    ("rspamd",         "Filtro antispam / DKIM (Rspamd)"),
     ("cron",           "Programador de tareas"),
 ]
 
