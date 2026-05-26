@@ -102,13 +102,25 @@ class RspamdManager:
 
     # ─── multimap.conf (blacklist prefilter) ──────────────────────────────
 
+    def _entry_to_map_line(self, entry: str) -> str:
+        """
+        Convierte una entrada de blacklist al formato correcto para el mapa regexp.
+        @domain.com   →  /.*@domain\.com$/   (bloquea todo el dominio)
+        user@domain   →  user@domain         (dirección exacta, sin cambios)
+        """
+        if entry.startswith('@'):
+            escaped = re.escape(entry[1:])   # escapa puntos del dominio
+            return f'/.*@{escaped}$/'
+        return entry
+
     def _write_blacklist_map(self, domain, entries):
         """Escribe el fichero de mapa de blacklist para un dominio"""
         safe = self._safe_name(domain)
         d    = os.path.join(self.MAPS_DIR, safe)
         os.makedirs(d, exist_ok=True)
         path = os.path.join(d, "blacklist.map")
-        content = "\n".join(e.strip() for e in entries if e.strip()) + "\n"
+        lines = [self._entry_to_map_line(e) for e in entries if e.strip()]
+        content = "\n".join(lines) + "\n"
         tmp = path + ".tmp"
         with open(tmp, "w") as f:
             f.write(content)
@@ -118,8 +130,9 @@ class RspamdManager:
     def _build_multimap_conf(self, domain_configs):
         """
         Genera multimap.conf con una regla prefilter por dominio.
-        Usa type="from" + condition Lua para filtrar por dominio destinatario.
-        Esto garantiza el rechazo ANTES de que se aplique ningún scoring.
+        Usa type="from" + regexp=true para soportar dominios completos (@domain)
+        y direcciones exactas en el mismo fichero de mapa.
+        El prefilter rechaza ANTES de cualquier scoring.
         """
         out = ["# SVQPanel — Generado automáticamente. NO editar manualmente.\n"]
 
@@ -134,27 +147,16 @@ class RspamdManager:
             map_path = os.path.join(self.MAPS_DIR, safe, "blacklist.map")
             symbol   = f"SVQ_BL_{safe.upper()}"
 
-            # Condición Lua: solo aplica si el destinatario es de este dominio
-            condition = (
-                f"function(task) "
-                f"local rcpts = task:get_recipients('smtp'); "
-                f"if rcpts then "
-                f"for _, r in ipairs(rcpts) do "
-                f"if r.domain and r.domain:lower() == '{domain.lower()}' then "
-                f"return true end end end "
-                f"return false end"
-            )
-
             out.append(f"""\
 # ── blacklist {domain} ──
 {symbol} {{
   type = "from";
+  regexp = true;
   map = "{map_path}";
   symbol = "{symbol}";
   prefilter = true;
   action = "reject";
-  message = "Remitente bloqueado por el administrador del dominio";
-  condition = "{condition}";
+  message = "Remitente bloqueado";
 }}
 """)
 
