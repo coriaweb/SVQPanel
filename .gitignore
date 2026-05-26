@@ -44,6 +44,9 @@ ENV/
 .env.local
 .env.*.local
 
+# Claude Code: settings locales pueden contener rutas/comandos con secretos
+.claude/settings.local.json
+
 # Base de datos
 *.db
 *.sqlite

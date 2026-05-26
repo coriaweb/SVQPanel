@@ -53,14 +53,13 @@ class svqpanel_autologin extends rcube_plugin
 
     /**
      * Hook startup: si hay un svqtoken en la URL, intenta autologin.
+     *
+     * - Sin sesión previa  → autologin normal.
+     * - Sesión activa de otro buzón → mata la sesión anterior y autologin.
+     * - Sesión activa del mismo buzón → solo redirige al inbox (no relogin).
      */
     public function startup(array $args): array
     {
-        // Si ya hay un usuario autenticado, no hacer nada
-        if (!empty($_SESSION['user_id'])) {
-            return $args;
-        }
-
         // Solo actuar si el parámetro svqtoken está presente
         $raw_token = rcube_utils::get_input_value('svqtoken', rcube_utils::INPUT_GET);
         if (!$raw_token) {
@@ -73,7 +72,7 @@ class svqpanel_autologin extends rcube_plugin
             return $args;
         }
 
-        // Obtener credenciales del panel (llamada localhost)
+        // Obtener credenciales del panel (llamada localhost, consume el token)
         $data = $this->fetch_credentials($token);
         if (!$data || empty($data['username']) || empty($data['password'])) {
             return $args;
@@ -81,6 +80,20 @@ class svqpanel_autologin extends rcube_plugin
 
         $rcmail = rcube::get_instance();
         $host   = $data['imap_host'] ?? 'localhost';
+
+        // Si ya hay una sesión activa del MISMO buzón, no relogueamos:
+        // basta con redirigir al inbox (evita un IMAP auth innecesario).
+        $current_user = $_SESSION['username'] ?? null;
+        if (!empty($_SESSION['user_id']) && $current_user === $data['username']) {
+            $rcmail->output->redirect(['_task' => 'mail'], 0, true);
+            exit;
+        }
+
+        // Si hay sesión de OTRO buzón, matarla antes de loguear el nuevo
+        // (replica lo que hace index.php con $request_valid → kill_session()).
+        if (!empty($_SESSION['user_id'])) {
+            $rcmail->kill_session();
+        }
 
         if (!$rcmail->login($data['username'], $data['password'], $host, false)) {
             // Login fallido: dejar que Roundcube muestre la página normal de login
