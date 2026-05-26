@@ -29,13 +29,9 @@ class RspamdManager:
     def _to_rspamd_pattern(self, entry: str) -> str:
         """
         Convierte una entrada a patrón válido para Rspamd settings.
-        @domain.com  →  /@domain\.com$/  (regex: cualquier dirección del dominio)
-        user@domain  →  user@domain      (dirección exacta, sin cambios)
+        @domain.com  →  @domain.com  (Rspamd lo reconoce como wildcard de dominio)
+        user@domain  →  user@domain  (dirección exacta)
         """
-        if entry.startswith('@'):
-            # Escapar puntos y caracteres especiales para regex
-            escaped = re.escape(entry)   # "@coriaweb.es" → "@coriaweb\\.es"
-            return f'/{escaped}$/'       # → "/@coriaweb\.es$/"
         return entry
 
     # ─── Generación de settings.conf ──────────────────────────────────────
@@ -82,7 +78,11 @@ class RspamdManager:
   from = [{wl_list}];
   priority = 10;
   apply {{
-    action = "no action";
+    actions {{
+      "add header" = 999.0;
+      greylist = 999.0;
+      reject = 9999.0;
+    }}
   }}
 }}
 """)
@@ -96,7 +96,11 @@ class RspamdManager:
   from = [{bl_list}];
   priority = 10;
   apply {{
-    action = "reject";
+    actions {{
+      "add header" = 0.1;
+      greylist = 0.1;
+      reject = 0.1;
+    }}
   }}
 }}
 """)
