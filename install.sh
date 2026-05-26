@@ -653,7 +653,7 @@ MDBCREDEOF
         chown -R www-data:www-data "$PMA_DIR"
         chmod -R 755 "$PMA_DIR"
         mkdir -p /tmp/phpmyadmin && chmod 777 /tmp/phpmyadmin
-        mkdir -p /tmp/pma_tokens && chmod 700 /tmp/pma_tokens
+        mkdir -p /tmp/pma_tokens && chmod 711 /tmp/pma_tokens
 
         # Generar clave Fernet (se añade al .env más abajo, en sección env)
         PANEL_ENCRYPTION_KEY=$(python3 -c \

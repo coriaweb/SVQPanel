@@ -523,7 +523,11 @@ def get_pma_token(
     # ── Crear token de un solo uso ────────────────────────────────────────────
     token = uuid.uuid4().hex  # 32 chars hex, sin guiones
     token_dir = "/tmp/pma_tokens"
-    os.makedirs(token_dir, mode=0o700, exist_ok=True)
+    # 711: root puede crear/borrar; otros pueden acceder si conocen el nombre exacto.
+    # El nombre es un UUID de 128 bits → prácticamente imposible de adivinar.
+    os.makedirs(token_dir, mode=0o711, exist_ok=True)
+    # Asegurar permisos del directorio incluso si ya existía con permisos incorrectos
+    os.chmod(token_dir, 0o711)
     token_file = os.path.join(token_dir, f"{token}.json")
     token_data = {
         "user":     client_db.db_user,
@@ -533,7 +537,8 @@ def get_pma_token(
     }
     with open(token_file, "w") as fh:
         json.dump(token_data, fh)
-    os.chmod(token_file, 0o600)
+    # 644: legible por www-data (PHP-FPM); el UUID en el nombre lo hace inaccesible por fuerza bruta
+    os.chmod(token_file, 0o644)
 
     return {
         "status":      "success",

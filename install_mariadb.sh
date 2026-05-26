@@ -377,8 +377,9 @@ SIGNONEOF
     echo -e "  ✓ signon.php creado"
 
     # Directorio de tokens (lo crea la API al primer uso, pero lo pre-creamos aquí)
+    # 711: root crea/borra tokens; PHP-FPM (www-data) puede leerlos si conoce el nombre
     mkdir -p /tmp/pma_tokens
-    chmod 700 /tmp/pma_tokens
+    chmod 711 /tmp/pma_tokens
     chown root:root /tmp/pma_tokens
 
     # ── Añadir PANEL_ENCRYPTION_KEY al .env ───────────────────────────────────
