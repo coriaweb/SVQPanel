@@ -72,14 +72,58 @@ echo -e "${YELLOW}6. Ejecutando migraciones de BD...${NC}"
 cd "$PANEL_DIR"
 source "$VENV_DIR/bin/activate"
 
-# Crear tablas si no existen (SQLAlchemy lo hace automáticamente)
-python3 -c "
+# Crear/actualizar todas las tablas (SQLAlchemy + migraciones incrementales)
+python3 << 'PYEOF'
+import sys
+sys.path.insert(0, '/opt/svqpanel')
 from api.models.database import Base, engine
+# Importar todos los modelos para que SQLAlchemy los registre
 from api.models.models_user import User
 from api.models.models_domain import Domain
+from api.models.models_settings import Settings
+from api.models.models_dns import DnsZone, DnsRecord
+from api.models.models_mail import MailDomain, Mailbox, MailAlias
+from api.models.models_client_db import ClientDatabase   # ← Fase 10 MariaDB
 Base.metadata.create_all(bind=engine)
-print('✓ Tablas de BD verificadas')
-"
+print("✓ Tablas de BD verificadas/creadas")
+
+# Migraciones incrementales (ADD COLUMN IF NOT EXISTS)
+from sqlalchemy import text
+migrations = [
+    "ALTER TABLE users ADD COLUMN IF NOT EXISTS parent_id INTEGER REFERENCES users(id) ON DELETE SET NULL",
+    "ALTER TABLE users ADD COLUMN IF NOT EXISTS databases_limit INTEGER DEFAULT 5",
+    "ALTER TABLE settings ADD COLUMN IF NOT EXISTS network_interface VARCHAR(20) DEFAULT 'eth0'",
+    # Fase 10: tabla client_databases (ya la crea create_all, pero por si acaso)
+    """CREATE TABLE IF NOT EXISTS client_databases (
+        id               SERIAL PRIMARY KEY,
+        user_id          INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        domain_id        INTEGER REFERENCES domains(id) ON DELETE SET NULL,
+        db_name          VARCHAR(64)  UNIQUE NOT NULL,
+        db_name_suffix   VARCHAR(48)  NOT NULL,
+        db_user          VARCHAR(64)  UNIQUE NOT NULL,
+        db_user_suffix   VARCHAR(48)  NOT NULL,
+        db_password_hash VARCHAR(255) NOT NULL,
+        charset          VARCHAR(20)  DEFAULT 'utf8mb4',
+        collation        VARCHAR(50)  DEFAULT 'utf8mb4_unicode_ci',
+        quota_mb         INTEGER      DEFAULT 1024,
+        size_mb          INTEGER      DEFAULT 0,
+        is_active        BOOLEAN      DEFAULT TRUE,
+        created_at       TIMESTAMP    DEFAULT NOW(),
+        updated_at       TIMESTAMP    DEFAULT NOW()
+    )""",
+    "CREATE INDEX IF NOT EXISTS ix_client_databases_user_id  ON client_databases(user_id)",
+    "CREATE INDEX IF NOT EXISTS ix_client_databases_domain_id ON client_databases(domain_id)",
+]
+with engine.connect() as conn:
+    for sql in migrations:
+        try:
+            conn.execute(text(sql))
+            conn.commit()
+        except Exception as e:
+            print(f"  (migración omitida: {e})")
+print("✓ Migraciones completadas")
+PYEOF
+
 deactivate
 echo -e "${GREEN}✓ Base de datos actualizada${NC}\n"
 

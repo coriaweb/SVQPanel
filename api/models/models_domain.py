@@ -39,8 +39,9 @@ class Domain(Base):
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
     ssl_renewed_at = Column(DateTime, nullable=True)
     
-    # Relación
-    user = relationship("User", back_populates="domains")
+    # Relaciones
+    user      = relationship("User",           back_populates="domains")
+    databases = relationship("ClientDatabase", back_populates="domain", cascade="all, delete-orphan")
     
     def __repr__(self):
         return f"<Domain {self.domain_name}>"

@@ -12,7 +12,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from api.models.database import create_tables, get_db
 from config.config import PANEL_NAME, PANEL_VERSION
 
-from api.routes import users, domains, php, ssl, ipv6, auth, settings, dns, system, mail
+from api.routes import users, domains, php, ssl, ipv6, auth, settings, dns, system, mail, databases
 
 # Crear app FastAPI
 app = FastAPI(
@@ -117,6 +117,28 @@ def _run_migrations():
         "CREATE INDEX IF NOT EXISTS ix_mail_domains_user_id ON mail_domains(user_id)",
         "CREATE INDEX IF NOT EXISTS ix_mailboxes_mail_domain_id ON mailboxes(mail_domain_id)",
         "CREATE INDEX IF NOT EXISTS ix_mail_aliases_mail_domain_id ON mail_aliases(mail_domain_id)",
+        # Fase 10: MariaDB — bases de datos de clientes
+        """CREATE TABLE IF NOT EXISTS client_databases (
+            id               SERIAL PRIMARY KEY,
+            user_id          INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+            domain_id        INTEGER REFERENCES domains(id) ON DELETE SET NULL,
+            db_name          VARCHAR(64)  UNIQUE NOT NULL,
+            db_name_suffix   VARCHAR(48)  NOT NULL,
+            db_user          VARCHAR(64)  UNIQUE NOT NULL,
+            db_user_suffix   VARCHAR(48)  NOT NULL,
+            db_password_hash VARCHAR(255) NOT NULL,
+            charset          VARCHAR(20)  DEFAULT 'utf8mb4',
+            collation        VARCHAR(50)  DEFAULT 'utf8mb4_unicode_ci',
+            quota_mb         INTEGER      DEFAULT 1024,
+            size_mb          INTEGER      DEFAULT 0,
+            is_active        BOOLEAN      DEFAULT TRUE,
+            created_at       TIMESTAMP    DEFAULT NOW(),
+            updated_at       TIMESTAMP    DEFAULT NOW()
+        )""",
+        "CREATE INDEX IF NOT EXISTS ix_client_databases_user_id   ON client_databases(user_id)",
+        "CREATE INDEX IF NOT EXISTS ix_client_databases_domain_id  ON client_databases(domain_id)",
+        # Límite de BDs por usuario
+        "ALTER TABLE users ADD COLUMN IF NOT EXISTS databases_limit INTEGER DEFAULT 5",
     ]
     with engine.connect() as conn:
         for sql in migrations:
@@ -163,7 +185,8 @@ app.include_router(ipv6.router, prefix="/api", tags=["IPv6"])
 app.include_router(settings.router, prefix="/api", tags=["Settings"])
 app.include_router(dns.router, prefix="/api", tags=["DNS"])
 app.include_router(system.router, prefix="/api", tags=["System"])
-app.include_router(mail.router, prefix="/api", tags=["Mail"])
+app.include_router(mail.router,      prefix="/api", tags=["Mail"])
+app.include_router(databases.router, prefix="/api", tags=["Databases"])
 # Autoconfig/Autodiscover sin prefijo (clientes de correo los buscan en rutas raíz)
 app.include_router(mail.router, prefix="", include_in_schema=False)
 

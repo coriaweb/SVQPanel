@@ -78,6 +78,22 @@ else
 fi
 
 ###############################################################################
+# 2c. BASE DE DATOS PARA CLIENTES (MariaDB — opcional)
+###############################################################################
+echo -e "${YELLOW}¿Instalar MariaDB para bases de datos de clientes?${NC}"
+echo "  Los clientes podrán crear BDs MySQL/MariaDB para sus aplicaciones"
+echo "  (WordPress, Joomla, PrestaShop, Laravel, etc.)"
+echo -e "  Se instala MariaDB ${YELLOW}11.4 LTS${NC} desde el repositorio oficial."
+read -p "¿Instalar MariaDB? (s/N): " _MARIADB_INPUT
+INSTALL_MARIADB=false
+if [[ "${_MARIADB_INPUT,,}" =~ ^(s|si|y|yes)$ ]]; then
+    INSTALL_MARIADB=true
+    echo -e "${GREEN}✓ MariaDB seleccionado${NC}\n"
+else
+    echo -e "${YELLOW}✗ Sin MariaDB para clientes${NC}\n"
+fi
+
+###############################################################################
 # 2. ELEGIR VERSIONES PHP
 ###############################################################################
 echo -e "${YELLOW}¿Qué versiones PHP necesitas?${NC}"
@@ -546,6 +562,71 @@ SQLEOF
 echo -e "${GREEN}✓ PostgreSQL configurado${NC}\n"
 
 ###############################################################################
+# 7b. INSTALAR MARIADB 11.4 LTS (bases de datos para clientes)
+###############################################################################
+MARIADB_PANEL_PASS=""
+if [[ "$INSTALL_MARIADB" == true ]]; then
+    echo -e "${YELLOW}Instalando MariaDB 11.4 LTS (repositorio oficial)...${NC}"
+
+    # ── Repositorio oficial de MariaDB ────────────────────────────────────────
+    curl -LsS https://r.mariadb.com/downloads/mariadb_repo_setup \
+        | bash -s -- --mariadb-server-version="mariadb-11.4" > /dev/null 2>&1
+    apt-get update -qq
+    apt-get install -y -qq mariadb-server mariadb-client
+
+    systemctl enable mariadb
+    systemctl start mariadb
+
+    echo -e "  ${GREEN}✓ MariaDB 11.4 instalado${NC}"
+
+    # ── Generar contraseñas aleatorias ────────────────────────────────────────
+    MARIADB_ROOT_PASS=$(python3 -c \
+        "import secrets,string; \
+         chars=string.ascii_letters+string.digits; \
+         print(''.join(secrets.choice(chars) for _ in range(24)))")
+
+    MARIADB_PANEL_PASS=$(python3 -c \
+        "import secrets,string; \
+         chars=string.ascii_letters+string.digits; \
+         print(''.join(secrets.choice(chars) for _ in range(24)))")
+
+    # ── Asegurar instalación (equivale a mysql_secure_installation) ────────────
+    mysql --user=root << MARIADBEOF
+-- Contraseña root
+ALTER USER 'root'@'localhost' IDENTIFIED BY '${MARIADB_ROOT_PASS}';
+-- Eliminar usuarios anónimos y BD test
+DELETE FROM mysql.user WHERE User='';
+DROP DATABASE IF EXISTS test;
+DELETE FROM mysql.db WHERE Db='test' OR Db='test\\_%';
+-- Usuario administrador del panel SVQPanel
+-- Solo necesita: CREATE/DROP bases de datos, CREATE/DROP usuarios, GRANT, RELOAD
+CREATE USER IF NOT EXISTS 'svqpanel_admin'@'localhost'
+    IDENTIFIED BY '${MARIADB_PANEL_PASS}';
+GRANT CREATE, DROP, RELOAD, GRANT OPTION, CREATE USER ON *.* TO 'svqpanel_admin'@'localhost';
+GRANT SELECT ON information_schema.* TO 'svqpanel_admin'@'localhost';
+FLUSH PRIVILEGES;
+MARIADBEOF
+
+    echo -e "  ${GREEN}✓ MariaDB asegurado y usuario del panel creado${NC}"
+
+    # ── Guardar credenciales ──────────────────────────────────────────────────
+    mkdir -p /opt/svqpanel/.credentials
+    cat > /opt/svqpanel/.credentials/mariadb.txt << MDBCREDEOF
+# Credenciales MariaDB — NO compartir
+MariaDB root:          root / ${MARIADB_ROOT_PASS}
+Panel admin (svqpanel_admin): ${MARIADB_PANEL_PASS}
+MDBCREDEOF
+    chmod 600 /opt/svqpanel/.credentials/mariadb.txt
+
+    # ── Verificar servicio ────────────────────────────────────────────────────
+    if systemctl is-active --quiet mariadb; then
+        echo -e "${GREEN}✓ MariaDB activo y listo para clientes${NC}\n"
+    else
+        echo -e "${RED}✗ MariaDB NO activo (revisar: journalctl -u mariadb)${NC}\n"
+    fi
+fi
+
+###############################################################################
 # 8. CLONAR REPO Y SETUP PYTHON
 ###############################################################################
 echo -e "${YELLOW}Clonando repositorio SVQPanel...${NC}"
@@ -597,6 +678,7 @@ from api.models.models_domain import Domain
 from api.models.models_settings import Settings
 from api.models.models_dns import DnsZone, DnsRecord
 from api.models.models_mail import MailDomain, Mailbox, MailAlias
+from api.models.models_client_db import ClientDatabase
 
 DATABASE_URL = "postgresql://panel_user:panel_password_123@localhost/panel_db"
 engine = create_engine(DATABASE_URL)
@@ -647,6 +729,16 @@ if [[ "$INSTALL_MAIL" == true ]]; then
     MAIL_ENABLED_VAL="true"
 fi
 
+# MARIADB_ENABLED depende de si se seleccionó instalar MariaDB
+MARIADB_ENABLED_VAL="false"
+if [[ "$INSTALL_MARIADB" == true ]]; then
+    MARIADB_ENABLED_VAL="true"
+fi
+
+# SECRET_KEY aleatorio para JWT
+SECRET_KEY_VAL=$(python3 -c \
+    "import secrets; print(secrets.token_hex(32))")
+
 cat > /opt/svqpanel/.env << ENVEOF
 # SVQPanel Configuration
 DATABASE_URL=postgresql://panel_user:panel_password_123@localhost/panel_db
@@ -655,8 +747,16 @@ PANEL_VERSION=0.1.0
 PANEL_HOST=0.0.0.0
 PANEL_PORT=8001
 DEBUG=False
-SECRET_KEY=change-this-in-production-to-a-random-key
+SECRET_KEY=${SECRET_KEY_VAL}
+
+# Servidor de correo (Postfix + Dovecot + Rspamd)
 MAIL_ENABLED=${MAIL_ENABLED_VAL}
+
+# MariaDB — bases de datos para clientes
+MARIADB_ENABLED=${MARIADB_ENABLED_VAL}
+MARIADB_HOST=localhost
+MARIADB_PANEL_USER=svqpanel_admin
+MARIADB_PANEL_PASSWORD=${MARIADB_PANEL_PASS}
 ENVEOF
 
 echo -e "${GREEN}✓ Archivo .env creado${NC}\n"
@@ -801,6 +901,7 @@ from api.models.models_user import User
 from api.models.models_domain import Domain
 from api.models.models_dns import DnsZone, DnsRecord
 from api.models.models_mail import MailDomain, Mailbox, MailAlias
+from api.models.models_client_db import ClientDatabase
 
 DATABASE_URL = "postgresql://panel_user:panel_password_123@localhost/panel_db"
 engine = create_engine(DATABASE_URL)
@@ -856,8 +957,9 @@ echo "Configuración:"
 echo "  Webserver:    $WEBSERVER"
 echo "  PHP versions: ${PHP_ARRAY[*]}"
 echo "  Correo:       $( [[ "$INSTALL_MAIL" == true ]] && echo 'Postfix + Dovecot + Rspamd' || echo 'No instalado' )"
+echo "  MariaDB:      $( [[ "$INSTALL_MARIADB" == true ]] && echo 'MariaDB 11.4 LTS (bases de datos de clientes)' || echo 'No instalado' )"
 echo "  Directorio:   /opt/svqpanel"
-echo "  Base de datos: panel_db (PostgreSQL)"
+echo "  Base de datos panel: panel_db (PostgreSQL)"
 echo -e "\n${GREEN}╔════════════════════════════════════════════════════════════╗${NC}"
 echo -e "${GREEN}║   SVQPanel - Credenciales de Administrador                 ║${NC}"
 echo -e "${GREEN}╠════════════════════════════════════════════════════════════╣${NC}"
@@ -881,8 +983,18 @@ echo "  • User: panel_user"
 echo "  • Password: panel_password_123"
 echo "  • Database: panel_db"
 echo -e "\n${YELLOW}Archivos importantes:${NC}"
-echo "  • Configuración: /opt/svqpanel/.env"
-echo "  • Credenciales admin: /opt/svqpanel/.credentials/admin.txt"
+echo "  • Configuración:        /opt/svqpanel/.env"
+echo "  • Credenciales admin:   /opt/svqpanel/.credentials/admin.txt"
+if [[ "$INSTALL_MARIADB" == true ]]; then
+    echo "  • Credenciales MariaDB: /opt/svqpanel/.credentials/mariadb.txt"
+fi
+if [[ "$INSTALL_MARIADB" == true ]]; then
+    echo -e "\n${YELLOW}MariaDB (bases de datos de clientes):${NC}"
+    echo "  • Host:       localhost:3306"
+    echo "  • Panel user: svqpanel_admin"
+    echo "  • API:        POST /api/databases  → crear BD de cliente"
+    echo "  • Credenciales completas: /opt/svqpanel/.credentials/mariadb.txt"
+fi
 if [[ "$INSTALL_MAIL" == true ]]; then
     echo -e "\n${YELLOW}Servidor de correo:${NC}"
     echo "  • SMTP entrada:  puerto 25   (MX de tus dominios)"

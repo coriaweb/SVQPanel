@@ -12,18 +12,28 @@
 - Modelos SQLAlchemy (User, Domain)
 - Documentación
 
-### Fase 2 🚀 EN DESARROLLO
-- Crear rutas API FastAPI
-- Implementar CRUD para usuarios, dominios, PHP, SSL, IPv6
-- Autenticación por token (simple)
+### Fase 2 ✅ COMPLETA
+
+- Rutas API FastAPI: usuarios, dominios, PHP, SSL, IPv6, DNS, correo
+- Autenticación JWT (Bearer token)
 - Validaciones Pydantic
 
-### Fase 3 (Próxima)
-- Scripts Python para ejecutar funciones reales
-- Integración con comandos del SO (adduser, nginx, etc)
+### Fase 3 ✅ COMPLETA
 
-### Fase 4 (Futura)
-- Frontend HTML/JS
+- Scripts Python para operaciones reales del SO
+- Nginx, PHP-FPM, certbot, BIND9, Postfix/Dovecot/Rspamd
+
+### Fase 10 ✅ COMPLETA — MariaDB para clientes
+
+- Doble BD: PostgreSQL (panel) + MariaDB (clientes)
+- `api/models/models_client_db.py` — modelo ClientDatabase
+- `api/schemas/database_schemas.py` — schemas Pydantic
+- `api/routes/databases.py` — CRUD + operaciones MariaDB reales
+- `install.sh` — sección MariaDB 11.4 LTS (instalación opcional)
+
+### Fase 4 (Próxima)
+
+- Frontend Vue3
 
 ## 🔧 Tecnología Stack
 

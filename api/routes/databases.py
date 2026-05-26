@@ -1,0 +1,576 @@
+"""
+Rutas API para gestión de bases de datos MariaDB de clientes.
+
+Arquitectura:
+  - PostgreSQL (interno del panel): guarda metadata en tabla client_databases
+  - MariaDB (para clientes): motor real donde se crean CREATE DATABASE / CREATE USER
+
+Naming convention (como cPanel):
+  username "juan", sufijo "wordpress"
+    → db_name = "juan_wordpress"   (nombre real en MariaDB)
+    → db_user = "juan_wordpress"   (usuario real en MariaDB)
+
+Endpoints:
+  GET    /api/databases              → listar BDs del usuario
+  POST   /api/databases              → crear BD + usuario MariaDB
+  GET    /api/databases/{id}         → obtener detalle
+  PUT    /api/databases/{id}         → actualizar quota/dominio/estado
+  DELETE /api/databases/{id}         → eliminar BD y usuario de MariaDB
+  PUT    /api/databases/{id}/password → cambiar contraseña del usuario MariaDB
+  GET    /api/databases/charsets     → listar charsets/collations disponibles
+"""
+
+import os
+import re
+import secrets
+import string
+import hashlib
+import subprocess
+from typing import List, Optional
+
+from fastapi import APIRouter, Depends, HTTPException, status, Query
+from sqlalchemy.orm import Session
+from sqlalchemy.exc import IntegrityError
+
+from api.models.database import get_db
+from api.models.models_client_db import ClientDatabase
+from api.models.models_user import User
+from api.models.models_domain import Domain
+from api.schemas.database_schemas import (
+    DatabaseCreate, DatabaseUpdate, DatabaseChangePassword,
+    DatabaseResponse, DatabaseCreateResponse,
+    DatabasePasswordResetResponse, DatabaseListResponse,
+)
+from api.dependencies import get_current_user, require_admin
+
+router = APIRouter()
+
+# ── Configuración MariaDB desde .env ─────────────────────────────────────────
+MARIADB_ENABLED       = os.getenv("MARIADB_ENABLED", "false").lower() == "true"
+MARIADB_HOST          = os.getenv("MARIADB_HOST", "localhost")
+MARIADB_PANEL_USER    = os.getenv("MARIADB_PANEL_USER", "svqpanel_admin")
+MARIADB_PANEL_PASSWORD = os.getenv("MARIADB_PANEL_PASSWORD", "")
+
+
+# ── Helpers internos ─────────────────────────────────────────────────────────
+
+def _check_mariadb_enabled():
+    """Lanza 503 si MariaDB no está habilitado en este servidor."""
+    if not MARIADB_ENABLED:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=(
+                "MariaDB no está habilitado en este servidor. "
+                "Instala MariaDB y configura MARIADB_ENABLED=true en .env"
+            )
+        )
+
+
+def _run_mariadb(sql: str) -> str:
+    """
+    Ejecuta SQL en MariaDB usando el usuario administrador del panel.
+    Usa el cliente CLI 'mysql' para no añadir dependencias extra de Python.
+    Lanza Exception con el mensaje de error si falla.
+    """
+    try:
+        cmd = [
+            "mysql",
+            f"--host={MARIADB_HOST}",
+            f"--user={MARIADB_PANEL_USER}",
+            f"--password={MARIADB_PANEL_PASSWORD}",
+            "--silent",
+            "--execute", sql,
+        ]
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
+        if result.returncode != 0:
+            err = result.stderr.strip()
+            # Quitar advertencia de contraseña en línea de comandos (normal en MySQL)
+            err = "\n".join(
+                line for line in err.splitlines()
+                if "Using a password on the command line" not in line
+            )
+            raise Exception(err or "Error desconocido en MariaDB")
+        return result.stdout
+    except subprocess.TimeoutExpired:
+        raise Exception("Timeout al ejecutar comando MariaDB (>30 s)")
+    except FileNotFoundError:
+        raise Exception(
+            "Cliente 'mysql' no encontrado en el sistema. ¿Está MariaDB instalado?"
+        )
+
+
+def _hash_password(password: str) -> str:
+    """PBKDF2-SHA256 con salt aleatorio."""
+    salt = secrets.token_hex(16)
+    h = hashlib.pbkdf2_hmac("sha256", password.encode(), salt.encode(), 100_000)
+    return f"{salt}${h.hex()}"
+
+
+def _generate_password(length: int = 20) -> str:
+    """Genera una contraseña aleatoria segura."""
+    alphabet = string.ascii_letters + string.digits + "!@#$%^&*()"
+    while True:
+        pwd = "".join(secrets.choice(alphabet) for _ in range(length))
+        # Asegurar al menos una letra, número y símbolo
+        if (any(c.isalpha() for c in pwd)
+                and any(c.isdigit() for c in pwd)
+                and any(c in "!@#$%^&*()" for c in pwd)):
+            return pwd
+
+
+def _make_db_name(username: str, suffix: str) -> str:
+    """
+    Genera el nombre real de la BD en MariaDB.
+    Formato: {username[:16]}_{suffix}  →  max 64 chars (límite MariaDB).
+    """
+    prefix = re.sub(r'[^a-z0-9_]', '_', username.lower())[:16]
+    return f"{prefix}_{suffix}"[:64]
+
+
+def _make_db_user(username: str, suffix: str) -> str:
+    """
+    Genera el nombre real del usuario en MariaDB.
+    Formato: {username[:10]}_{suffix}  →  max 32 chars (límite MariaDB seguro).
+    """
+    prefix = re.sub(r'[^a-z0-9_]', '_', username.lower())[:10]
+    return f"{prefix}_{suffix}"[:32]
+
+
+def _assert_can_manage(current_user: User, owner_id: int, db: Session):
+    """Lanza 403 si current_user no puede gestionar recursos de owner_id."""
+    if current_user.role == "admin":
+        return
+    if current_user.role == "reseller":
+        owner = db.query(User).filter(User.id == owner_id).first()
+        if owner and owner.parent_id == current_user.id:
+            return
+        if current_user.id == owner_id:
+            return
+        raise HTTPException(status_code=403, detail="Sin permisos para gestionar este recurso")
+    if current_user.id != owner_id:
+        raise HTTPException(status_code=403, detail="Sin permisos")
+
+
+# ── Endpoints ─────────────────────────────────────────────────────────────────
+
+@router.get("/databases/charsets", tags=["Databases"])
+def list_charsets():
+    """Lista charsets y collations disponibles para crear BDs MariaDB."""
+    return {
+        "status": "success",
+        "charsets": [
+            {
+                "charset": "utf8mb4",
+                "description": "UTF-8 completo (recomendado para todos los idiomas y emojis)",
+                "collations": [
+                    {"name": "utf8mb4_unicode_ci",  "description": "Unicode CI — recomendada"},
+                    {"name": "utf8mb4_general_ci",  "description": "General CI — más rápida"},
+                    {"name": "utf8mb4_spanish_ci",  "description": "Español (ñ, ü, tildes)"},
+                ],
+                "default_collation": "utf8mb4_unicode_ci",
+            },
+            {
+                "charset": "utf8",
+                "description": "UTF-8 básico (3 bytes, sin emojis — usar utf8mb4 preferiblemente)",
+                "collations": [
+                    {"name": "utf8_unicode_ci", "description": "Unicode CI"},
+                    {"name": "utf8_general_ci", "description": "General CI"},
+                ],
+                "default_collation": "utf8_unicode_ci",
+            },
+            {
+                "charset": "latin1",
+                "description": "ISO-8859-1 (Europa occidental, legacy)",
+                "collations": [
+                    {"name": "latin1_swedish_ci", "description": "Swedish CI (default MariaDB)"},
+                    {"name": "latin1_spanish_ci", "description": "Español"},
+                ],
+                "default_collation": "latin1_swedish_ci",
+            },
+        ]
+    }
+
+
+@router.get("/databases", response_model=DatabaseListResponse, tags=["Databases"])
+def list_databases(
+    skip: int = Query(0, ge=0),
+    limit: int = Query(50, ge=1, le=200),
+    user_id: Optional[int] = Query(None, description="Filtrar por usuario (solo admin/reseller)"),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """
+    Lista bases de datos MariaDB.
+    - Admin: ve todas (o filtradas por user_id)
+    - Reseller: ve las propias + las de sus clientes
+    - User: solo ve las suyas
+    """
+    query = db.query(ClientDatabase)
+
+    if current_user.role == "admin":
+        if user_id is not None:
+            query = query.filter(ClientDatabase.user_id == user_id)
+    elif current_user.role == "reseller":
+        client_ids = [
+            u.id for u in db.query(User).filter(User.parent_id == current_user.id).all()
+        ]
+        client_ids.append(current_user.id)
+        if user_id is not None:
+            if user_id not in client_ids:
+                raise HTTPException(status_code=403, detail="Sin permisos para ver ese usuario")
+            query = query.filter(ClientDatabase.user_id == user_id)
+        else:
+            query = query.filter(ClientDatabase.user_id.in_(client_ids))
+    else:
+        query = query.filter(ClientDatabase.user_id == current_user.id)
+
+    total = query.count()
+    items = query.offset(skip).limit(limit).all()
+    return {"total": total, "items": items}
+
+
+@router.post("/databases", response_model=DatabaseCreateResponse, status_code=status.HTTP_201_CREATED, tags=["Databases"])
+def create_database(
+    data: DatabaseCreate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """
+    Crea una base de datos MariaDB para el usuario.
+
+    - Genera el nombre real: `{username}_{db_name_suffix}`
+    - Genera el usuario real: `{username}_{db_user_suffix}`
+    - Ejecuta CREATE DATABASE + CREATE USER + GRANT en MariaDB
+    - Guarda la metadata en PostgreSQL
+    - **Devuelve la contraseña una sola vez** — el cliente debe guardarla
+    """
+    _check_mariadb_enabled()
+
+    # ── Determinar propietario ────────────────────────────────────────────────
+    # Un admin puede crear BDs para cualquier usuario si pasara user_id,
+    # pero en este endpoint el propietario siempre es el usuario autenticado.
+    owner = current_user
+
+    # ── Verificar límite ──────────────────────────────────────────────────────
+    db_count = db.query(ClientDatabase).filter(ClientDatabase.user_id == owner.id).count()
+    if owner.databases_limit > 0 and db_count >= owner.databases_limit:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Límite de bases de datos alcanzado ({owner.databases_limit}). "
+                   f"Contacta con el administrador para ampliar el límite."
+        )
+
+    # ── Generar nombres reales en MariaDB ─────────────────────────────────────
+    db_name = _make_db_name(owner.username, data.db_name_suffix)
+    db_user = _make_db_user(owner.username, data.db_user_suffix)
+
+    # ── Verificar unicidad ────────────────────────────────────────────────────
+    if db.query(ClientDatabase).filter(ClientDatabase.db_name == db_name).first():
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f"La base de datos '{db_name}' ya existe"
+        )
+    if db.query(ClientDatabase).filter(ClientDatabase.db_user == db_user).first():
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f"El usuario de BD '{db_user}' ya existe"
+        )
+
+    # ── Verificar dominio (si se especificó) ──────────────────────────────────
+    if data.domain_id:
+        domain = db.query(Domain).filter(Domain.id == data.domain_id).first()
+        if not domain:
+            raise HTTPException(status_code=404, detail="Dominio no encontrado")
+        if domain.user_id != owner.id and current_user.role not in ["admin", "reseller"]:
+            raise HTTPException(status_code=403, detail="Sin permisos para ese dominio")
+
+    # ── Crear en MariaDB ──────────────────────────────────────────────────────
+    charset   = data.charset
+    collation = data.collation
+    password  = data.db_password
+
+    # Escapar backtick en el nombre de la BD (prevención de SQL injection)
+    safe_db_name = db_name.replace("`", "``")
+    # Los usuarios y contraseñas van entre comillas simples — escapar ' → ''
+    safe_db_user = db_user.replace("'", "''")
+    safe_password = password.replace("'", "''")
+
+    created_db   = False
+    created_user = False
+
+    try:
+        _run_mariadb(
+            f"CREATE DATABASE `{safe_db_name}` "
+            f"CHARACTER SET {charset} COLLATE {collation};"
+        )
+        created_db = True
+
+        _run_mariadb(
+            f"CREATE USER '{safe_db_user}'@'localhost' "
+            f"IDENTIFIED BY '{safe_password}';"
+        )
+        created_user = True
+
+        _run_mariadb(
+            f"GRANT ALL PRIVILEGES ON `{safe_db_name}`.* "
+            f"TO '{safe_db_user}'@'localhost';"
+        )
+        _run_mariadb("FLUSH PRIVILEGES;")
+
+    except Exception as exc:
+        # Limpieza: deshacer lo que se llegó a crear
+        try:
+            if created_user:
+                _run_mariadb(f"DROP USER IF EXISTS '{safe_db_user}'@'localhost';")
+        except Exception:
+            pass
+        try:
+            if created_db:
+                _run_mariadb(f"DROP DATABASE IF EXISTS `{safe_db_name}`;")
+        except Exception:
+            pass
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error creando base de datos en MariaDB: {exc}"
+        )
+
+    # ── Guardar metadata en PostgreSQL ────────────────────────────────────────
+    try:
+        client_db = ClientDatabase(
+            user_id        = owner.id,
+            domain_id      = data.domain_id,
+            db_name        = db_name,
+            db_name_suffix = data.db_name_suffix,
+            db_user        = db_user,
+            db_user_suffix = data.db_user_suffix,
+            db_password_hash = _hash_password(password),
+            charset        = charset,
+            collation      = collation,
+            quota_mb       = data.quota_mb,
+        )
+        db.add(client_db)
+        db.commit()
+        db.refresh(client_db)
+    except IntegrityError:
+        db.rollback()
+        # Si falla en PostgreSQL, limpiar MariaDB
+        try:
+            _run_mariadb(f"DROP USER IF EXISTS '{safe_db_user}'@'localhost';")
+            _run_mariadb(f"DROP DATABASE IF EXISTS `{safe_db_name}`;")
+        except Exception:
+            pass
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Conflicto al guardar la BD en el panel"
+        )
+
+    # ── Respuesta (contraseña solo esta vez) ──────────────────────────────────
+    return DatabaseCreateResponse(
+        **{k: v for k, v in client_db.__dict__.items() if not k.startswith("_")},
+        db_password=password,
+        message=(
+            "⚠ Base de datos creada. Guarda la contraseña ahora mismo. "
+            "No se puede recuperar después; si la pierdes deberás resetearla."
+        )
+    )
+
+
+@router.get("/databases/{db_id}", response_model=DatabaseResponse, tags=["Databases"])
+def get_database(
+    db_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Obtiene los detalles de una base de datos por ID."""
+    client_db = db.query(ClientDatabase).filter(ClientDatabase.id == db_id).first()
+    if not client_db:
+        raise HTTPException(status_code=404, detail="Base de datos no encontrada")
+
+    _assert_can_manage(current_user, client_db.user_id, db)
+    return client_db
+
+
+@router.put("/databases/{db_id}", response_model=DatabaseResponse, tags=["Databases"])
+def update_database(
+    db_id: int,
+    data: DatabaseUpdate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """
+    Actualiza parámetros de una BD (quota, dominio asociado, estado activo).
+    No cambia el nombre ni el usuario de MariaDB (usa el endpoint /password para eso).
+    """
+    client_db = db.query(ClientDatabase).filter(ClientDatabase.id == db_id).first()
+    if not client_db:
+        raise HTTPException(status_code=404, detail="Base de datos no encontrada")
+
+    _assert_can_manage(current_user, client_db.user_id, db)
+
+    if data.domain_id is not None:
+        domain = db.query(Domain).filter(Domain.id == data.domain_id).first()
+        if not domain:
+            raise HTTPException(status_code=404, detail="Dominio no encontrado")
+        client_db.domain_id = data.domain_id
+
+    if data.quota_mb is not None:
+        client_db.quota_mb = data.quota_mb
+
+    if data.is_active is not None:
+        client_db.is_active = data.is_active
+
+    db.commit()
+    db.refresh(client_db)
+    return client_db
+
+
+@router.put("/databases/{db_id}/password", response_model=DatabasePasswordResetResponse, tags=["Databases"])
+def reset_database_password(
+    db_id: int,
+    data: DatabaseChangePassword,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """
+    Cambia la contraseña del usuario MariaDB de una BD.
+    Actualiza tanto MariaDB (ALTER USER) como el hash en PostgreSQL.
+    Devuelve la nueva contraseña en claro una sola vez.
+    """
+    _check_mariadb_enabled()
+
+    client_db = db.query(ClientDatabase).filter(ClientDatabase.id == db_id).first()
+    if not client_db:
+        raise HTTPException(status_code=404, detail="Base de datos no encontrada")
+
+    _assert_can_manage(current_user, client_db.user_id, db)
+
+    safe_user = client_db.db_user.replace("'", "''")
+    safe_pass = data.new_password.replace("'", "''")
+
+    try:
+        _run_mariadb(
+            f"ALTER USER '{safe_user}'@'localhost' IDENTIFIED BY '{safe_pass}';"
+        )
+        _run_mariadb("FLUSH PRIVILEGES;")
+    except Exception as exc:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error cambiando contraseña en MariaDB: {exc}"
+        )
+
+    client_db.db_password_hash = _hash_password(data.new_password)
+    db.commit()
+
+    return DatabasePasswordResetResponse(
+        db_user=client_db.db_user,
+        new_password=data.new_password,
+    )
+
+
+@router.delete("/databases/{db_id}", status_code=status.HTTP_204_NO_CONTENT, tags=["Databases"])
+def delete_database(
+    db_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """
+    Elimina una BD y su usuario de MariaDB, y borra el registro del panel.
+    Si hay errores en MariaDB, el registro del panel se borra igualmente
+    y se devuelve un warning en el header X-Warning.
+    """
+    _check_mariadb_enabled()
+
+    client_db = db.query(ClientDatabase).filter(ClientDatabase.id == db_id).first()
+    if not client_db:
+        raise HTTPException(status_code=404, detail="Base de datos no encontrada")
+
+    _assert_can_manage(current_user, client_db.user_id, db)
+
+    safe_db_name = client_db.db_name.replace("`", "``")
+    safe_db_user = client_db.db_user.replace("'", "''")
+
+    mariadb_errors = []
+
+    try:
+        _run_mariadb(f"DROP DATABASE IF EXISTS `{safe_db_name}`;")
+    except Exception as exc:
+        mariadb_errors.append(f"drop_db: {exc}")
+
+    try:
+        _run_mariadb(f"DROP USER IF EXISTS '{safe_db_user}'@'localhost';")
+        _run_mariadb("FLUSH PRIVILEGES;")
+    except Exception as exc:
+        mariadb_errors.append(f"drop_user: {exc}")
+
+    # Eliminar siempre del panel, aunque haya errores en MariaDB
+    db.delete(client_db)
+    db.commit()
+
+    if mariadb_errors:
+        # Devolver 207 con detalle de lo que falló
+        raise HTTPException(
+            status_code=207,
+            detail={
+                "message": "BD eliminada del panel pero con errores en MariaDB",
+                "errors": mariadb_errors,
+            }
+        )
+
+    return None
+
+
+# ── Endpoint de administración ────────────────────────────────────────────────
+
+@router.post("/admin/databases/sync-sizes", tags=["Databases"])
+def sync_database_sizes(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_admin),
+):
+    """
+    (Admin) Sincroniza el tamaño real de todas las BDs MariaDB
+    consultando information_schema y actualizando size_mb en PostgreSQL.
+    """
+    _check_mariadb_enabled()
+
+    try:
+        sql = """
+            SELECT table_schema AS db_name,
+                   ROUND(SUM(data_length + index_length) / 1048576, 2) AS size_mb
+            FROM information_schema.tables
+            WHERE table_schema NOT IN
+                  ('mysql','information_schema','performance_schema','sys')
+            GROUP BY table_schema;
+        """
+        output = _run_mariadb(sql)
+    except Exception as exc:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Error consultando information_schema: {exc}"
+        )
+
+    # Parsear output (tab-separated)
+    size_map: dict[str, float] = {}
+    for line in output.strip().splitlines():
+        parts = line.strip().split("\t")
+        if len(parts) == 2:
+            try:
+                size_map[parts[0]] = float(parts[1])
+            except ValueError:
+                pass
+
+    # Actualizar en PostgreSQL
+    updated = 0
+    all_dbs = db.query(ClientDatabase).all()
+    for client_db in all_dbs:
+        if client_db.db_name in size_map:
+            client_db.size_mb = int(size_map[client_db.db_name])
+            updated += 1
+
+    db.commit()
+
+    return {
+        "status": "success",
+        "updated": updated,
+        "total": len(all_dbs),
+        "message": f"Tamaños actualizados para {updated} de {len(all_dbs)} bases de datos",
+    }
