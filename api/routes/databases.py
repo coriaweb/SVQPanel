@@ -344,8 +344,13 @@ def create_database(
         )
         created_user = True
 
+        # Otorgar permisos específicos (no ALL PRIVILEGES — requiere tenerlos
+        # todos en la cuenta admin, lo que puede no cumplirse siempre)
         _run_mariadb(
-            f"GRANT ALL PRIVILEGES ON `{safe_db_name}`.* "
+            f"GRANT SELECT, INSERT, UPDATE, DELETE, CREATE, DROP, INDEX, ALTER, "
+            f"CREATE TEMPORARY TABLES, LOCK TABLES, EXECUTE, "
+            f"CREATE VIEW, SHOW VIEW, CREATE ROUTINE, ALTER ROUTINE, "
+            f"EVENT, TRIGGER ON `{safe_db_name}`.* "
             f"TO '{safe_db_user}'@'localhost';"
         )
         _run_mariadb("FLUSH PRIVILEGES;")
