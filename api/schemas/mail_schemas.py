@@ -3,7 +3,7 @@ Esquemas Pydantic para el módulo de correo electrónico
 """
 
 import re
-from pydantic import BaseModel, Field, field_validator, model_validator
+from pydantic import BaseModel, Field, field_validator, model_validator, ValidationInfo
 from typing import Optional, List
 from datetime import datetime
 
@@ -234,3 +234,44 @@ class DkimResponse(BaseModel):
     public_key_pem:   Optional[str] = None
     dns_auto_added:   bool          = False
     message:          str           = ""
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Antispam (Rspamd por dominio)
+# ─────────────────────────────────────────────────────────────────────────────
+
+class SpamSettingsUpdate(BaseModel):
+    spam_tag_threshold:    Optional[float] = Field(None, ge=1.0,  le=30.0,
+        description="Score para etiquetar como spam (cabecera X-Spam)")
+    spam_reject_threshold: Optional[float] = Field(None, ge=3.0,  le=100.0,
+        description="Score para rechazar el mensaje definitivamente")
+    whitelist_senders:     Optional[str]   = Field(None,
+        description="Remitentes permitidos, uno por línea (email o @dominio)")
+    blacklist_senders:     Optional[str]   = Field(None,
+        description="Remitentes bloqueados, uno por línea (email o @dominio)")
+
+    @field_validator("spam_reject_threshold")
+    @classmethod
+    def reject_gt_tag(cls, v, info):
+        tag = info.data.get("spam_tag_threshold")
+        if tag is not None and v is not None and v <= tag:
+            raise ValueError("El umbral de rechazo debe ser mayor que el de etiquetado")
+        return v
+
+
+class SpamStatsResponse(BaseModel):
+    scanned:    int = 0
+    rejected:   int = 0
+    tagged:     int = 0
+    greylisted: int = 0
+    clean:      int = 0
+    learned:    int = 0
+    error:      Optional[str] = None
+
+
+class SpamSettingsResponse(BaseModel):
+    spam_tag_threshold:    float = 6.0
+    spam_reject_threshold: float = 15.0
+    whitelist_senders:     str   = ""
+    blacklist_senders:     str   = ""
+    stats:                 SpamStatsResponse = SpamStatsResponse()

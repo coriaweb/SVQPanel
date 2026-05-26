@@ -19,8 +19,9 @@ from api.schemas.mail_schemas import (
     MailboxCreate, MailboxUpdate, MailboxResponse,
     MailAliasCreate, MailAliasResponse,
     DkimGenerateRequest, DkimResponse,
+    SpamSettingsUpdate, SpamSettingsResponse, SpamStatsResponse,
 )
-from api.dependencies import require_auth
+from api.dependencies import require_auth, require_admin
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -788,6 +789,89 @@ async def delete_alias(
         logger.error(f"Error eliminando alias de Postfix: {e}")
 
     return None
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Antispam — configuración y estadísticas por dominio
+# ─────────────────────────────────────────────────────────────────────────────
+
+@router.get("/mail/domains/{domain_id}/spam", response_model=SpamSettingsResponse)
+async def get_spam_settings(
+    domain_id: int,
+    current_user=Depends(require_auth),
+    db: Session = Depends(get_db)
+):
+    """Obtiene la configuración antispam y estadísticas de un dominio"""
+    md = db.query(MailDomain).filter(MailDomain.id == domain_id).first()
+    if not md:
+        raise HTTPException(status_code=404, detail="Dominio no encontrado")
+    _require_edit(md, current_user)
+
+    stats = SpamStatsResponse()
+    try:
+        from scripts.rspamd_manager import RspamdManager
+        mgr = RspamdManager()
+        if mgr.rspamd_available():
+            raw = mgr.get_domain_stats(md.domain_name)
+            stats = SpamStatsResponse(**raw)
+    except Exception:
+        pass
+
+    return SpamSettingsResponse(
+        spam_tag_threshold=md.spam_tag_threshold or 6.0,
+        spam_reject_threshold=md.spam_reject_threshold or 15.0,
+        whitelist_senders=md.whitelist_senders or "",
+        blacklist_senders=md.blacklist_senders or "",
+        stats=stats,
+    )
+
+
+@router.put("/mail/domains/{domain_id}/spam", response_model=SpamSettingsResponse)
+async def update_spam_settings(
+    domain_id: int,
+    payload: SpamSettingsUpdate,
+    current_user=Depends(require_auth),
+    db: Session = Depends(get_db)
+):
+    """Actualiza umbrales de spam y listas de remitentes de un dominio"""
+    _require_mail_enabled()
+    md = db.query(MailDomain).filter(MailDomain.id == domain_id).first()
+    if not md:
+        raise HTTPException(status_code=404, detail="Dominio no encontrado")
+    _require_edit(md, current_user)
+
+    if payload.spam_tag_threshold    is not None: md.spam_tag_threshold    = payload.spam_tag_threshold
+    if payload.spam_reject_threshold is not None: md.spam_reject_threshold = payload.spam_reject_threshold
+    if payload.whitelist_senders     is not None: md.whitelist_senders     = payload.whitelist_senders.strip()
+    if payload.blacklist_senders     is not None: md.blacklist_senders     = payload.blacklist_senders.strip()
+    db.commit()
+
+    # Regenerar settings.conf de Rspamd con todos los dominios
+    try:
+        from scripts.rspamd_manager import RspamdManager
+        all_domains = db.query(MailDomain).filter(MailDomain.is_active == True).all()
+        RspamdManager().rebuild_from_db(all_domains)
+    except PermissionError:
+        logger.warning("Sin permisos para actualizar config Rspamd (¿entorno dev?)")
+    except Exception as e:
+        logger.error(f"Error actualizando Rspamd: {e}")
+
+    return SpamSettingsResponse(
+        spam_tag_threshold=md.spam_tag_threshold,
+        spam_reject_threshold=md.spam_reject_threshold,
+        whitelist_senders=md.whitelist_senders or "",
+        blacklist_senders=md.blacklist_senders or "",
+    )
+
+
+@router.get("/mail/spam/stats", response_model=SpamStatsResponse)
+async def get_global_spam_stats(current_user=Depends(require_admin)):
+    """Estadísticas globales de Rspamd (solo admin)"""
+    try:
+        from scripts.rspamd_manager import RspamdManager
+        return SpamStatsResponse(**RspamdManager().get_global_stats())
+    except Exception as e:
+        return SpamStatsResponse(error=str(e))
 
 
 # ─────────────────────────────────────────────────────────────────────────────

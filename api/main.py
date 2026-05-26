@@ -108,6 +108,11 @@ def _run_migrations():
             created_at     TIMESTAMP DEFAULT NOW(),
             UNIQUE (mail_domain_id, source)
         )""",
+        # Fase 9f: campos antispam por dominio
+        "ALTER TABLE mail_domains ADD COLUMN IF NOT EXISTS spam_tag_threshold FLOAT DEFAULT 6.0",
+        "ALTER TABLE mail_domains ADD COLUMN IF NOT EXISTS spam_reject_threshold FLOAT DEFAULT 15.0",
+        "ALTER TABLE mail_domains ADD COLUMN IF NOT EXISTS whitelist_senders TEXT DEFAULT ''",
+        "ALTER TABLE mail_domains ADD COLUMN IF NOT EXISTS blacklist_senders TEXT DEFAULT ''",
         # Índices de correo para consultas frecuentes
         "CREATE INDEX IF NOT EXISTS ix_mail_domains_user_id ON mail_domains(user_id)",
         "CREATE INDEX IF NOT EXISTS ix_mailboxes_mail_domain_id ON mailboxes(mail_domain_id)",

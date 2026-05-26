@@ -4,7 +4,7 @@ Almacenamiento bajo /home/{panel_user}/mail/{domain}/{mailbox}/
 """
 
 from sqlalchemy import (
-    Column, Integer, String, Boolean, DateTime, Text,
+    Column, Integer, Float, String, Boolean, DateTime, Text,
     ForeignKey, UniqueConstraint
 )
 from sqlalchemy.orm import relationship
@@ -41,6 +41,12 @@ class MailDomain(Base):
 
     # ── Límites ───────────────────────────────────────────────────────────
     max_mailboxes = Column(Integer, default=0)   # 0 = sin límite
+
+    # ── Antispam (Rspamd por dominio) ─────────────────────────────────────
+    spam_tag_threshold    = Column(Float, default=6.0)   # score → añadir cabecera spam
+    spam_reject_threshold = Column(Float, default=15.0)  # score → rechazar
+    whitelist_senders     = Column(Text, default="")     # emails/dominios permitidos (uno por línea)
+    blacklist_senders     = Column(Text, default="")     # emails/dominios bloqueados (uno por línea)
 
     # ── Timestamps ────────────────────────────────────────────────────────
     created_at = Column(DateTime, default=datetime.utcnow)

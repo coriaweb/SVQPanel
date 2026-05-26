@@ -455,9 +455,10 @@
 
           <!-- ── TAB: Ajustes ── -->
           <div v-if="activeTab === 'settings'">
-            <h6 class="mb-3">Configuración del dominio</h6>
-            <form @submit.prevent="saveSettings" class="row g-3">
 
+            <!-- Configuración general -->
+            <h6 class="mb-3">Configuración general</h6>
+            <form @submit.prevent="saveSettings" class="row g-3 mb-4">
               <div class="col-md-6">
                 <label class="form-label">Catch-all
                   <small class="text-muted">(correo para direcciones no existentes)</small>
@@ -466,7 +467,6 @@
                        v-model="settingsForm.catch_all"
                        placeholder="catchall@example.com (vacío para desactivar)">
               </div>
-
               <div class="col-md-3">
                 <label class="form-label">Límite de buzones
                   <small class="text-muted">(0 = sin límite)</small>
@@ -474,7 +474,6 @@
                 <input type="number" class="form-control" v-model.number="settingsForm.max_mailboxes"
                        min="0" max="9999">
               </div>
-
               <div class="col-md-3">
                 <label class="form-label">Estado</label>
                 <select class="form-select" v-model="settingsForm.is_active">
@@ -482,15 +481,121 @@
                   <option :value="false">Suspendido</option>
                 </select>
               </div>
-
               <div class="col-12">
                 <button type="submit" class="btn btn-primary" :disabled="savingSettings">
                   <span v-if="savingSettings" class="spinner-border spinner-border-sm me-2"></span>
                   <i v-else class="bi bi-floppy me-1"></i>Guardar cambios
                 </button>
               </div>
-
             </form>
+
+            <hr />
+
+            <!-- Antispam (Rspamd) -->
+            <div class="d-flex align-items-center mb-3">
+              <h6 class="mb-0"><i class="bi bi-shield-check me-2 text-danger"></i>Antispam</h6>
+              <span v-if="loadingSpam" class="spinner-border spinner-border-sm ms-2"></span>
+            </div>
+
+            <!-- Estadísticas de spam -->
+            <div v-if="spamSettings.stats" class="row g-2 mb-4">
+              <div class="col-6 col-md-2">
+                <div class="card text-center border-0 bg-light">
+                  <div class="card-body py-2">
+                    <div class="fs-5 fw-bold">{{ spamSettings.stats.scanned }}</div>
+                    <div class="small text-muted">Analizados</div>
+                  </div>
+                </div>
+              </div>
+              <div class="col-6 col-md-2">
+                <div class="card text-center border-0 bg-success bg-opacity-10">
+                  <div class="card-body py-2">
+                    <div class="fs-5 fw-bold text-success">{{ spamSettings.stats.clean }}</div>
+                    <div class="small text-muted">Limpios</div>
+                  </div>
+                </div>
+              </div>
+              <div class="col-6 col-md-2">
+                <div class="card text-center border-0 bg-warning bg-opacity-10">
+                  <div class="card-body py-2">
+                    <div class="fs-5 fw-bold text-warning">{{ spamSettings.stats.tagged }}</div>
+                    <div class="small text-muted">Etiquetados</div>
+                  </div>
+                </div>
+              </div>
+              <div class="col-6 col-md-2">
+                <div class="card text-center border-0 bg-secondary bg-opacity-10">
+                  <div class="card-body py-2">
+                    <div class="fs-5 fw-bold text-secondary">{{ spamSettings.stats.greylisted }}</div>
+                    <div class="small text-muted">Greylisted</div>
+                  </div>
+                </div>
+              </div>
+              <div class="col-6 col-md-2">
+                <div class="card text-center border-0 bg-danger bg-opacity-10">
+                  <div class="card-body py-2">
+                    <div class="fs-5 fw-bold text-danger">{{ spamSettings.stats.rejected }}</div>
+                    <div class="small text-muted">Rechazados</div>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <form @submit.prevent="saveSpamSettings" class="row g-3">
+              <!-- Umbrales -->
+              <div class="col-md-3">
+                <label class="form-label">
+                  Umbral etiquetado
+                  <small class="text-muted d-block">Score → añade cabecera spam</small>
+                </label>
+                <div class="input-group">
+                  <input type="number" class="form-control" step="0.5" min="1" max="20"
+                         v-model.number="spamForm.spam_tag_threshold">
+                  <span class="input-group-text">pts</span>
+                </div>
+              </div>
+              <div class="col-md-3">
+                <label class="form-label">
+                  Umbral rechazo
+                  <small class="text-muted d-block">Score → rechazar mensaje</small>
+                </label>
+                <div class="input-group">
+                  <input type="number" class="form-control" step="0.5" min="3" max="100"
+                         v-model.number="spamForm.spam_reject_threshold">
+                  <span class="input-group-text">pts</span>
+                </div>
+              </div>
+              <div class="col-md-3">
+                <label class="form-label">
+                  <i class="bi bi-check-circle text-success me-1"></i>Whitelist
+                  <small class="text-muted d-block">Remitentes siempre permitidos</small>
+                </label>
+                <textarea class="form-control font-monospace" rows="5"
+                          v-model="spamForm.whitelist_senders"
+                          placeholder="usuario@dominio.com&#10;@dominio.com&#10;otro@ejemplo.org"
+                          style="font-size:.8rem"></textarea>
+                <small class="text-muted">Un email o @dominio por línea</small>
+              </div>
+              <div class="col-md-3">
+                <label class="form-label">
+                  <i class="bi bi-x-circle text-danger me-1"></i>Blacklist
+                  <small class="text-muted d-block">Remitentes siempre bloqueados</small>
+                </label>
+                <textarea class="form-control font-monospace" rows="5"
+                          v-model="spamForm.blacklist_senders"
+                          placeholder="spam@ejemplo.com&#10;@dominiomalicioso.com"
+                          style="font-size:.8rem"></textarea>
+                <small class="text-muted">Un email o @dominio por línea</small>
+              </div>
+
+              <div class="col-12">
+                <button type="submit" class="btn btn-danger" :disabled="savingSpam">
+                  <span v-if="savingSpam" class="spinner-border spinner-border-sm me-2"></span>
+                  <i v-else class="bi bi-shield-check me-1"></i>Guardar configuración antispam
+                </button>
+              </div>
+            </form>
+
           </div>
 
         </div>
@@ -764,6 +869,10 @@ export default {
 
     // ── Ajustes ───────────────────────────────────────────────────────
     const settingsForm   = ref({ catch_all: '', max_mailboxes: 0, is_active: true })
+    const spamSettings   = ref({ stats: { scanned:0, clean:0, tagged:0, greylisted:0, rejected:0 } })
+    const spamForm       = ref({ spam_tag_threshold: 6.0, spam_reject_threshold: 15.0, whitelist_senders: '', blacklist_senders: '' })
+    const loadingSpam    = ref(false)
+    const savingSpam     = ref(false)
     const savingSettings = ref(false)
 
     // ── Modales ───────────────────────────────────────────────────────
@@ -860,6 +969,9 @@ export default {
       if (tab === 'dkim' && dkimInfo.value === null) {
         await loadDkim(selectedDomain.value.id)
       }
+      if (tab === 'settings' && !spamSettings.value.spam_tag_threshold) {
+        await loadSpamSettings(selectedDomain.value.id)
+      }
     }
 
     // ─────────────────────────────────────────────────────────────────
@@ -903,6 +1015,41 @@ export default {
         store.showNotification('Error: ' + e.message, 'danger')
       } finally {
         savingSettings.value = false
+      }
+    }
+
+    // ─────────────────────────────────────────────────────────────────
+    // Antispam
+    // ─────────────────────────────────────────────────────────────────
+
+    const loadSpamSettings = async (domainId) => {
+      loadingSpam.value = true
+      try {
+        const data = await api.get(`/api/mail/domains/${domainId}/spam`)
+        spamSettings.value = data
+        spamForm.value = {
+          spam_tag_threshold:    data.spam_tag_threshold,
+          spam_reject_threshold: data.spam_reject_threshold,
+          whitelist_senders:     data.whitelist_senders || '',
+          blacklist_senders:     data.blacklist_senders || '',
+        }
+      } catch { /* si Rspamd no está instalado no bloqueamos */ }
+      finally { loadingSpam.value = false }
+    }
+
+    const saveSpamSettings = async () => {
+      savingSpam.value = true
+      try {
+        const data = await api.put(
+          `/api/mail/domains/${selectedDomain.value.id}/spam`,
+          spamForm.value
+        )
+        spamSettings.value = data
+        store.showNotification('Configuración antispam guardada', 'success')
+      } catch (e) {
+        store.showNotification('Error: ' + e.message, 'danger')
+      } finally {
+        savingSpam.value = false
       }
     }
 
@@ -1082,11 +1229,13 @@ export default {
       loadingMailboxes, loadingAliases, loadingDkim,
       generatingDkim, dkimJustGenerated, copied,
       settingsForm, savingSettings,
+      spamSettings, spamForm, loadingSpam, savingSpam,
       showNewDomain, showNewMailbox, showPasswordModal, showNewAlias,
       deleteTarget, saving, showPwd,
       newDomainForm, newMailboxForm, newAliasForm, passwordTarget, newPassword,
       loadDomains, openDetail, switchTab,
       openNewDomain, createDomain, saveSettings,
+      loadSpamSettings, saveSpamSettings,
       generateDkim, rotateDkim, copyText,
       createMailbox, toggleMailbox, openChangePassword, changePassword,
       createAlias,
