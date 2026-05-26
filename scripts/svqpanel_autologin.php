@@ -11,10 +11,17 @@
  *   3. Este plugin intercepta el startup de Roundcube
  *   4. Valida el token contra el endpoint interno del panel (solo localhost)
  *   5. Llama a $rcmail->login() con las credenciales recibidas
- *   6. Redirige a la bandeja de entrada
+ *   6. Replica los pasos que normalmente hace index.php tras un login válido:
+ *        - session->regenerate_id(false)
+ *        - session->set_auth_cookie()       ← imprescindible: emite roundcube_sessauth
+ *   7. Redirige a la bandeja de entrada
  *
- * Instalación (install.sh lo hace automáticamente):
- *   /usr/share/roundcube/plugins/svqpanel_autologin/svqpanel_autologin.php
+ * Por qué hacen falta esos pasos manualmente:
+ *   rcmail::login() solo autentica contra IMAP y rellena $_SESSION['user_id'].
+ *   No regenera el session ID ni emite la cookie roundcube_sessauth — eso lo
+ *   hace el handler de la acción "login" en /webmail/public_html/index.php.
+ *   Al invocar login() desde un hook "startup" se salta ese paso, la cookie
+ *   roundcube_sessauth nunca se envía y la siguiente petición pierde la sesión.
  *
  * Seguridad:
  *   - El endpoint interno solo acepta peticiones desde 127.0.0.1
@@ -49,8 +56,13 @@ class svqpanel_autologin extends rcube_plugin
      */
     public function startup(array $args): array
     {
+        // Si ya hay un usuario autenticado, no hacer nada
+        if (!empty($_SESSION['user_id'])) {
+            return $args;
+        }
+
         // Solo actuar si el parámetro svqtoken está presente
-        $raw_token = $_GET['svqtoken'] ?? $_POST['svqtoken'] ?? null;
+        $raw_token = rcube_utils::get_input_value('svqtoken', rcube_utils::INPUT_GET);
         if (!$raw_token) {
             return $args;
         }
@@ -58,11 +70,6 @@ class svqpanel_autologin extends rcube_plugin
         // Validar formato del token (UUID hex de 32 chars, sin guiones)
         $token = preg_replace('/[^a-f0-9]/', '', strtolower($raw_token));
         if (strlen($token) !== 32) {
-            rcube::raise_error(
-                ['code' => 403, 'type' => 'php',
-                 'message' => 'svqpanel_autologin: formato de token inválido'],
-                true, false
-            );
             return $args;
         }
 
@@ -73,28 +80,25 @@ class svqpanel_autologin extends rcube_plugin
         }
 
         $rcmail = rcube::get_instance();
+        $host   = $data['imap_host'] ?? 'localhost';
 
-        // Intentar login directo con las credenciales obtenidas
-        $host = $data['imap_host'] ?? 'localhost';
-        if ($rcmail->login($data['username'], $data['password'], $host, false)) {
-            // Login exitoso: limpiar lang de sesión y redirigir al correo
-            $rcmail->session->remove('user_lang');
-
-            // Forzar cookie de sesión
-            if (function_exists('rcube_utils::setcookie')) {
-                rcube_utils::setcookie(
-                    $rcmail->config->get('session_name', 'roundcube_sessid'),
-                    session_id(),
-                    0
-                );
-            }
-
-            $rcmail->output->redirect(['_task' => 'mail']);
-            exit;
+        if (!$rcmail->login($data['username'], $data['password'], $host, false)) {
+            // Login fallido: dejar que Roundcube muestre la página normal de login
+            return $args;
         }
 
-        // Si el login falla, dejar que Roundcube muestre la página normal
-        return $args;
+        // ─── Replica el cierre de la acción "login" del index.php ────────────
+        // (program/include/index.php líneas ~119-126 en Roundcube 1.7)
+        $rcmail->session->remove('temp');
+        $rcmail->session->regenerate_id(false);
+        $rcmail->session->set_auth_cookie();   // ← emite la cookie roundcube_sessauth
+
+        // Permite a otros plugins controlar la URL post-login
+        $redir = $rcmail->plugins->exec_hook('login_after', ['_task' => 'mail']);
+        unset($redir['abort'], $redir['_err']);
+
+        $rcmail->output->redirect($redir, 0, true);
+        exit;
     }
 
     // ------------------------------------------------------------------
@@ -124,13 +128,7 @@ class svqpanel_autologin extends rcube_plugin
         ]);
 
         $response = @file_get_contents($url, false, $context);
-
         if ($response === false || $response === '') {
-            rcube::raise_error(
-                ['code' => 500, 'type' => 'php',
-                 'message' => 'svqpanel_autologin: no se pudo contactar con el panel'],
-                true, false
-            );
             return null;
         }
 
