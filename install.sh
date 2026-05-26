@@ -664,20 +664,67 @@ MDBCREDEOF
              chars = string.ascii_letters + string.digits; \
              print(''.join(secrets.choice(chars) for _ in range(56)))")
 
+        PMA_CONTROL_PASS=$(python3 -c \
+            "import secrets, string; \
+             chars = string.ascii_letters + string.digits; \
+             print(''.join(secrets.choice(chars) for _ in range(24)))")
+
+        # ── BD phpmyadmin + usuario pma (controluser) ─────────────────────────
+        mariadb --user=root << PMADBEOF
+CREATE DATABASE IF NOT EXISTS phpmyadmin CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
+DROP USER IF EXISTS 'pma'@'localhost';
+CREATE USER 'pma'@'localhost' IDENTIFIED BY '${PMA_CONTROL_PASS}';
+GRANT SELECT, INSERT, UPDATE, DELETE ON phpmyadmin.* TO 'pma'@'localhost';
+FLUSH PRIVILEGES;
+PMADBEOF
+        mariadb --user=root phpmyadmin < "${PMA_DIR}/sql/create_tables.sql"
+        echo -e "  ${GREEN}✓ BD phpmyadmin y usuario pma creados${NC}"
+
         cat > "${PMA_DIR}/config.inc.php" << PMACFGEOF
 <?php
 \$cfg['blowfish_secret'] = '${PMA_BLOWFISH_SECRET}';
 \$i = 0; \$i++;
 \$cfg['Servers'][\$i]['host']          = '127.0.0.1';
 \$cfg['Servers'][\$i]['port']          = '3306';
+\$cfg['Servers'][\$i]['compress']      = false;
 \$cfg['Servers'][\$i]['auth_type']     = 'signon';
 \$cfg['Servers'][\$i]['SignonSession'] = 'SignonSession';
 \$cfg['Servers'][\$i]['SignonURL']     = '/pma/signon.php';
 \$cfg['Servers'][\$i]['LogoutURL']     = '/databases';
 \$cfg['Servers'][\$i]['AllowRoot']     = false;
+
+// Almacenamiento de configuración (elimina el aviso de funciones extendidas)
+\$cfg['Servers'][\$i]['controlhost']        = '127.0.0.1';
+\$cfg['Servers'][\$i]['controlport']        = '3306';
+\$cfg['Servers'][\$i]['controluser']        = 'pma';
+\$cfg['Servers'][\$i]['controlpass']        = '${PMA_CONTROL_PASS}';
+\$cfg['Servers'][\$i]['pmadb']             = 'phpmyadmin';
+\$cfg['Servers'][\$i]['bookmarktable']     = 'pma__bookmark';
+\$cfg['Servers'][\$i]['relation']          = 'pma__relation';
+\$cfg['Servers'][\$i]['table_info']        = 'pma__table_info';
+\$cfg['Servers'][\$i]['table_coords']      = 'pma__table_coords';
+\$cfg['Servers'][\$i]['pdf_pages']         = 'pma__pdf_pages';
+\$cfg['Servers'][\$i]['column_info']       = 'pma__column_info';
+\$cfg['Servers'][\$i]['history']           = 'pma__history';
+\$cfg['Servers'][\$i]['table_uiprefs']     = 'pma__table_uiprefs';
+\$cfg['Servers'][\$i]['tracking']          = 'pma__tracking';
+\$cfg['Servers'][\$i]['userconfig']        = 'pma__userconfig';
+\$cfg['Servers'][\$i]['recent']            = 'pma__recent';
+\$cfg['Servers'][\$i]['favorite']          = 'pma__favorite';
+\$cfg['Servers'][\$i]['users']             = 'pma__users';
+\$cfg['Servers'][\$i]['usergroups']        = 'pma__usergroups';
+\$cfg['Servers'][\$i]['navigationhide']    = 'pma__navigationhide';
+\$cfg['Servers'][\$i]['savedsearches']     = 'pma__savedsearches';
+\$cfg['Servers'][\$i]['central_columns']   = 'pma__central_columns';
+\$cfg['Servers'][\$i]['designer_settings'] = 'pma__designer_settings';
+\$cfg['Servers'][\$i]['export_templates']  = 'pma__export_templates';
+
+// Directorios
 \$cfg['TempDir']   = '/tmp/phpmyadmin/';
 \$cfg['UploadDir'] = '';
 \$cfg['SaveDir']   = '';
+
+// UI
 \$cfg['ServerDefault']       = 1;
 \$cfg['LoginCookieValidity'] = 1440;
 \$cfg['SendErrorReports']    = 'never';
