@@ -259,6 +259,18 @@ class SpamSettingsUpdate(BaseModel):
         return v
 
 
+class SpamHistoryItem(BaseModel):
+    id:             str   = ""
+    from_addr:      str   = ""
+    subject:        str   = ""
+    action:         str   = ""
+    score:          float = 0.0
+    required_score: float = 0.0
+    timestamp:      str   = ""
+    size:           int   = 0
+    ip:             str   = ""
+
+
 class SpamStatsResponse(BaseModel):
     scanned:    int = 0
     rejected:   int = 0
@@ -266,7 +278,8 @@ class SpamStatsResponse(BaseModel):
     greylisted: int = 0
     clean:      int = 0
     learned:    int = 0
-    error:      Optional[str] = None
+    error:      Optional[str]           = None
+    history:    List[SpamHistoryItem]   = []
 
 
 class SpamSettingsResponse(BaseModel):

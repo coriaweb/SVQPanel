@@ -18,10 +18,11 @@ from urllib.request import urlopen, Request
 
 
 class RspamdManager:
-    SETTINGS_FILE = "/etc/rspamd/local.d/settings.conf"
-    MULTIMAP_FILE = "/etc/rspamd/local.d/multimap.conf"
-    MAPS_DIR      = "/etc/rspamd/maps/domains"
-    RSPAMD_API    = "http://127.0.0.1:11334"
+    SETTINGS_FILE   = "/etc/rspamd/local.d/settings.conf"
+    MULTIMAP_FILE   = "/etc/rspamd/local.d/multimap.conf"
+    CONTROLLER_FILE = "/etc/rspamd/local.d/worker-controller.inc"
+    MAPS_DIR        = "/etc/rspamd/maps/domains"
+    RSPAMD_API      = "http://127.0.0.1:11334"
 
     # ─── Helpers ──────────────────────────────────────────────────────────
 
@@ -239,31 +240,103 @@ class RspamdManager:
                 "error": str(e)
             }
 
-    def get_history(self, limit=200):
-        """Historial reciente vía HTTP API (requiere secure_ip en worker-controller.inc)"""
+    def _ensure_controller_secure_ip(self):
+        """
+        Añade secure_ip para localhost en worker-controller.inc si no existe.
+        Necesario para que la API HTTP funcione sin contraseña desde localhost.
+        Solo escribe/recarga una vez; las siguientes llamadas son un simple read.
+        """
         try:
-            url = f"{self.RSPAMD_API}/history?limit={limit}"
+            content = ""
+            if os.path.exists(self.CONTROLLER_FILE):
+                with open(self.CONTROLLER_FILE) as f:
+                    content = f.read()
+            if "secure_ip" not in content:
+                os.makedirs(os.path.dirname(self.CONTROLLER_FILE), exist_ok=True)
+                with open(self.CONTROLLER_FILE, "a") as f:
+                    f.write('\n# SVQPanel: acceso local sin contraseña\n'
+                            'secure_ip = ["127.0.0.1", "::1"];\n')
+                subprocess.run(["systemctl", "reload", "rspamd"],
+                               timeout=10, capture_output=True)
+                import time; time.sleep(1.5)   # esperar recarga
+        except Exception:
+            pass
+
+    def get_history(self, limit=200):
+        """
+        Historial reciente vía HTTP API.
+        Configura secure_ip automáticamente en el primer uso si falta.
+        Soporta respuesta como array (Rspamd 3.x) u objeto con 'rows' (4.x).
+        """
+        url = f"{self.RSPAMD_API}/history?rows={limit}"
+
+        def _fetch():
             with urlopen(Request(url), timeout=5) as resp:
-                return json.loads(resp.read())
+                data = json.loads(resp.read())
+            if isinstance(data, list):
+                return data
+            if isinstance(data, dict):
+                return data.get("rows", [])
+            return []
+
+        # Intento directo
+        try:
+            return _fetch()
+        except Exception:
+            pass
+
+        # Fallo → configurar secure_ip + reintentar
+        self._ensure_controller_secure_ip()
+        try:
+            return _fetch()
         except Exception:
             return []
 
     def get_domain_stats(self, domain, limit=500):
-        """Estadísticas filtradas por dominio destinatario"""
-        history = self.get_history(limit=limit)
+        """Estadísticas y mensajes recientes filtrados por dominio destinatario"""
+        from datetime import datetime, timezone
+
+        history  = self.get_history(limit=limit)
+        domain_l = domain.lower()
         filtered = [
             msg for msg in history
-            if any(r.lower().endswith(f"@{domain.lower()}")
+            if any(r.lower().endswith(f"@{domain_l}")
                    for r in msg.get("rcpts", []))
         ]
-        stats = {"scanned": len(filtered), "rejected": 0, "tagged": 0,
-                 "greylisted": 0, "clean": 0}
+
+        stats = {
+            "scanned": len(filtered), "rejected": 0, "tagged": 0,
+            "greylisted": 0, "clean": 0, "history": [],
+        }
         for msg in filtered:
             action = msg.get("action", "")
             if action == "reject":       stats["rejected"]   += 1
             elif action == "add header": stats["tagged"]     += 1
             elif action == "greylist":   stats["greylisted"] += 1
             else:                        stats["clean"]      += 1
+
+        # Últimos 25 mensajes, más recientes primero
+        recent = sorted(filtered,
+                        key=lambda m: m.get("time", 0) or 0,
+                        reverse=True)[:25]
+        for msg in recent:
+            ts = msg.get("time", 0) or 0
+            if ts:
+                try:
+                    ts = datetime.fromtimestamp(ts, tz=timezone.utc).strftime("%d/%m/%Y %H:%M")
+                except Exception:
+                    ts = str(ts)
+            stats["history"].append({
+                "id":             str(msg.get("id", "")),
+                "from_addr":      str(msg.get("from", "") or ""),
+                "subject":        str(msg.get("subject", "") or "(sin asunto)"),
+                "action":         str(msg.get("action", "")),
+                "score":          float(msg.get("score", 0) or 0),
+                "required_score": float(msg.get("required_score", 0) or 0),
+                "timestamp":      str(ts),
+                "size":           int(msg.get("size", 0) or 0),
+                "ip":             str(msg.get("ip", "") or ""),
+            })
         return stats
 
     # ─── Utilidades ───────────────────────────────────────────────────────

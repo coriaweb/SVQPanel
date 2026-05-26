@@ -596,6 +596,59 @@
               </div>
             </form>
 
+            <!-- ── Historial reciente de mensajes ── -->
+            <div v-if="spamSettings.stats && spamSettings.stats.history && spamSettings.stats.history.length" class="mt-4">
+              <h6 class="mb-3">
+                <i class="bi bi-clock-history me-2 text-secondary"></i>Últimos mensajes analizados
+                <span class="badge bg-secondary ms-2">{{ spamSettings.stats.history.length }}</span>
+              </h6>
+              <div class="table-responsive">
+                <table class="table table-sm table-hover align-middle mb-0" style="font-size:.82rem">
+                  <thead class="table-light">
+                    <tr>
+                      <th>Remitente</th>
+                      <th>Asunto</th>
+                      <th class="text-center">Acción</th>
+                      <th class="text-center">Score</th>
+                      <th class="text-end">Fecha</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <tr v-for="msg in spamSettings.stats.history" :key="msg.id">
+                      <td class="font-monospace text-truncate" style="max-width:160px" :title="msg.from_addr">
+                        {{ msg.from_addr || '—' }}
+                      </td>
+                      <td class="text-truncate" style="max-width:180px" :title="msg.subject">
+                        {{ msg.subject || '—' }}
+                      </td>
+                      <td class="text-center">
+                        <span :class="{
+                          'badge bg-danger':    msg.action === 'reject',
+                          'badge bg-warning text-dark': msg.action === 'add header',
+                          'badge bg-secondary': msg.action === 'greylist',
+                          'badge bg-success':   msg.action === 'no action',
+                          'badge bg-light text-dark border': !['reject','add header','greylist','no action'].includes(msg.action),
+                        }">
+                          {{ msg.action === 'add header' ? 'spam' :
+                             msg.action === 'no action'  ? 'limpio' :
+                             msg.action || '?' }}
+                        </span>
+                      </td>
+                      <td class="text-center font-monospace">
+                        {{ msg.score.toFixed(2) }}
+                      </td>
+                      <td class="text-end text-muted text-nowrap">{{ msg.timestamp }}</td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+            </div>
+            <div v-else-if="spamSettings.stats && spamSettings.stats.scanned === 0 && !loadingSpam"
+                 class="mt-3 text-muted small">
+              <i class="bi bi-info-circle me-1"></i>
+              Aún no hay mensajes registrados para este dominio.
+            </div>
+
           </div>
 
         </div>
@@ -869,7 +922,7 @@ export default {
 
     // ── Ajustes ───────────────────────────────────────────────────────
     const settingsForm   = ref({ catch_all: '', max_mailboxes: 0, is_active: true })
-    const spamSettings   = ref({ stats: { scanned:0, clean:0, tagged:0, greylisted:0, rejected:0 } })
+    const spamSettings   = ref({ stats: { scanned:0, clean:0, tagged:0, greylisted:0, rejected:0, history:[] } })
     const spamForm       = ref({ spam_tag_threshold: 6.0, spam_reject_threshold: 15.0, whitelist_senders: '', blacklist_senders: '' })
     const loadingSpam    = ref(false)
     const savingSpam     = ref(false)
