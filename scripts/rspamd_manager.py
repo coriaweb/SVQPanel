@@ -26,6 +26,16 @@ class RspamdManager:
         """Divide un bloque de texto (una entrada por línea) en lista limpia"""
         return [e.strip().lower() for e in (raw or "").splitlines() if e.strip()]
 
+    def _to_rspamd_pattern(self, entry: str) -> str:
+        """
+        Convierte una entrada a patrón válido para Rspamd settings.
+        @domain.com  →  *@domain.com  (glob: cualquier dirección del dominio)
+        user@domain  →  user@domain   (dirección exacta, sin cambios)
+        """
+        if entry.startswith('@'):
+            return f'*{entry}'
+        return entry
+
     # ─── Generación de settings.conf ──────────────────────────────────────
 
     def _build_settings_conf(self, domain_configs):
@@ -62,7 +72,7 @@ class RspamdManager:
             # ── Whitelist (aceptar sin analizar) ─────────────────────────
             wl = cfg.get("whitelist_entries", [])
             if wl:
-                wl_list = ", ".join(f'"{e}"' for e in wl)
+                wl_list = ", ".join(f'"{self._to_rspamd_pattern(e)}"' for e in wl)
                 out.append(f"""\
   {safe}_whitelist {{
     rcpt_domain = ["{domain}"];
@@ -74,7 +84,7 @@ class RspamdManager:
             # ── Blacklist (rechazar inmediatamente) ───────────────────────
             bl = cfg.get("blacklist_entries", [])
             if bl:
-                bl_list = ", ".join(f'"{e}"' for e in bl)
+                bl_list = ", ".join(f'"{self._to_rspamd_pattern(e)}"' for e in bl)
                 out.append(f"""\
   {safe}_blacklist {{
     rcpt_domain = ["{domain}"];
