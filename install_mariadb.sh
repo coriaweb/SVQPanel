@@ -79,12 +79,26 @@ curl -LsS https://r.mariadb.com/downloads/mariadb_repo_setup \
     | bash -s -- --mariadb-server-version="mariadb-11.4" > /dev/null 2>&1
 
 apt-get update -qq
-apt-get install -y -qq mariadb-server mariadb-client
+apt-get install -y mariadb-server mariadb-client
 
 systemctl enable mariadb
 systemctl start mariadb
 
-echo -e "${GREEN}✓ MariaDB $(mysql --version | awk '{print $6}' | tr -d ',') instalado${NC}\n"
+# Verificar que el binario cliente está disponible
+MARIADB_BIN=""
+for BIN in /usr/bin/mariadb /usr/bin/mysql; do
+    if [[ -x "$BIN" ]]; then
+        MARIADB_BIN="$BIN"
+        break
+    fi
+done
+
+if [[ -z "$MARIADB_BIN" ]]; then
+    echo -e "${RED}Error: binario cliente mariadb no encontrado tras instalar mariadb-client${NC}"
+    exit 1
+fi
+
+echo -e "${GREEN}✓ MariaDB instalado — cliente: $MARIADB_BIN${NC}\n"
 
 ###############################################################################
 # 3. GENERAR CONTRASEÑAS ALEATORIAS

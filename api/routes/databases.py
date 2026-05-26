@@ -68,16 +68,31 @@ def _check_mariadb_enabled():
 
 def _mariadb_binary() -> str:
     """
-    Devuelve el nombre del binario cliente de MariaDB disponible.
-    MariaDB 11.x usa 'mariadb'; versiones antiguas y MySQL usan 'mysql'.
+    Devuelve la ruta completa al binario cliente de MariaDB/MySQL.
+    Busca en rutas explícitas además del PATH del proceso (que en systemd
+    puede ser más restrictivo que el PATH interactivo del usuario).
     """
     import shutil
+    # Rutas explícitas primero (systemd puede tener PATH limitado)
+    explicit_paths = [
+        "/usr/bin/mariadb",
+        "/usr/bin/mysql",
+        "/usr/local/bin/mariadb",
+        "/usr/local/bin/mysql",
+        "/opt/mariadb/bin/mariadb",
+    ]
+    for path in explicit_paths:
+        import os
+        if os.path.isfile(path) and os.access(path, os.X_OK):
+            return path
+    # Fallback: buscar en PATH del proceso
     for binary in ("mariadb", "mysql"):
-        if shutil.which(binary):
-            return binary
+        found = shutil.which(binary)
+        if found:
+            return found
     raise Exception(
         "Cliente MariaDB/MySQL no encontrado. "
-        "Instala mariadb-client: apt install mariadb-client"
+        "Ejecuta en el servidor: apt install -y mariadb-client"
     )
 
 

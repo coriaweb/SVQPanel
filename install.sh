@@ -572,11 +572,16 @@ if [[ "$INSTALL_MARIADB" == true ]]; then
     curl -LsS https://r.mariadb.com/downloads/mariadb_repo_setup \
         | bash -s -- --mariadb-server-version="mariadb-11.4" > /dev/null 2>&1
     apt-get update -qq
-    apt-get install -y -qq mariadb-server mariadb-client
+    apt-get install -y mariadb-server mariadb-client
 
     systemctl enable mariadb
     systemctl start mariadb
 
+    # Verificar binario cliente (necesario para que el panel gestione BDs)
+    if [[ ! -x /usr/bin/mariadb && ! -x /usr/bin/mysql ]]; then
+        echo -e "${RED}Error: binario cliente mariadb no encontrado tras instalar mariadb-client${NC}"
+        exit 1
+    fi
     echo -e "  ${GREEN}✓ MariaDB 11.4 instalado${NC}"
 
     # ── Generar contraseñas aleatorias ────────────────────────────────────────
