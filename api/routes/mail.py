@@ -1,18 +1,22 @@
 """
 Rutas API para gestión de correo electrónico
-(dominios, buzones, alias, DKIM)
+(dominios, buzones, alias, DKIM, autologin Roundcube)
 """
 
 import os
+import uuid
 import socket
+import base64
+import hashlib
 import logging
+from datetime import datetime, timedelta
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi.responses import Response
 from sqlalchemy.orm import Session
 from typing import List
 
 from api.models.database import get_db
-from api.models.models_mail import MailDomain, Mailbox, MailAlias
+from api.models.models_mail import MailDomain, Mailbox, MailAlias, WebmailToken
 from api.models.models_dns import DnsZone, DnsRecord
 from api.schemas.mail_schemas import (
     MailDomainCreate, MailDomainUpdate, MailDomainResponse, MailDomainListItem,
@@ -20,11 +24,33 @@ from api.schemas.mail_schemas import (
     MailAliasCreate, MailAliasResponse,
     DkimGenerateRequest, DkimResponse,
     SpamSettingsUpdate, SpamSettingsResponse, SpamStatsResponse,
+    WebmailTokenResponse, RoundcubeStatusResponse,
 )
 from api.dependencies import require_auth, require_admin
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Cifrado reversible de contraseñas (para autologin webmail)
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _get_fernet():
+    """Devuelve un cifrador Fernet derivado de la SECRET_KEY del panel."""
+    from cryptography.fernet import Fernet
+    secret = os.getenv("SECRET_KEY", "svqpanel-insecure-default")
+    key = base64.urlsafe_b64encode(hashlib.sha256(secret.encode()).digest())
+    return Fernet(key)
+
+
+def _encrypt_password(plain: str) -> str:
+    """Cifra una contraseña en claro para almacenarla en la BD."""
+    return _get_fernet().encrypt(plain.encode()).decode()
+
+
+def _decrypt_password(encrypted: str) -> str:
+    """Descifra una contraseña almacenada en la BD."""
+    return _get_fernet().decrypt(encrypted.encode()).decode()
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -562,12 +588,19 @@ async def create_mailbox(
     except Exception as e:
         raise HTTPException(500, f"Error creando buzón en el sistema: {e}")
 
+    # Cifrar la contraseña en claro para autologin webmail (Roundcube)
+    try:
+        enc_pwd = _encrypt_password(data.password)
+    except Exception:
+        enc_pwd = None
+
     # Crear en la BD
     mb = Mailbox(
-        mail_domain_id = md.id,
-        username       = data.username,
-        password_hash  = pwd_hash,
-        quota_mb       = data.quota_mb,
+        mail_domain_id     = md.id,
+        username           = data.username,
+        password_hash      = pwd_hash,
+        encrypted_password = enc_pwd,
+        quota_mb           = data.quota_mb,
     )
     db.add(mb)
     db.commit()
@@ -610,6 +643,10 @@ async def update_mailbox(
                 data.password, data.quota_mb or mb.quota_mb
             )
             mb.password_hash = new_hash
+            try:
+                mb.encrypted_password = _encrypt_password(data.password)
+            except Exception:
+                pass
 
         if data.quota_mb is not None and data.quota_mb != mb.quota_mb:
             mgr.update_mailbox_quota(
@@ -634,6 +671,10 @@ async def update_mailbox(
             try:
                 from scripts.mail_manager import MailManager
                 mb.password_hash = MailManager().hash_password(data.password)
+            except Exception:
+                pass
+            try:
+                mb.encrypted_password = _encrypt_password(data.password)
             except Exception:
                 pass
         if data.quota_mb is not None:
@@ -872,6 +913,147 @@ async def get_global_spam_stats(current_user=Depends(require_admin)):
         return SpamStatsResponse(**RspamdManager().get_global_stats())
     except Exception as e:
         return SpamStatsResponse(error=str(e))
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Roundcube Webmail — autologin
+# ─────────────────────────────────────────────────────────────────────────────
+
+@router.get("/mail/roundcube/status", response_model=RoundcubeStatusResponse)
+async def get_roundcube_status(current_user=Depends(require_auth)):
+    """
+    Indica si Roundcube está instalado y la URL base del webmail.
+    El frontend usa esta info para mostrar (o no) el botón de webmail.
+    """
+    enabled = os.getenv("ROUNDCUBE_ENABLED", "false").lower() == "true"
+    url = os.getenv("ROUNDCUBE_URL", "/webmail") if enabled else None
+    return RoundcubeStatusResponse(enabled=enabled, url=url, webmail_url=url)
+
+
+@router.post(
+    "/mail/domains/{domain_id}/mailboxes/{mailbox_id}/webmail-token",
+    response_model=WebmailTokenResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+async def create_webmail_token(
+    domain_id:  int,
+    mailbox_id: int,
+    current_user=Depends(require_auth),
+    db: Session = Depends(get_db),
+):
+    """
+    Genera un token de autologin de un solo uso para abrir Roundcube
+    directamente en la sesión del buzón indicado.
+    - Validez: 60 segundos.
+    - Uso único: el token se invalida tras el primer acceso de Roundcube.
+    - Solo disponible si ROUNDCUBE_ENABLED=true en el .env.
+    """
+    _require_mail_enabled()
+
+    if os.getenv("ROUNDCUBE_ENABLED", "false").lower() != "true":
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Roundcube no está instalado en este servidor."
+        )
+
+    md = _get_mail_domain_or_404(domain_id, db)
+    _require_edit(md, current_user)
+
+    mb = db.query(Mailbox).filter(
+        Mailbox.id == mailbox_id,
+        Mailbox.mail_domain_id == domain_id,
+    ).first()
+    if not mb:
+        raise HTTPException(status_code=404, detail="Buzón no encontrado")
+
+    if not mb.encrypted_password:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=(
+                "Autologin no disponible para este buzón. "
+                "Cambia su contraseña desde el panel para activarlo."
+            ),
+        )
+
+    # Eliminar tokens anteriores no consumidos de este buzón
+    db.query(WebmailToken).filter(
+        WebmailToken.mailbox_id == mailbox_id,
+        WebmailToken.used == False,
+    ).delete(synchronize_session=False)
+
+    # Crear nuevo token (UUID hex de 32 chars, TTL 60s)
+    token = uuid.uuid4().hex
+    wt = WebmailToken(
+        token      = token,
+        mailbox_id = mailbox_id,
+        expires_at = datetime.utcnow() + timedelta(seconds=60),
+    )
+    db.add(wt)
+    db.commit()
+
+    roundcube_url = os.getenv("ROUNDCUBE_URL", "/webmail")
+    sep = "&" if "?" in roundcube_url else "?"
+    full_url = f"{roundcube_url}{sep}svqtoken={token}"
+
+    logger.info(f"Token webmail generado para {mb.full_email} (expira en 60s)")
+    return WebmailTokenResponse(token=token, url=full_url, expires_in=60)
+
+
+@router.get("/internal/webmail-token/{token}")
+async def validate_webmail_token(
+    token: str,
+    request: Request,
+    db: Session = Depends(get_db),
+):
+    """
+    Endpoint INTERNO exclusivo para el plugin Roundcube (localhost).
+    Valida el token, lo marca como usado y devuelve las credenciales IMAP.
+
+    ⚠ Solo accesible desde 127.0.0.1 / ::1.
+    No requiere autenticación JWT — la seguridad reside en la restricción de IP.
+    """
+    # Restringir acceso a localhost únicamente
+    client_host = (request.client.host if request.client else "")
+    if client_host not in ("127.0.0.1", "::1", "localhost", ""):
+        logger.warning(f"Intento de acceso al endpoint interno desde {client_host}")
+        raise HTTPException(status_code=403, detail="Acceso denegado")
+
+    # Validar token: no usado + no caducado
+    wt = db.query(WebmailToken).filter(
+        WebmailToken.token == token,
+        WebmailToken.used  == False,
+    ).first()
+
+    if not wt:
+        raise HTTPException(status_code=404, detail="Token no válido o ya utilizado")
+
+    if datetime.utcnow() > wt.expires_at:
+        db.delete(wt)
+        db.commit()
+        raise HTTPException(status_code=410, detail="Token expirado")
+
+    mb = wt.mailbox
+    if not mb or not mb.encrypted_password:
+        raise HTTPException(status_code=400, detail="Credenciales no disponibles")
+
+    # Descifrar contraseña
+    try:
+        plain_password = _decrypt_password(mb.encrypted_password)
+    except Exception as e:
+        logger.error(f"Error descifrando contraseña del buzón {mb.id}: {e}")
+        raise HTTPException(status_code=500, detail="Error interno al descifrar credenciales")
+
+    # Marcar token como usado (consumo único)
+    wt.used = True
+    db.commit()
+
+    logger.info(f"Token webmail consumido para {mb.full_email}")
+    return {
+        "username":  mb.full_email,
+        "password":  plain_password,
+        "imap_host": "localhost",
+        "imap_port": 143,
+    }
 
 
 # ─────────────────────────────────────────────────────────────────────────────

@@ -341,6 +341,29 @@ class APIClient {
     return this.delete(`/api/mail/domains/${domainId}/aliases/${aliasId}`)
   }
 
+  // Roundcube Webmail — autologin
+  /**
+   * Consulta si Roundcube está instalado y devuelve su URL.
+   * @returns {{ enabled: boolean, url: string|null }}
+   */
+  getRoundcubeStatus() {
+    return this.get('/api/mail/roundcube/status')
+  }
+
+  /**
+   * Genera un token de autologin de un solo uso (TTL 60s) para el buzón dado.
+   * El resultado incluye la URL completa con el token lista para abrir en nueva pestaña.
+   * @param {number} domainId
+   * @param {number} mailboxId
+   * @returns {{ token: string, url: string, expires_in: number }}
+   */
+  getWebmailToken(domainId, mailboxId) {
+    return this.post(
+      `/api/mail/domains/${domainId}/mailboxes/${mailboxId}/webmail-token`,
+      {}
+    )
+  }
+
   // Health check
   health() {
     return this.get('/api/health')

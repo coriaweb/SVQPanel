@@ -1,5 +1,5 @@
 """
-Modelos de correo electrónico: MailDomain, Mailbox, MailAlias
+Modelos de correo electrónico: MailDomain, Mailbox, MailAlias, WebmailToken
 Almacenamiento bajo /home/{panel_user}/mail/{domain}/{mailbox}/
 """
 
@@ -83,12 +83,13 @@ class Mailbox(Base):
     id             = Column(Integer, primary_key=True, index=True)
     mail_domain_id = Column(Integer, ForeignKey("mail_domains.id", ondelete="CASCADE"),
                             nullable=False, index=True)
-    username       = Column(String(255), nullable=False)   # "info" → info@domain.com
-    password_hash  = Column(String(255), nullable=False)   # {SHA512-CRYPT}...
-    quota_mb       = Column(Integer, default=1024)         # MB; 0 = sin límite
-    is_active      = Column(Boolean, default=True)
-    created_at     = Column(DateTime, default=datetime.utcnow)
-    updated_at     = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    username           = Column(String(255), nullable=False)   # "info" → info@domain.com
+    password_hash      = Column(String(255), nullable=False)   # {SHA512-CRYPT}...
+    encrypted_password = Column(String(512),  nullable=True)   # Fernet-AES para autologin webmail
+    quota_mb           = Column(Integer, default=1024)         # MB; 0 = sin límite
+    is_active          = Column(Boolean, default=True)
+    created_at         = Column(DateTime, default=datetime.utcnow)
+    updated_at         = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
     __table_args__ = (
         UniqueConstraint("mail_domain_id", "username", name="uq_mailbox_domain_username"),
@@ -142,3 +143,26 @@ class MailAlias(Base):
 
     def __repr__(self):
         return f"<MailAlias {self.full_source} → {self.destination}>"
+
+
+class WebmailToken(Base):
+    """
+    Token de un solo uso para autologin a Roundcube.
+    Generado por el panel → consumido por el plugin de Roundcube (localhost).
+    TTL: 60 segundos. Se marca 'used' al consumirse.
+    """
+    __tablename__ = "webmail_tokens"
+
+    id         = Column(Integer, primary_key=True, index=True)
+    token      = Column(String(64), unique=True, nullable=False, index=True)
+    mailbox_id = Column(Integer,
+                        ForeignKey("mailboxes.id", ondelete="CASCADE"),
+                        nullable=False, index=True)
+    expires_at = Column(DateTime, nullable=False)
+    used       = Column(Boolean, default=False)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    mailbox = relationship("Mailbox", backref="webmail_tokens")
+
+    def __repr__(self):
+        return f"<WebmailToken mailbox={self.mailbox_id} used={self.used}>"

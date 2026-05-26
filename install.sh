@@ -78,6 +78,22 @@ else
 fi
 
 ###############################################################################
+# 2b-2. ROUNDCUBE WEBMAIL (solo si se instala correo)
+###############################################################################
+INSTALL_ROUNDCUBE=false
+if [[ "$INSTALL_MAIL" == true ]]; then
+    echo -e "${YELLOW}¿Instalar Roundcube Webmail?${NC}"
+    echo "  Webmail en /webmail — autologin desde el panel (1 clic por buzón)"
+    read -p "¿Instalar Roundcube? (s/N): " _RC_INPUT
+    if [[ "${_RC_INPUT,,}" =~ ^(s|si|y|yes)$ ]]; then
+        INSTALL_ROUNDCUBE=true
+        echo -e "${GREEN}✓ Roundcube seleccionado${NC}\n"
+    else
+        echo -e "${YELLOW}✗ Sin Roundcube${NC}\n"
+    fi
+fi
+
+###############################################################################
 # 2c. BASE DE DATOS PARA CLIENTES (MariaDB — opcional)
 ###############################################################################
 echo -e "${YELLOW}¿Instalar MariaDB para bases de datos de clientes?${NC}"
@@ -459,6 +475,199 @@ RSPAMDGREYEOF
     done
 
     echo -e "\n${GREEN}✓ Servidor de correo instalado${NC}\n"
+fi
+
+###############################################################################
+# 6d. ROUNDCUBE WEBMAIL
+###############################################################################
+if [[ "$INSTALL_ROUNDCUBE" == true ]]; then
+    echo -e "${YELLOW}Instalando Roundcube Webmail...${NC}"
+
+    # Generar credenciales aleatorias
+    RC_DB_PASS=$(openssl rand -base64 18 | tr -dc 'a-zA-Z0-9' | head -c 20)
+    RC_DES_KEY=$(openssl rand -base64 18 | tr -dc 'a-zA-Z0-9' | head -c 24)
+
+    # ── 1. Base de datos PostgreSQL para Roundcube ─────────────────────────
+    echo -e "  ${YELLOW}→ Creando BD roundcubemail en PostgreSQL...${NC}"
+    sudo -u postgres psql 2>/dev/null << RCDBEOF || true
+DO \$\$
+BEGIN
+    IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'roundcubemail') THEN
+        CREATE USER roundcubemail WITH PASSWORD '${RC_DB_PASS}';
+    ELSE
+        ALTER USER roundcubemail WITH PASSWORD '${RC_DB_PASS}';
+    END IF;
+END
+\$\$;
+DROP DATABASE IF EXISTS roundcubemail;
+CREATE DATABASE roundcubemail OWNER roundcubemail;
+RCDBEOF
+    echo -e "  ${GREEN}✓ BD roundcubemail creada${NC}"
+
+    # ── 2. Instalar paquetes Roundcube ─────────────────────────────────────
+    echo -e "  ${YELLOW}→ Instalando paquetes Roundcube...${NC}"
+
+    # Evitar el wizard interactivo (configuramos la BD manualmente)
+    echo "roundcube-core roundcube/dbconfig-install boolean false" | debconf-set-selections
+    DEBIAN_FRONTEND=noninteractive apt-get install -y -qq \
+        roundcube roundcube-core roundcube-pgsql \
+        php-net-sieve php-pear 2>/dev/null || true
+
+    echo -e "  ${GREEN}✓ Roundcube instalado${NC}"
+
+    # ── 3. Inicializar esquema de BD ───────────────────────────────────────
+    echo -e "  ${YELLOW}→ Inicializando esquema de BD de Roundcube...${NC}"
+    RC_SQL=""
+    for RC_SQL_CANDIDATE in \
+        /usr/share/roundcube/SQL/postgres.initial.sql \
+        /usr/share/dbconfig-common/data/roundcube/install/pgsql \
+        /usr/share/doc/roundcube-core/SQL/postgres.initial.sql; do
+        if [[ -f "$RC_SQL_CANDIDATE" ]]; then
+            RC_SQL="$RC_SQL_CANDIDATE"
+            break
+        fi
+    done
+    # Versión gzipeada
+    if [[ -z "$RC_SQL" ]]; then
+        for RC_SQL_GZ in \
+            /usr/share/doc/roundcube-core/SQL/postgres.initial.sql.gz \
+            /usr/share/roundcube/SQL/postgres.initial.sql.gz; do
+            if [[ -f "$RC_SQL_GZ" ]]; then
+                zcat "$RC_SQL_GZ" | \
+                    PGPASSWORD="$RC_DB_PASS" psql -U roundcubemail -h localhost roundcubemail 2>/dev/null || true
+                RC_SQL="done"
+                break
+            fi
+        done
+    fi
+    if [[ -n "$RC_SQL" && "$RC_SQL" != "done" ]]; then
+        PGPASSWORD="$RC_DB_PASS" psql -U roundcubemail -h localhost roundcubemail \
+            < "$RC_SQL" 2>/dev/null || true
+    fi
+    echo -e "  ${GREEN}✓ Esquema BD inicializado${NC}"
+
+    # ── 4. Determinar webroot y versión PHP ────────────────────────────────
+    RC_PHP_VER="${PHP_INSTALLED[0]:-8.2}"
+    RC_PHP_SOCK="/run/php/php${RC_PHP_VER}-fpm.sock"
+
+    # Localizar el directorio PHP de Roundcube
+    if [[ -d /usr/share/roundcube ]]; then
+        RC_APP_DIR="/usr/share/roundcube"
+    else
+        RC_APP_DIR="/var/lib/roundcube"
+    fi
+
+    # Crear symlink en /var/www/webmail (mismo patrón que /var/www/pma)
+    ln -sfn "$RC_APP_DIR" /var/www/webmail
+    echo -e "  ${GREEN}✓ Symlink /var/www/webmail → $RC_APP_DIR${NC}"
+
+    # ── 5. Configurar Roundcube ────────────────────────────────────────────
+    echo -e "  ${YELLOW}→ Configurando Roundcube...${NC}"
+    cat > /etc/roundcube/config.inc.php << RCCONFEOF
+<?php
+// SVQPanel — Roundcube config generado automáticamente
+\$config['db_dsnw'] = 'pgsql://roundcubemail:${RC_DB_PASS}@localhost/roundcubemail';
+
+// IMAP (Dovecot)
+\$config['imap_host']     = 'localhost:143';
+\$config['imap_auth_type'] = null;
+
+// SMTP (Postfix submission)
+\$config['smtp_host']     = 'localhost:587';
+\$config['smtp_user']     = '%u';
+\$config['smtp_pass']     = '%p';
+\$config['smtp_auth_type'] = '';
+
+// Panel
+\$config['product_name']  = 'Webmail';
+\$config['support_url']   = '';
+\$config['des_key']        = '${RC_DES_KEY}';
+
+// Plugin autologin SVQPanel
+\$config['plugins'] = ['svqpanel_autologin'];
+
+// Skin
+\$config['skin']            = 'elastic';
+\$config['auto_create_user'] = true;
+\$config['login_autocomplete'] = 2;
+RCCONFEOF
+    echo -e "  ${GREEN}✓ Configuración Roundcube creada${NC}"
+
+    # ── 6. Instalar plugin svqpanel_autologin ──────────────────────────────
+    echo -e "  ${YELLOW}→ Instalando plugin de autologin...${NC}"
+    RC_PLUGIN_DIR="${RC_APP_DIR}/plugins/svqpanel_autologin"
+    mkdir -p "$RC_PLUGIN_DIR"
+
+    # Copiar el plugin desde el repositorio de SVQPanel
+    if [[ -f /opt/svqpanel/scripts/svqpanel_autologin.php ]]; then
+        cp /opt/svqpanel/scripts/svqpanel_autologin.php \
+           "${RC_PLUGIN_DIR}/svqpanel_autologin.php"
+    else
+        # Escribir inline si el fichero fuente no está disponible
+        cat > "${RC_PLUGIN_DIR}/svqpanel_autologin.php" << 'RCPLUGEOF'
+<?php
+/**
+ * SVQPanel Autologin Plugin — ver scripts/svqpanel_autologin.php del repo.
+ * Generado inline por install.sh como fallback.
+ */
+class svqpanel_autologin extends rcube_plugin
+{
+    public $task = '.*';
+    public $noframe = true;
+
+    private const PANEL_PORT   = 8001;
+    private const FETCH_TIMEOUT = 5;
+
+    public function init(): void
+    {
+        $this->add_hook('startup', [$this, 'startup']);
+    }
+
+    public function startup(array $args): array
+    {
+        $raw = $_GET['svqtoken'] ?? $_POST['svqtoken'] ?? null;
+        if (!$raw) return $args;
+
+        $token = preg_replace('/[^a-f0-9]/', '', strtolower($raw));
+        if (strlen($token) !== 32) return $args;
+
+        $data = $this->fetch_credentials($token);
+        if (!$data || empty($data['username']) || empty($data['password'])) return $args;
+
+        $rcmail = rcube::get_instance();
+        if ($rcmail->login($data['username'], $data['password'], $data['imap_host'] ?? 'localhost', false)) {
+            $rcmail->session->remove('user_lang');
+            $rcmail->output->redirect(['_task' => 'mail']);
+            exit;
+        }
+        return $args;
+    }
+
+    private function fetch_credentials(string $token): ?array
+    {
+        $url = sprintf('http://127.0.0.1:%d/api/internal/webmail-token/%s',
+                       self::PANEL_PORT, rawurlencode($token));
+        $ctx = stream_context_create(['http' => ['timeout' => self::FETCH_TIMEOUT,
+                                                  'ignore_errors' => true]]);
+        $resp = @file_get_contents($url, false, $ctx);
+        if (!$resp) return null;
+        $data = json_decode($resp, true);
+        return (isset($data['detail'])) ? null : $data;
+    }
+}
+RCPLUGEOF
+    fi
+    echo -e "  ${GREEN}✓ Plugin svqpanel_autologin instalado${NC}"
+
+    # ── 7. Guardar credenciales ────────────────────────────────────────────
+    mkdir -p /opt/svqpanel/.credentials
+    cat > /opt/svqpanel/.credentials/roundcube.txt << RCCREDEOF
+roundcubemail_db_pass=${RC_DB_PASS}
+roundcube_des_key=${RC_DES_KEY}
+RCCREDEOF
+    chmod 600 /opt/svqpanel/.credentials/roundcube.txt
+
+    echo -e "\n${GREEN}✓ Roundcube instalado (configurar Nginx más adelante en este script)${NC}\n"
 fi
 
 ###############################################################################
@@ -870,6 +1079,13 @@ if [[ "$INSTALL_MARIADB" == true ]]; then
     MARIADB_ENABLED_VAL="true"
 fi
 
+# ROUNDCUBE_ENABLED / ROUNDCUBE_URL
+ROUNDCUBE_ENABLED_VAL="false"
+ROUNDCUBE_URL_VAL="/webmail"
+if [[ "$INSTALL_ROUNDCUBE" == true ]]; then
+    ROUNDCUBE_ENABLED_VAL="true"
+fi
+
 # SECRET_KEY aleatorio para JWT
 SECRET_KEY_VAL=$(python3 -c \
     "import secrets; print(secrets.token_hex(32))")
@@ -893,6 +1109,10 @@ MARIADB_HOST=localhost
 MARIADB_PANEL_USER=svqpanel_admin
 MARIADB_PANEL_PASSWORD=${MARIADB_PANEL_PASS}
 PANEL_ENCRYPTION_KEY=${PANEL_ENCRYPTION_KEY}
+
+# Roundcube Webmail (autologin desde el panel)
+ROUNDCUBE_ENABLED=${ROUNDCUBE_ENABLED_VAL}
+ROUNDCUBE_URL=${ROUNDCUBE_URL_VAL}
 ENVEOF
 
 echo -e "${GREEN}✓ Archivo .env creado${NC}\n"
@@ -1037,6 +1257,48 @@ PYEOF
         fi
     fi
 
+    # ── Roundcube: inyectar bloque /webmail/ si se instaló ───────────────────
+    if [[ "$INSTALL_ROUNDCUBE" == true && -L /var/www/webmail ]]; then
+        PHP_FPM_SOCK_RC=$(find /run/php /var/run/php -name 'php*-fpm.sock' 2>/dev/null \
+                          | sort -rV | head -1)
+        if [[ -n "$PHP_FPM_SOCK_RC" ]]; then
+            python3 - << RCPYEOF
+sock = "${PHP_FPM_SOCK_RC}"
+rc_block = (
+    "\n"
+    "    # Roundcube Webmail — autologin desde SVQPanel\n"
+    "    location /webmail {\n"
+    "        return 301 /webmail/;\n"
+    "    }\n"
+    "    location /webmail/ {\n"
+    "        root /var/www;\n"
+    "        index index.php;\n"
+    "        location ~ \\.php\$ {\n"
+    "            include snippets/fastcgi-php.conf;\n"
+    "            fastcgi_pass unix:" + sock + ";\n"
+    "            fastcgi_param SCRIPT_FILENAME \$document_root\$fastcgi_script_name;\n"
+    "            include fastcgi_params;\n"
+    "        }\n"
+    "        location ~ ^/webmail/(config|logs|temp|vendor/bin)/ {\n"
+    "            deny all;\n"
+    "        }\n"
+    "    }\n"
+    "\n"
+)
+with open('/etc/nginx/sites-available/svqpanel', 'r') as f:
+    content = f.read()
+marker = '    location / {'
+if marker in content and 'location /webmail' not in content:
+    content = content.replace(marker, rc_block + marker)
+    with open('/etc/nginx/sites-available/svqpanel', 'w') as f:
+        f.write(content)
+RCPYEOF
+            echo -e "  ${GREEN}✓ Bloque Roundcube /webmail/ añadido a nginx${NC}"
+        else
+            echo -e "  ${YELLOW}⚠ No se encontró PHP-FPM socket; configura nginx para /webmail manualmente${NC}"
+        fi
+    fi
+
     ln -sf /etc/nginx/sites-available/svqpanel /etc/nginx/sites-enabled/svqpanel
     rm -f /etc/nginx/sites-enabled/default
     nginx -t && systemctl restart nginx
@@ -1129,6 +1391,7 @@ echo "Configuración:"
 echo "  Webserver:    $WEBSERVER"
 echo "  PHP versions: ${PHP_ARRAY[*]}"
 echo "  Correo:       $( [[ "$INSTALL_MAIL" == true ]] && echo 'Postfix + Dovecot + Rspamd' || echo 'No instalado' )"
+echo "  Roundcube:    $( [[ "$INSTALL_ROUNDCUBE" == true ]] && echo 'Instalado — /webmail' || echo 'No instalado' )"
 echo "  MariaDB:      $( [[ "$INSTALL_MARIADB" == true ]] && echo 'MariaDB 11.4 LTS (bases de datos de clientes)' || echo 'No instalado' )"
 echo "  Directorio:   /opt/svqpanel"
 echo "  Base de datos panel: panel_db (PostgreSQL)"
@@ -1177,6 +1440,13 @@ if [[ "$INSTALL_MAIL" == true ]]; then
     echo "  • Buzones en:    /home/{usuario}/mail/{dominio}/{buzon}/"
     echo -e "  ${YELLOW}Configura por dominio: registro MX, rDNS (PTR), SPF, DKIM y DMARC${NC}"
 fi
+if [[ "$INSTALL_ROUNDCUBE" == true ]]; then
+    echo -e "\n${YELLOW}Roundcube Webmail:${NC}"
+    echo "  • URL:           http://IP_DEL_SERVIDOR/webmail/"
+    echo "  • Autologin:     botón ✉ junto a cada buzón en el panel"
+    echo "  • Plugin:        svqpanel_autologin (instalado automáticamente)"
+    echo "  • Credenciales:  /opt/svqpanel/.credentials/roundcube.txt"
+fi
 
 echo -e "\n${RED}⚠ IMPORTANTE:${NC}"
 echo "  • Las credenciales se guardaron en: /opt/svqpanel/.credentials/admin.txt"
@@ -1185,4 +1455,7 @@ echo "  • Cambia las credenciales de BD en .env antes de ir a producción"
 echo "  • Asegúrate de usar HTTPS en producción"
 if [[ "$INSTALL_MAIL" == true ]]; then
     echo "  • Correo: sustituye el certificado snakeoil por uno real (Let's Encrypt)"
+fi
+if [[ "$INSTALL_ROUNDCUBE" == true ]]; then
+    echo "  • Roundcube: los tokens de autologin caducan en 60 segundos (uso único)"
 fi

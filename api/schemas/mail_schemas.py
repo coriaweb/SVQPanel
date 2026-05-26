@@ -288,3 +288,21 @@ class SpamSettingsResponse(BaseModel):
     whitelist_senders:     str   = ""
     blacklist_senders:     str   = ""
     stats:                 SpamStatsResponse = SpamStatsResponse()
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Webmail autologin (Roundcube)
+# ─────────────────────────────────────────────────────────────────────────────
+
+class WebmailTokenResponse(BaseModel):
+    """Respuesta al generar un token de autologin para Roundcube"""
+    token:      str
+    url:        str   # URL completa con el token para abrir Roundcube
+    expires_in: int   # Segundos de validez (60 por defecto)
+
+
+class RoundcubeStatusResponse(BaseModel):
+    """Estado de Roundcube: si está instalado y su URL de acceso"""
+    enabled:     bool
+    url:         Optional[str] = None   # None si no está instalado
+    webmail_url: Optional[str] = None   # URL base del webmail (sin token)

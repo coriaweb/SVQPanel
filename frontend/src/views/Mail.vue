@@ -258,6 +258,16 @@
                   </td>
                   <td class="text-end">
                     <div class="d-flex gap-1 justify-content-end">
+                      <!-- Botón Webmail (Roundcube autologin) -->
+                      <button v-if="roundcubeEnabled"
+                              class="btn btn-sm btn-outline-primary"
+                              @click="openWebmail(mb)"
+                              :disabled="openingWebmail === mb.id"
+                              title="Abrir Webmail (autologin)">
+                        <span v-if="openingWebmail === mb.id"
+                              class="spinner-border spinner-border-sm"></span>
+                        <i v-else class="bi bi-envelope-open"></i>
+                      </button>
                       <button class="btn btn-sm btn-outline-secondary"
                               @click="openChangePassword(mb)" title="Cambiar contraseña">
                         <i class="bi bi-key"></i>
@@ -909,6 +919,11 @@ export default {
     const activeTab      = ref('mailboxes')
     const loading        = ref(false)
 
+    // ── Roundcube / Webmail ───────────────────────────────────────────
+    const roundcubeEnabled = ref(false)
+    const roundcubeUrl     = ref(null)
+    const openingWebmail   = ref(null)  // mailbox.id mientras se genera el token
+
     // ── Detalle ───────────────────────────────────────────────────────
     const mailboxes           = ref([])
     const aliases             = ref([])
@@ -947,6 +962,16 @@ export default {
     // ─────────────────────────────────────────────────────────────────
     // Carga de datos
     // ─────────────────────────────────────────────────────────────────
+
+    const loadRoundcubeStatus = async () => {
+      try {
+        const status = await api.getRoundcubeStatus()
+        roundcubeEnabled.value = status.enabled
+        roundcubeUrl.value     = status.url
+      } catch {
+        roundcubeEnabled.value = false
+      }
+    }
 
     const loadDomains = async () => {
       loading.value = true
@@ -1210,6 +1235,27 @@ export default {
     }
 
     // ─────────────────────────────────────────────────────────────────
+    // Webmail (Roundcube autologin)
+    // ─────────────────────────────────────────────────────────────────
+
+    const openWebmail = async (mb) => {
+      if (openingWebmail.value === mb.id) return
+      openingWebmail.value = mb.id
+      try {
+        const result = await api.getWebmailToken(selectedDomain.value.id, mb.id)
+        // Abrir en nueva pestaña — el token solo dura 60s, hay que usarlo de inmediato
+        window.open(result.url, '_blank', 'noopener,noreferrer')
+      } catch (e) {
+        store.showNotification(
+          'No se pudo abrir el webmail: ' + e.message,
+          'danger'
+        )
+      } finally {
+        openingWebmail.value = null
+      }
+    }
+
+    // ─────────────────────────────────────────────────────────────────
     // Alias
     // ─────────────────────────────────────────────────────────────────
 
@@ -1274,7 +1320,10 @@ export default {
       }
     }
 
-    onMounted(loadDomains)
+    onMounted(() => {
+      loadDomains()
+      loadRoundcubeStatus()
+    })
 
     return {
       mailEnabled, mailDomains, selectedDomain, activeTab, loading,
@@ -1286,11 +1335,14 @@ export default {
       showNewDomain, showNewMailbox, showPasswordModal, showNewAlias,
       deleteTarget, saving, showPwd,
       newDomainForm, newMailboxForm, newAliasForm, passwordTarget, newPassword,
+      // Roundcube
+      roundcubeEnabled, roundcubeUrl, openingWebmail,
       loadDomains, openDetail, switchTab,
       openNewDomain, createDomain, saveSettings,
       loadSpamSettings, saveSpamSettings,
       generateDkim, rotateDkim, copyText,
       createMailbox, toggleMailbox, openChangePassword, changePassword,
+      openWebmail,
       createAlias,
       confirmDelete, executeDelete,
     }
