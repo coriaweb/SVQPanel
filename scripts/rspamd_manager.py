@@ -94,7 +94,7 @@ class RspamdManager:
 {safe}_blacklist {{
   rcpt_domain = ["{domain}"];
   from = [{bl_list}];
-  priority = 10;
+  priority = 20;
   apply {{
     actions {{
       "add header" = 0.1;
