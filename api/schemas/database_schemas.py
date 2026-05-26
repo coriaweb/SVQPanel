@@ -43,8 +43,8 @@ class DatabaseCreate(BaseModel):
     db_user_suffix: str   # sufijo usuario; user real = {username}_{sufijo}
     db_password: str
     domain_id: Optional[int] = None  # dominio asociado (opcional)
-    charset: str = "utf8mb4"
-    collation: str = "utf8mb4_unicode_ci"
+    db_charset: str = "utf8mb4"
+    db_collation: str = "utf8mb4_unicode_ci"
     quota_mb: int = 1024             # 0 = sin límite
 
     @field_validator("db_name_suffix")
@@ -66,14 +66,14 @@ class DatabaseCreate(BaseModel):
             raise ValueError("La contraseña no puede superar 128 caracteres")
         return v
 
-    @field_validator("charset")
+    @field_validator("db_charset")
     @classmethod
     def validate_charset(cls, v):
         if v not in VALID_CHARSETS:
             raise ValueError(f"Charset inválido. Opciones: {', '.join(VALID_CHARSETS)}")
         return v
 
-    @field_validator("collation")
+    @field_validator("db_collation")
     @classmethod
     def validate_collation(cls, v):
         if v not in VALID_COLLATIONS:
@@ -131,8 +131,8 @@ class DatabaseResponse(BaseModel):
     db_user: str          # usuario real en MariaDB (con prefijo)
     db_user_suffix: str   # sufijo elegido por el usuario
 
-    charset: str
-    collation: str
+    db_charset: str
+    db_collation: str
     size_mb: int
     quota_mb: int
     is_active: bool

@@ -44,9 +44,9 @@ class ClientDatabase(Base):
     db_password_hash = Column(String(255), nullable=False)
 
     # ── Configuración MariaDB ─────────────────────────────────────────────────
-    charset   = Column(String(20),  default="utf8mb4")
-    collation = Column(String(50),  default="utf8mb4_unicode_ci")
-    quota_mb  = Column(Integer,     default=1024)   # 0 = sin límite
+    db_charset   = Column(String(20),  default="utf8mb4")
+    db_collation = Column(String(50),  default="utf8mb4_unicode_ci")  # 'collation' es palabra clave en PostgreSQL
+    quota_mb     = Column(Integer,     default=1024)   # 0 = sin límite
 
     # ── Estadísticas (se puede actualizar con un cron/tarea) ─────────────────
     size_mb = Column(Integer, default=0)

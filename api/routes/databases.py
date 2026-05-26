@@ -285,8 +285,8 @@ def create_database(
             raise HTTPException(status_code=403, detail="Sin permisos para ese dominio")
 
     # ── Crear en MariaDB ──────────────────────────────────────────────────────
-    charset   = data.charset
-    collation = data.collation
+    db_charset   = data.db_charset
+    db_collation = data.db_collation
     password  = data.db_password
 
     # Escapar backtick en el nombre de la BD (prevención de SQL injection)
@@ -301,7 +301,7 @@ def create_database(
     try:
         _run_mariadb(
             f"CREATE DATABASE `{safe_db_name}` "
-            f"CHARACTER SET {charset} COLLATE {collation};"
+            f"CHARACTER SET {db_charset} COLLATE {db_collation};"
         )
         created_db = True
 
@@ -344,8 +344,8 @@ def create_database(
             db_user        = db_user,
             db_user_suffix = data.db_user_suffix,
             db_password_hash = _hash_password(password),
-            charset        = charset,
-            collation      = collation,
+            db_charset     = db_charset,
+            db_collation   = db_collation,
             quota_mb       = data.quota_mb,
         )
         db.add(client_db)
