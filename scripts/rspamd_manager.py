@@ -1,19 +1,26 @@
 """
 Gestión de configuración antispam por dominio (Rspamd)
-- Umbrales de spam (tag / reject) por dominio
-- Whitelist y blacklist de remitentes por dominio (inlineadas en settings.conf)
-- Estadísticas globales vía rspamc
+
+Estrategia:
+  · settings.conf  → umbrales personalizados + whitelist por dominio
+  · multimap.conf  → blacklist por dominio (prefilter → reject inmediato)
+
+Los ficheros de mapa de blacklist se guardan en:
+  /etc/rspamd/maps/domains/{safe_domain}/blacklist.map
 """
 
 import os
 import re
 import json
+import shutil
 import subprocess
 from urllib.request import urlopen, Request
 
 
 class RspamdManager:
     SETTINGS_FILE = "/etc/rspamd/local.d/settings.conf"
+    MULTIMAP_FILE = "/etc/rspamd/local.d/multimap.conf"
+    MAPS_DIR      = "/etc/rspamd/maps/domains"
     RSPAMD_API    = "http://127.0.0.1:11334"
 
     # ─── Helpers ──────────────────────────────────────────────────────────
@@ -34,17 +41,13 @@ class RspamdManager:
         """
         return entry
 
-    # ─── Generación de settings.conf ──────────────────────────────────────
+    # ─── settings.conf (umbrales + whitelist) ─────────────────────────────
 
     def _build_settings_conf(self, domain_configs):
         """
-        Genera el contenido de settings.conf.
-        domain_configs: lista de dicts con claves:
-          domain, tag_threshold, reject_threshold,
-          whitelist_entries (list), blacklist_entries (list)
+        Genera settings.conf con umbrales personalizados y whitelist.
+        NOTA: local.d/settings.conf se inyecta dentro de settings{} automáticamente.
         """
-        # NOTA: local.d/settings.conf se inyecta DENTRO del bloque settings{}
-        # de Rspamd automáticamente — NO añadir wrapper "settings { }" exterior.
         out = ["# SVQPanel — Generado automáticamente. NO editar manualmente.\n"]
 
         for cfg in domain_configs:
@@ -68,7 +71,7 @@ class RspamdManager:
   }}
 }}
 """)
-            # ── Whitelist (aceptar sin analizar) ─────────────────────────
+            # ── Whitelist: subir umbrales a valores inalcanzables ─────────
             wl = cfg.get("whitelist_entries", [])
             if wl:
                 wl_list = ", ".join(f'"{self._to_rspamd_pattern(e)}"' for e in wl)
@@ -86,24 +89,6 @@ class RspamdManager:
   }}
 }}
 """)
-            # ── Blacklist (rechazar inmediatamente) ───────────────────────
-            bl = cfg.get("blacklist_entries", [])
-            if bl:
-                bl_list = ", ".join(f'"{self._to_rspamd_pattern(e)}"' for e in bl)
-                out.append(f"""\
-{safe}_blacklist {{
-  rcpt_domain = ["{domain}"];
-  from = [{bl_list}];
-  priority = 20;
-  apply {{
-    actions {{
-      "add header" = 0.1;
-      greylist = 0.1;
-      reject = 0.1;
-    }}
-  }}
-}}
-""")
 
         return "\n".join(out)
 
@@ -115,31 +100,111 @@ class RspamdManager:
             f.write(content)
         os.replace(tmp, self.SETTINGS_FILE)
 
+    # ─── multimap.conf (blacklist prefilter) ──────────────────────────────
+
+    def _write_blacklist_map(self, domain, entries):
+        """Escribe el fichero de mapa de blacklist para un dominio"""
+        safe = self._safe_name(domain)
+        d    = os.path.join(self.MAPS_DIR, safe)
+        os.makedirs(d, exist_ok=True)
+        path = os.path.join(d, "blacklist.map")
+        content = "\n".join(e.strip() for e in entries if e.strip()) + "\n"
+        tmp = path + ".tmp"
+        with open(tmp, "w") as f:
+            f.write(content)
+        os.replace(tmp, path)
+        return path
+
+    def _build_multimap_conf(self, domain_configs):
+        """
+        Genera multimap.conf con una regla prefilter por dominio.
+        Usa type="from" + condition Lua para filtrar por dominio destinatario.
+        Esto garantiza el rechazo ANTES de que se aplique ningún scoring.
+        """
+        out = ["# SVQPanel — Generado automáticamente. NO editar manualmente.\n"]
+
+        for cfg in domain_configs:
+            domain = cfg["domain"]
+            safe   = self._safe_name(domain)
+            bl     = cfg.get("blacklist_entries", [])
+
+            if not bl:
+                continue
+
+            map_path = os.path.join(self.MAPS_DIR, safe, "blacklist.map")
+            symbol   = f"SVQ_BL_{safe.upper()}"
+
+            # Condición Lua: solo aplica si el destinatario es de este dominio
+            condition = (
+                f"function(task) "
+                f"local rcpts = task:get_recipients('smtp'); "
+                f"if rcpts then "
+                f"for _, r in ipairs(rcpts) do "
+                f"if r.domain and r.domain:lower() == '{domain.lower()}' then "
+                f"return true end end end "
+                f"return false end"
+            )
+
+            out.append(f"""\
+# ── blacklist {domain} ──
+{symbol} {{
+  type = "from";
+  map = "{map_path}";
+  symbol = "{symbol}";
+  prefilter = true;
+  action = "reject";
+  message = "Remitente bloqueado por el administrador del dominio";
+  condition = "{condition}";
+}}
+""")
+
+        return "\n".join(out)
+
+    def _write_multimap_conf(self, content):
+        """Escribe multimap.conf de forma atómica"""
+        tmp = self.MULTIMAP_FILE + ".tmp"
+        os.makedirs(os.path.dirname(self.MULTIMAP_FILE), exist_ok=True)
+        with open(tmp, "w") as f:
+            f.write(content)
+        os.replace(tmp, self.MULTIMAP_FILE)
+
     # ─── API pública ──────────────────────────────────────────────────────
 
     def rebuild_from_db(self, mail_domains):
         """
-        Regenera settings.conf desde la lista completa de MailDomain de la BD.
+        Regenera settings.conf y multimap.conf desde la BD.
         Llamar siempre que cambie cualquier dominio de correo.
         """
         configs = []
         for md in mail_domains:
+            bl_entries = self._parse_entries(md.blacklist_senders)
+            wl_entries = self._parse_entries(md.whitelist_senders)
+
+            # Escribir/limpiar fichero de mapa de blacklist
+            safe     = self._safe_name(md.domain_name)
+            map_path = os.path.join(self.MAPS_DIR, safe, "blacklist.map")
+            if bl_entries:
+                self._write_blacklist_map(md.domain_name, bl_entries)
+            elif os.path.exists(map_path):
+                os.remove(map_path)
+
             configs.append({
                 "domain":            md.domain_name,
                 "tag_threshold":     md.spam_tag_threshold    or 6.0,
                 "reject_threshold":  md.spam_reject_threshold or 15.0,
-                "whitelist_entries": self._parse_entries(md.whitelist_senders),
-                "blacklist_entries": self._parse_entries(md.blacklist_senders),
+                "whitelist_entries": wl_entries,
+                "blacklist_entries": bl_entries,
             })
 
-        content = self._build_settings_conf(configs)
-        self._write_settings_conf(content)
+        self._write_settings_conf(self._build_settings_conf(configs))
+        self._write_multimap_conf(self._build_multimap_conf(configs))
         self._reload_rspamd()
 
     def remove_domain(self, domain):
-        """Elimina el bloque de settings de un dominio (rebuild_from_db lo hace automáticamente)"""
-        # Al llamar rebuild_from_db sin ese dominio, ya no aparecerá en settings.conf
-        pass
+        """Elimina los ficheros de mapa de un dominio"""
+        d = os.path.join(self.MAPS_DIR, self._safe_name(domain))
+        if os.path.exists(d):
+            shutil.rmtree(d)
 
     # ─── Estadísticas ─────────────────────────────────────────────────────
 
@@ -151,12 +216,8 @@ class RspamdManager:
                 capture_output=True, text=True, timeout=5
             )
             stats = {
-                "scanned":    0,
-                "rejected":   0,
-                "tagged":     0,
-                "greylisted": 0,
-                "clean":      0,
-                "learned":    0,
+                "scanned": 0, "rejected": 0, "tagged": 0,
+                "greylisted": 0, "clean": 0, "learned": 0,
             }
             for line in result.stdout.splitlines():
                 def _num(l):
@@ -177,11 +238,7 @@ class RspamdManager:
             }
 
     def get_history(self, limit=200):
-        """
-        Historial reciente de Rspamd vía HTTP API.
-        Requiere: echo 'secure_ip = ["127.0.0.1", "::1"];'
-                  >> /etc/rspamd/local.d/worker-controller.inc
-        """
+        """Historial reciente vía HTTP API (requiere secure_ip en worker-controller.inc)"""
         try:
             url = f"{self.RSPAMD_API}/history?limit={limit}"
             with urlopen(Request(url), timeout=5) as resp:
@@ -201,10 +258,10 @@ class RspamdManager:
                  "greylisted": 0, "clean": 0}
         for msg in filtered:
             action = msg.get("action", "")
-            if action == "reject":         stats["rejected"]   += 1
-            elif action == "add header":   stats["tagged"]     += 1
-            elif action == "greylist":     stats["greylisted"] += 1
-            else:                          stats["clean"]      += 1
+            if action == "reject":       stats["rejected"]   += 1
+            elif action == "add header": stats["tagged"]     += 1
+            elif action == "greylist":   stats["greylisted"] += 1
+            else:                        stats["clean"]      += 1
         return stats
 
     # ─── Utilidades ───────────────────────────────────────────────────────
