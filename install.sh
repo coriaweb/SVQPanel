@@ -478,10 +478,15 @@ RSPAMDGREYEOF
 fi
 
 ###############################################################################
-# 6d. ROUNDCUBE WEBMAIL
+# 6d. ROUNDCUBE WEBMAIL (descarga desde GitHub — compatible PHP 8.4/8.5)
 ###############################################################################
 if [[ "$INSTALL_ROUNDCUBE" == true ]]; then
     echo -e "${YELLOW}Instalando Roundcube Webmail...${NC}"
+
+    # Dependencias PHP necesarias (sin el paquete roundcube de Debian, que es viejo)
+    DEBIAN_FRONTEND=noninteractive apt-get install -y -qq \
+        php-net-sieve php-pear php-intl php-zip php-xml \
+        php-mbstring php-gd php-pgsql 2>/dev/null || true
 
     # Generar credenciales aleatorias
     RC_DB_PASS=$(openssl rand -base64 18 | tr -dc 'a-zA-Z0-9' | head -c 20)
@@ -504,136 +509,154 @@ CREATE DATABASE roundcubemail OWNER roundcubemail;
 RCDBEOF
     echo -e "  ${GREEN}✓ BD roundcubemail creada${NC}"
 
-    # ── 2. Instalar paquetes Roundcube ─────────────────────────────────────
-    echo -e "  ${YELLOW}→ Instalando paquetes Roundcube...${NC}"
+    # ── 2. Descargar Roundcube latest desde GitHub ─────────────────────────
+    echo -e "  ${YELLOW}→ Descargando Roundcube (última versión estable)...${NC}"
 
-    # Evitar el wizard interactivo (configuramos la BD manualmente)
-    echo "roundcube-core roundcube/dbconfig-install boolean false" | debconf-set-selections
-    DEBIAN_FRONTEND=noninteractive apt-get install -y -qq \
-        roundcube roundcube-core roundcube-pgsql \
-        php-net-sieve php-pear 2>/dev/null || true
+    # Obtener la versión más reciente
+    RC_VERSION=$(curl -s https://api.github.com/repos/roundcube/roundcubemail/releases/latest \
+                 | grep '"tag_name"' | head -1 \
+                 | sed 's/.*"tag_name": "\([^"]*\)".*/\1/')
 
-    echo -e "  ${GREEN}✓ Roundcube instalado${NC}"
+    # Fallback si la API no responde (1.7.0 = primera versión compatible con PHP 8.5)
+    RC_VERSION="${RC_VERSION:-1.7.0}"
+    echo -e "  ${YELLOW}  Versión: ${RC_VERSION}${NC}"
 
-    # ── 3. Inicializar esquema de BD ───────────────────────────────────────
-    echo -e "  ${YELLOW}→ Inicializando esquema de BD de Roundcube...${NC}"
-    RC_SQL=""
-    for RC_SQL_CANDIDATE in \
-        /usr/share/roundcube/SQL/postgres.initial.sql \
-        /usr/share/dbconfig-common/data/roundcube/install/pgsql \
-        /usr/share/doc/roundcube-core/SQL/postgres.initial.sql; do
-        if [[ -f "$RC_SQL_CANDIDATE" ]]; then
-            RC_SQL="$RC_SQL_CANDIDATE"
-            break
-        fi
+    RC_APP_DIR="/var/www/roundcube"
+    RC_TGZ="/tmp/roundcubemail-${RC_VERSION}-complete.tar.gz"
+
+    curl -fsSL \
+        "https://github.com/roundcube/roundcubemail/releases/download/${RC_VERSION}/roundcubemail-${RC_VERSION}-complete.tar.gz" \
+        -o "$RC_TGZ"
+
+    rm -rf "$RC_APP_DIR"
+    mkdir -p "$RC_APP_DIR"
+    tar -xzf "$RC_TGZ" -C /tmp/
+    mv "/tmp/roundcubemail-${RC_VERSION}/"* "$RC_APP_DIR/"
+    rm -f "$RC_TGZ"
+
+    # Directorios con permisos de escritura para www-data
+    for D in temp logs; do
+        mkdir -p "${RC_APP_DIR}/${D}"
+        chown -R www-data:www-data "${RC_APP_DIR}/${D}"
+        chmod 775 "${RC_APP_DIR}/${D}"
     done
-    # Versión gzipeada
-    if [[ -z "$RC_SQL" ]]; then
-        for RC_SQL_GZ in \
-            /usr/share/doc/roundcube-core/SQL/postgres.initial.sql.gz \
-            /usr/share/roundcube/SQL/postgres.initial.sql.gz; do
-            if [[ -f "$RC_SQL_GZ" ]]; then
-                zcat "$RC_SQL_GZ" | \
-                    PGPASSWORD="$RC_DB_PASS" psql -U roundcubemail -h localhost roundcubemail 2>/dev/null || true
-                RC_SQL="done"
-                break
-            fi
-        done
-    fi
-    if [[ -n "$RC_SQL" && "$RC_SQL" != "done" ]]; then
-        PGPASSWORD="$RC_DB_PASS" psql -U roundcubemail -h localhost roundcubemail \
-            < "$RC_SQL" 2>/dev/null || true
-    fi
-    echo -e "  ${GREEN}✓ Esquema BD inicializado${NC}"
 
-    # ── 4. Determinar webroot y versión PHP ────────────────────────────────
-    RC_PHP_VER="${PHP_INSTALLED[0]:-8.2}"
-    RC_PHP_SOCK="/run/php/php${RC_PHP_VER}-fpm.sock"
+    echo -e "  ${GREEN}✓ Roundcube ${RC_VERSION} descargado en ${RC_APP_DIR}${NC}"
 
-    # Localizar el directorio PHP de Roundcube
-    if [[ -d /usr/share/roundcube ]]; then
-        RC_APP_DIR="/usr/share/roundcube"
-    else
-        RC_APP_DIR="/var/lib/roundcube"
+    # ── 3. Parche PHP 8.4/8.5 — array_first / array_last ──────────────────
+    # bootstrap.php define funciones que PHP 8.4+ ya trae nativas → conflicto
+    BOOTSTRAP="${RC_APP_DIR}/program/lib/Roundcube/bootstrap.php"
+    if [[ -f "$BOOTSTRAP" ]]; then
+        python3 << PYEOF
+import re
+filepath = '${BOOTSTRAP}'
+with open(filepath, 'r') as f:
+    lines = f.readlines()
+result = []
+i = 0
+while i < len(lines):
+    line = lines[i]
+    m = re.search(r'^function (array_first|array_last|array_is_list)\(', line)
+    if m:
+        fname = m.group(1)
+        result.append(f"if (!function_exists('{fname}')) {{\n")
+        result.append(line)
+        i += 1
+        depth = 1
+        while i < len(lines) and depth > 0:
+            result.append(lines[i])
+            depth += lines[i].count('{') - lines[i].count('}')
+            i += 1
+        result.append("}\n")
+        continue
+    result.append(line)
+    i += 1
+with open(filepath, 'w') as f:
+    f.writelines(result)
+print("bootstrap.php parcheado para PHP 8.4/8.5")
+PYEOF
+        echo -e "  ${GREEN}✓ Parche PHP 8.4/8.5 aplicado${NC}"
     fi
 
-    # Crear symlink en /var/www/webmail (mismo patrón que /var/www/pma)
+    # ── 4. Crear symlink /var/www/webmail ──────────────────────────────────
     ln -sfn "$RC_APP_DIR" /var/www/webmail
     echo -e "  ${GREEN}✓ Symlink /var/www/webmail → $RC_APP_DIR${NC}"
 
     # ── 5. Configurar Roundcube ────────────────────────────────────────────
     echo -e "  ${YELLOW}→ Configurando Roundcube...${NC}"
-    cat > /etc/roundcube/config.inc.php << RCCONFEOF
+    mkdir -p "${RC_APP_DIR}/config"
+    cat > "${RC_APP_DIR}/config/config.inc.php" << RCCONFEOF
 <?php
 // SVQPanel — Roundcube config generado automáticamente
 \$config['db_dsnw'] = 'pgsql://roundcubemail:${RC_DB_PASS}@localhost/roundcubemail';
 
 // IMAP (Dovecot)
-\$config['imap_host']     = 'localhost:143';
-\$config['imap_auth_type'] = null;
+\$config['imap_host']      = 'localhost:143';
+\$config['imap_auth_type']  = null;
 
 // SMTP (Postfix submission)
-\$config['smtp_host']     = 'localhost:587';
-\$config['smtp_user']     = '%u';
-\$config['smtp_pass']     = '%p';
-\$config['smtp_auth_type'] = '';
+\$config['smtp_host']      = 'localhost:587';
+\$config['smtp_user']      = '%u';
+\$config['smtp_pass']      = '%p';
+\$config['smtp_auth_type']  = '';
 
 // Panel
-\$config['product_name']  = 'Webmail';
-\$config['support_url']   = '';
-\$config['des_key']        = '${RC_DES_KEY}';
+\$config['product_name']   = 'Webmail';
+\$config['support_url']    = '';
+\$config['des_key']         = '${RC_DES_KEY}';
 
 // Plugin autologin SVQPanel
 \$config['plugins'] = ['svqpanel_autologin'];
 
 // Skin
-\$config['skin']            = 'elastic';
+\$config['skin']             = 'elastic';
 \$config['auto_create_user'] = true;
 \$config['login_autocomplete'] = 2;
 RCCONFEOF
+
+    # Enlace /etc/roundcube → config en RC_APP_DIR (compatibilidad)
+    mkdir -p /etc/roundcube
+    ln -sfn "${RC_APP_DIR}/config/config.inc.php" /etc/roundcube/config.inc.php 2>/dev/null || true
+
     echo -e "  ${GREEN}✓ Configuración Roundcube creada${NC}"
 
-    # ── 6. Instalar plugin svqpanel_autologin ──────────────────────────────
+    # ── 6. Inicializar esquema de BD ───────────────────────────────────────
+    echo -e "  ${YELLOW}→ Inicializando esquema de BD de Roundcube...${NC}"
+    RC_SQL="${RC_APP_DIR}/SQL/postgres.initial.sql"
+    if [[ -f "$RC_SQL" ]]; then
+        PGPASSWORD="$RC_DB_PASS" psql -U roundcubemail -h localhost roundcubemail \
+            < "$RC_SQL" 2>/dev/null || true
+        echo -e "  ${GREEN}✓ Esquema BD inicializado${NC}"
+    else
+        echo -e "  ${YELLOW}⚠ No se encontró SQL inicial — inicializa manualmente${NC}"
+    fi
+
+    # ── 7. Instalar plugin svqpanel_autologin ──────────────────────────────
     echo -e "  ${YELLOW}→ Instalando plugin de autologin...${NC}"
     RC_PLUGIN_DIR="${RC_APP_DIR}/plugins/svqpanel_autologin"
     mkdir -p "$RC_PLUGIN_DIR"
 
-    # Copiar el plugin desde el repositorio de SVQPanel
     if [[ -f /opt/svqpanel/scripts/svqpanel_autologin.php ]]; then
         cp /opt/svqpanel/scripts/svqpanel_autologin.php \
            "${RC_PLUGIN_DIR}/svqpanel_autologin.php"
     else
-        # Escribir inline si el fichero fuente no está disponible
         cat > "${RC_PLUGIN_DIR}/svqpanel_autologin.php" << 'RCPLUGEOF'
 <?php
-/**
- * SVQPanel Autologin Plugin — ver scripts/svqpanel_autologin.php del repo.
- * Generado inline por install.sh como fallback.
- */
 class svqpanel_autologin extends rcube_plugin
 {
     public $task = '.*';
     public $noframe = true;
-
-    private const PANEL_PORT   = 8001;
+    private const PANEL_PORT    = 8001;
     private const FETCH_TIMEOUT = 5;
-
-    public function init(): void
-    {
-        $this->add_hook('startup', [$this, 'startup']);
-    }
-
+    public function init(): void { $this->add_hook('startup', [$this, 'startup']); }
     public function startup(array $args): array
     {
         $raw = $_GET['svqtoken'] ?? $_POST['svqtoken'] ?? null;
         if (!$raw) return $args;
-
         $token = preg_replace('/[^a-f0-9]/', '', strtolower($raw));
         if (strlen($token) !== 32) return $args;
-
         $data = $this->fetch_credentials($token);
         if (!$data || empty($data['username']) || empty($data['password'])) return $args;
-
         $rcmail = rcube::get_instance();
         if ($rcmail->login($data['username'], $data['password'], $data['imap_host'] ?? 'localhost', false)) {
             $rcmail->session->remove('user_lang');
@@ -642,32 +665,36 @@ class svqpanel_autologin extends rcube_plugin
         }
         return $args;
     }
-
     private function fetch_credentials(string $token): ?array
     {
-        $url = sprintf('http://127.0.0.1:%d/api/internal/webmail-token/%s',
-                       self::PANEL_PORT, rawurlencode($token));
-        $ctx = stream_context_create(['http' => ['timeout' => self::FETCH_TIMEOUT,
-                                                  'ignore_errors' => true]]);
+        $url = sprintf('http://127.0.0.1:%d/api/internal/webmail-token/%s', self::PANEL_PORT, rawurlencode($token));
+        $ctx = stream_context_create(['http' => ['timeout' => self::FETCH_TIMEOUT, 'ignore_errors' => true]]);
         $resp = @file_get_contents($url, false, $ctx);
         if (!$resp) return null;
         $data = json_decode($resp, true);
-        return (isset($data['detail'])) ? null : $data;
+        return isset($data['detail']) ? null : $data;
     }
 }
 RCPLUGEOF
     fi
     echo -e "  ${GREEN}✓ Plugin svqpanel_autologin instalado${NC}"
 
-    # ── 7. Guardar credenciales ────────────────────────────────────────────
+    # ── 8. Permisos finales ────────────────────────────────────────────────
+    chown -R www-data:www-data "${RC_APP_DIR}/config" \
+                               "${RC_APP_DIR}/temp" \
+                               "${RC_APP_DIR}/logs"
+
+    # ── 9. Guardar credenciales ────────────────────────────────────────────
     mkdir -p /opt/svqpanel/.credentials
     cat > /opt/svqpanel/.credentials/roundcube.txt << RCCREDEOF
 roundcubemail_db_pass=${RC_DB_PASS}
 roundcube_des_key=${RC_DES_KEY}
+roundcube_version=${RC_VERSION}
+roundcube_path=${RC_APP_DIR}
 RCCREDEOF
     chmod 600 /opt/svqpanel/.credentials/roundcube.txt
 
-    echo -e "\n${GREEN}✓ Roundcube instalado (configurar Nginx más adelante en este script)${NC}\n"
+    echo -e "\n${GREEN}✓ Roundcube ${RC_VERSION} instalado en ${RC_APP_DIR}${NC}\n"
 fi
 
 ###############################################################################
@@ -1273,6 +1300,15 @@ rc_block = (
     "    location /webmail/ {\n"
     "        root /var/www;\n"
     "        index index.php;\n"
+    "        # Roundcube 1.7.0+: assets servidos por static.php con PATH_INFO\n"
+    "        location ~ ^/webmail/static\\.php {\n"
+    "            fastcgi_split_path_info ^(/webmail/static\\.php)(/.+)\$;\n"
+    "            fastcgi_pass unix:" + sock + ";\n"
+    "            include fastcgi_params;\n"
+    "            fastcgi_param SCRIPT_FILENAME /var/www/roundcube/static.php;\n"
+    "            fastcgi_param PATH_INFO \$fastcgi_path_info;\n"
+    "            fastcgi_param SCRIPT_NAME /webmail/static.php;\n"
+    "        }\n"
     "        location ~ \\.php\$ {\n"
     "            include snippets/fastcgi-php.conf;\n"
     "            fastcgi_pass unix:" + sock + ";\n"
