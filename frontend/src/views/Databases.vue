@@ -80,6 +80,16 @@
                 <td>
                   <div class="btn-group btn-group-sm">
                     <button
+                      class="btn btn-outline-success"
+                      @click="openPhpMyAdmin(db)"
+                      title="Abrir phpMyAdmin"
+                      :disabled="pmaLoading === db.id"
+                      v-if="canManage(db)"
+                    >
+                      <span v-if="pmaLoading === db.id" class="spinner-border spinner-border-sm"></span>
+                      <i v-else class="bi bi-box-arrow-up-right"></i>
+                    </button>
+                    <button
                       class="btn btn-outline-info"
                       @click="openEditForm(db)"
                       title="Editar"
@@ -197,6 +207,7 @@ export default {
     const passwordLoading = ref(false)
     const showNewPassword = ref(false)
     const isMariaDBDisabled = ref(false)
+    const pmaLoading = ref(null)  // id de la BD cuyo botón phpMyAdmin está en carga
 
     const currentUser = computed(() => store.currentUser)
 
@@ -296,6 +307,32 @@ export default {
       }
     }
 
+    const openPhpMyAdmin = async (db) => {
+      pmaLoading.value = db.id
+      try {
+        const data = await databaseService.getPMAToken(db.id)
+        if (data?.pma_url) {
+          window.open(data.pma_url, '_blank', 'noopener,noreferrer')
+        } else {
+          store.showNotification('No se pudo obtener el enlace de phpMyAdmin', 'error')
+        }
+      } catch (error) {
+        const msg = error.message || ''
+        if (msg.includes('503') || msg.toLowerCase().includes('no está configurado')) {
+          store.showNotification('phpMyAdmin no está instalado en este servidor', 'warning')
+        } else if (msg.includes('409') || msg.toLowerCase().includes('no hay contraseña')) {
+          store.showNotification(
+            'Cambia la contraseña de esta BD desde el panel para habilitar phpMyAdmin',
+            'warning'
+          )
+        } else {
+          store.showNotification(`Error abriendo phpMyAdmin: ${msg}`, 'error')
+        }
+      } finally {
+        pmaLoading.value = null
+      }
+    }
+
     const canManage = (db) => {
       return store.currentUser?.is_admin || db.user_id === store.currentUser?.id
     }
@@ -334,7 +371,9 @@ export default {
       handlePasswordChange,
       confirmDelete,
       canManage,
-      getUserName
+      getUserName,
+      openPhpMyAdmin,
+      pmaLoading
     }
   }
 }

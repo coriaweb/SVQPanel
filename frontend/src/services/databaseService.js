@@ -42,5 +42,10 @@ export default {
   async getCharsets() {
     const data = await api.get('/api/databases/charsets')
     return data?.charsets || []
+  },
+
+  // Obtener URL de acceso phpMyAdmin (autologin, token de un solo uso)
+  async getPMAToken(dbId) {
+    return api.get(`/api/databases/${dbId}/pma-token`)
   }
 }

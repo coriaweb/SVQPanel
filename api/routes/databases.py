@@ -20,12 +20,15 @@ Endpoints:
   GET    /api/databases/charsets     → listar charsets/collations disponibles
 """
 
+import json
 import os
 import re
 import secrets
 import string
 import hashlib
 import subprocess
+import time
+import uuid
 from typing import List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, status, Query
@@ -46,10 +49,14 @@ from api.dependencies import get_current_user, require_admin
 router = APIRouter()
 
 # ── Configuración MariaDB desde .env ─────────────────────────────────────────
-MARIADB_ENABLED       = os.getenv("MARIADB_ENABLED", "false").lower() == "true"
-MARIADB_HOST          = os.getenv("MARIADB_HOST", "localhost")
-MARIADB_PANEL_USER    = os.getenv("MARIADB_PANEL_USER", "svqpanel_admin")
+MARIADB_ENABLED        = os.getenv("MARIADB_ENABLED", "false").lower() == "true"
+MARIADB_HOST           = os.getenv("MARIADB_HOST", "localhost")
+MARIADB_PANEL_USER     = os.getenv("MARIADB_PANEL_USER", "svqpanel_admin")
 MARIADB_PANEL_PASSWORD = os.getenv("MARIADB_PANEL_PASSWORD", "")
+
+# Clave Fernet para cifrado reversible de contraseñas (phpMyAdmin autologin)
+# Generada en install_mariadb.sh: python3 -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
+PANEL_ENCRYPTION_KEY = os.getenv("PANEL_ENCRYPTION_KEY", "")
 
 
 # ── Helpers internos ─────────────────────────────────────────────────────────
@@ -64,6 +71,39 @@ def _check_mariadb_enabled():
                 "Instala MariaDB y configura MARIADB_ENABLED=true en .env"
             )
         )
+
+
+def _get_fernet():
+    """
+    Devuelve una instancia Fernet si PANEL_ENCRYPTION_KEY está configurada,
+    o None si no hay clave (phpMyAdmin no configurado).
+    """
+    if not PANEL_ENCRYPTION_KEY:
+        return None
+    try:
+        from cryptography.fernet import Fernet
+        return Fernet(PANEL_ENCRYPTION_KEY.encode())
+    except Exception:
+        return None
+
+
+def _encrypt_password(password: str) -> Optional[str]:
+    """Cifra con Fernet. Devuelve None si no hay clave configurada."""
+    f = _get_fernet()
+    if not f:
+        return None
+    return f.encrypt(password.encode()).decode()
+
+
+def _decrypt_password(enc: str) -> Optional[str]:
+    """Descifra con Fernet. Devuelve None si falla o no hay clave."""
+    f = _get_fernet()
+    if not f or not enc:
+        return None
+    try:
+        return f.decrypt(enc.encode()).decode()
+    except Exception:
+        return None
 
 
 def _mariadb_binary() -> str:
@@ -375,16 +415,17 @@ def create_database(
     # ── Guardar metadata en PostgreSQL ────────────────────────────────────────
     try:
         client_db = ClientDatabase(
-            user_id        = owner.id,
-            domain_id      = data.domain_id,
-            db_name        = db_name,
-            db_name_suffix = data.db_name_suffix,
-            db_user        = db_user,
-            db_user_suffix = data.db_user_suffix,
+            user_id          = owner.id,
+            domain_id        = data.domain_id,
+            db_name          = db_name,
+            db_name_suffix   = data.db_name_suffix,
+            db_user          = db_user,
+            db_user_suffix   = data.db_user_suffix,
             db_password_hash = _hash_password(password),
-            db_charset     = db_charset,
-            db_collation   = db_collation,
-            quota_mb       = data.quota_mb,
+            db_password_enc  = _encrypt_password(password),  # para phpMyAdmin autologin
+            db_charset       = db_charset,
+            db_collation     = db_collation,
+            quota_mb         = data.quota_mb,
         )
         db.add(client_db)
         db.commit()
@@ -426,6 +467,81 @@ def get_database(
 
     _assert_can_manage(current_user, client_db.user_id, db)
     return client_db
+
+
+@router.get("/databases/{db_id}/pma-token", tags=["Databases"])
+def get_pma_token(
+    db_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """
+    Genera un token de acceso phpMyAdmin de un solo uso (válido 5 minutos).
+
+    Flujo:
+      1. Frontend llama a este endpoint.
+      2. El panel crea /tmp/pma_tokens/{token}.json con user+password+exp.
+      3. Devuelve { pma_url: "/pma/signon.php?token=..." }.
+      4. Frontend abre esa URL en nueva pestaña.
+      5. signon.php lee el fichero (lo elimina), inicia sesión phpMyAdmin y redirige.
+      6. El usuario ve solo su BD, sin acceso a otras.
+    """
+    _check_mariadb_enabled()
+
+    if not PANEL_ENCRYPTION_KEY:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=(
+                "phpMyAdmin no está configurado. "
+                "Ejecuta install_mariadb.sh para instalarlo, o añade "
+                "PANEL_ENCRYPTION_KEY al .env y reinicia el panel."
+            ),
+        )
+
+    client_db = db.query(ClientDatabase).filter(ClientDatabase.id == db_id).first()
+    if not client_db:
+        raise HTTPException(status_code=404, detail="Base de datos no encontrada")
+
+    _assert_can_manage(current_user, client_db.user_id, db)
+
+    if not client_db.db_password_enc:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=(
+                "No hay contraseña guardada para esta BD. "
+                "Cambia la contraseña desde el panel para habilitar phpMyAdmin autologin."
+            ),
+        )
+
+    plaintext = _decrypt_password(client_db.db_password_enc)
+    if not plaintext:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Error descifrando la contraseña almacenada. Comprueba PANEL_ENCRYPTION_KEY.",
+        )
+
+    # ── Crear token de un solo uso ────────────────────────────────────────────
+    token = uuid.uuid4().hex  # 32 chars hex, sin guiones
+    token_dir = "/tmp/pma_tokens"
+    os.makedirs(token_dir, mode=0o700, exist_ok=True)
+    token_file = os.path.join(token_dir, f"{token}.json")
+    token_data = {
+        "user":     client_db.db_user,
+        "password": plaintext,
+        "db":       client_db.db_name,
+        "exp":      time.time() + 300,  # 5 minutos
+    }
+    with open(token_file, "w") as fh:
+        json.dump(token_data, fh)
+    os.chmod(token_file, 0o600)
+
+    return {
+        "status":      "success",
+        "pma_url":     f"/pma/signon.php?token={token}",
+        "expires_in":  300,
+        "db_name":     client_db.db_name,
+        "db_user":     client_db.db_user,
+    }
 
 
 @router.put("/databases/{db_id}", response_model=DatabaseResponse, tags=["Databases"])
@@ -497,6 +613,7 @@ def reset_database_password(
         )
 
     client_db.db_password_hash = _hash_password(data.new_password)
+    client_db.db_password_enc  = _encrypt_password(data.new_password)  # refrescar cifrado phpMyAdmin
     db.commit()
 
     return DatabasePasswordResetResponse(

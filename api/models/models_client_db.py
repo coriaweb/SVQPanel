@@ -43,6 +43,10 @@ class ClientDatabase(Base):
     # Hash de la contraseña (PBKDF2-SHA256); no reversible → reset si se olvida
     db_password_hash = Column(String(255), nullable=False)
 
+    # Contraseña cifrada con Fernet (simétrico, reversible) — para phpMyAdmin autologin
+    # Se rellena si PANEL_ENCRYPTION_KEY está configurada en .env
+    db_password_enc  = Column(String(500), nullable=True)
+
     # ── Configuración MariaDB ─────────────────────────────────────────────────
     db_charset   = Column(String(20),  default="utf8mb4")
     db_collation = Column(String(50),  default="utf8mb4_unicode_ci")  # 'collation' es palabra clave en PostgreSQL

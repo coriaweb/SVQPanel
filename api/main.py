@@ -139,6 +139,8 @@ def _run_migrations():
         "CREATE INDEX IF NOT EXISTS ix_client_databases_domain_id  ON client_databases(domain_id)",
         # Límite de BDs por usuario
         "ALTER TABLE users ADD COLUMN IF NOT EXISTS databases_limit INTEGER DEFAULT 5",
+        # Fase 10b: contraseña cifrada con Fernet para phpMyAdmin autologin
+        "ALTER TABLE client_databases ADD COLUMN IF NOT EXISTS db_password_enc VARCHAR(500)",
     ]
     with engine.connect() as conn:
         for sql in migrations:

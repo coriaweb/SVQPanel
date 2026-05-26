@@ -634,6 +634,84 @@ MDBCREDEOF
     else
         echo -e "${RED}✗ MariaDB NO activo (revisar: journalctl -u mariadb)${NC}\n"
     fi
+
+    # ── Instalar phpMyAdmin con autologin ─────────────────────────────────────
+    echo -e "${YELLOW}Instalando phpMyAdmin...${NC}"
+    PMA_VERSION="5.2.2"
+    PMA_DIR="/var/www/pma"
+    PMA_DL="https://files.phpmyadmin.net/phpMyAdmin/${PMA_VERSION}/phpMyAdmin-${PMA_VERSION}-all-languages.tar.gz"
+    PMA_TMP="/tmp/phpmyadmin.tar.gz"
+
+    apt-get install -y php-mbstring php-xml php-curl php-zip > /dev/null 2>&1
+
+    curl -Lo "$PMA_TMP" "$PMA_DL" 2>/dev/null || wget -qO "$PMA_TMP" "$PMA_DL"
+    if [[ -f "$PMA_TMP" && -s "$PMA_TMP" ]]; then
+        rm -rf "${PMA_DIR:?}"
+        mkdir -p "$PMA_DIR"
+        tar xzf "$PMA_TMP" -C "$PMA_DIR" --strip-components=1
+        rm -f "$PMA_TMP"
+        chown -R www-data:www-data "$PMA_DIR"
+        chmod -R 755 "$PMA_DIR"
+        mkdir -p /tmp/phpmyadmin && chmod 777 /tmp/phpmyadmin
+        mkdir -p /tmp/pma_tokens && chmod 700 /tmp/pma_tokens
+
+        # Generar clave Fernet (se añade al .env más abajo, en sección env)
+        PANEL_ENCRYPTION_KEY=$(python3 -c \
+            "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())")
+
+        PMA_BLOWFISH_SECRET=$(python3 -c \
+            "import secrets, string; \
+             chars = string.ascii_letters + string.digits; \
+             print(''.join(secrets.choice(chars) for _ in range(56)))")
+
+        cat > "${PMA_DIR}/config.inc.php" << PMACFGEOF
+<?php
+\$cfg['blowfish_secret'] = '${PMA_BLOWFISH_SECRET}';
+\$i = 0; \$i++;
+\$cfg['Servers'][\$i]['host']          = '127.0.0.1';
+\$cfg['Servers'][\$i]['port']          = '3306';
+\$cfg['Servers'][\$i]['auth_type']     = 'signon';
+\$cfg['Servers'][\$i]['SignonSession'] = 'SignonSession';
+\$cfg['Servers'][\$i]['SignonURL']     = '/pma/signon.php';
+\$cfg['Servers'][\$i]['LogoutURL']     = '/databases';
+\$cfg['Servers'][\$i]['AllowRoot']     = false;
+\$cfg['TempDir']   = '/tmp/phpmyadmin/';
+\$cfg['UploadDir'] = '';
+\$cfg['SaveDir']   = '';
+\$cfg['ServerDefault']       = 1;
+\$cfg['LoginCookieValidity'] = 1440;
+\$cfg['SendErrorReports']    = 'never';
+\$cfg['CheckConfigurationPermissions'] = false;
+PMACFGEOF
+        chmod 640 "${PMA_DIR}/config.inc.php"
+        chown root:www-data "${PMA_DIR}/config.inc.php"
+
+        cat > "${PMA_DIR}/signon.php" << 'SIGNONEOF'
+<?php
+$token = isset($_GET['token']) ? preg_replace('/[^a-f0-9]/', '', $_GET['token']) : '';
+if (empty($token)) { header('Location: /'); exit; }
+$token_file = '/tmp/pma_tokens/' . $token . '.json';
+if (!file_exists($token_file)) { http_response_code(403); die('<p>Token inválido o expirado. <a href="/">Volver al panel</a></p>'); }
+$data = json_decode(file_get_contents($token_file), true);
+@unlink($token_file);
+if (!$data || !isset($data['exp']) || time() > $data['exp']) { http_response_code(403); die('<p>Token expirado. <a href="/databases">Volver al panel</a></p>'); }
+session_name('SignonSession');
+session_start();
+$_SESSION['PMA_single_signon_user']     = $data['user'];
+$_SESSION['PMA_single_signon_password'] = $data['password'];
+$_SESSION['PMA_single_signon_host']     = '127.0.0.1';
+$_SESSION['PMA_single_signon_port']     = '';
+session_write_close();
+header('Location: /pma/index.php');
+exit;
+SIGNONEOF
+        chmod 644 "${PMA_DIR}/signon.php"
+        chown www-data:www-data "${PMA_DIR}/signon.php"
+        echo -e "  ${GREEN}✓ phpMyAdmin ${PMA_VERSION} instalado en $PMA_DIR${NC}"
+    else
+        echo -e "  ${YELLOW}⚠ No se pudo descargar phpMyAdmin — instálalo manualmente${NC}"
+        PANEL_ENCRYPTION_KEY=""
+    fi
 fi
 
 ###############################################################################
@@ -767,6 +845,7 @@ MARIADB_ENABLED=${MARIADB_ENABLED_VAL}
 MARIADB_HOST=localhost
 MARIADB_PANEL_USER=svqpanel_admin
 MARIADB_PANEL_PASSWORD=${MARIADB_PANEL_PASS}
+PANEL_ENCRYPTION_KEY=${PANEL_ENCRYPTION_KEY}
 ENVEOF
 
 echo -e "${GREEN}✓ Archivo .env creado${NC}\n"
@@ -874,6 +953,42 @@ server {
     }
 }
 NGINXEOF
+
+    # ── phpMyAdmin: inyectar bloque /pma si se instaló ───────────────────────
+    if [[ "$INSTALL_MARIADB" == true && -d /var/www/pma ]]; then
+        PHP_FPM_SOCK=$(find /run/php /var/run/php -name 'php*-fpm.sock' 2>/dev/null \
+                       | sort -rV | head -1)
+        if [[ -n "$PHP_FPM_SOCK" ]]; then
+            python3 - << PYEOF
+sock = "${PHP_FPM_SOCK}"
+pma_block = (
+    "\n"
+    "    # phpMyAdmin — acceso autenticado via panel SVQPanel\n"
+    "    location /pma/ {\n"
+    "        root /var/www;\n"
+    "        index index.php index.html;\n"
+    "        location ~ \\.php$ {\n"
+    "            include snippets/fastcgi-php.conf;\n"
+    "            fastcgi_pass unix:" + sock + ";\n"
+    "            fastcgi_param SCRIPT_FILENAME \$document_root\$fastcgi_script_name;\n"
+    "            include fastcgi_params;\n"
+    "        }\n"
+    "    }\n"
+    "\n"
+)
+with open('/etc/nginx/sites-available/svqpanel', 'r') as f:
+    content = f.read()
+marker = '    location / {'
+if marker in content and 'location /pma' not in content:
+    content = content.replace(marker, pma_block + marker)
+    with open('/etc/nginx/sites-available/svqpanel', 'w') as f:
+        f.write(content)
+PYEOF
+            echo -e "  ${GREEN}✓ Bloque phpMyAdmin añadido a nginx${NC}"
+        else
+            echo -e "  ${YELLOW}⚠ No se encontró PHP-FPM socket; configura nginx para /pma manualmente${NC}"
+        fi
+    fi
 
     ln -sf /etc/nginx/sites-available/svqpanel /etc/nginx/sites-enabled/svqpanel
     rm -f /etc/nginx/sites-enabled/default
