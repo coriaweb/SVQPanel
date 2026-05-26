@@ -91,19 +91,13 @@ echo -e "${GREEN}✓ MariaDB $(mysql --version | awk '{print $6}' | tr -d ',') i
 ###############################################################################
 echo -e "${BLUE}[3/6] Generando credenciales seguras...${NC}"
 
-# Contraseña root de MariaDB
-MARIADB_ROOT_PASS=$(python3 -c \
-    "import secrets,string; \
-     chars=string.ascii_letters+string.digits; \
-     print(''.join(secrets.choice(chars) for _ in range(24)))")
-
-# Contraseña del usuario administrador del panel
+# Contraseña del usuario administrador del panel (root mantiene unix_socket auth)
 MARIADB_PANEL_PASS=$(python3 -c \
     "import secrets,string; \
      chars=string.ascii_letters+string.digits; \
      print(''.join(secrets.choice(chars) for _ in range(24)))")
 
-echo -e "  ✓ Contraseñas generadas (24 chars, aleatorias)"
+echo -e "  ✓ Contraseña svqpanel_admin generada (24 chars, aleatoria)"
 echo -e "${GREEN}✓ Credenciales listas${NC}\n"
 
 ###############################################################################
@@ -111,37 +105,49 @@ echo -e "${GREEN}✓ Credenciales listas${NC}\n"
 ###############################################################################
 echo -e "${BLUE}[4/6] Asegurando MariaDB y creando usuario svqpanel_admin...${NC}"
 
-mysql --user=root << MARIADBEOF
--- Contraseña root segura
-ALTER USER 'root'@'localhost' IDENTIFIED BY '${MARIADB_ROOT_PASS}';
+# Verificar que podemos conectar como root (usa unix_socket auth por defecto en Debian)
+if ! mariadb --user=root -e "SELECT 1;" > /dev/null 2>&1; then
+    echo -e "${RED}Error: No se puede conectar a MariaDB como root.${NC}"
+    echo "  Si root tiene contraseña, ejecúta manualmente:"
+    echo "    systemctl stop mariadb"
+    echo "    mysqld_safe --skip-grant-tables &"
+    echo "    sleep 3"
+    echo "    mariadb -e \"ALTER USER 'root'@'localhost' IDENTIFIED VIA unix_socket;\""
+    echo "    systemctl restart mariadb"
+    exit 1
+fi
 
--- Eliminar cuentas anónimas y BD de prueba
+mariadb --user=root << MARIADBEOF
+-- ── Hardening básico ──────────────────────────────────────────────────────
+-- Eliminar cuentas anónimas
 DELETE FROM mysql.user WHERE User='';
+-- Deshabilitar acceso root remoto (seguridad; root solo local via unix_socket)
+DELETE FROM mysql.user WHERE User='root' AND Host NOT IN ('localhost', '127.0.0.1', '::1');
+-- Eliminar BD de prueba
 DROP DATABASE IF EXISTS test;
 DELETE FROM mysql.db WHERE Db='test' OR Db='test\\_%';
 
--- Eliminar usuario anterior del panel si existe (idempotente)
+-- ── Usuario administrador del panel ───────────────────────────────────────
+-- Eliminar si existe (idempotente — permite re-ejecutar el script)
 DROP USER IF EXISTS 'svqpanel_admin'@'localhost';
 
--- Crear usuario administrador del panel con permisos mínimos necesarios:
---   CREATE/DROP → gestionar BDs de clientes
---   CREATE USER/DROP USER → gestionar usuarios por BD
---   GRANT OPTION → asignar privilegios
---   RELOAD → FLUSH PRIVILEGES
---   SELECT en information_schema → consultar tamaños
+-- Crear con permisos mínimos necesarios:
+--   CREATE/DROP     → gestionar BDs de clientes
+--   CREATE USER     → crear/eliminar usuarios por BD
+--   GRANT OPTION    → asignar privilegios a esos usuarios
+--   RELOAD          → FLUSH PRIVILEGES
+-- NOTA: information_schema NO necesita GRANT explícito — MariaDB da acceso
+--       automático a todos los usuarios autenticados (BD virtual, no real).
 CREATE USER 'svqpanel_admin'@'localhost'
     IDENTIFIED BY '${MARIADB_PANEL_PASS}';
 
 GRANT CREATE, DROP, RELOAD, GRANT OPTION, CREATE USER
     ON *.* TO 'svqpanel_admin'@'localhost';
 
-GRANT SELECT
-    ON information_schema.* TO 'svqpanel_admin'@'localhost';
-
 FLUSH PRIVILEGES;
 MARIADBEOF
 
-echo -e "  ✓ root → contraseña asegurada"
+echo -e "  ✓ root → mantiene autenticación unix_socket (sin contraseña de red)"
 echo -e "  ✓ svqpanel_admin → creado con permisos mínimos"
 echo -e "${GREEN}✓ MariaDB asegurado${NC}\n"
 
@@ -185,14 +191,14 @@ cat > "$CREDS_DIR/mariadb.txt" << CREDEOF
 # NO compartas este archivo
 
 MariaDB root:
-  usuario: root
-  password: ${MARIADB_ROOT_PASS}
-  conexión: mysql -u root -p
+  autenticación: unix_socket (sin contraseña de red — más seguro)
+  conexión local (como root del sistema): mariadb --user=root
+  acceso remoto: DESACTIVADO por seguridad
 
 Panel admin (usado internamente por SVQPanel):
   usuario: svqpanel_admin
   password: ${MARIADB_PANEL_PASS}
-  conexión: mysql -u svqpanel_admin -p
+  conexión: mariadb -u svqpanel_admin -p
 
 Conexión desde app de cliente (ejemplo):
   host: 127.0.0.1
@@ -244,6 +250,6 @@ echo "  DELETE /api/databases/{id}          → eliminar BD"
 echo "  GET    /api/databases/charsets      → ver charsets disponibles"
 echo ""
 echo -e "${RED}⚠ IMPORTANTE:${NC}"
-echo "  • Cambia la contraseña de root de MariaDB si lo expones a red"
+echo "  • root usa unix_socket (solo accesible como root del SO — no hay contraseña de red)"
 echo "  • El panel usa solo svqpanel_admin — root no es necesario para el panel"
 echo "  • Las BDs de clientes son locales (localhost:3306) — no exponer a internet"
