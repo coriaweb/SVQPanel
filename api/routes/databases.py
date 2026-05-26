@@ -66,15 +66,31 @@ def _check_mariadb_enabled():
         )
 
 
+def _mariadb_binary() -> str:
+    """
+    Devuelve el nombre del binario cliente de MariaDB disponible.
+    MariaDB 11.x usa 'mariadb'; versiones antiguas y MySQL usan 'mysql'.
+    """
+    import shutil
+    for binary in ("mariadb", "mysql"):
+        if shutil.which(binary):
+            return binary
+    raise Exception(
+        "Cliente MariaDB/MySQL no encontrado. "
+        "Instala mariadb-client: apt install mariadb-client"
+    )
+
+
 def _run_mariadb(sql: str) -> str:
     """
     Ejecuta SQL en MariaDB usando el usuario administrador del panel.
-    Usa el cliente CLI 'mysql' para no añadir dependencias extra de Python.
+    Usa el cliente CLI (mariadb o mysql) sin dependencias Python extra.
     Lanza Exception con el mensaje de error si falla.
     """
     try:
+        binary = _mariadb_binary()
         cmd = [
-            "mysql",
+            binary,
             f"--host={MARIADB_HOST}",
             f"--user={MARIADB_PANEL_USER}",
             f"--password={MARIADB_PANEL_PASSWORD}",
@@ -84,10 +100,11 @@ def _run_mariadb(sql: str) -> str:
         result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
         if result.returncode != 0:
             err = result.stderr.strip()
-            # Quitar advertencia de contraseña en línea de comandos (normal en MySQL)
+            # Quitar advertencias de contraseña en línea de comandos
             err = "\n".join(
                 line for line in err.splitlines()
                 if "Using a password on the command line" not in line
+                and "Deprecated program name" not in line
             )
             raise Exception(err or "Error desconocido en MariaDB")
         return result.stdout
@@ -95,7 +112,8 @@ def _run_mariadb(sql: str) -> str:
         raise Exception("Timeout al ejecutar comando MariaDB (>30 s)")
     except FileNotFoundError:
         raise Exception(
-            "Cliente 'mysql' no encontrado en el sistema. ¿Está MariaDB instalado?"
+            "Cliente MariaDB/MySQL no encontrado. "
+            "Instala mariadb-client: apt install mariadb-client"
         )
 
 
