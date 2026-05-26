@@ -31,9 +31,14 @@
 - `api/routes/databases.py` — CRUD + operaciones MariaDB reales
 - `install.sh` — sección MariaDB 11.4 LTS (instalación opcional)
 
-### Fase 4 (Próxima)
+### Fase 4 ✅ COMPLETA — Frontend Vue 3 (Gestión de Bases de Datos)
 
-- Frontend Vue3
+- `frontend/src/views/Databases.vue` — vista principal con tabla de BDs
+- `frontend/src/components/DatabaseForm.vue` — formulario para crear/editar
+- `frontend/src/services/databaseService.js` — llamadas a API `/api/databases`
+- Componentes Modal, tabla con acciones (editar, cambiar password, eliminar)
+- Integración con router y menú principal
+- Soporte para admin/reseller y usuarios finales
 
 ## 🔧 Tecnología Stack
 

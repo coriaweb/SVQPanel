@@ -26,6 +26,11 @@
             </router-link>
           </li>
           <li>
+            <router-link to="/databases" :class="{active: route.path === '/databases'}">
+              <i class="bi bi-database"></i> Bases de Datos
+            </router-link>
+          </li>
+          <li>
             <router-link to="/dns" :class="{active: route.path === '/dns'}">
               <i class="bi bi-diagram-3"></i> DNS
             </router-link>

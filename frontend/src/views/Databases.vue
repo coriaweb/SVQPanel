@@ -1,0 +1,338 @@
+<template>
+  <div>
+    <div class="d-flex justify-content-between align-items-center mb-4">
+      <h2><i class="bi bi-database"></i> Bases de Datos</h2>
+      <button class="btn btn-primary" @click="openCreateForm" v-if="!isMariaDBDisabled">
+        <i class="bi bi-plus-circle"></i> Crear BD
+      </button>
+      <button class="btn btn-warning" disabled v-else>
+        <i class="bi bi-exclamation-triangle"></i> MariaDB no habilitado
+      </button>
+    </div>
+
+    <!-- Advertencia si MariaDB no está habilitado -->
+    <div v-if="isMariaDBDisabled" class="alert alert-warning" role="alert">
+      <i class="bi bi-exclamation-triangle-fill me-2"></i>
+      <strong>MariaDB no está habilitado en este servidor.</strong>
+      Los clientes no pueden crear bases de datos hasta que el administrador lo configure.
+    </div>
+
+    <!-- Filtro por usuario (solo admin/reseller) -->
+    <div v-if="isAdminOrReseller" class="mb-3">
+      <select v-model="selectedUser" class="form-select" @change="loadDatabases">
+        <option value="">Mis bases de datos</option>
+        <option value="all">Todas las bases de datos</option>
+        <option v-for="user in users" :key="user.id" :value="user.id">
+          {{ user.username }} ({{ user.email }})
+        </option>
+      </select>
+    </div>
+
+    <!-- Tabla de BDs -->
+    <div class="card">
+      <div class="card-body p-0">
+        <div v-if="loading" class="text-center py-5">
+          <div class="spinner-border" role="status"></div>
+        </div>
+        <div v-else-if="databases.length === 0" class="alert alert-info m-3 mb-0">
+          <i class="bi bi-info-circle me-2"></i>
+          {{ isMariaDBDisabled ? 'MariaDB no está disponible' : 'No hay bases de datos creadas' }}
+        </div>
+        <div v-else class="table-responsive">
+          <table class="table table-hover align-middle mb-0">
+            <thead class="table-light">
+              <tr>
+                <th>Nombre BD</th>
+                <th v-if="isAdminOrReseller">Usuario</th>
+                <th>Usuario MariaDB</th>
+                <th>Almacenamiento</th>
+                <th>Charset</th>
+                <th>Estado</th>
+                <th>Acciones</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr v-for="db in databases" :key="db.id">
+                <td>
+                  <i class="bi bi-database text-primary me-1"></i>
+                  <code class="fw-semibold">{{ db.db_name }}</code>
+                </td>
+                <td v-if="isAdminOrReseller" class="small">
+                  {{ getUserName(db.user_id) }}
+                </td>
+                <td>
+                  <code class="small">{{ db.db_user }}</code>
+                </td>
+                <td>
+                  <span class="badge bg-info">{{ db.size_mb }} / {{ db.quota_mb }} MB</span>
+                </td>
+                <td>
+                  <span class="badge bg-secondary">{{ db.db_charset }}</span>
+                </td>
+                <td>
+                  <span v-if="db.is_active" class="badge bg-success">
+                    <i class="bi bi-check-circle me-1"></i>Activo
+                  </span>
+                  <span v-else class="badge bg-danger">
+                    <i class="bi bi-x-circle me-1"></i>Inactivo
+                  </span>
+                </td>
+                <td>
+                  <div class="btn-group btn-group-sm">
+                    <button
+                      class="btn btn-outline-info"
+                      @click="openEditForm(db)"
+                      title="Editar"
+                      v-if="canManage(db)"
+                    >
+                      <i class="bi bi-pencil"></i>
+                    </button>
+                    <button
+                      class="btn btn-outline-warning"
+                      @click="openPasswordForm(db)"
+                      title="Cambiar contraseña"
+                      v-if="canManage(db)"
+                    >
+                      <i class="bi bi-key"></i>
+                    </button>
+                    <button
+                      class="btn btn-outline-danger"
+                      @click="confirmDelete(db)"
+                      title="Eliminar"
+                      v-if="canManage(db)"
+                    >
+                      <i class="bi bi-trash"></i>
+                    </button>
+                  </div>
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+
+    <!-- Modal: Crear/Editar BD -->
+    <Modal
+      :isOpen="showFormModal"
+      :title="editingDatabase ? 'Editar BD' : 'Crear Nueva BD'"
+      @close="showFormModal = false"
+    >
+      <DatabaseForm
+        :database="editingDatabase"
+        :domains="userDomains"
+        @submit="handleFormSubmit"
+        @cancel="showFormModal = false"
+      />
+    </Modal>
+
+    <!-- Modal: Cambiar contraseña -->
+    <Modal
+      :isOpen="showPasswordModal"
+      title="Cambiar Contraseña BD"
+      @close="showPasswordModal = false"
+    >
+      <div>
+        <p class="mb-3">
+          <strong>BD:</strong> <code>{{ selectedDatabase?.db_name }}</code> <br>
+          <strong>Usuario:</strong> <code>{{ selectedDatabase?.db_user }}</code>
+        </p>
+        <form @submit.prevent="handlePasswordChange">
+          <div class="mb-3">
+            <label class="form-label">Nueva Contraseña</label>
+            <div class="input-group">
+              <input
+                v-model="newPassword"
+                :type="showNewPassword ? 'text' : 'password'"
+                class="form-control"
+                placeholder="Mínimo 8 caracteres"
+                required
+              />
+              <button
+                type="button"
+                class="btn btn-outline-secondary"
+                @click="showNewPassword = !showNewPassword"
+              >
+                <i :class="showNewPassword ? 'bi bi-eye-slash' : 'bi bi-eye'"></i>
+              </button>
+            </div>
+          </div>
+          <div class="d-flex gap-2">
+            <button type="submit" class="btn btn-warning" :disabled="passwordLoading">
+              <span v-if="passwordLoading" class="spinner-border spinner-border-sm me-2"></span>
+              Cambiar Contraseña
+            </button>
+            <button type="button" class="btn btn-secondary" @click="showPasswordModal = false">
+              Cancelar
+            </button>
+          </div>
+        </form>
+      </div>
+    </Modal>
+  </div>
+</template>
+
+<script>
+import { ref, computed, onMounted } from 'vue'
+import { useMainStore } from '../stores/useMainStore'
+import databaseService from '../services/databaseService'
+import api from '../services/api'
+import Modal from '../components/Modal.vue'
+import DatabaseForm from '../components/DatabaseForm.vue'
+
+export default {
+  name: 'Databases',
+  components: { Modal, DatabaseForm },
+  setup() {
+    const store = useMainStore()
+    const databases = ref([])
+    const users = ref([])
+    const loading = ref(false)
+    const showFormModal = ref(false)
+    const showPasswordModal = ref(false)
+    const editingDatabase = ref(null)
+    const selectedDatabase = ref(null)
+    const selectedUser = ref('')
+    const newPassword = ref('')
+    const passwordLoading = ref(false)
+    const showNewPassword = ref(false)
+    const isMariaDBDisabled = ref(false)
+
+    const currentUser = computed(() => store.currentUser)
+
+    const isAdminOrReseller = computed(() =>
+      ['admin', 'reseller'].includes(store.currentUser?.role)
+    )
+
+    const userDomains = computed(() => {
+      // Para admin/reseller, mostrar dominios del usuario seleccionado
+      if (store.currentUser?.is_admin && selectedUser.value && selectedUser.value !== 'all') {
+        return [] // Podría loadear dominios del usuario seleccionado
+      }
+      return []
+    })
+
+    const loadDatabases = async () => {
+      loading.value = true
+      try {
+        const userId = selectedUser.value && selectedUser.value !== 'all' ? selectedUser.value : null
+        const data = await databaseService.list(userId)
+        databases.value = data.items || []
+      } catch (error) {
+        if (error.response?.status === 503) {
+          isMariaDBDisabled.value = true
+          databases.value = []
+        } else {
+          store.showNotification(`Error: ${error.response?.data?.detail || error.message}`, 'error')
+        }
+      } finally {
+        loading.value = false
+      }
+    }
+
+    const loadUsers = async () => {
+      if (!isAdminOrReseller.value) return
+      try {
+        const response = await api.get('/users?limit=1000')
+        users.value = response.data.data || []
+      } catch (error) {
+        console.error('Error cargando usuarios:', error)
+      }
+    }
+
+    const openCreateForm = () => {
+      editingDatabase.value = null
+      showFormModal.value = true
+    }
+
+    const openEditForm = (db) => {
+      editingDatabase.value = db
+      showFormModal.value = true
+    }
+
+    const openPasswordForm = (db) => {
+      selectedDatabase.value = db
+      newPassword.value = ''
+      showNewPassword.value = false
+      showPasswordModal.value = true
+    }
+
+    const handleFormSubmit = async () => {
+      showFormModal.value = false
+      await loadDatabases()
+    }
+
+    const handlePasswordChange = async () => {
+      if (newPassword.value.length < 8) {
+        store.showNotification('La contraseña debe tener al menos 8 caracteres', 'error')
+        return
+      }
+
+      passwordLoading.value = true
+      try {
+        await databaseService.resetPassword(selectedDatabase.value.id, newPassword.value)
+        store.showNotification(`⚠️ Nueva contraseña: ${newPassword.value}`, 'success')
+        showPasswordModal.value = false
+        await loadDatabases()
+      } catch (error) {
+        store.showNotification(`Error: ${error.response?.data?.detail || error.message}`, 'error')
+      } finally {
+        passwordLoading.value = false
+      }
+    }
+
+    const confirmDelete = async (db) => {
+      if (confirm(`¿Eliminar BD "${db.db_name}"? Esta acción no se puede deshacer.`)) {
+        try {
+          await databaseService.delete(db.id)
+          store.showNotification('BD eliminada correctamente', 'success')
+          await loadDatabases()
+        } catch (error) {
+          store.showNotification(`Error: ${error.response?.data?.detail || error.message}`, 'error')
+        }
+      }
+    }
+
+    const canManage = (db) => {
+      return store.currentUser?.is_admin || db.user_id === store.currentUser?.id
+    }
+
+    const getUserName = (userId) => {
+      const user = users.value.find(u => u.id === userId)
+      return user ? `${user.username} (${user.email})` : `Usuario ${userId}`
+    }
+
+    onMounted(() => {
+      loadDatabases()
+      loadUsers()
+    })
+
+    return {
+      databases,
+      users,
+      loading,
+      showFormModal,
+      showPasswordModal,
+      editingDatabase,
+      selectedDatabase,
+      selectedUser,
+      newPassword,
+      passwordLoading,
+      showNewPassword,
+      isMariaDBDisabled,
+      currentUser,
+      isAdminOrReseller,
+      userDomains,
+      loadDatabases,
+      openCreateForm,
+      openEditForm,
+      openPasswordForm,
+      handleFormSubmit,
+      handlePasswordChange,
+      confirmDelete,
+      canManage,
+      getUserName
+    }
+  }
+}
+</script>
