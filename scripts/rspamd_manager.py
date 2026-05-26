@@ -292,6 +292,27 @@ class RspamdManager:
         except Exception:
             return []
 
+    def _msg_rcpts(self, msg: dict) -> list:
+        """
+        Devuelve la lista de destinatarios de un mensaje del historial.
+        Rspamd 4.x usa rcpt_smtp / rcpt_mime; versiones anteriores usaban rcpts.
+        """
+        return (msg.get("rcpt_smtp")
+                or msg.get("rcpt_mime")
+                or msg.get("rcpts")
+                or [])
+
+    def _msg_from(self, msg: dict) -> str:
+        """Remitente del mensaje (sender_smtp en 4.x, from en versiones anteriores)"""
+        return (msg.get("sender_smtp")
+                or msg.get("sender_mime")
+                or msg.get("from")
+                or "")
+
+    def _msg_time(self, msg: dict) -> float:
+        """Timestamp Unix del mensaje (unix_time en 4.x, time en versiones anteriores)"""
+        return float(msg.get("unix_time") or msg.get("time") or 0)
+
     def get_domain_stats(self, domain, limit=500):
         """Estadísticas y mensajes recientes filtrados por dominio destinatario"""
         from datetime import datetime, timezone
@@ -301,7 +322,7 @@ class RspamdManager:
         filtered = [
             msg for msg in history
             if any(r.lower().endswith(f"@{domain_l}")
-                   for r in msg.get("rcpts", []))
+                   for r in self._msg_rcpts(msg))
         ]
 
         stats = {
@@ -316,26 +337,26 @@ class RspamdManager:
             else:                        stats["clean"]      += 1
 
         # Últimos 25 mensajes, más recientes primero
-        recent = sorted(filtered,
-                        key=lambda m: m.get("time", 0) or 0,
-                        reverse=True)[:25]
+        recent = sorted(filtered, key=self._msg_time, reverse=True)[:25]
         for msg in recent:
-            ts = msg.get("time", 0) or 0
+            ts = self._msg_time(msg)
             if ts:
                 try:
                     ts = datetime.fromtimestamp(ts, tz=timezone.utc).strftime("%d/%m/%Y %H:%M")
                 except Exception:
                     ts = str(ts)
+            else:
+                ts = ""
             stats["history"].append({
-                "id":             str(msg.get("id", "")),
-                "from_addr":      str(msg.get("from", "") or ""),
-                "subject":        str(msg.get("subject", "") or "(sin asunto)"),
-                "action":         str(msg.get("action", "")),
-                "score":          float(msg.get("score", 0) or 0),
-                "required_score": float(msg.get("required_score", 0) or 0),
+                "id":             str(msg.get("message-id") or msg.get("id") or ""),
+                "from_addr":      str(self._msg_from(msg)),
+                "subject":        str(msg.get("subject") or "(sin asunto)"),
+                "action":         str(msg.get("action") or ""),
+                "score":          float(msg.get("score") or 0),
+                "required_score": float(msg.get("required_score") or 0),
                 "timestamp":      str(ts),
-                "size":           int(msg.get("size", 0) or 0),
-                "ip":             str(msg.get("ip", "") or ""),
+                "size":           int(msg.get("size") or 0),
+                "ip":             str(msg.get("ip") or ""),
             })
         return stats
 
