@@ -125,7 +125,6 @@
 import { ref, computed, onMounted } from 'vue'
 import { useMainStore } from '../stores/useMainStore'
 import databaseService from '../services/databaseService'
-import api from '../services/api'
 
 export default {
   name: 'DatabaseForm',
@@ -214,7 +213,7 @@ export default {
         }
         emit('submit')
       } catch (error) {
-        store.showNotification(`Error: ${error.response?.data?.detail || error.message}`, 'error')
+        store.showNotification(`Error: ${error.message}`, 'error')
       } finally {
         loading.value = false
       }

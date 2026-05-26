@@ -217,13 +217,16 @@ export default {
       try {
         const userId = selectedUser.value && selectedUser.value !== 'all' ? selectedUser.value : null
         const data = await databaseService.list(userId)
-        databases.value = data.items || []
+        // La API devuelve { total, items }
+        databases.value = data?.items || []
       } catch (error) {
-        if (error.response?.status === 503) {
+        // api.js lanza errores planos (Error), no Axios. Detectar 503 por texto del mensaje.
+        const msg = error.message || ''
+        if (msg.includes('503') || msg.toLowerCase().includes('no está habilitado')) {
           isMariaDBDisabled.value = true
           databases.value = []
         } else {
-          store.showNotification(`Error: ${error.response?.data?.detail || error.message}`, 'error')
+          store.showNotification(`Error cargando bases de datos: ${msg}`, 'error')
         }
       } finally {
         loading.value = false
@@ -271,11 +274,11 @@ export default {
       passwordLoading.value = true
       try {
         await databaseService.resetPassword(selectedDatabase.value.id, newPassword.value)
-        store.showNotification(`⚠️ Nueva contraseña: ${newPassword.value}`, 'success')
+        store.showNotification(`⚠️ Nueva contraseña guardada para ${selectedDatabase.value.db_user}`, 'success')
         showPasswordModal.value = false
         await loadDatabases()
       } catch (error) {
-        store.showNotification(`Error: ${error.response?.data?.detail || error.message}`, 'error')
+        store.showNotification(`Error cambiando contraseña: ${error.message}`, 'error')
       } finally {
         passwordLoading.value = false
       }
@@ -288,7 +291,7 @@ export default {
           store.showNotification('BD eliminada correctamente', 'success')
           await loadDatabases()
         } catch (error) {
-          store.showNotification(`Error: ${error.response?.data?.detail || error.message}`, 'error')
+          store.showNotification(`Error eliminando BD: ${error.message}`, 'error')
         }
       }
     }

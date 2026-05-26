@@ -8,45 +8,39 @@ export default {
     params.append('limit', limit)
     if (userId) params.append('user_id', userId)
 
-    const response = await api.get(`/databases?${params.toString()}`)
-    return response.data
+    return api.get(`/api/databases?${params.toString()}`)
   },
 
   // Obtener detalle de una BD
   async getDetail(dbId) {
-    const response = await api.get(`/databases/${dbId}`)
-    return response.data
+    return api.get(`/api/databases/${dbId}`)
   },
 
   // Crear BD
   async create(data) {
-    const response = await api.post('/databases', data)
-    return response.data
+    return api.post('/api/databases', data)
   },
 
   // Actualizar BD (quota, dominio, estado)
   async update(dbId, data) {
-    const response = await api.put(`/databases/${dbId}`, data)
-    return response.data
+    return api.put(`/api/databases/${dbId}`, data)
   },
 
   // Cambiar contraseña
   async resetPassword(dbId, newPassword) {
-    const response = await api.put(`/databases/${dbId}/password`, {
+    return api.put(`/api/databases/${dbId}/password`, {
       new_password: newPassword
     })
-    return response.data
   },
 
   // Eliminar BD
   async delete(dbId) {
-    const response = await api.delete(`/databases/${dbId}`)
-    return response.data
+    return api.delete(`/api/databases/${dbId}`)
   },
 
   // Listar charsets y collations disponibles
   async getCharsets() {
-    const response = await api.get('/databases/charsets')
-    return response.data.charsets || []
+    const data = await api.get('/api/databases/charsets')
+    return data?.charsets || []
   }
 }

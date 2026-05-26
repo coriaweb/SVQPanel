@@ -147,6 +147,8 @@ def get_all_services() -> list:
     """
     Devuelve todos los servicios detectados en el sistema.
     Solo incluye los que están instalados (LoadState != not-found).
+    Deduplica mysql/mariadb: en instalaciones de MariaDB, 'mysql' es un
+    alias de compatibilidad del mismo proceso — solo mostramos 'mariadb'.
     """
     services = []
     seen = set()
@@ -169,6 +171,13 @@ def get_all_services() -> list:
         if info:
             services.append(info)
             seen.add(svc_name)
+
+    # Deduplicar mysql vs mariadb: en instalaciones de MariaDB ambos
+    # apuntan al mismo proceso. Si ambos están presentes, eliminar 'mysql'
+    # (mariadb es el nombre canónico del servicio en Debian).
+    names_in_list = {s["name"] for s in services}
+    if "mariadb" in names_in_list and "mysql" in names_in_list:
+        services = [s for s in services if s["name"] != "mysql"]
 
     # Ordenar: primero los activos, luego por nombre
     services.sort(key=lambda s: (0 if s["is_running"] else 1, s["name"]))
