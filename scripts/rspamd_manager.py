@@ -47,8 +47,9 @@ class RspamdManager:
           domain, tag_threshold, reject_threshold,
           whitelist_entries (list), blacklist_entries (list)
         """
-        out = ["# SVQPanel — Generado automáticamente. NO editar manualmente.\n",
-               "settings {\n"]
+        # NOTA: local.d/settings.conf se inyecta DENTRO del bloque settings{}
+        # de Rspamd automáticamente — NO añadir wrapper "settings { }" exterior.
+        out = ["# SVQPanel — Generado automáticamente. NO editar manualmente.\n"]
 
         for cfg in domain_configs:
             domain = cfg["domain"]
@@ -58,49 +59,48 @@ class RspamdManager:
 
             # ── Umbrales de spam ──────────────────────────────────────────
             out.append(f"""\
-  # ── {domain} ──
-  {safe}_thresholds {{
-    rcpt_domain = ["{domain}"];
-    priority = 5;
-    apply {{
-      actions {{
-        "add header" = {tag:.1f};
-        reject = {reject:.1f};
-        greylist = 4.0;
-      }}
+# ── {domain} ──
+{safe}_thresholds {{
+  rcpt_domain = ["{domain}"];
+  priority = 5;
+  apply {{
+    actions {{
+      "add header" = {tag:.1f};
+      reject = {reject:.1f};
+      greylist = 4.0;
     }}
   }}
+}}
 """)
             # ── Whitelist (aceptar sin analizar) ─────────────────────────
             wl = cfg.get("whitelist_entries", [])
             if wl:
                 wl_list = ", ".join(f'"{self._to_rspamd_pattern(e)}"' for e in wl)
                 out.append(f"""\
-  {safe}_whitelist {{
-    rcpt_domain = ["{domain}"];
-    from = [{wl_list}];
-    priority = 10;
-    apply {{
-      action = "no action";
-    }}
+{safe}_whitelist {{
+  rcpt_domain = ["{domain}"];
+  from = [{wl_list}];
+  priority = 10;
+  apply {{
+    action = "no action";
   }}
+}}
 """)
             # ── Blacklist (rechazar inmediatamente) ───────────────────────
             bl = cfg.get("blacklist_entries", [])
             if bl:
                 bl_list = ", ".join(f'"{self._to_rspamd_pattern(e)}"' for e in bl)
                 out.append(f"""\
-  {safe}_blacklist {{
-    rcpt_domain = ["{domain}"];
-    from = [{bl_list}];
-    priority = 10;
-    apply {{
-      action = "reject";
-    }}
+{safe}_blacklist {{
+  rcpt_domain = ["{domain}"];
+  from = [{bl_list}];
+  priority = 10;
+  apply {{
+    action = "reject";
   }}
+}}
 """)
 
-        out.append("}\n")
         return "\n".join(out)
 
     def _write_settings_conf(self, content):
