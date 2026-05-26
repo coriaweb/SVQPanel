@@ -145,18 +145,21 @@ DELETE FROM mysql.db WHERE Db='test' OR Db='test\\_%';
 -- Eliminar si existe (idempotente — permite re-ejecutar el script)
 DROP USER IF EXISTS 'svqpanel_admin'@'localhost';
 
--- Crear con permisos mínimos necesarios:
---   CREATE/DROP     → gestionar BDs de clientes
---   CREATE USER     → crear/eliminar usuarios por BD
---   GRANT OPTION    → asignar privilegios a esos usuarios
---   RELOAD          → FLUSH PRIVILEGES
--- NOTA: information_schema NO necesita GRANT explícito — MariaDB da acceso
---       automático a todos los usuarios autenticados (BD virtual, no real).
+-- Crear con permisos necesarios para gestionar BDs de clientes:
+--   Privilegios de datos (SELECT..TRIGGER) → puede otorgarlos a usuarios cliente
+--   CREATE USER / DROP    → crear/eliminar usuarios y BDs
+--   RELOAD                → FLUSH PRIVILEGES
+--   WITH GRANT OPTION     → imprescindible para "GRANT ALL ON db.* TO cliente"
+--   Solo acceso local (localhost) — no expuesto a red
+-- NOTA: information_schema NO necesita GRANT — acceso automático a todos los usuarios.
 CREATE USER 'svqpanel_admin'@'localhost'
     IDENTIFIED BY '${MARIADB_PANEL_PASS}';
 
-GRANT CREATE, DROP, RELOAD, GRANT OPTION, CREATE USER
-    ON *.* TO 'svqpanel_admin'@'localhost';
+GRANT SELECT, INSERT, UPDATE, DELETE, CREATE, DROP, INDEX, ALTER,
+      CREATE TEMPORARY TABLES, LOCK TABLES, EXECUTE,
+      CREATE VIEW, SHOW VIEW, CREATE ROUTINE, ALTER ROUTINE,
+      EVENT, TRIGGER, CREATE USER, RELOAD
+      ON *.* TO 'svqpanel_admin'@'localhost' WITH GRANT OPTION;
 
 FLUSH PRIVILEGES;
 MARIADBEOF

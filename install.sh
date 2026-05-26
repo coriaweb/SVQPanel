@@ -604,11 +604,16 @@ DELETE FROM mysql.user WHERE User='';
 DROP DATABASE IF EXISTS test;
 DELETE FROM mysql.db WHERE Db='test' OR Db='test\\_%';
 -- Usuario administrador del panel SVQPanel
--- Solo necesita: CREATE/DROP bases de datos, CREATE/DROP usuarios, GRANT, RELOAD
-CREATE USER IF NOT EXISTS 'svqpanel_admin'@'localhost'
+-- Necesita privilegios de datos WITH GRANT OPTION para poder otorgarlos
+-- a los usuarios cliente (GRANT ALL ON db.* TO cliente)
+DROP USER IF EXISTS 'svqpanel_admin'@'localhost';
+CREATE USER 'svqpanel_admin'@'localhost'
     IDENTIFIED BY '${MARIADB_PANEL_PASS}';
-GRANT CREATE, DROP, RELOAD, GRANT OPTION, CREATE USER ON *.* TO 'svqpanel_admin'@'localhost';
-GRANT SELECT ON information_schema.* TO 'svqpanel_admin'@'localhost';
+GRANT SELECT, INSERT, UPDATE, DELETE, CREATE, DROP, INDEX, ALTER,
+      CREATE TEMPORARY TABLES, LOCK TABLES, EXECUTE,
+      CREATE VIEW, SHOW VIEW, CREATE ROUTINE, ALTER ROUTINE,
+      EVENT, TRIGGER, CREATE USER, RELOAD
+      ON *.* TO 'svqpanel_admin'@'localhost' WITH GRANT OPTION;
 FLUSH PRIVILEGES;
 MARIADBEOF
 
