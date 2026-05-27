@@ -204,7 +204,7 @@ class APIClient {
         } else {
           const msg = Array.isArray(data?.detail)
             ? data.detail.map(e => `${e.loc?.slice(-1)[0] ?? ''}: ${e.msg}`).join(' | ')
-            : data?.detail || `Error ${xhr.status}`
+            : data?.message || data?.detail || `Error ${xhr.status}`
           reject(new Error(msg))
         }
       }
