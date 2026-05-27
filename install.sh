@@ -1476,10 +1476,12 @@ maxretry = 5
 [svqpanel-auth]
 enabled  = true
 # El panel escribe a este log las lineas 'auth_failed ip=X user=Y reason=Z'
-# desde Fase 12.6 (api/utils/auth_log.py)
+# desde Fase 12.6 (api/utils/auth_log.py). backend=auto (=inotify) en lugar
+# del 'systemd' del DEFAULT porque queremos vigilar un fichero, no el journal.
 port     = http,https,8001
 filter   = svqpanel-auth
 logpath  = /opt/svqpanel/logs/auth.log
+backend  = auto
 maxretry = 5
 
 [dovecot]
@@ -1504,6 +1506,7 @@ maxretry = 10
 enabled  = true
 filter   = recidive
 logpath  = /var/log/fail2ban.log
+backend  = auto
 bantime  = 1w
 findtime = 1d
 maxretry = 3
