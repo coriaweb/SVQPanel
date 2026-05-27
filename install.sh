@@ -1521,6 +1521,43 @@ echo -e "${GREEN}✓ fail2ban: jails activas (sshd, recidive$( [[ "$INSTALL_MAIL
 if [[ -n "$INSTALLER_IP" ]]; then
     echo -e "  ${GREEN}✓ Anti-lockout: $INSTALLER_IP en whitelist nftables + ignoreip fail2ban${NC}"
 fi
+
+# ─── Systemd timer para refresco diario de IP lists ──────────────────────────
+cat > /etc/systemd/system/svqpanel-iplist-refresh.service << 'IPLRSEOF'
+[Unit]
+Description=SVQPanel — refresca listas IP desde URLs externas
+After=network-online.target nftables.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=root
+WorkingDirectory=/opt/svqpanel
+ExecStart=/opt/svqpanel/venv/bin/python -m api.cli refresh_ip_lists
+TimeoutStartSec=600
+
+[Install]
+WantedBy=multi-user.target
+IPLRSEOF
+
+cat > /etc/systemd/system/svqpanel-iplist-refresh.timer << 'IPLRTEOF'
+[Unit]
+Description=SVQPanel — timer diario para refrescar listas IP
+
+[Timer]
+OnCalendar=daily
+RandomizedDelaySec=2h
+Persistent=true
+Unit=svqpanel-iplist-refresh.service
+
+[Install]
+WantedBy=timers.target
+IPLRTEOF
+
+systemctl daemon-reload
+systemctl enable --now svqpanel-iplist-refresh.timer >/dev/null 2>&1 || true
+
+echo -e "${GREEN}✓ systemd timer: svqpanel-iplist-refresh.timer (refresco diario)${NC}"
 echo ""
 
 ###############################################################################
