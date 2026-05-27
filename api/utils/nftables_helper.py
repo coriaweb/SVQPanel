@@ -124,11 +124,11 @@ def _render_single_rule(r) -> List[str]:
                 parts.append(proto)
         elif proto == "icmp":
             parts.append("ip protocol icmp" if family == "ip" else "ip6 nexthdr icmpv6")
-        # Comentario opcional
+        # Acción primero, luego comentario (orden nftables exigido)
+        parts.append(nft_action)
         if r.description:
             safe = r.description.replace('"', "'")
             parts.append(f'comment "{safe[:64]}"')
-        parts.append(nft_action)
         out.append(" ".join(parts))
     return out
 

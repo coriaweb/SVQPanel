@@ -86,10 +86,12 @@ def parse_list_content(text: str, max_entries: int = 500_000) -> Tuple[List[str]
     Devuelve (ipv4_entries, ipv6_entries, errors).
 
     Acepta una IP/CIDR por línea. Comentarios con # o ;. Líneas vacías y
-    espacios extras se ignoran.
+    espacios extras se ignoran. Las redes se colapsan (merge de rangos
+    solapados/contiguos) — necesario porque nftables 'flags interval'
+    rechaza intervalos que se solapan.
     """
-    ipv4: List[str] = []
-    ipv6: List[str] = []
+    ipv4_nets: List[ipaddress.IPv4Network] = []
+    ipv6_nets: List[ipaddress.IPv6Network] = []
     errors: List[str] = []
     total = 0
 
@@ -101,7 +103,6 @@ def parse_list_content(text: str, max_entries: int = 500_000) -> Tuple[List[str]
         line = _LINE_CLEAN_RE.sub("", raw).strip()
         if not line:
             continue
-        # Algunas listas usan separadores tipo tabuladores con campos extra
         first_token = line.split()[0]
 
         try:
@@ -110,16 +111,28 @@ def parse_list_content(text: str, max_entries: int = 500_000) -> Tuple[List[str]
             errors.append(first_token)
             continue
 
-        entry = str(net) if net.prefixlen != net.max_prefixlen else str(net.network_address)
         if net.version == 4:
-            ipv4.append(entry)
+            ipv4_nets.append(net)
         else:
-            ipv6.append(entry)
+            ipv6_nets.append(net)
         total += 1
 
-    # Deduplicar manteniendo orden
-    ipv4 = list(dict.fromkeys(ipv4))
-    ipv6 = list(dict.fromkeys(ipv6))
+    # Colapsar (merge) rangos solapados o contiguos. Imprescindible para
+    # 'flags interval' de nftables.
+    try:
+        ipv4_nets = list(ipaddress.collapse_addresses(ipv4_nets))
+    except (TypeError, ValueError) as e:
+        errors.append(f"collapse v4: {e}")
+    try:
+        ipv6_nets = list(ipaddress.collapse_addresses(ipv6_nets))
+    except (TypeError, ValueError) as e:
+        errors.append(f"collapse v6: {e}")
+
+    def _fmt(net):
+        return str(net) if net.prefixlen != net.max_prefixlen else str(net.network_address)
+
+    ipv4 = [_fmt(n) for n in ipv4_nets]
+    ipv6 = [_fmt(n) for n in ipv6_nets]
     return ipv4, ipv6, errors
 
 
@@ -192,7 +205,7 @@ def regenerate_iplists_nft(active_lists: List[Tuple[IpList, List[str], List[str]
             set_decls.append(_set_decl(s, "v4"))
             rules_block.append(
                 f"add rule inet svqpanel input ip  saddr @{s} {nft_action} "
-                f"comment \"iplist:{iplist.name}\""
+                f"comment \"iplist:{iplist.name[:48]}\""
             )
             for i in range(0, len(v4), 1024):
                 chunk = v4[i:i+1024]
@@ -205,7 +218,7 @@ def regenerate_iplists_nft(active_lists: List[Tuple[IpList, List[str], List[str]
             set_decls.append(_set_decl(s, "v6"))
             rules_block.append(
                 f"add rule inet svqpanel input ip6 saddr @{s} {nft_action} "
-                f"comment \"iplist:{iplist.name}\""
+                f"comment \"iplist:{iplist.name[:48]}\""
             )
             for i in range(0, len(v6), 1024):
                 chunk = v6[i:i+1024]
