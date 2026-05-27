@@ -359,7 +359,7 @@
     </div>
 
     <!-- ═══════════════════════════ Modal regla firewall ═══════════════════════════ -->
-    <Modal v-if="showRuleForm" @close="showRuleForm=false" :title="ruleForm.id ? 'Editar regla' : 'Nueva regla'">
+    <Modal :isOpen="showRuleForm" @close="showRuleForm=false" :title="ruleForm.id ? 'Editar regla' : 'Nueva regla'">
       <form @submit.prevent="saveRule">
         <div class="row g-2">
           <div class="col-md-4">
@@ -417,7 +417,7 @@
     </Modal>
 
     <!-- ═══════════════════════════ Modal lista IP ═══════════════════════════ -->
-    <Modal v-if="showIpListForm" @close="showIpListForm=false" :title="ipListForm.id ? 'Editar lista' : 'Nueva lista IP'">
+    <Modal :isOpen="showIpListForm" @close="showIpListForm=false" :title="ipListForm.id ? 'Editar lista' : 'Nueva lista IP'">
       <form @submit.prevent="saveIpList">
         <div class="row g-2">
           <div class="col-md-6">
@@ -476,7 +476,7 @@
     </Modal>
 
     <!-- ═══════════════════════════ Modal banear manual / añadir ignoreip ═══════════════════════════ -->
-    <Modal v-if="showManualBan" @close="showManualBan=false" title="Banear IP manualmente">
+    <Modal :isOpen="showManualBan" @close="showManualBan=false" title="Banear IP manualmente">
       <form @submit.prevent="submitManualBan">
         <div class="row g-2">
           <div class="col-md-6">
@@ -499,7 +499,7 @@
       </form>
     </Modal>
 
-    <Modal v-if="showAddIgnore" @close="showAddIgnore=false" title="Añadir IP a whitelist permanente">
+    <Modal :isOpen="showAddIgnore" @close="showAddIgnore=false" title="Añadir IP a whitelist permanente">
       <form @submit.prevent="submitAddIgnore">
         <label class="form-label small">IP o CIDR</label>
         <input class="form-control form-control-sm" v-model="ignoreForm.ip" required placeholder="1.2.3.4 o 10.0.0.0/8">
