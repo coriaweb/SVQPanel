@@ -2,7 +2,11 @@
   <div>
     <div class="d-flex justify-content-between align-items-center mb-4">
       <h2><i class="bi bi-folder2-open"></i> Archivos</h2>
-      <div class="d-flex gap-2">
+      <div class="d-flex align-items-center gap-2">
+        <div class="form-check form-switch mb-0" title="Si está desactivado, los archivos con el mismo nombre no se sobreescriben">
+          <input class="form-check-input" type="checkbox" id="overwriteCheck" v-model="uploadOverwrite">
+          <label class="form-check-label small text-muted" for="overwriteCheck">Sobreescribir</label>
+        </div>
         <button class="btn btn-outline-secondary" @click="loadFiles" :disabled="!selectedDomainId || loading">
           <i class="bi bi-arrow-clockwise"></i>
         </button>
@@ -137,6 +141,9 @@
                     <button class="btn btn-outline-secondary" title="Renombrar" @click="renameEntry(entry)">
                       <i class="bi bi-input-cursor-text"></i>
                     </button>
+                    <button class="btn btn-outline-secondary" title="Permisos" @click="openChmod(entry)">
+                      <i class="bi bi-lock"></i>
+                    </button>
                     <button class="btn btn-outline-danger" title="Eliminar" @click="deleteEntry(entry)">
                       <i class="bi bi-trash"></i>
                     </button>
@@ -149,15 +156,86 @@
       </div>
     </div>
 
-    <Modal :isOpen="showEditor" :title="editingPath" @close="closeEditor">
+    <Modal :isOpen="showEditor" :title="editingPath" size="lg" @close="closeEditor">
       <div>
-        <textarea v-model="editorContent" class="form-control font-monospace file-editor" spellcheck="false"></textarea>
+        <!-- Barra de herramientas del editor -->
+        <div class="d-flex justify-content-between align-items-center mb-2">
+          <div class="d-flex gap-2 align-items-center">
+            <span class="badge bg-secondary font-monospace">{{ editingLang }}</span>
+            <small class="text-muted">Ctrl+S para guardar · Tab inserta espacios</small>
+          </div>
+          <div class="form-check form-switch mb-0">
+            <input class="form-check-input" type="checkbox" id="wrapCheck" v-model="editorWrap">
+            <label class="form-check-label small text-muted" for="wrapCheck">Ajuste de línea</label>
+          </div>
+        </div>
+
+        <textarea
+          v-model="editorContent"
+          class="form-control font-monospace file-editor"
+          :class="{ 'file-editor-nowrap': !editorWrap }"
+          spellcheck="false"
+          @keydown="handleEditorKeydown"
+        ></textarea>
+
+        <!-- Barra de estado -->
+        <div class="d-flex justify-content-between align-items-center mt-1 px-1">
+          <small class="text-muted">
+            {{ editorStats.lines }} líneas · {{ editorStats.chars }} caracteres · {{ editorStats.sizeLabel }}
+          </small>
+          <small class="text-muted">UTF-8</small>
+        </div>
+
         <div class="d-flex gap-2 mt-3">
           <button class="btn btn-primary" @click="saveFile" :disabled="saving">
             <span v-if="saving" class="spinner-border spinner-border-sm me-2"></span>
+            <i v-else class="bi bi-floppy me-1"></i>
             Guardar
           </button>
           <button class="btn btn-secondary" @click="closeEditor">Cancelar</button>
+        </div>
+      </div>
+    </Modal>
+
+    <!-- Modal de permisos (chmod) -->
+    <Modal :isOpen="showChmod" :title="`Permisos: ${chmodEntry?.name ?? ''}`" size="sm" @close="showChmod = false">
+      <div>
+        <table class="table table-sm table-bordered text-center align-middle mb-3">
+          <thead class="table-light">
+            <tr>
+              <th class="text-start"></th>
+              <th>Leer</th>
+              <th>Escribir</th>
+              <th>Ejecutar</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr v-for="(label, key) in { owner: 'Propietario', group: 'Grupo', other: 'Otros' }" :key="key">
+              <td class="text-start fw-semibold ps-2">{{ label }}</td>
+              <td><input type="checkbox" v-model="chmodBits[key].r" class="form-check-input"></td>
+              <td><input type="checkbox" v-model="chmodBits[key].w" class="form-check-input"></td>
+              <td><input type="checkbox" v-model="chmodBits[key].x" class="form-check-input"></td>
+            </tr>
+          </tbody>
+        </table>
+        <div class="d-flex align-items-center gap-3 mb-3">
+          <span class="text-muted small">Valor octal:</span>
+          <code class="fs-4 fw-bold text-primary">{{ chmodOctal }}</code>
+          <span class="text-muted small ms-auto">
+            <span v-if="chmodEntry?.type === 'directory'">
+              Típico: <code>755</code> (directorios)
+            </span>
+            <span v-else>
+              Típico: <code>644</code> (archivos)
+            </span>
+          </span>
+        </div>
+        <div class="d-flex gap-2">
+          <button class="btn btn-primary" @click="applyChmod" :disabled="savingChmod">
+            <span v-if="savingChmod" class="spinner-border spinner-border-sm me-1"></span>
+            Aplicar
+          </button>
+          <button class="btn btn-secondary" @click="showChmod = false">Cancelar</button>
         </div>
       </div>
     </Modal>
@@ -165,7 +243,7 @@
 </template>
 
 <script>
-import { computed, onMounted, ref } from 'vue'
+import { computed, nextTick, onMounted, ref } from 'vue'
 import { useRoute } from 'vue-router'
 import api from '../services/api'
 import Modal from '../components/Modal.vue'
@@ -191,7 +269,45 @@ export default {
     const saving = ref(false)
     const uploadProgress = ref(null)   // null = idle, 0-100 = subiendo
     const uploadFileNames = ref('')    // nombres de los archivos en subida
+    const uploadOverwrite = ref(true)  // sobreescribir archivos existentes
     const extracting = ref(null)       // path del ZIP que se está extrayendo
+
+    // — Editor —
+    const editorWrap = ref(false)
+    const editingLang = computed(() => {
+      const ext = editingPath.value.split('.').pop()?.toLowerCase() || ''
+      const map = {
+        php: 'PHP', js: 'JavaScript', ts: 'TypeScript', html: 'HTML', htm: 'HTML',
+        css: 'CSS', json: 'JSON', xml: 'XML', yml: 'YAML', yaml: 'YAML',
+        md: 'Markdown', sql: 'SQL', vue: 'Vue', env: 'ENV', sh: 'Shell',
+        ini: 'INI', conf: 'Conf', txt: 'Texto', log: 'Log',
+      }
+      return map[ext] || ext.toUpperCase() || 'Texto'
+    })
+    const editorStats = computed(() => {
+      const text = editorContent.value
+      const lines = text ? text.split('\n').length : 0
+      const chars = text.length
+      const bytes = new Blob([text]).size
+      const units = ['B', 'KB', 'MB']
+      let s = bytes; let u = 0
+      while (s >= 1024 && u < units.length - 1) { s /= 1024; u++ }
+      return { lines, chars, sizeLabel: `${s.toFixed(u === 0 ? 0 : 1)} ${units[u]}` }
+    })
+
+    // — Chmod —
+    const showChmod = ref(false)
+    const savingChmod = ref(false)
+    const chmodEntry = ref(null)
+    const chmodBits = ref({
+      owner: { r: false, w: false, x: false },
+      group: { r: false, w: false, x: false },
+      other: { r: false, w: false, x: false },
+    })
+    const chmodOctal = computed(() => {
+      const toInt = (b) => (b.r ? 4 : 0) + (b.w ? 2 : 0) + (b.x ? 1 : 0)
+      return `${toInt(chmodBits.value.owner)}${toInt(chmodBits.value.group)}${toInt(chmodBits.value.other)}`
+    })
 
     const breadcrumb = computed(() => '/' + (currentPath.value || ''))
 
@@ -263,16 +379,19 @@ export default {
 
       uploadProgress.value = 0
       try {
-        await api.uploadDomainFiles(
+        const result = await api.uploadDomainFiles(
           selectedDomainId.value,
           currentPath.value,
           files,
-          (pct) => { uploadProgress.value = pct }
+          (pct) => { uploadProgress.value = pct },
+          uploadOverwrite.value
         )
-        store.showNotification(
-          `${files.length} archivo${files.length > 1 ? 's' : ''} subido${files.length > 1 ? 's' : ''} correctamente`,
-          'success'
-        )
+        const skipped = result?.skipped?.length ?? 0
+        const saved   = result?.files?.length   ?? files.length
+        const msg = skipped
+          ? `${saved} subido${saved !== 1 ? 's' : ''}, ${skipped} omitido${skipped !== 1 ? 's' : ''} (ya existía${skipped !== 1 ? 'n' : ''})`
+          : `${saved} archivo${saved !== 1 ? 's' : ''} subido${saved !== 1 ? 's' : ''} correctamente`
+        store.showNotification(msg, skipped ? 'warning' : 'success')
         await loadFiles()
       } catch (error) {
         store.showNotification(`Error subiendo archivos: ${error.message}`, 'danger')
@@ -297,6 +416,50 @@ export default {
         store.showNotification(`Error extrayendo ZIP: ${error.message}`, 'danger')
       } finally {
         extracting.value = null
+      }
+    }
+
+    // — Editor: teclado —
+    const handleEditorKeydown = (event) => {
+      // Ctrl/Cmd+S → guardar
+      if ((event.ctrlKey || event.metaKey) && event.key === 's') {
+        event.preventDefault()
+        if (!saving.value) saveFile()
+        return
+      }
+      // Tab → 2 espacios en lugar de cambiar el foco
+      if (event.key === 'Tab') {
+        event.preventDefault()
+        const ta = event.target
+        const start = ta.selectionStart
+        const end   = ta.selectionEnd
+        const indent = '  '
+        editorContent.value =
+          editorContent.value.substring(0, start) + indent + editorContent.value.substring(end)
+        nextTick(() => { ta.selectionStart = ta.selectionEnd = start + indent.length })
+      }
+    }
+
+    // — Chmod —
+    const openChmod = (entry) => {
+      chmodEntry.value = entry
+      const digits = (entry.permissions || '644').padStart(3, '0').slice(-3)
+      const parse  = (d) => ({ r: !!(parseInt(d) & 4), w: !!(parseInt(d) & 2), x: !!(parseInt(d) & 1) })
+      chmodBits.value = { owner: parse(digits[0]), group: parse(digits[1]), other: parse(digits[2]) }
+      showChmod.value = true
+    }
+
+    const applyChmod = async () => {
+      savingChmod.value = true
+      try {
+        await api.chmodDomainEntry(selectedDomainId.value, chmodEntry.value.path, chmodOctal.value)
+        store.showNotification(`Permisos cambiados a ${chmodOctal.value}`, 'success')
+        showChmod.value = false
+        await loadFiles()
+      } catch (error) {
+        store.showNotification(`Error cambiando permisos: ${error.message}`, 'danger')
+      } finally {
+        savingChmod.value = false
       }
     }
 
@@ -415,12 +578,23 @@ export default {
     onMounted(loadDomains)
 
     return {
+      // lista de archivos
       domains, entries, selectedDomainId, currentPath, breadcrumb, loading, disabled,
+      loadFiles, changeDomain, openDirectory, goUp, createFolder,
+      // upload
+      uploadProgress, uploadFileNames, uploadOverwrite, uploadFiles,
+      // editor
       showEditor, editingPath, editorContent, saving,
-      uploadProgress, uploadFileNames, extracting,
-      loadFiles, changeDomain, openDirectory, goUp, createFolder, uploadFiles,
-      editFile, saveFile, closeEditor, downloadFile, renameEntry, deleteEntry,
-      extractZip, formatSize, formatDate, isEditable, isZip, fileIcon,
+      editorWrap, editingLang, editorStats,
+      handleEditorKeydown, editFile, saveFile, closeEditor,
+      // descarga / rename / delete
+      downloadFile, renameEntry, deleteEntry,
+      // zip
+      extracting, extractZip,
+      // chmod
+      showChmod, savingChmod, chmodEntry, chmodBits, chmodOctal, openChmod, applyChmod,
+      // helpers
+      formatSize, formatDate, isEditable, isZip, fileIcon,
     }
   },
 }
@@ -428,8 +602,16 @@ export default {
 
 <style scoped>
 .file-editor {
-  min-height: 55vh;
+  min-height: 60vh;
   resize: vertical;
+  font-size: 0.875rem;
+  line-height: 1.5;
+  tab-size: 2;
+  white-space: pre-wrap;
+  overflow-wrap: break-word;
+}
+
+.file-editor.file-editor-nowrap {
   white-space: pre;
   overflow-wrap: normal;
   overflow-x: auto;

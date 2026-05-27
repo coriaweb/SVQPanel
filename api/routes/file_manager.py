@@ -8,7 +8,7 @@ import mimetypes
 import os
 import shutil
 import zipfile
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import List, Optional
 
@@ -72,6 +72,11 @@ class ExtractRequest(BaseModel):
     dest: str = Field("", description="Carpeta destino relativa; vacío = misma carpeta del ZIP")
 
 
+class ChmodRequest(BaseModel):
+    path: str = Field(..., min_length=1)
+    mode: str = Field(..., pattern=r"^[0-7]{3,4}$", description="Permisos en octal, p.ej. '644' o '755'")
+
+
 def _check_enabled():
     if not FILE_MANAGER_ENABLED:
         raise HTTPException(
@@ -131,7 +136,7 @@ def _file_entry(root: str, target: str) -> FileEntry:
         path=rel,
         type="directory" if is_dir else "file",
         size=0 if is_dir else stat.st_size,
-        modified_at=datetime.fromtimestamp(stat.st_mtime),
+        modified_at=datetime.fromtimestamp(stat.st_mtime, tz=timezone.utc),
         mime_type=mime_type,
         permissions=oct(stat.st_mode)[-3:],
     )
@@ -241,11 +246,15 @@ def download_file(
 async def upload_files(
     domain_id: int,
     path: str = Form(""),
+    overwrite: bool = Form(True),
     files: List[UploadFile] = File(...),
     db: Session = Depends(get_db),
     current_user: User = Depends(require_auth),
 ):
-    """Sube uno o varios archivos a una carpeta del dominio."""
+    """Sube uno o varios archivos a una carpeta del dominio.
+
+    Si ``overwrite=false`` los archivos que ya existen se omiten (no sobreescriben).
+    """
     _check_enabled()
     domain = _get_domain_or_404(domain_id, db, current_user)
     target_dir = _safe_join(domain.public_html, path)
@@ -253,10 +262,18 @@ async def upload_files(
         raise HTTPException(status_code=404, detail="Carpeta no encontrada")
 
     max_bytes = FILE_MANAGER_MAX_UPLOAD_MB * 1024 * 1024
-    saved = []
+    saved: list[str] = []
+    skipped: list[str] = []
+
     for upload in files:
         filename = _safe_child_name(upload.filename or "")
         destination = _safe_join(target_dir, filename)
+
+        if not overwrite and os.path.exists(destination):
+            await upload.read()   # vaciar el stream aunque no escribamos
+            skipped.append(filename)
+            continue
+
         written = 0
         with open(destination, "wb") as fh:
             while chunk := await upload.read(1024 * 1024):
@@ -272,7 +289,7 @@ async def upload_files(
         _apply_domain_owner(domain, destination)
         saved.append(filename)
 
-    return {"status": "success", "files": saved}
+    return {"status": "success", "files": saved, "skipped": skipped}
 
 
 @router.post("/file-manager/domains/{domain_id}/mkdir", tags=["File Manager"])
@@ -412,3 +429,21 @@ def extract_zip(
         "dest": _relative_path(root, dest_dir),
         "files_extracted": extracted_count,
     }
+
+
+@router.post("/file-manager/domains/{domain_id}/chmod", tags=["File Manager"])
+def chmod_entry(
+    domain_id: int,
+    payload: ChmodRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_auth),
+):
+    """Cambia los permisos (chmod) de un archivo o carpeta dentro del dominio."""
+    _check_enabled()
+    domain = _get_domain_or_404(domain_id, db, current_user)
+    target = _safe_join(domain.public_html, payload.path)
+    if not os.path.exists(target):
+        raise HTTPException(status_code=404, detail="Elemento no encontrado")
+    mode_int = int(payload.mode, 8)
+    os.chmod(target, mode_int)
+    return {"status": "success", "path": payload.path, "mode": payload.mode}

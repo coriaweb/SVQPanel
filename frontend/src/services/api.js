@@ -176,10 +176,11 @@ class APIClient {
    * @param {FileList|File[]} files
    * @param {(percent: number) => void} [onProgress] - callback 0–100
    */
-  uploadDomainFiles(domainId, path, files, onProgress = null) {
+  uploadDomainFiles(domainId, path, files, onProgress = null, overwrite = true) {
     return new Promise((resolve, reject) => {
       const formData = new FormData()
       formData.append('path', path || '')
+      formData.append('overwrite', overwrite ? 'true' : 'false')
       Array.from(files || []).forEach(file => formData.append('files', file))
 
       const xhr = new XMLHttpRequest()
@@ -216,6 +217,10 @@ class APIClient {
 
   extractDomainZip(domainId, path, dest = '') {
     return this.post(`/api/file-manager/domains/${domainId}/extract`, { path, dest })
+  }
+
+  chmodDomainEntry(domainId, path, mode) {
+    return this.post(`/api/file-manager/domains/${domainId}/chmod`, { path, mode })
   }
 
   async downloadDomainFile(domainId, path) {

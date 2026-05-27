@@ -1,6 +1,6 @@
 <template>
   <div v-if="isOpen" class="modal-overlay" @click.self="close">
-    <div class="modal-content">
+    <div class="modal-content" :class="sizeClass">
       <div class="modal-header">
         <h5>{{ title }}</h5>
         <button type="button" class="btn-close" @click="close"></button>
@@ -26,9 +26,19 @@ export default {
     title: {
       type: String,
       required: true
+    },
+    size: {
+      type: String,
+      default: 'md',
+      validator: (v) => ['sm', 'md', 'lg', 'xl'].includes(v)
     }
   },
   emits: ['close'],
+  computed: {
+    sizeClass() {
+      return this.size !== 'md' ? `modal-${this.size}` : ''
+    }
+  },
   methods: {
     close() {
       this.$emit('close')
@@ -57,8 +67,14 @@ export default {
   box-shadow: 0 10px 40px rgba(0, 0, 0, 0.2);
   width: 90%;
   max-width: 500px;
+  max-height: 90vh;
+  overflow-y: auto;
   animation: slideIn 0.3s ease-out;
 }
+
+.modal-content.modal-lg  { max-width: 800px; }
+.modal-content.modal-xl  { max-width: 1100px; }
+.modal-content.modal-sm  { max-width: 360px; }
 
 @keyframes slideIn {
   from {
@@ -83,6 +99,10 @@ export default {
   margin: 0;
   font-size: 1.25rem;
   font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: calc(100% - 2rem);
 }
 
 .modal-body {
@@ -103,6 +123,7 @@ export default {
   cursor: pointer;
   font-size: 1.5rem;
   color: #6c757d;
+  flex-shrink: 0;
 }
 
 .btn-close:hover {
