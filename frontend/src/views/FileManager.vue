@@ -100,7 +100,7 @@
                     <i class="bi bi-folder-fill text-warning me-2"></i>{{ entry.name }}
                   </button>
                   <span v-else>
-                    <i class="bi bi-file-earmark text-secondary me-2"></i>{{ entry.name }}
+                    <i :class="fileIcon(entry)" class="me-2"></i>{{ entry.name }}
                   </span>
                 </td>
                 <td>{{ entry.type === 'directory' ? '-' : formatSize(entry.size) }}</td>
@@ -389,6 +389,29 @@ export default {
 
     const isZip = (entry) => entry.name.toLowerCase().endsWith('.zip')
 
+    const fileIcon = (entry) => {
+      const ext = entry.name.split('.').pop()?.toLowerCase()
+      if (['zip', 'gz', 'tar', 'rar', '7z', 'bz2', 'xz'].includes(ext))
+        return 'bi bi-file-zip-fill text-warning'
+      if (['jpg', 'jpeg', 'png', 'gif', 'webp', 'svg', 'ico', 'bmp'].includes(ext))
+        return 'bi bi-file-image text-info'
+      if (['mp4', 'avi', 'mov', 'mkv', 'webm'].includes(ext))
+        return 'bi bi-file-play text-danger'
+      if (['mp3', 'ogg', 'wav', 'flac', 'aac'].includes(ext))
+        return 'bi bi-file-music text-danger'
+      if (['pdf'].includes(ext))
+        return 'bi bi-file-pdf text-danger'
+      if (['php'].includes(ext))
+        return 'bi bi-file-code text-primary'
+      if (['html', 'htm', 'css', 'js', 'ts', 'vue', 'json', 'xml', 'yml', 'yaml'].includes(ext))
+        return 'bi bi-file-code text-success'
+      if (['txt', 'md', 'log', 'csv'].includes(ext))
+        return 'bi bi-file-text text-secondary'
+      if (['sql'].includes(ext))
+        return 'bi bi-file-earmark-data text-warning'
+      return 'bi bi-file-earmark text-secondary'
+    }
+
     onMounted(loadDomains)
 
     return {
@@ -397,7 +420,7 @@ export default {
       uploadProgress, uploadFileNames, extracting,
       loadFiles, changeDomain, openDirectory, goUp, createFolder, uploadFiles,
       editFile, saveFile, closeEditor, downloadFile, renameEntry, deleteEntry,
-      extractZip, formatSize, formatDate, isEditable, isZip,
+      extractZip, formatSize, formatDate, isEditable, isZip, fileIcon,
     }
   },
 }
