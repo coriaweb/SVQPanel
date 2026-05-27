@@ -54,7 +54,10 @@ async def list_connections(
     Lista conexiones TCP/UDP activas usando 'ss'. Si listening=True, solo
     sockets en estado LISTEN (puertos abiertos).
     """
-    args = ["ss", "-tunap", "-H"]   # -H sin cabecera
+    # PATH absoluto: el systemd service de svqpanel solo tiene
+    # /opt/svqpanel/venv/bin en PATH, así que 'ss' (en /usr/bin) no se
+    # encontraría → FileNotFoundError → [] silencioso.
+    args = ["/usr/bin/ss", "-tunap", "-H"]   # -H sin cabecera
     if listening:
         args.append("-l")
     try:
