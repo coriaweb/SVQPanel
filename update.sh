@@ -84,6 +84,9 @@ from api.models.models_settings import Settings
 from api.models.models_dns import DnsZone, DnsRecord
 from api.models.models_mail import MailDomain, Mailbox, MailAlias
 from api.models.models_client_db import ClientDatabase   # ← Fase 10 MariaDB
+from api.models.models_security import (                   # ← Fase 12 Firewall/Fail2ban
+    FirewallRule, BannedIp, IpList, SecurityAuditLog,
+)
 Base.metadata.create_all(bind=engine)
 print("✓ Tablas de BD verificadas/creadas")
 
@@ -126,6 +129,37 @@ PYEOF
 
 deactivate
 echo -e "${GREEN}✓ Base de datos actualizada${NC}\n"
+
+echo -e "${YELLOW}6b. Verificaciones de seguridad post-update...${NC}"
+
+# Usuario sistema admin (fix para instalaciones anteriores que solo lo creaban en BD)
+if ! id admin >/dev/null 2>&1; then
+    echo "  • Creando usuario del sistema 'admin' que faltaba..."
+    ADMIN_PASS=$(grep -E "^admin:" /opt/svqpanel/.credentials/admin.txt 2>/dev/null | cut -d: -f2)
+    [[ -z "$ADMIN_PASS" ]] && ADMIN_PASS=$(openssl rand -base64 12)
+    useradd -m -s /bin/bash -d /home/admin admin 2>/dev/null || useradd -s /bin/bash -d /home/admin admin
+    echo "admin:$ADMIN_PASS" | chpasswd
+    mkdir -p /home/admin/web /home/admin/tmp
+    chown admin:www-data /home/admin/web && chmod 750 /home/admin/web
+    chown admin:admin /home/admin/tmp     && chmod 750 /home/admin/tmp
+    chown admin:admin /home/admin
+    echo -e "  ${GREEN}✓ Usuario admin creado${NC}"
+fi
+
+# nginx default_server (fix para instalaciones donde svqpanel no era default)
+if [[ -f /etc/nginx/sites-available/svqpanel ]] \
+   && ! grep -qE "listen 80 default_server" /etc/nginx/sites-available/svqpanel; then
+    echo "  • Patcheando svqpanel nginx config con default_server..."
+    sed -i 's/^    listen 80;$/    listen 80 default_server;/' /etc/nginx/sites-available/svqpanel
+    if nginx -t 2>/dev/null; then
+        systemctl reload nginx
+        echo -e "  ${GREEN}✓ nginx svqpanel ahora es default_server (panel responde por IP)${NC}"
+    else
+        echo -e "  ${RED}✗ nginx -t falló, revierte: nano /etc/nginx/sites-available/svqpanel${NC}"
+    fi
+fi
+
+echo -e "${GREEN}✓ Verificaciones de seguridad completadas${NC}\n"
 
 echo -e "${YELLOW}7. Reiniciando servicio...${NC}"
 systemctl start svqpanel

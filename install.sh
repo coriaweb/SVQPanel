@@ -1188,7 +1188,12 @@ upstream svqpanel_backend {
 }
 
 server {
-    listen 80;
+    # default_server: garantiza que el panel atienda peticiones por IP o
+    # hostnames no configurados. Sin esto, cuando se anaden dominios de
+    # clientes (que alfabeticamente vengan antes que 'svqpanel' en
+    # sites-enabled), uno de ellos roba el rol de default y el panel
+    # deja de responder a la IP del servidor.
+    listen 80 default_server;
     server_name _;
 
     client_max_body_size 100M;
