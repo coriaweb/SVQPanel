@@ -1050,6 +1050,9 @@ from api.models.models_settings import Settings
 from api.models.models_dns import DnsZone, DnsRecord
 from api.models.models_mail import MailDomain, Mailbox, MailAlias
 from api.models.models_client_db import ClientDatabase
+from api.models.models_security import (
+    FirewallRule, BannedIp, IpList, SecurityAuditLog,
+)
 
 DATABASE_URL = "postgresql://panel_user:panel_password_123@localhost/panel_db"
 engine = create_engine(DATABASE_URL)
@@ -1343,7 +1346,7 @@ RCPYEOF
 fi
 
 ###############################################################################
-# 12. SEGURIDAD: nftables (firewall) + fail2ban
+# 12B. SEGURIDAD: nftables (firewall) + fail2ban   (Fase 12)
 #
 # Diseño:
 #   - Tabla nftables propia 'inet svqpanel' aislada del sistema, evita pisar
@@ -1514,6 +1517,12 @@ failregex = ^.* auth_failed ip=<HOST>.*$
 ignoreregex =
 F2BFILTEREOF
 
+# Asegurar que existe el log que mirará [svqpanel-auth] cuando se habilite,
+# si no fail2ban da error de "logpath not found" al activar el jail
+# (svqpanel.service corre como root, así que basta con permisos por defecto)
+mkdir -p /opt/svqpanel/logs
+touch /opt/svqpanel/logs/auth.log
+
 systemctl enable fail2ban >/dev/null 2>&1 || true
 systemctl restart fail2ban >/dev/null 2>&1 || systemctl start fail2ban
 
@@ -1647,6 +1656,7 @@ echo "  PHP versions: ${PHP_ARRAY[*]}"
 echo "  Correo:       $( [[ "$INSTALL_MAIL" == true ]] && echo 'Postfix + Dovecot + Rspamd' || echo 'No instalado' )"
 echo "  Roundcube:    $( [[ "$INSTALL_ROUNDCUBE" == true ]] && echo 'Instalado — /webmail' || echo 'No instalado' )"
 echo "  MariaDB:      $( [[ "$INSTALL_MARIADB" == true ]] && echo 'MariaDB 11.4 LTS (bases de datos de clientes)' || echo 'No instalado' )"
+echo "  Seguridad:    nftables (table inet svqpanel) + fail2ban"
 echo "  Directorio:   /opt/svqpanel"
 echo "  Base de datos panel: panel_db (PostgreSQL)"
 echo -e "\n${GREEN}╔════════════════════════════════════════════════════════════╗${NC}"
@@ -1663,9 +1673,10 @@ echo -e "Proximos pasos:"
 echo "  1. Verifica el estado: systemctl status svqpanel"
 echo "  2. Ver logs: journalctl -u svqpanel -f"
 echo -e "\n${GREEN}SVQPanel estará disponible en:${NC}"
-echo "  • Panel Web: http://IP_DEL_SERVIDOR"
-echo "  • API: http://IP_DEL_SERVIDOR:8001"
-echo "  • API Docs: http://IP_DEL_SERVIDOR:8001/docs"
+echo "  • Panel Web:    http://IP_DEL_SERVIDOR"
+echo "  • Seguridad:    http://IP_DEL_SERVIDOR/security  (firewall, fail2ban, listas IP)"
+echo "  • API:          http://IP_DEL_SERVIDOR:8001"
+echo "  • API Docs:     http://IP_DEL_SERVIDOR:8001/docs"
 echo -e "\n${YELLOW}Base de datos:${NC}"
 echo "  • Host: localhost"
 echo "  • User: panel_user"
@@ -1700,6 +1711,18 @@ if [[ "$INSTALL_ROUNDCUBE" == true ]]; then
     echo "  • Autologin:     botón ✉ junto a cada buzón en el panel"
     echo "  • Plugin:        svqpanel_autologin (instalado automáticamente)"
     echo "  • Credenciales:  /opt/svqpanel/.credentials/roundcube.txt"
+fi
+
+echo -e "\n${YELLOW}Seguridad (Fase 12):${NC}"
+echo "  • UI:                  http://IP_DEL_SERVIDOR/security"
+echo "  • Firewall:            nftables (tabla 'inet svqpanel')"
+echo "                         /etc/nftables.conf + /etc/nftables/svqpanel-*.nft"
+echo "  • Brute-force:         fail2ban (sshd, recidive y más con correo)"
+echo "                         /etc/fail2ban/jail.local"
+echo "  • Listas IP (URL):     refresh diario via systemd timer"
+echo "                         systemctl list-timers svqpanel-iplist-refresh.timer"
+if [[ -n "$INSTALLER_IP" ]]; then
+    echo "  • Anti-lockout:        $INSTALLER_IP ya está en whitelist y en ignoreip"
 fi
 
 echo -e "\n${RED}⚠ IMPORTANTE:${NC}"
