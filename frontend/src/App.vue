@@ -26,6 +26,11 @@
             </router-link>
           </li>
           <li>
+            <router-link to="/files" :class="{active: route.path === '/files'}">
+              <i class="bi bi-folder2-open"></i> Archivos
+            </router-link>
+          </li>
+          <li>
             <router-link to="/databases" :class="{active: route.path === '/databases'}">
               <i class="bi bi-database"></i> Bases de Datos
             </router-link>

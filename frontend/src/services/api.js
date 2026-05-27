@@ -140,6 +140,60 @@ class APIClient {
     return this.delete(`/api/domains/${domainId}`)
   }
 
+  // File Manager
+  getFileManagerDomains() {
+    return this.get('/api/file-manager/domains')
+  }
+
+  listDomainFiles(domainId, path = '') {
+    return this.get(`/api/file-manager/domains/${domainId}/files?path=${encodeURIComponent(path || '')}`)
+  }
+
+  readDomainFile(domainId, path) {
+    return this.get(`/api/file-manager/domains/${domainId}/file?path=${encodeURIComponent(path)}`)
+  }
+
+  writeDomainFile(domainId, path, content) {
+    return this.put(`/api/file-manager/domains/${domainId}/file?path=${encodeURIComponent(path)}`, { content })
+  }
+
+  createDomainDirectory(domainId, path, name) {
+    return this.post(`/api/file-manager/domains/${domainId}/mkdir`, { path, name })
+  }
+
+  renameDomainEntry(domainId, path, newName) {
+    return this.post(`/api/file-manager/domains/${domainId}/rename`, { path, new_name: newName })
+  }
+
+  deleteDomainEntry(domainId, path) {
+    return this.post(`/api/file-manager/domains/${domainId}/delete`, { path })
+  }
+
+  uploadDomainFiles(domainId, path, files) {
+    const formData = new FormData()
+    formData.append('path', path || '')
+    Array.from(files || []).forEach(file => formData.append('files', file))
+
+    return this.request(`/api/file-manager/domains/${domainId}/upload`, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${localStorage.getItem('token') || this.token}`
+      },
+      body: formData
+    })
+  }
+
+  async downloadDomainFile(domainId, path) {
+    const response = await fetch(
+      `/api/file-manager/domains/${domainId}/download?path=${encodeURIComponent(path)}`,
+      { headers: this.getHeaders() }
+    )
+    if (!response.ok) {
+      throw new Error(`Error ${response.status}`)
+    }
+    return response.blob()
+  }
+
   // PHP versions (available/running — used in domain PHP selector)
   getPHPVersions() {
     return this.get('/api/php/versions')

@@ -9,6 +9,7 @@ import Mail from '../views/Mail.vue'
 import Settings from '../views/Settings.vue'
 import SystemServices from '../views/SystemServices.vue'
 import Security from '../views/Security.vue'
+import FileManager from '../views/FileManager.vue'
 import Login from '../views/Login.vue'
 
 const isAuthenticated = () => {
@@ -50,6 +51,12 @@ const routes = [
     path: '/domains',
     name: 'Domains',
     component: Domains,
+    meta: { requiresAuth: true }
+  },
+  {
+    path: '/files',
+    name: 'FileManager',
+    component: FileManager,
     meta: { requiresAuth: true }
   },
   {

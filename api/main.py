@@ -12,7 +12,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from api.models.database import create_tables, get_db
 from config.config import PANEL_NAME, PANEL_VERSION
 
-from api.routes import users, domains, php, ssl, ipv6, auth, settings, dns, system, mail, databases, firewall, fail2ban, security_monitor, ip_lists
+from api.routes import users, domains, php, ssl, ipv6, auth, settings, dns, system, mail, databases, firewall, fail2ban, security_monitor, ip_lists, file_manager
 
 # Crear app FastAPI
 app = FastAPI(
@@ -261,6 +261,7 @@ app.include_router(firewall.router,         prefix="/api", tags=["Firewall"])
 app.include_router(fail2ban.router,         prefix="/api", tags=["Fail2ban"])
 app.include_router(security_monitor.router, prefix="/api", tags=["Security Monitor"])
 app.include_router(ip_lists.router,         prefix="/api", tags=["IP Lists"])
+app.include_router(file_manager.router,     prefix="/api", tags=["File Manager"])
 # Autoconfig/Autodiscover sin prefijo (clientes de correo los buscan en rutas raíz)
 app.include_router(mail.router, prefix="", include_in_schema=False)
 

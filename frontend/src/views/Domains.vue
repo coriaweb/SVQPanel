@@ -102,6 +102,9 @@
                     <button class="btn btn-outline-primary" @click="openIPv6Manager(domain)" title="IPv6">
                       <i class="bi bi-diagram-3"></i>
                     </button>
+                    <button class="btn btn-outline-secondary" @click="openFileManager(domain)" title="Archivos">
+                      <i class="bi bi-folder2-open"></i>
+                    </button>
                     <button class="btn btn-outline-warning" @click="openEditForm(domain)" title="Editar">
                       <i class="bi bi-pencil"></i>
                     </button>
@@ -141,6 +144,7 @@
 
 <script>
 import { ref, computed, onMounted } from 'vue'
+import { useRouter } from 'vue-router'
 import { useMainStore } from '../stores/useMainStore'
 import api from '../services/api'
 import Modal from '../components/Modal.vue'
@@ -153,6 +157,7 @@ export default {
   components: { Modal, DomainForm, SSLManager, IPv6Manager },
   setup() {
     const store = useMainStore()
+    const router = useRouter()
 
     const domains      = ref([])
     const users        = ref([])
@@ -231,6 +236,7 @@ export default {
 
     const openIPv6Manager  = (d) => { selectedDomain.value = { ...d }; showIPv6Manager.value = true }
     const closeIPv6Manager = () => { showIPv6Manager.value = false; selectedDomain.value = null }
+    const openFileManager = (d) => { router.push({ path: '/files', query: { domain: d.id } }) }
 
     const deleteDomainConfirm = (domainId) => {
       if (confirm('¿Eliminar este dominio? Se borrarán todos sus archivos.')) {
@@ -264,6 +270,7 @@ export default {
       openCreateForm, openEditForm, closeDomainForm, handleDomainSubmit,
       openSSLManager, closeSSLManager,
       openIPv6Manager, closeIPv6Manager,
+      openFileManager,
       deleteDomainConfirm, changePHP,
       loadDomains, reloadDomains, getUserName,
     }
