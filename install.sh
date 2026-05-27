@@ -1605,6 +1605,25 @@ print(''.join(random.choice(chars) for _ in range(16)))
 PASSWDEOF
 )
 
+# Crear usuario del SISTEMA 'admin' además del usuario del panel.
+# Si el admin del panel intenta alojar dominios (chown user:www-data ...) y
+# no existe en /etc/passwd, falla. Hestia hace lo mismo: el admin tiene
+# cuenta de sistema desde el primer momento.
+if ! id admin >/dev/null 2>&1; then
+    useradd -m -s /bin/bash -d /home/admin admin
+    echo "admin:$ADMIN_PASSWORD" | chpasswd
+    # Estructura web estilo Hestia (igual que UserManager.create_user)
+    mkdir -p /home/admin/web
+    chown admin:www-data /home/admin/web
+    chmod 750 /home/admin/web
+    mkdir -p /home/admin/tmp
+    chown admin:admin /home/admin/tmp
+    chmod 750 /home/admin/tmp
+    echo -e "  ${GREEN}✓ Usuario del sistema 'admin' creado${NC}"
+else
+    echo -e "  ${YELLOW}⚠ Usuario del sistema 'admin' ya existía, no se recrea${NC}"
+fi
+
 # Crear usuario admin en la BD (pasar contraseña via variable de entorno)
 SVQPANEL_ADMIN_PASS="$ADMIN_PASSWORD" python3 << 'PYTHONEOF'
 import sys
