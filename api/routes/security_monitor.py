@@ -88,8 +88,13 @@ async def list_connections(
 
         l_addr, l_port = _split_addr_port(local)
         r_addr, r_port = _split_addr_port(remote)
-        if l_port is None or r_port is None:
+        # Solo descartamos si el local_port es inválido. En LISTEN, remote
+        # suele ser '0.0.0.0:*' o '[::]:*' → port se queda como None y lo
+        # normalizamos a 0 para que se vea en la UI.
+        if l_port is None:
             continue
+        if r_port is None:
+            r_port = 0
 
         out.append(ActiveConnection(
             protocol    = proto,
