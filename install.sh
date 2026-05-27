@@ -1343,6 +1343,187 @@ RCPYEOF
 fi
 
 ###############################################################################
+# 12. SEGURIDAD: nftables (firewall) + fail2ban
+#
+# Diseño:
+#   - Tabla nftables propia 'inet svqpanel' aislada del sistema, evita pisar
+#     reglas existentes del admin. Si algo va mal, se borra entera.
+#   - Política por defecto ACCEPT en la chain del panel; el panel solo AÑADE
+#     reglas de deny/block desde la UI. Así la instalación nunca bloquea.
+#   - Auto-whitelist de la IP desde la que se está ejecutando el instalador
+#     (típicamente la sesión SSH) → cuando el admin active modo restrictivo
+#     desde la UI, su IP ya estará protegida.
+#   - fail2ban ignoreip incluye 127.0.0.1, ::1 y la IP del instalador.
+###############################################################################
+echo -e "${YELLOW}Instalando nftables + fail2ban...${NC}"
+
+apt-get install -y -qq nftables fail2ban
+
+# Detectar IP origen de la sesión SSH (el que ejecuta el instalador)
+INSTALLER_IP=""
+if [[ -n "$SSH_CLIENT" ]]; then
+    INSTALLER_IP="$(echo "$SSH_CLIENT" | awk '{print $1}')"
+elif [[ -n "$SSH_CONNECTION" ]]; then
+    INSTALLER_IP="$(echo "$SSH_CONNECTION" | awk '{print $1}')"
+fi
+if [[ -z "$INSTALLER_IP" ]]; then
+    echo -e "  ${YELLOW}⚠ No se detectó SSH_CLIENT; sin auto-whitelist de IP origen${NC}"
+else
+    echo -e "  ${GREEN}✓ IP del instalador detectada: $INSTALLER_IP (se añadirá a whitelist)${NC}"
+fi
+
+# Plantar nftables.conf con table 'inet svqpanel' aislada
+cat > /etc/nftables.conf << 'NFTEOF'
+#!/usr/sbin/nft -f
+# /etc/nftables.conf — gestionado por SVQPanel (Fase 12)
+# La tabla 'inet svqpanel' contiene todo lo que gestiona el panel.
+# NO edites a mano salvo emergencia; el panel regenera este archivo.
+
+flush ruleset
+
+table inet svqpanel {
+    # Named sets — los rellena el panel y/o fail2ban
+    set whitelist_v4 { type ipv4_addr; flags interval; }
+    set whitelist_v6 { type ipv6_addr; flags interval; }
+    set f2b_v4 { type ipv4_addr; flags timeout; }
+    set f2b_v6 { type ipv6_addr; flags timeout; }
+
+    chain input {
+        type filter hook input priority filter; policy accept;
+
+        # Tráfico local y conexiones ya establecidas
+        iif "lo" accept
+        ct state { established, related } accept
+        ct state invalid drop
+
+        # ICMP básico
+        ip  protocol icmp icmp type { echo-request, destination-unreachable, time-exceeded, parameter-problem } accept
+        ip6 nexthdr  icmpv6 icmpv6 type { echo-request, destination-unreachable, packet-too-big, time-exceeded, parameter-problem, nd-router-solicit, nd-router-advert, nd-neighbor-solicit, nd-neighbor-advert } accept
+
+        # Whitelist con prioridad máxima
+        ip  saddr @whitelist_v4 accept
+        ip6 saddr @whitelist_v6 accept
+
+        # Bans dinámicos de fail2ban
+        ip  saddr @f2b_v4 drop
+        ip6 saddr @f2b_v6 drop
+    }
+}
+
+# Includes gestionados por el panel (pueden estar vacíos al inicio)
+include "/etc/nftables/svqpanel-iplists.nft"
+include "/etc/nftables/svqpanel-rules.nft"
+NFTEOF
+
+# Crear los includes vacíos
+mkdir -p /etc/nftables
+: > /etc/nftables/svqpanel-iplists.nft
+: > /etc/nftables/svqpanel-rules.nft
+
+# Inyectar la IP del instalador en svqpanel-rules.nft para que persista a reboots
+if [[ -n "$INSTALLER_IP" ]]; then
+    if [[ "$INSTALLER_IP" =~ : ]]; then
+        SET="whitelist_v6"
+    else
+        SET="whitelist_v4"
+    fi
+    cat > /etc/nftables/svqpanel-rules.nft << SVQRULESEOF
+# Generado por install.sh — auto-whitelist del IP del instalador
+add element inet svqpanel $SET { $INSTALLER_IP }
+SVQRULESEOF
+fi
+
+systemctl enable nftables >/dev/null 2>&1 || true
+nft -f /etc/nftables.conf
+systemctl restart nftables >/dev/null 2>&1 || systemctl start nftables
+
+echo -e "${GREEN}✓ nftables: tabla 'inet svqpanel' activa (política ACCEPT)${NC}"
+
+# ─── fail2ban ────────────────────────────────────────────────────────────────
+IGNOREIP="127.0.0.1/8 ::1"
+if [[ -n "$INSTALLER_IP" ]]; then
+    IGNOREIP="$IGNOREIP $INSTALLER_IP"
+fi
+
+# jail.local condicional según servicios instalados
+MAIL_JAILS_ENABLED="false"
+if [[ "$INSTALL_MAIL" == true ]]; then
+    MAIL_JAILS_ENABLED="true"
+fi
+
+cat > /etc/fail2ban/jail.local << F2BEOF
+# /etc/fail2ban/jail.local — gestionado por SVQPanel (Fase 12)
+# Cualquier cambio desde el panel puede sobrescribir este archivo.
+
+[DEFAULT]
+bantime  = 1h
+findtime = 10m
+maxretry = 5
+backend  = systemd
+banaction = nftables-multiport
+banaction_allports = nftables-allports
+ignoreip = $IGNOREIP
+
+[sshd]
+enabled  = true
+port     = ssh
+filter   = sshd
+maxretry = 5
+
+[svqpanel-auth]
+enabled  = false
+# Habilitar cuando el panel escriba logs de fallo de login a /opt/svqpanel/logs/auth.log
+port     = http,https,8001
+filter   = svqpanel-auth
+logpath  = /opt/svqpanel/logs/auth.log
+maxretry = 5
+
+[dovecot]
+enabled  = $MAIL_JAILS_ENABLED
+port     = pop3,pop3s,imap,imaps,submission,sieve
+filter   = dovecot
+maxretry = 5
+
+[postfix-sasl]
+enabled  = $MAIL_JAILS_ENABLED
+port     = smtp,465,submission,imap,imaps,pop3,pop3s
+filter   = postfix-sasl
+maxretry = 5
+
+[nginx-limit-req]
+enabled  = false
+port     = http,https
+filter   = nginx-limit-req
+maxretry = 10
+
+[recidive]
+enabled  = true
+filter   = recidive
+logpath  = /var/log/fail2ban.log
+bantime  = 1w
+findtime = 1d
+maxretry = 3
+F2BEOF
+
+# Filtro custom para fallos de login del panel
+cat > /etc/fail2ban/filter.d/svqpanel-auth.conf << 'F2BFILTEREOF'
+# fail2ban filter for SVQPanel login failures
+# Espera líneas tipo: "auth_failed ip=1.2.3.4 user=admin"
+[Definition]
+failregex = ^.* auth_failed ip=<HOST>.*$
+ignoreregex =
+F2BFILTEREOF
+
+systemctl enable fail2ban >/dev/null 2>&1 || true
+systemctl restart fail2ban >/dev/null 2>&1 || systemctl start fail2ban
+
+echo -e "${GREEN}✓ fail2ban: jails activas (sshd, recidive$( [[ "$INSTALL_MAIL" == true ]] && echo ', dovecot, postfix-sasl' ))${NC}"
+if [[ -n "$INSTALLER_IP" ]]; then
+    echo -e "  ${GREEN}✓ Anti-lockout: $INSTALLER_IP en whitelist nftables + ignoreip fail2ban${NC}"
+fi
+echo ""
+
+###############################################################################
 # 13. CREAR USUARIO ADMIN AUTOMÁTICO
 ###############################################################################
 echo -e "${YELLOW}Creando usuario administrador...${NC}"

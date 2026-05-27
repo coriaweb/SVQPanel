@@ -141,6 +141,74 @@ def _run_migrations():
         "ALTER TABLE users ADD COLUMN IF NOT EXISTS databases_limit INTEGER DEFAULT 5",
         # Fase 10b: contraseña cifrada con Fernet para phpMyAdmin autologin
         "ALTER TABLE client_databases ADD COLUMN IF NOT EXISTS db_password_enc VARCHAR(500)",
+        # ─────────────────────────────────────────────────────────────────
+        # Fase 12: Seguridad (firewall nftables, fail2ban, listas IP, auditoría)
+        # ─────────────────────────────────────────────────────────────────
+        """CREATE TABLE IF NOT EXISTS firewall_rules (
+            id           SERIAL PRIMARY KEY,
+            action       VARCHAR(10)  NOT NULL,
+            protocol     VARCHAR(10)  NOT NULL DEFAULT 'tcp',
+            port_range   VARCHAR(50),
+            source_ip    VARCHAR(64),
+            description  VARCHAR(255),
+            is_whitelist BOOLEAN      NOT NULL DEFAULT FALSE,
+            priority     INTEGER      NOT NULL DEFAULT 100,
+            is_active    BOOLEAN      NOT NULL DEFAULT TRUE,
+            created_by   INTEGER      REFERENCES users(id) ON DELETE SET NULL,
+            created_at   TIMESTAMP    NOT NULL DEFAULT NOW(),
+            updated_at   TIMESTAMP    DEFAULT NOW()
+        )""",
+        "CREATE INDEX IF NOT EXISTS ix_firewall_rules_priority ON firewall_rules(priority)",
+        """CREATE TABLE IF NOT EXISTS banned_ips (
+            id          SERIAL PRIMARY KEY,
+            ip          VARCHAR(45)  NOT NULL,
+            banned_by   VARCHAR(20)  NOT NULL,
+            jail_name   VARCHAR(64),
+            reason      VARCHAR(255),
+            banned_at   TIMESTAMP    NOT NULL DEFAULT NOW(),
+            expires_at  TIMESTAMP,
+            unbanned_at TIMESTAMP
+        )""",
+        "CREATE INDEX IF NOT EXISTS ix_banned_ips_ip       ON banned_ips(ip)",
+        "CREATE INDEX IF NOT EXISTS ix_banned_ips_active   ON banned_ips(unbanned_at) WHERE unbanned_at IS NULL",
+        """CREATE TABLE IF NOT EXISTS ip_lists (
+            id                      SERIAL PRIMARY KEY,
+            name                    VARCHAR(64)  UNIQUE NOT NULL,
+            description             VARCHAR(255),
+            url                     VARCHAR(2048) NOT NULL,
+            action                  VARCHAR(10)  NOT NULL DEFAULT 'block',
+            address_family          VARCHAR(10)  NOT NULL DEFAULT 'both',
+            refresh_interval_hours  INTEGER      NOT NULL DEFAULT 24,
+            max_entries             INTEGER      NOT NULL DEFAULT 500000,
+            enabled                 BOOLEAN      NOT NULL DEFAULT TRUE,
+            last_fetched_at         TIMESTAMP,
+            last_success_at         TIMESTAMP,
+            last_error              TEXT,
+            sha256_last             VARCHAR(64),
+            entry_count_v4          INTEGER      DEFAULT 0,
+            entry_count_v6          INTEGER      DEFAULT 0,
+            created_by              INTEGER      REFERENCES users(id) ON DELETE SET NULL,
+            created_at              TIMESTAMP    NOT NULL DEFAULT NOW(),
+            updated_at              TIMESTAMP    DEFAULT NOW()
+        )""",
+        """CREATE TABLE IF NOT EXISTS security_audit_log (
+            id          SERIAL PRIMARY KEY,
+            user_id     INTEGER  REFERENCES users(id) ON DELETE SET NULL,
+            user_label  VARCHAR(64),
+            category    VARCHAR(20)  NOT NULL,
+            action      VARCHAR(40)  NOT NULL,
+            target      VARCHAR(255),
+            before      TEXT,
+            after       TEXT,
+            ip_origin   VARCHAR(45),
+            success     BOOLEAN      NOT NULL DEFAULT TRUE,
+            error       TEXT,
+            created_at  TIMESTAMP    NOT NULL DEFAULT NOW()
+        )""",
+        "CREATE INDEX IF NOT EXISTS ix_security_audit_user_id            ON security_audit_log(user_id)",
+        "CREATE INDEX IF NOT EXISTS ix_security_audit_category           ON security_audit_log(category)",
+        "CREATE INDEX IF NOT EXISTS ix_security_audit_created_at         ON security_audit_log(created_at)",
+        "CREATE INDEX IF NOT EXISTS ix_security_audit_category_created   ON security_audit_log(category, created_at DESC)",
     ]
     with engine.connect() as conn:
         for sql in migrations:
