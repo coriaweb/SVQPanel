@@ -69,18 +69,20 @@ async def list_connections(
 
     out: List[ActiveConnection] = []
     for raw in r.stdout.splitlines():
-        # Las dos primeras tokens son protocolo (tcp/udp) y estado en el formato sin cabecera
-        # Ejemplo:  tcp   ESTAB  0  0  127.0.0.1:8001  127.0.0.1:54321  users:(("python",pid=123,fd=8))
-        parts = raw.split(None, 5)
-        if len(parts) < 5:
+        # ss -tunap -H formato:
+        #   proto state recv_q send_q local:port remote:port [users:((...))]
+        # Ejemplo:
+        #   tcp   ESTAB  0  0  127.0.0.1:8001  127.0.0.1:54321  users:(("python",pid=123,fd=8))
+        parts = raw.split(None, 6)
+        if len(parts) < 6:
             continue
-        proto = parts[0].lower()
-        state = parts[1]
-        local = parts[3]
-        remote = parts[4]
+        proto  = parts[0].lower()
+        state  = parts[1]
+        local  = parts[4]
+        remote = parts[5]
         process = None
-        if len(parts) > 5 and "users:" in parts[5]:
-            m = re.search(r'\("([^"]+)"', parts[5])
+        if len(parts) > 6 and "users:" in parts[6]:
+            m = re.search(r'\("([^"]+)"', parts[6])
             if m:
                 process = m.group(1)
 
