@@ -11,6 +11,13 @@ import logging
 from datetime import datetime, timedelta
 
 from api.models.database import SessionLocal
+# Cargar TODOS los modelos para que SQLAlchemy pueda resolver las FK
+# (ej. ip_lists.created_by → users.id). Sin esto, el primer flush() casca
+# con NoReferencedTableError.
+from api.models import (  # noqa: F401
+    models_user, models_domain, models_settings, models_dns,
+    models_mail, models_client_db, models_security,
+)
 from api.models.models_security import IpList, SecurityAuditLog
 from api.utils import ip_list_fetcher, nftables_helper as nft
 
