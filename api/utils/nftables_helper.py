@@ -93,27 +93,36 @@ def render_rules_nft(rules) -> str:
 
 
 def _render_single_rule(r) -> List[str]:
-    """Convierte una FirewallRule a sentencias 'add rule inet svqpanel input ...'."""
+    """
+    Convierte una FirewallRule en una o varias sentencias
+    'add rule inet svqpanel input ...'.
+
+    Reglas:
+      - Sin source_ip: una sola regla (la tabla 'inet' cubre v4+v6 sin
+        necesidad de duplicar). Para protocolo 'icmp' generamos UNA regla
+        por familia porque el match difiere (icmp vs icmpv6).
+      - Con source_ip: usamos el match 'ip saddr' o 'ip6 saddr' según
+        la familia detectada en el CIDR.
+    """
     out = []
-    family_branches: List[Tuple[str, Optional[str]]] = []
-    # Decidir si la regla aplica a v4, v6 o ambas según source_ip
-    if r.source_ip:
-        if _is_ipv6(r.source_ip):
-            family_branches.append(("ip6", r.source_ip))
-        else:
-            family_branches.append(("ip",  r.source_ip))
-    else:
-        # Sin source → aplicar a ambas familias
-        family_branches.append(("ip",  None))
-        family_branches.append(("ip6", None))
-
-    # Acción nftables
     nft_action = {"allow": "accept", "deny": "drop", "reject": "reject"}[r.action]
-
-    proto = r.protocol if r.protocol != "any" else None
+    proto      = r.protocol if r.protocol != "any" else None
     port_range = _fmt_port_range(r.port_range)
 
-    for family, src in family_branches:
+    # Decidir qué (familia, source) emitimos
+    branches: List[Tuple[Optional[str], Optional[str]]] = []
+    if r.source_ip:
+        family = "ip6" if _is_ipv6(r.source_ip) else "ip"
+        branches.append((family, r.source_ip))
+    elif proto == "icmp":
+        # ICMP requiere doble regla porque el match cambia entre v4 y v6
+        branches.append(("ip",  None))
+        branches.append(("ip6", None))
+    else:
+        # tcp/udp/any sin source → una sola regla en family 'inet'
+        branches.append((None, None))
+
+    for family, src in branches:
         parts = ["add rule inet svqpanel input"]
         if src:
             parts.append(f"{family} saddr {src}")
@@ -124,7 +133,6 @@ def _render_single_rule(r) -> List[str]:
                 parts.append(proto)
         elif proto == "icmp":
             parts.append("ip protocol icmp" if family == "ip" else "ip6 nexthdr icmpv6")
-        # Acción primero, luego comentario (orden nftables exigido)
         parts.append(nft_action)
         if r.description:
             safe = r.description.replace('"', "'")
