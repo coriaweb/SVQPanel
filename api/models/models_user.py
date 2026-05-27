@@ -36,9 +36,22 @@ class User(Base):
     # NULL = cuenta de nivel superior (admin o reseller directo del sistema)
     parent_id = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
 
-    # Límites
-    domains_limit   = Column(Integer, default=10)
-    databases_limit = Column(Integer, default=5)   # 0 = sin límite
+    # Plan asignado (snapshot pattern: los campos siguientes se copian al asignar)
+    plan_id   = Column(Integer, ForeignKey("plans.id", ondelete="SET NULL"), nullable=True)
+    plan_name = Column(String(64), nullable=True)
+
+    # Límites (los rellena el plan o se editan manualmente; 0 = sin límite)
+    domains_limit          = Column(Integer, default=10)
+    databases_limit        = Column(Integer, default=5)
+    mailboxes_limit        = Column(Integer, default=10)
+    dns_zones_limit        = Column(Integer, default=10)
+    disk_quota_mb          = Column(Integer, default=1024)
+    traffic_quota_mb_month = Column(Integer, default=10240)
+
+    # Stats (actualizadas por cron — Fase 13.2)
+    disk_used_mb           = Column(Integer, default=0)
+    traffic_used_mb_month  = Column(Integer, default=0)
+    stats_updated_at       = Column(DateTime, nullable=True)
 
     # Timestamps
     created_at = Column(DateTime, default=datetime.utcnow)

@@ -110,6 +110,22 @@ else
 fi
 
 ###############################################################################
+# 2d. CROWDSEC (IPS colaborativo) — recomendado
+###############################################################################
+echo -e "${YELLOW}¿Instalar CrowdSec?${NC} ${GREEN}(recomendado)${NC}"
+echo "  IPS colaborativo: detecta ataques desde logs (sshd, nginx, postfix...)"
+echo "  y aplica bans via bouncer de nftables. Complementa a fail2ban con una"
+echo "  blocklist comunitaria opcional. Footprint: ~80 MB RAM."
+read -p "¿Instalar CrowdSec? (S/n): " _CS_INPUT
+INSTALL_CROWDSEC=true
+if [[ "${_CS_INPUT,,}" =~ ^(n|no)$ ]]; then
+    INSTALL_CROWDSEC=false
+    echo -e "${YELLOW}✗ Sin CrowdSec${NC}\n"
+else
+    echo -e "${GREEN}✓ CrowdSec seleccionado${NC}\n"
+fi
+
+###############################################################################
 # 2. ELEGIR VERSIONES PHP
 ###############################################################################
 echo -e "${YELLOW}¿Qué versiones PHP necesitas?${NC}"
@@ -1560,6 +1576,121 @@ if [[ -n "$INSTALLER_IP" ]]; then
     echo -e "  ${GREEN}✓ Anti-lockout: $INSTALLER_IP en whitelist nftables + ignoreip fail2ban${NC}"
 fi
 
+###############################################################################
+# 12C. CROWDSEC (IPS colaborativo)
+#
+# CrowdSec analiza logs (sshd, nginx, postfix...) y genera decisiones de ban
+# que aplica el bouncer de nftables. Coexiste con fail2ban: fail2ban es
+# reactivo simple (regex sobre logs), CrowdSec añade escenarios complejos +
+# blocklist comunitaria opcional via CAPI.
+#
+# Tablas nftables que coexisten:
+#   - 'inet svqpanel'  → gestionado por el panel (whitelist + f2b sets)
+#   - 'ip/ip6 crowdsec' → gestionado por crowdsec-firewall-bouncer
+###############################################################################
+if [[ "$INSTALL_CROWDSEC" == true ]]; then
+    echo -e "${YELLOW}Instalando CrowdSec...${NC}"
+
+    # ── 1. Repositorio oficial ────────────────────────────────────────────────
+    curl -s https://install.crowdsec.net 2>/dev/null | bash > /dev/null 2>&1 || {
+        echo -e "  ${YELLOW}⚠ Fallback: añadiendo repo packagecloud manualmente${NC}"
+        curl -s https://packagecloud.io/install/repositories/crowdsec/crowdsec/script.deb.sh 2>/dev/null \
+            | bash > /dev/null 2>&1
+    }
+    apt-get update -qq
+
+    # ── 2. CrowdSec engine + bouncer firewall (nftables) ──────────────────────
+    DEBIAN_FRONTEND=noninteractive apt-get install -y -qq crowdsec
+
+    # Pre-seleccionar nftables como backend antes de instalar el bouncer,
+    # así no salta el wizard interactivo en sistemas con iptables y nftables
+    debconf-set-selections <<< "crowdsec-firewall-bouncer crowdsec-firewall-bouncer/backend select nftables"
+    DEBIAN_FRONTEND=noninteractive apt-get install -y -qq crowdsec-firewall-bouncer-nftables 2>/dev/null \
+        || DEBIAN_FRONTEND=noninteractive apt-get install -y -qq crowdsec-firewall-bouncer-iptables
+
+    # Verificar que cscli existe
+    if ! command -v cscli >/dev/null 2>&1; then
+        echo -e "  ${RED}✗ cscli no disponible — CrowdSec no se instaló correctamente${NC}"
+        echo -e "  ${YELLOW}  Revisa: apt-get install crowdsec  (o journalctl -u crowdsec)${NC}"
+    else
+        echo -e "  ${GREEN}✓ CrowdSec engine $(cscli version 2>/dev/null | grep -oP 'version:\s*\K\S+' | head -1) instalado${NC}"
+
+        # ── 3. Colecciones base ───────────────────────────────────────────────
+        echo -e "  ${YELLOW}→ Instalando colecciones (parsers + escenarios)...${NC}"
+        for COL in \
+            crowdsecurity/linux \
+            crowdsecurity/sshd \
+            crowdsecurity/nginx \
+            crowdsecurity/base-http-scenarios \
+            crowdsecurity/http-cve; do
+            cscli collections install "$COL" > /dev/null 2>&1 \
+                && echo -e "    ${GREEN}✓ $COL${NC}" \
+                || echo -e "    ${YELLOW}⚠ $COL (no disponible)${NC}"
+        done
+
+        if [[ "$INSTALL_MAIL" == true ]]; then
+            for COL in crowdsecurity/postfix crowdsecurity/dovecot; do
+                cscli collections install "$COL" > /dev/null 2>&1 \
+                    && echo -e "    ${GREEN}✓ $COL${NC}" \
+                    || echo -e "    ${YELLOW}⚠ $COL (no disponible)${NC}"
+            done
+        fi
+
+        cscli hub update > /dev/null 2>&1 || true
+
+        # ── 4. Whitelist IP del instalador ────────────────────────────────────
+        if [[ -n "$INSTALLER_IP" ]]; then
+            mkdir -p /etc/crowdsec/parsers/s02-enrich
+            cat > /etc/crowdsec/parsers/s02-enrich/svqpanel-whitelist.yaml << CSWLEOF
+name: svqpanel/installer-whitelist
+description: "Whitelist IP del instalador (SVQPanel)"
+whitelist:
+  reason: "SVQPanel installer / admin SSH origin"
+  ip:
+    - "${INSTALLER_IP}"
+CSWLEOF
+            echo -e "  ${GREEN}✓ IP ${INSTALLER_IP} añadida a whitelist CrowdSec${NC}"
+        fi
+
+        # ── 5. Acquis extra: log de auth del propio panel ─────────────────────
+        # CrowdSec lee /opt/svqpanel/logs/auth.log (mismo log que fail2ban) y
+        # podemos reutilizar el filtro 'sshd' si las líneas se parecen, o más
+        # adelante crear un parser SVQPanel dedicado.
+        mkdir -p /etc/crowdsec/acquis.d
+        cat > /etc/crowdsec/acquis.d/svqpanel.yaml << CSACQEOF
+# SVQPanel — fuente adicional de logs para CrowdSec
+filenames:
+  - /opt/svqpanel/logs/auth.log
+labels:
+  type: syslog
+  application: svqpanel
+CSACQEOF
+
+        # ── 6. Servicios ──────────────────────────────────────────────────────
+        systemctl enable crowdsec >/dev/null 2>&1 || true
+        systemctl restart crowdsec >/dev/null 2>&1 || systemctl start crowdsec
+
+        # El bouncer puede llamarse crowdsec-firewall-bouncer.service
+        systemctl enable crowdsec-firewall-bouncer >/dev/null 2>&1 || true
+        systemctl restart crowdsec-firewall-bouncer >/dev/null 2>&1 \
+            || systemctl start crowdsec-firewall-bouncer >/dev/null 2>&1 || true
+
+        # ── 7. Verificación ───────────────────────────────────────────────────
+        if systemctl is-active --quiet crowdsec; then
+            echo -e "  ${GREEN}✓ Servicio crowdsec activo${NC}"
+        else
+            echo -e "  ${RED}✗ crowdsec NO activo (revisar: journalctl -u crowdsec)${NC}"
+        fi
+        if systemctl is-active --quiet crowdsec-firewall-bouncer; then
+            echo -e "  ${GREEN}✓ crowdsec-firewall-bouncer activo${NC}"
+        else
+            echo -e "  ${YELLOW}⚠ crowdsec-firewall-bouncer NO activo (los bans no se aplicarán al firewall)${NC}"
+        fi
+    fi
+
+    echo -e "${GREEN}✓ CrowdSec instalado${NC}\n"
+fi
+
 # ─── Systemd timer para refresco diario de IP lists ──────────────────────────
 cat > /etc/systemd/system/svqpanel-iplist-refresh.service << 'IPLRSEOF'
 [Unit]
@@ -1596,6 +1727,42 @@ systemctl daemon-reload
 systemctl enable --now svqpanel-iplist-refresh.timer >/dev/null 2>&1 || true
 
 echo -e "${GREEN}✓ systemd timer: svqpanel-iplist-refresh.timer (refresco diario)${NC}"
+
+# ─── Timer horario para refresco de stats de usuarios (Fase 13.2) ────────────
+cat > /etc/systemd/system/svqpanel-user-stats.service << 'USTSEOF'
+[Unit]
+Description=SVQPanel — recalcula disco + tráfico mensual por usuario
+After=network.target svqpanel.service
+
+[Service]
+Type=oneshot
+User=root
+WorkingDirectory=/opt/svqpanel
+ExecStart=/opt/svqpanel/venv/bin/python -m api.cli refresh_user_stats
+TimeoutStartSec=900
+
+[Install]
+WantedBy=multi-user.target
+USTSEOF
+
+cat > /etc/systemd/system/svqpanel-user-stats.timer << 'USTTEOF'
+[Unit]
+Description=SVQPanel — timer horario para stats de usuarios
+
+[Timer]
+OnBootSec=5min
+OnUnitActiveSec=1h
+Persistent=true
+Unit=svqpanel-user-stats.service
+
+[Install]
+WantedBy=timers.target
+USTTEOF
+
+systemctl daemon-reload
+systemctl enable --now svqpanel-user-stats.timer >/dev/null 2>&1 || true
+
+echo -e "${GREEN}✓ systemd timer: svqpanel-user-stats.timer (horario)${NC}"
 echo ""
 
 ###############################################################################
@@ -1704,7 +1871,7 @@ echo "  PHP versions: ${PHP_ARRAY[*]}"
 echo "  Correo:       $( [[ "$INSTALL_MAIL" == true ]] && echo 'Postfix + Dovecot + Rspamd' || echo 'No instalado' )"
 echo "  Roundcube:    $( [[ "$INSTALL_ROUNDCUBE" == true ]] && echo 'Instalado — /webmail' || echo 'No instalado' )"
 echo "  MariaDB:      $( [[ "$INSTALL_MARIADB" == true ]] && echo 'MariaDB 11.4 LTS (bases de datos de clientes)' || echo 'No instalado' )"
-echo "  Seguridad:    nftables (table inet svqpanel) + fail2ban"
+echo "  Seguridad:    nftables (table inet svqpanel) + fail2ban$( [[ "$INSTALL_CROWDSEC" == true ]] && echo ' + CrowdSec' )"
 echo "  Directorio:   /opt/svqpanel"
 echo "  Base de datos panel: panel_db (PostgreSQL)"
 echo -e "\n${GREEN}╔════════════════════════════════════════════════════════════╗${NC}"
@@ -1771,6 +1938,10 @@ echo "  • Listas IP (URL):     refresh diario via systemd timer"
 echo "                         systemctl list-timers svqpanel-iplist-refresh.timer"
 if [[ -n "$INSTALLER_IP" ]]; then
     echo "  • Anti-lockout:        $INSTALLER_IP ya está en whitelist y en ignoreip"
+fi
+if [[ "$INSTALL_CROWDSEC" == true ]]; then
+    echo "  • CrowdSec:            cscli decisions list  /  cscli metrics"
+    echo "                         UI panel → /security tab CrowdSec"
 fi
 
 echo -e "\n${RED}⚠ IMPORTANTE:${NC}"

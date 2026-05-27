@@ -16,9 +16,10 @@ from api.models.database import SessionLocal
 # con NoReferencedTableError.
 from api.models import (  # noqa: F401
     models_user, models_domain, models_settings, models_dns,
-    models_mail, models_client_db, models_security,
+    models_mail, models_client_db, models_security, models_plan,
 )
 from api.models.models_security import IpList, SecurityAuditLog
+from api.models.models_user import User
 from api.utils import ip_list_fetcher, nftables_helper as nft
 
 logging.basicConfig(
@@ -112,6 +113,42 @@ def cmd_refresh_ip_lists(force: bool = False) -> int:
         db.close()
 
 
+def cmd_refresh_user_stats() -> int:
+    """
+    Para cada usuario con home_dir definido, recalcula disk_used_mb y
+    traffic_used_mb_month (mes en curso) parseando /home/{user}/web/.
+    """
+    from scripts.user_stats import compute_user_stats
+
+    db = SessionLocal()
+    try:
+        users = db.query(User).filter(User.is_active == True).all()        # noqa: E712
+        updated = 0
+        for u in users:
+            home = u.home_dir or f"/home/{u.username}"
+            if not home:
+                continue
+            try:
+                disk_mb, traffic_mb = compute_user_stats(home)
+            except Exception as e:
+                logger.warning(f"stats {u.username}: {e}")
+                continue
+            u.disk_used_mb          = disk_mb
+            u.traffic_used_mb_month = traffic_mb
+            u.stats_updated_at      = datetime.utcnow()
+            updated += 1
+            logger.info(f"  {u.username:20s} disk={disk_mb}MB traffic={traffic_mb}MB")
+        db.commit()
+        logger.info(f"Stats refrescadas para {updated}/{len(users)} usuarios")
+        return 0
+    except Exception as e:
+        logger.exception(f"refresh_user_stats falló: {e}")
+        db.rollback()
+        return 2
+    finally:
+        db.close()
+
+
 def main():
     parser = argparse.ArgumentParser(prog="api.cli", description="SVQPanel CLI")
     sub = parser.add_subparsers(dest="cmd", required=True)
@@ -119,9 +156,13 @@ def main():
     p_refresh = sub.add_parser("refresh_ip_lists", help="Refresca listas IP vencidas")
     p_refresh.add_argument("--force", action="store_true", help="Refresca todas, ignorar interval")
 
+    sub.add_parser("refresh_user_stats", help="Recalcula disk + traffic por usuario")
+
     args = parser.parse_args()
     if args.cmd == "refresh_ip_lists":
         sys.exit(cmd_refresh_ip_lists(force=args.force))
+    if args.cmd == "refresh_user_stats":
+        sys.exit(cmd_refresh_user_stats())
 
 
 if __name__ == "__main__":

@@ -156,7 +156,7 @@ async def control_service(
     allowed_prefixes = (
         "nginx", "apache2", "named", "bind9",
         "php", "postgresql", "mariadb", "mysql",
-        "fail2ban", "ufw", "ssh", "vsftpd", "proftpd",
+        "fail2ban", "crowdsec", "nftables", "ufw", "ssh", "vsftpd", "proftpd",
         "clamav", "dovecot", "exim4", "postfix",
         "redis", "memcached", "cron", "spamassassin", "spamd", "rspamd",
         "svqpanel",

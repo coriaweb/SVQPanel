@@ -112,6 +112,23 @@
         <small class="text-muted">{{ roleDescription }}</small>
       </div>
       <div class="col-md-6 mb-3">
+        <label for="plan_id" class="form-label">Plan</label>
+        <select id="plan_id" v-model="form.plan_id" class="form-select" :disabled="!plans.length">
+          <option :value="null">— Sin plan (límites manuales) —</option>
+          <option v-for="p in plans" :key="p.id" :value="p.id">
+            {{ p.name }}
+            <template v-if="p.owner_id === null"> (global)</template>
+            <template v-else> ({{ p.owner_username }})</template>
+          </option>
+        </select>
+        <small class="text-muted">
+          Al asignar plan se copian sus límites; si lo dejas vacío usa los valores manuales.
+        </small>
+      </div>
+    </div>
+
+    <div class="row" v-if="!form.plan_id">
+      <div class="col-md-6 mb-3">
         <label for="domains_limit" class="form-label">Límite de dominios</label>
         <input
           id="domains_limit"
@@ -122,6 +139,14 @@
           placeholder="10"
         />
         <small class="text-muted">0 = sin límite</small>
+      </div>
+    </div>
+    <div class="row" v-else>
+      <div class="col-12 mb-3">
+        <div class="alert alert-info py-2 mb-0 small">
+          <i class="bi bi-info-circle me-1"></i>
+          Los límites se copiarán del plan seleccionado al guardar.
+        </div>
       </div>
     </div>
 
@@ -150,7 +175,7 @@
 </template>
 
 <script>
-import { ref, computed } from 'vue'
+import { ref, computed, onMounted } from 'vue'
 import { useMainStore } from '../stores/useMainStore'
 import api from '../services/api'
 
@@ -177,7 +202,14 @@ export default {
       new_password_confirm:'',
       role:                props.user?.role        || 'user',
       domains_limit:       props.user?.domains_limit ?? 10,
+      plan_id:             props.user?.plan_id     ?? null,
       is_active:           props.user?.is_active   ?? true,
+    })
+
+    const plans = ref([])
+    onMounted(async () => {
+      try { plans.value = await api.getPlans() }
+      catch (e) { /* ignorar: usuario sin permisos para planes */ }
     })
 
     const roleDescription = computed(() => ({
@@ -202,6 +234,7 @@ export default {
 
       loading.value = true
       try {
+        let userId
         if (isEditing.value) {
           const payload = {
             email:         form.value.email,
@@ -216,9 +249,16 @@ export default {
             payload.new_password = form.value.new_password
           }
           await api.updateUser(props.user.id, payload)
+          userId = props.user.id
+          // Aplicar plan si cambió
+          const prevPlanId = props.user.plan_id ?? null
+          if (form.value.plan_id !== prevPlanId) {
+            if (form.value.plan_id) await api.assignPlanToUser(userId, form.value.plan_id)
+            else                    await api.unassignPlanFromUser(userId)
+          }
           store.showNotification('Usuario actualizado correctamente', 'success')
         } else {
-          await api.createUser({
+          const created = await api.createUser({
             username:      form.value.username,
             email:         form.value.email,
             first_name:    form.value.first_name,
@@ -229,6 +269,10 @@ export default {
             is_active:     form.value.is_active,
             ...(props.parentId ? { parent_id: props.parentId } : {})
           })
+          userId = created?.id
+          if (userId && form.value.plan_id) {
+            await api.assignPlanToUser(userId, form.value.plan_id)
+          }
           store.showNotification('Usuario creado correctamente', 'success')
         }
         emit('submit')
@@ -243,6 +287,7 @@ export default {
       form, loading, isEditing,
       showPasswordChange, passwordError,
       roleDescription, handleSubmit,
+      plans,
     }
   }
 }

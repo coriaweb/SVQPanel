@@ -10,6 +10,7 @@ import Settings from '../views/Settings.vue'
 import SystemServices from '../views/SystemServices.vue'
 import Security from '../views/Security.vue'
 import FileManager from '../views/FileManager.vue'
+import Plans from '../views/Plans.vue'
 import Login from '../views/Login.vue'
 
 const isAuthenticated = () => {
@@ -94,6 +95,12 @@ const routes = [
     name: 'Security',
     component: Security,
     meta: { requiresAuth: true, requiresAdmin: true }
+  },
+  {
+    path: '/plans',
+    name: 'Plans',
+    component: Plans,
+    meta: { requiresAuth: true, requiresAdminOrReseller: true }
   }
 ]
 
@@ -114,6 +121,12 @@ router.beforeEach((to, from, next) => {
 
   // Si la ruta requiere admin
   if (to.meta.requiresAdmin && !user.is_admin) {
+    next('/dashboard')
+    return
+  }
+
+  // Si la ruta requiere admin o reseller
+  if (to.meta.requiresAdminOrReseller && !['admin', 'reseller'].includes(user.role)) {
     next('/dashboard')
     return
   }

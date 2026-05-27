@@ -35,6 +35,7 @@
                 <th>PHP</th>
                 <th>SSL</th>
                 <th>IPv6</th>
+                <th>Tamaño</th>
                 <th>Estado</th>
                 <th>Acciones</th>
               </tr>
@@ -91,11 +92,22 @@
                   </button>
                 </td>
                 <td>
+                  <span v-if="diskInfo[domain.id]" class="small font-monospace" :title="`public_html: ${formatMB(diskInfo[domain.id].public_html_mb)} — logs: ${formatMB(diskInfo[domain.id].logs_mb)}`">
+                    {{ formatMB(diskInfo[domain.id].public_html_mb) }}
+                  </span>
+                  <button v-else class="btn btn-link btn-sm py-0 px-1" @click="loadDiskInfo(domain)">
+                    <i class="bi bi-hdd"></i>
+                  </button>
+                </td>
+                <td>
                   <span v-if="domain.is_active" class="badge bg-success">Activo</span>
                   <span v-else class="badge bg-danger">Inactivo</span>
                 </td>
                 <td>
                   <div class="btn-group btn-group-sm">
+                    <button class="btn btn-outline-info" @click="openLogsViewer(domain)" title="Ver registros (access/error)">
+                      <i class="bi bi-binoculars"></i>
+                    </button>
                     <button class="btn btn-outline-success" @click="openSSLManager(domain)" title="SSL">
                       <i class="bi bi-lock"></i>
                     </button>
@@ -139,6 +151,47 @@
     <Modal v-if="selectedDomain" :isOpen="showIPv6Manager" :title="'IPv6 — ' + selectedDomain.domain_name" @close="closeIPv6Manager">
       <IPv6Manager :domain="selectedDomain" @reload="reloadDomains" />
     </Modal>
+
+    <!-- Modal: visor de logs por dominio -->
+    <Modal v-if="logsDomain" :isOpen="showLogsViewer" :title="'Registros — ' + logsDomain.domain_name" @close="closeLogsViewer">
+      <div class="mb-2 d-flex justify-content-between align-items-center">
+        <ul class="nav nav-pills nav-sm">
+          <li class="nav-item">
+            <a class="nav-link" :class="{active: logTab==='access'}" href="#" @click.prevent="switchLog('access')">
+              <i class="bi bi-file-text me-1"></i> access.log
+            </a>
+          </li>
+          <li class="nav-item">
+            <a class="nav-link" :class="{active: logTab==='error'}" href="#" @click.prevent="switchLog('error')">
+              <i class="bi bi-bug me-1"></i> error.log
+            </a>
+          </li>
+        </ul>
+        <div class="d-flex gap-2 align-items-center">
+          <select v-model.number="logLines" @change="loadLogs" class="form-select form-select-sm" style="width: 110px;">
+            <option :value="50">50 líneas</option>
+            <option :value="200">200</option>
+            <option :value="500">500</option>
+            <option :value="2000">2000</option>
+          </select>
+          <button class="btn btn-sm btn-outline-secondary" @click="loadLogs" title="Refrescar">
+            <i class="bi bi-arrow-clockwise"></i>
+          </button>
+        </div>
+      </div>
+
+      <div v-if="logsLoading" class="text-center py-4">
+        <div class="spinner-border spinner-border-sm"></div>
+      </div>
+      <div v-else-if="!logsData.exists" class="alert alert-info">
+        {{ logsData.message || 'Sin datos.' }}
+        <div class="small text-muted mt-1 font-monospace">{{ logsData.path }}</div>
+      </div>
+      <div v-else>
+        <div class="small text-muted mb-2 font-monospace">{{ logsData.path }} — {{ logsData.count }} líneas</div>
+        <pre class="bg-dark text-light p-2 rounded" style="max-height: 60vh; overflow:auto; font-size: 11px; white-space: pre-wrap; word-break: break-all;">{{ logsData.lines.join('\n') }}</pre>
+      </div>
+    </Modal>
   </div>
 </template>
 
@@ -171,6 +224,17 @@ export default {
     const editingDomain   = ref(null)
     const selectedDomain  = ref(null)
 
+    // Logs por dominio
+    const showLogsViewer = ref(false)
+    const logsDomain     = ref(null)
+    const logTab         = ref('access')
+    const logLines       = ref(200)
+    const logsData       = ref({ exists: false, lines: [], path: '' })
+    const logsLoading    = ref(false)
+
+    // Disco por dominio (cache: {domainId: {public_html_mb, ...}})
+    const diskInfo = ref({})
+
     // Rol del usuario actual
     const isAdminOrReseller = computed(() =>
       ['admin', 'reseller'].includes(store.currentUser?.role)
@@ -183,10 +247,57 @@ export default {
       try {
         const data = await api.getDomains(selectedUser.value || null)
         domains.value = Array.isArray(data) ? data : []
+        // Cargar disk info para todos los dominios en paralelo (no bloqueante)
+        diskInfo.value = {}
+        for (const d of domains.value) loadDiskInfo(d)
       } catch (e) {
         store.showNotification('Error al cargar dominios', 'danger')
       } finally {
         loading.value = false
+      }
+    }
+
+    const loadDiskInfo = async (domain) => {
+      try {
+        const info = await api.getDomainDisk(domain.id)
+        diskInfo.value = { ...diskInfo.value, [domain.id]: info }
+      } catch (e) {
+        // silencioso: el botón quedará disponible para reintentar
+      }
+    }
+
+    const formatMB = (mb) => {
+      if (!mb) return '0 MB'
+      if (mb >= 1024) return (mb / 1024).toFixed(mb % 1024 === 0 ? 0 : 1) + ' GB'
+      return mb + ' MB'
+    }
+
+    // ─── Logs ────────────────────────────────────────────────────────────────
+    const openLogsViewer = (domain) => {
+      logsDomain.value = domain
+      logTab.value = 'access'
+      showLogsViewer.value = true
+      loadLogs()
+    }
+    const closeLogsViewer = () => {
+      showLogsViewer.value = false
+      logsDomain.value = null
+      logsData.value = { exists: false, lines: [], path: '' }
+    }
+    const switchLog = (t) => {
+      logTab.value = t
+      loadLogs()
+    }
+    const loadLogs = async () => {
+      if (!logsDomain.value) return
+      logsLoading.value = true
+      try {
+        logsData.value = await api.getDomainLogs(logsDomain.value.id, logTab.value, logLines.value)
+      } catch (e) {
+        store.showNotification('Error cargando logs: ' + e.message, 'danger')
+        logsData.value = { exists: false, lines: [], path: '', message: e.message }
+      } finally {
+        logsLoading.value = false
       }
     }
 
@@ -273,6 +384,10 @@ export default {
       openFileManager,
       deleteDomainConfirm, changePHP,
       loadDomains, reloadDomains, getUserName,
+      // Logs + disk
+      showLogsViewer, logsDomain, logTab, logLines, logsData, logsLoading,
+      diskInfo, loadDiskInfo, formatMB,
+      openLogsViewer, closeLogsViewer, switchLog, loadLogs,
     }
   }
 }

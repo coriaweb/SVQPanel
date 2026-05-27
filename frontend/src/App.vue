@@ -20,6 +20,11 @@
               <i class="bi bi-people"></i> Usuarios
             </router-link>
           </li>
+          <li v-if="['admin','reseller'].includes(currentUser?.role)">
+            <router-link to="/plans" :class="{active: route.path === '/plans'}">
+              <i class="bi bi-stack"></i> Planes
+            </router-link>
+          </li>
           <li>
             <router-link to="/domains" :class="{active: route.path === '/domains'}">
               <i class="bi bi-globe"></i> Dominios

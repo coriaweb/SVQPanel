@@ -57,6 +57,11 @@
         </a>
       </li>
       <li class="nav-item">
+        <a class="nav-link" :class="{active: tab==='crowdsec'}" href="#" @click.prevent="changeTab('crowdsec')">
+          <i class="bi bi-shield-check me-1"></i> CrowdSec
+        </a>
+      </li>
+      <li class="nav-item">
         <a class="nav-link" :class="{active: tab==='connections'}" href="#" @click.prevent="changeTab('connections')">
           <i class="bi bi-broadcast me-1"></i> Conexiones
         </a>
@@ -269,6 +274,220 @@
               </tr>
             </tbody>
           </table>
+        </div>
+      </div>
+    </div>
+
+    <!-- ═══════════════════════════ CrowdSec ═══════════════════════════ -->
+    <div v-if="tab==='crowdsec'">
+      <!-- Banner: no instalado / no corriendo -->
+      <div v-if="csStatus && !csStatus.installed" class="alert alert-warning d-flex align-items-center">
+        <i class="bi bi-exclamation-triangle-fill me-2"></i>
+        <div>
+          <strong>CrowdSec no está instalado.</strong>
+          Vuelve a ejecutar el instalador con la opción CrowdSec activada, o instala manualmente:
+          <code>curl -s https://install.crowdsec.net | bash &amp;&amp; apt install crowdsec crowdsec-firewall-bouncer-nftables</code>
+        </div>
+      </div>
+      <div v-else-if="csStatus && !csStatus.running" class="alert alert-danger d-flex align-items-center">
+        <i class="bi bi-x-octagon-fill me-2"></i>
+        <div>
+          <strong>CrowdSec instalado pero no está corriendo.</strong>
+          Revisa <code>journalctl -u crowdsec</code> y arranca con <code>systemctl start crowdsec</code>.
+        </div>
+      </div>
+
+      <!-- Resumen -->
+      <div v-if="csStatus && csStatus.running" class="row g-3 mb-3">
+        <div class="col-md-3"><div class="card text-center shadow-sm"><div class="card-body">
+          <div class="text-muted small">Versión</div>
+          <div class="h5 mb-0 font-monospace">{{ csStatus.version || '—' }}</div>
+        </div></div></div>
+        <div class="col-md-3"><div class="card text-center shadow-sm"><div class="card-body">
+          <div class="text-muted small">Decisiones activas</div>
+          <div class="display-6">{{ csStatus.decisions }}</div>
+        </div></div></div>
+        <div class="col-md-3"><div class="card text-center shadow-sm"><div class="card-body">
+          <div class="text-muted small">Bouncers</div>
+          <div class="display-6">{{ csStatus.bouncers }}</div>
+        </div></div></div>
+        <div class="col-md-3"><div class="card text-center shadow-sm"><div class="card-body">
+          <div class="text-muted small">Colecciones</div>
+          <div class="display-6">{{ csStatus.collections }}</div>
+        </div></div></div>
+      </div>
+
+      <!-- Sub-tabs CrowdSec -->
+      <div v-if="csStatus && csStatus.running">
+        <ul class="nav nav-pills mb-3">
+          <li class="nav-item">
+            <a class="nav-link" :class="{active: csTab==='decisions'}" href="#" @click.prevent="changeCsTab('decisions')">
+              <i class="bi bi-slash-circle me-1"></i> Decisiones
+            </a>
+          </li>
+          <li class="nav-item">
+            <a class="nav-link" :class="{active: csTab==='alerts'}" href="#" @click.prevent="changeCsTab('alerts')">
+              <i class="bi bi-bell me-1"></i> Alertas
+            </a>
+          </li>
+          <li class="nav-item">
+            <a class="nav-link" :class="{active: csTab==='bouncers'}" href="#" @click.prevent="changeCsTab('bouncers')">
+              <i class="bi bi-shield-shaded me-1"></i> Bouncers
+            </a>
+          </li>
+          <li class="nav-item">
+            <a class="nav-link" :class="{active: csTab==='collections'}" href="#" @click.prevent="changeCsTab('collections')">
+              <i class="bi bi-collection me-1"></i> Colecciones
+            </a>
+          </li>
+        </ul>
+
+        <!-- Decisiones -->
+        <div v-if="csTab==='decisions'" class="card shadow-sm">
+          <div class="card-header d-flex justify-content-between">
+            <h5 class="mb-0">Decisiones activas (bans CrowdSec)</h5>
+            <div class="d-flex gap-2">
+              <button class="btn btn-sm btn-outline-secondary" @click="loadCsDecisions">
+                <i class="bi bi-arrow-clockwise"></i>
+              </button>
+              <button class="btn btn-sm btn-success" @click="openCsBan">
+                <i class="bi bi-plus-lg me-1"></i> Decisión manual
+              </button>
+            </div>
+          </div>
+          <div class="card-body p-0">
+            <div v-if="!csDecisions.length" class="text-center py-4 text-muted">
+              No hay decisiones activas. Buena señal — o nada ha llegado a CrowdSec todavía.
+            </div>
+            <table v-else class="table table-sm table-hover mb-0">
+              <thead class="table-light">
+                <tr>
+                  <th>IP / valor</th><th>Tipo</th><th>Escenario</th>
+                  <th>Origen</th><th>Duración</th><th>Country</th>
+                  <th class="text-end">Acción</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr v-for="d in csDecisions" :key="d.id">
+                  <td class="font-monospace">{{ d.value }}</td>
+                  <td>
+                    <span class="badge" :class="d.type === 'ban' ? 'bg-danger' : 'bg-warning text-dark'">
+                      {{ d.type }}
+                    </span>
+                  </td>
+                  <td class="small">{{ d.scenario || '—' }}</td>
+                  <td class="small">{{ d.origin || '—' }}</td>
+                  <td class="small font-monospace">{{ d.duration || '—' }}</td>
+                  <td class="small">{{ d.country || '—' }}</td>
+                  <td class="text-end">
+                    <button class="btn btn-sm btn-outline-success" @click="deleteCsDecision(d)" title="Eliminar decisión">
+                      <i class="bi bi-unlock"></i>
+                    </button>
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        <!-- Alertas -->
+        <div v-if="csTab==='alerts'" class="card shadow-sm">
+          <div class="card-header d-flex justify-content-between">
+            <h5 class="mb-0">Alertas recientes</h5>
+            <button class="btn btn-sm btn-outline-secondary" @click="loadCsAlerts">
+              <i class="bi bi-arrow-clockwise"></i>
+            </button>
+          </div>
+          <div class="card-body p-0">
+            <div v-if="!csAlerts.length" class="text-center py-4 text-muted">No hay alertas.</div>
+            <table v-else class="table table-sm table-hover mb-0">
+              <thead class="table-light">
+                <tr>
+                  <th>Fecha</th><th>IP origen</th><th>Escenario</th>
+                  <th>Eventos</th><th>País</th><th>Mensaje</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr v-for="a in csAlerts" :key="a.id">
+                  <td class="small">{{ formatDate(a.created_at) }}</td>
+                  <td class="font-monospace small">{{ a.source_ip || '—' }}</td>
+                  <td class="small">{{ a.scenario }}</td>
+                  <td class="text-center small">{{ a.events_count || 0 }}</td>
+                  <td class="small">{{ a.source_country || '—' }}</td>
+                  <td class="small text-muted text-truncate" style="max-width: 350px;" :title="a.message">
+                    {{ a.message || '—' }}
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        <!-- Bouncers -->
+        <div v-if="csTab==='bouncers'" class="card shadow-sm">
+          <div class="card-header d-flex justify-content-between">
+            <h5 class="mb-0">Bouncers registrados</h5>
+            <button class="btn btn-sm btn-outline-secondary" @click="loadCsBouncers">
+              <i class="bi bi-arrow-clockwise"></i>
+            </button>
+          </div>
+          <div class="card-body p-0">
+            <div v-if="!csBouncers.length" class="text-center py-4 text-muted">
+              No hay bouncers. Sin bouncer las decisiones se almacenan pero no se aplican.
+            </div>
+            <table v-else class="table table-sm mb-0">
+              <thead class="table-light">
+                <tr>
+                  <th>Nombre</th><th>Tipo</th><th>Versión</th>
+                  <th>IP</th><th>Último pull</th><th>Estado</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr v-for="b in csBouncers" :key="b.name">
+                  <td><strong>{{ b.name }}</strong></td>
+                  <td><code class="small">{{ b.type || '—' }}</code></td>
+                  <td class="small">{{ b.version || '—' }}</td>
+                  <td class="font-monospace small">{{ b.ip_address || '—' }}</td>
+                  <td class="small">{{ formatDate(b.last_pull) }}</td>
+                  <td>
+                    <span class="badge" :class="b.revoked ? 'bg-danger' : 'bg-success'">
+                      {{ b.revoked ? 'revoked' : 'activo' }}
+                    </span>
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        <!-- Colecciones -->
+        <div v-if="csTab==='collections'" class="card shadow-sm">
+          <div class="card-header d-flex justify-content-between">
+            <h5 class="mb-0">Colecciones instaladas (parsers + escenarios)</h5>
+            <button class="btn btn-sm btn-outline-secondary" @click="loadCsCollections">
+              <i class="bi bi-arrow-clockwise"></i>
+            </button>
+          </div>
+          <div class="card-body p-0">
+            <div v-if="!csCollections.length" class="text-center py-4 text-muted">
+              No hay colecciones. Instala con <code>cscli collections install crowdsecurity/nginx</code>.
+            </div>
+            <table v-else class="table table-sm mb-0">
+              <thead class="table-light">
+                <tr>
+                  <th>Nombre</th><th>Versión</th><th>Estado</th><th>Descripción</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr v-for="c in csCollections" :key="c.name">
+                  <td><code class="small">{{ c.name }}</code></td>
+                  <td class="small">{{ c.version || '—' }}</td>
+                  <td class="small">{{ c.status || '—' }}</td>
+                  <td class="small text-muted">{{ c.description || '—' }}</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
         </div>
       </div>
     </div>
@@ -499,6 +718,37 @@
       </form>
     </Modal>
 
+    <!-- ═══════════════════════════ Modal CrowdSec ban manual ═══════════════════════════ -->
+    <Modal :isOpen="showCsBan" @close="showCsBan=false" title="Decisión manual CrowdSec">
+      <form @submit.prevent="submitCsBan">
+        <div class="row g-2">
+          <div class="col-md-6">
+            <label class="form-label small">IP o CIDR</label>
+            <input class="form-control form-control-sm" v-model="csBanForm.ip" required placeholder="1.2.3.4 o 10.0.0.0/24">
+          </div>
+          <div class="col-md-3">
+            <label class="form-label small">Duración</label>
+            <input class="form-control form-control-sm" v-model="csBanForm.duration" placeholder="4h, 1d, 30m">
+          </div>
+          <div class="col-md-3">
+            <label class="form-label small">Tipo</label>
+            <select class="form-select form-select-sm" v-model="csBanForm.type">
+              <option value="ban">ban</option>
+              <option value="captcha">captcha</option>
+            </select>
+          </div>
+          <div class="col-12">
+            <label class="form-label small">Razón (escenario)</label>
+            <input class="form-control form-control-sm" v-model="csBanForm.reason" maxlength="255" placeholder="manual / abuso reportado">
+          </div>
+        </div>
+        <div class="text-end mt-3">
+          <button type="button" class="btn btn-sm btn-outline-secondary me-2" @click="showCsBan=false">Cancelar</button>
+          <button type="submit" class="btn btn-sm btn-danger" :disabled="saving">Crear decisión</button>
+        </div>
+      </form>
+    </Modal>
+
     <Modal :isOpen="showAddIgnore" @close="showAddIgnore=false" title="Añadir IP a whitelist permanente">
       <form @submit.prevent="submitAddIgnore">
         <label class="form-label small">IP o CIDR</label>
@@ -538,6 +788,16 @@ const connListening = ref(true)
 
 const audit         = ref([])
 const auditCategory = ref('')
+
+// CrowdSec
+const csStatus      = ref(null)
+const csTab         = ref('decisions')
+const csDecisions   = ref([])
+const csAlerts      = ref([])
+const csBouncers    = ref([])
+const csCollections = ref([])
+const showCsBan     = ref(false)
+const csBanForm     = ref({ ip: '', duration: '4h', reason: '', type: 'ban' })
 
 const saving = ref(false)
 
@@ -626,6 +886,66 @@ function changeTab(t) {
   if (t === 'iplists')     loadIpLists()
   if (t === 'connections') loadConnections()
   if (t === 'audit')       loadAudit()
+  if (t === 'crowdsec')    loadCrowdsec()
+}
+
+// ─── CrowdSec ────────────────────────────────────────────────────────────────
+async function loadCrowdsec() {
+  try { csStatus.value = await api.getCrowdsecStatus() }
+  catch (e) { console.error(e); csStatus.value = { installed: false, running: false } }
+  if (csStatus.value?.running) {
+    changeCsTab(csTab.value)
+  }
+}
+
+function changeCsTab(t) {
+  csTab.value = t
+  if (t === 'decisions')   loadCsDecisions()
+  if (t === 'alerts')      loadCsAlerts()
+  if (t === 'bouncers')    loadCsBouncers()
+  if (t === 'collections') loadCsCollections()
+}
+
+async function loadCsDecisions() {
+  try { csDecisions.value = await api.getCrowdsecDecisions() }
+  catch (e) { alert('CrowdSec decisiones: ' + e.message) }
+}
+async function loadCsAlerts() {
+  try { csAlerts.value = await api.getCrowdsecAlerts(50) }
+  catch (e) { alert('CrowdSec alertas: ' + e.message) }
+}
+async function loadCsBouncers() {
+  try { csBouncers.value = await api.getCrowdsecBouncers() }
+  catch (e) { alert('CrowdSec bouncers: ' + e.message) }
+}
+async function loadCsCollections() {
+  try { csCollections.value = await api.getCrowdsecCollections() }
+  catch (e) { alert('CrowdSec colecciones: ' + e.message) }
+}
+
+function openCsBan() {
+  csBanForm.value = { ip: '', duration: '4h', reason: '', type: 'ban' }
+  showCsBan.value = true
+}
+async function submitCsBan() {
+  saving.value = true
+  try {
+    const payload = { ...csBanForm.value }
+    if (!payload.reason) delete payload.reason
+    await api.addCrowdsecDecision(payload)
+    showCsBan.value = false
+    await loadCsDecisions()
+    csStatus.value = await api.getCrowdsecStatus()
+  } catch (e) { alert('CrowdSec: ' + e.message) }
+  finally { saving.value = false }
+}
+async function deleteCsDecision(d) {
+  if (!confirm(`¿Eliminar decisión #${d.id} sobre ${d.value}?`)) return
+  try {
+    await api.deleteCrowdsecDecisionById(d.id)
+    await loadCsDecisions()
+    csStatus.value = await api.getCrowdsecStatus()
+  } catch (e) { alert(e.message) }
 }
 
 // ─── Firewall actions ────────────────────────────────────────────────────────

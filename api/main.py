@@ -13,7 +13,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from api.models.database import create_tables, get_db
 from config.config import PANEL_NAME, PANEL_VERSION
 
-from api.routes import users, domains, php, ssl, ipv6, auth, settings, dns, system, mail, databases, firewall, fail2ban, security_monitor, ip_lists, file_manager
+from api.routes import users, domains, php, ssl, ipv6, auth, settings, dns, system, mail, databases, firewall, fail2ban, security_monitor, ip_lists, file_manager, crowdsec, plans
 
 # Crear app FastAPI
 app = FastAPI(
@@ -214,6 +214,39 @@ def _run_migrations():
         "CREATE INDEX IF NOT EXISTS ix_security_audit_category           ON security_audit_log(category)",
         "CREATE INDEX IF NOT EXISTS ix_security_audit_created_at         ON security_audit_log(created_at)",
         "CREATE INDEX IF NOT EXISTS ix_security_audit_category_created   ON security_audit_log(category, created_at DESC)",
+        # ─────────────────────────────────────────────────────────────────
+        # Fase 13: Planes (plantillas de límites) — snapshot a usuarios
+        # ─────────────────────────────────────────────────────────────────
+        """CREATE TABLE IF NOT EXISTS plans (
+            id                      SERIAL PRIMARY KEY,
+            name                    VARCHAR(64)  NOT NULL,
+            description             VARCHAR(255),
+            owner_id                INTEGER      REFERENCES users(id) ON DELETE CASCADE,
+            disk_quota_mb           INTEGER      NOT NULL DEFAULT 1024,
+            traffic_quota_mb_month  INTEGER      NOT NULL DEFAULT 10240,
+            domains_limit           INTEGER      NOT NULL DEFAULT 5,
+            databases_limit         INTEGER      NOT NULL DEFAULT 5,
+            mailboxes_limit         INTEGER      NOT NULL DEFAULT 10,
+            dns_zones_limit         INTEGER      NOT NULL DEFAULT 10,
+            is_default              BOOLEAN      NOT NULL DEFAULT FALSE,
+            created_at              TIMESTAMP    NOT NULL DEFAULT NOW(),
+            updated_at              TIMESTAMP    DEFAULT NOW(),
+            CONSTRAINT uq_plans_owner_name UNIQUE (owner_id, name)
+        )""",
+        "CREATE INDEX IF NOT EXISTS ix_plans_owner_id ON plans(owner_id)",
+        # Solo 1 plan default por owner (índice parcial donde is_default=TRUE)
+        "CREATE UNIQUE INDEX IF NOT EXISTS uq_plans_default_per_owner ON plans(COALESCE(owner_id, 0)) WHERE is_default = TRUE",
+        # Campos en users que el plan rellena al asignarlo (snapshot)
+        "ALTER TABLE users ADD COLUMN IF NOT EXISTS plan_id INTEGER REFERENCES plans(id) ON DELETE SET NULL",
+        "ALTER TABLE users ADD COLUMN IF NOT EXISTS plan_name VARCHAR(64)",
+        "ALTER TABLE users ADD COLUMN IF NOT EXISTS disk_quota_mb INTEGER DEFAULT 1024",
+        "ALTER TABLE users ADD COLUMN IF NOT EXISTS traffic_quota_mb_month INTEGER DEFAULT 10240",
+        "ALTER TABLE users ADD COLUMN IF NOT EXISTS mailboxes_limit INTEGER DEFAULT 10",
+        "ALTER TABLE users ADD COLUMN IF NOT EXISTS dns_zones_limit INTEGER DEFAULT 10",
+        # Stats que el cron va actualizando (Fase 13.2)
+        "ALTER TABLE users ADD COLUMN IF NOT EXISTS disk_used_mb INTEGER DEFAULT 0",
+        "ALTER TABLE users ADD COLUMN IF NOT EXISTS traffic_used_mb_month INTEGER DEFAULT 0",
+        "ALTER TABLE users ADD COLUMN IF NOT EXISTS stats_updated_at TIMESTAMP",
     ]
     with engine.connect() as conn:
         for sql in migrations:
@@ -266,6 +299,8 @@ app.include_router(firewall.router,         prefix="/api", tags=["Firewall"])
 app.include_router(fail2ban.router,         prefix="/api", tags=["Fail2ban"])
 app.include_router(security_monitor.router, prefix="/api", tags=["Security Monitor"])
 app.include_router(ip_lists.router,         prefix="/api", tags=["IP Lists"])
+app.include_router(crowdsec.router,         prefix="/api", tags=["CrowdSec"])
+app.include_router(plans.router,            prefix="/api", tags=["Plans"])
 app.include_router(file_manager.router,     prefix="/api", tags=["File Manager"])
 # Autoconfig/Autodiscover sin prefijo (clientes de correo los buscan en rutas raíz)
 app.include_router(mail.router, prefix="", include_in_schema=False)

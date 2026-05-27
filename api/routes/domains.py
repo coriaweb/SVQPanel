@@ -309,3 +309,124 @@ async def delete_domain(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Error al eliminar dominio: {str(e)}"
         )
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Logs y disco por dominio (Fase 13.3)
+# ─────────────────────────────────────────────────────────────────────────────
+def _domain_owner_dir(domain: Domain, db: Session) -> str:
+    """Devuelve /home/{owner}/web/{dominio}"""
+    owner = db.query(User).filter(User.id == domain.user_id).first()
+    if not owner:
+        raise HTTPException(status_code=404, detail="Propietario del dominio no encontrado")
+    return f"/home/{owner.username}/web/{domain.domain_name}"
+
+
+def _check_access(current_user: User, domain: Domain, db: Session) -> None:
+    if current_user.role == "admin":
+        return
+    if domain.user_id == current_user.id:
+        return
+    if current_user.role == "reseller":
+        owner = db.query(User).filter(User.id == domain.user_id).first()
+        if owner and owner.parent_id == current_user.id:
+            return
+    raise HTTPException(status_code=403, detail="No tienes acceso a este dominio")
+
+
+@router.get("/domains/{domain_id}/logs")
+async def get_domain_logs(
+    domain_id:   int,
+    log_type:    str = Query("access", pattern="^(access|error)$", alias="type"),
+    lines:       int = Query(200, ge=1, le=5000),
+    current_user: User = Depends(require_auth),
+    db:           Session = Depends(get_db),
+):
+    """
+    Devuelve las últimas N líneas del log nginx (access o error) del dominio.
+    Path: /home/{user}/web/{dominio}/logs/nginx.{access|error}.log
+    """
+    import os
+    from collections import deque
+
+    domain = db.query(Domain).filter(Domain.id == domain_id).first()
+    if not domain:
+        raise HTTPException(status_code=404, detail="Dominio no encontrado")
+    _check_access(current_user, domain, db)
+
+    base = _domain_owner_dir(domain, db)
+    log_path = os.path.join(base, "logs", f"nginx.{log_type}.log")
+
+    if not os.path.isfile(log_path):
+        return {
+            "domain":   domain.domain_name,
+            "type":     log_type,
+            "path":     log_path,
+            "exists":   False,
+            "lines":    [],
+            "message":  "El archivo de log aún no existe (sin tráfico todavía)",
+        }
+
+    try:
+        with open(log_path, "r", encoding="utf-8", errors="replace") as f:
+            tail = deque(f, maxlen=lines)
+        return {
+            "domain":   domain.domain_name,
+            "type":     log_type,
+            "path":     log_path,
+            "exists":   True,
+            "lines":    [l.rstrip("\n") for l in tail],
+            "count":    len(tail),
+        }
+    except OSError as e:
+        raise HTTPException(status_code=500, detail=f"Error leyendo log: {e}")
+
+
+@router.get("/domains/{domain_id}/disk")
+async def get_domain_disk(
+    domain_id:   int,
+    current_user: User = Depends(require_auth),
+    db:           Session = Depends(get_db),
+):
+    """
+    Devuelve el tamaño en disco del directorio del dominio:
+        /home/{user}/web/{dominio}/public_html (solo web)
+        + total del dominio entero (incluye logs, tmp...)
+    """
+    import os
+    import subprocess
+
+    domain = db.query(Domain).filter(Domain.id == domain_id).first()
+    if not domain:
+        raise HTTPException(status_code=404, detail="Dominio no encontrado")
+    _check_access(current_user, domain, db)
+
+    base = _domain_owner_dir(domain, db)
+
+    def _du_bytes(path: str) -> int:
+        if not os.path.isdir(path):
+            return 0
+        try:
+            r = subprocess.run(
+                ["/usr/bin/du", "-sb", "--apparent-size", path],
+                capture_output=True, text=True, timeout=60,
+            )
+            if r.returncode != 0:
+                return 0
+            return int(r.stdout.split()[0])
+        except (subprocess.TimeoutExpired, ValueError, IndexError, FileNotFoundError):
+            return 0
+
+    public_bytes = _du_bytes(os.path.join(base, "public_html"))
+    total_bytes  = _du_bytes(base)
+    logs_bytes   = _du_bytes(os.path.join(base, "logs"))
+
+    return {
+        "domain":           domain.domain_name,
+        "public_html_mb":   public_bytes // (1024 * 1024),
+        "public_html_bytes": public_bytes,
+        "logs_mb":          logs_bytes // (1024 * 1024),
+        "logs_bytes":       logs_bytes,
+        "total_mb":         total_bytes // (1024 * 1024),
+        "total_bytes":      total_bytes,
+    }

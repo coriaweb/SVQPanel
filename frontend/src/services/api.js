@@ -495,6 +495,41 @@ class APIClient {
     return this.get(`/api/firewall/ip-lists/${id}/preview?limit=${limit}`)
   }
 
+  // Logs y disk por dominio
+  getDomainLogs(domainId, type = 'access', lines = 200) {
+    return this.get(`/api/domains/${domainId}/logs?type=${type}&lines=${lines}`)
+  }
+  getDomainDisk(domainId) {
+    return this.get(`/api/domains/${domainId}/disk`)
+  }
+
+  // Plans
+  getPlans()                      { return this.get('/api/plans') }
+  getPlan(id)                     { return this.get(`/api/plans/${id}`) }
+  createPlan(data)                { return this.post('/api/plans', data) }
+  updatePlan(id, data)            { return this.put(`/api/plans/${id}`, data) }
+  deletePlan(id)                  { return this.delete(`/api/plans/${id}`) }
+  assignPlanToUser(userId, planId) {
+    return this.post(`/api/users/${userId}/assign-plan/${planId}`, {})
+  }
+  unassignPlanFromUser(userId)    {
+    return this.post(`/api/users/${userId}/unassign-plan`, {})
+  }
+
+  // CrowdSec
+  getCrowdsecStatus()             { return this.get('/api/crowdsec/status') }
+  getCrowdsecCapi()               { return this.get('/api/crowdsec/capi') }
+  getCrowdsecDecisions()          { return this.get('/api/crowdsec/decisions') }
+  addCrowdsecDecision(data)       { return this.post('/api/crowdsec/decisions', data) }
+  deleteCrowdsecDecisionById(id)  { return this.delete(`/api/crowdsec/decisions/by-id/${id}`) }
+  deleteCrowdsecDecisionByIp(ip)  {
+    return this.delete(`/api/crowdsec/decisions/by-ip/${encodeURIComponent(ip)}`)
+  }
+  getCrowdsecAlerts(limit = 50)   { return this.get(`/api/crowdsec/alerts?limit=${limit}`) }
+  getCrowdsecBouncers()           { return this.get('/api/crowdsec/bouncers') }
+  getCrowdsecCollections()        { return this.get('/api/crowdsec/collections') }
+  getCrowdsecMetrics()            { return this.get('/api/crowdsec/metrics') }
+
   // Security monitor
   getSecurityAudit(category = null, limit = 100) {
     let url = `/api/security/audit?limit=${limit}`

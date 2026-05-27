@@ -21,10 +21,11 @@
             <thead class="table-light">
               <tr>
                 <th>Usuario</th>
-                <th>Email</th>
-                <th>Nombre</th>
+                <th>Plan</th>
                 <th>Rol</th>
                 <th>Dominios</th>
+                <th style="min-width: 160px;">Disco</th>
+                <th style="min-width: 160px;">Tráfico (mes)</th>
                 <th>Estado</th>
                 <th>Acciones</th>
               </tr>
@@ -34,9 +35,15 @@
                 <td>
                   <i class="bi bi-person-circle text-secondary me-1"></i>
                   <strong>{{ user.username }}</strong>
+                  <div class="small text-muted">{{ user.email }}</div>
+                  <div v-if="user.first_name || user.last_name" class="small text-muted">
+                    {{ [user.first_name, user.last_name].filter(Boolean).join(' ') }}
+                  </div>
                 </td>
-                <td>{{ user.email }}</td>
-                <td>{{ [user.first_name, user.last_name].filter(Boolean).join(' ') || '—' }}</td>
+                <td>
+                  <span v-if="user.plan_name" class="badge bg-info">{{ user.plan_name }}</span>
+                  <span v-else class="text-muted small">—</span>
+                </td>
                 <td>
                   <span :class="roleBadgeClass(user.role)" class="badge">
                     {{ roleLabel(user.role) }}
@@ -47,6 +54,12 @@
                     <i class="bi bi-globe2 me-1"></i>
                     {{ user.domains_limit === 0 ? '∞' : user.domains_limit }}
                   </span>
+                </td>
+                <td>
+                  <UsageBar :used="user.disk_used_mb || 0" :quota="user.disk_quota_mb || 0" />
+                </td>
+                <td>
+                  <UsageBar :used="user.traffic_used_mb_month || 0" :quota="user.traffic_quota_mb_month || 0" />
                 </td>
                 <td>
                   <span v-if="user.is_active" class="badge bg-success">Activo</span>
@@ -94,12 +107,14 @@ import { useMainStore } from '../stores/useMainStore'
 import api from '../services/api'
 import Modal from '../components/Modal.vue'
 import UserForm from '../components/UserForm.vue'
+import UsageBar from '../components/UsageBar.vue'
 
 export default {
   name: 'Users',
   components: {
     Modal,
-    UserForm
+    UserForm,
+    UsageBar
   },
   setup() {
     const store = useMainStore()

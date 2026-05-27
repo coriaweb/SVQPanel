@@ -39,6 +39,18 @@ class UserResponse(BaseModel):
     is_active: bool
     domains_limit: int
     parent_id: Optional[int] = None
+    # Plan + límites extendidos (Fase 13)
+    plan_id:                Optional[int] = None
+    plan_name:              Optional[str] = None
+    databases_limit:        Optional[int] = 0
+    mailboxes_limit:        Optional[int] = 0
+    dns_zones_limit:        Optional[int] = 0
+    disk_quota_mb:          Optional[int] = 0
+    traffic_quota_mb_month: Optional[int] = 0
+    # Stats (Fase 13.2 — pueden ser 0 si el cron aún no corrió)
+    disk_used_mb:           Optional[int] = 0
+    traffic_used_mb_month:  Optional[int] = 0
+    stats_updated_at:       Optional[datetime] = None
     created_at: Optional[datetime] = None
     updated_at: Optional[datetime] = None
     last_login: Optional[datetime] = None
