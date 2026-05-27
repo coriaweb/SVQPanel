@@ -7,6 +7,7 @@ Todas las operaciones quedan encerradas en el public_html del dominio elegido.
 import mimetypes
 import os
 import shutil
+import zipfile
 from datetime import datetime
 from pathlib import Path
 from typing import List, Optional
@@ -26,6 +27,7 @@ router = APIRouter()
 FILE_MANAGER_ENABLED = os.getenv("FILE_MANAGER_ENABLED", "true").lower() == "true"
 FILE_MANAGER_MAX_UPLOAD_MB = int(os.getenv("FILE_MANAGER_MAX_UPLOAD_MB", "100"))
 MAX_TEXT_FILE_BYTES = int(os.getenv("FILE_MANAGER_MAX_TEXT_FILE_MB", "2")) * 1024 * 1024
+MAX_EXTRACT_BYTES = int(os.getenv("FILE_MANAGER_MAX_EXTRACT_MB", "500")) * 1024 * 1024
 
 
 class FileEntry(BaseModel):
@@ -63,6 +65,11 @@ class DeleteRequest(BaseModel):
 
 class TextFileUpdate(BaseModel):
     content: str
+
+
+class ExtractRequest(BaseModel):
+    path: str = Field(..., min_length=1, description="Ruta relativa al ZIP dentro de public_html")
+    dest: str = Field("", description="Carpeta destino relativa; vacío = misma carpeta del ZIP")
 
 
 def _check_enabled():
@@ -325,3 +332,83 @@ def delete_entry(
     else:
         os.remove(target)
     return None
+
+
+@router.post("/file-manager/domains/{domain_id}/extract", tags=["File Manager"])
+def extract_zip(
+    domain_id: int,
+    payload: ExtractRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_auth),
+):
+    """Extrae un archivo ZIP dentro del dominio.
+
+    Por defecto extrae en la misma carpeta donde está el ZIP.
+    Se puede indicar un ``dest`` relativo para extraer en otro lugar.
+    Protege contra path-traversal y ZIP bombs (límite FILE_MANAGER_MAX_EXTRACT_MB).
+    """
+    _check_enabled()
+    domain = _get_domain_or_404(domain_id, db, current_user)
+    root = os.path.realpath(domain.public_html)
+    zip_path = _safe_join(root, payload.path)
+
+    if not os.path.isfile(zip_path):
+        raise HTTPException(status_code=404, detail="Archivo ZIP no encontrado")
+    if not zip_path.lower().endswith(".zip"):
+        raise HTTPException(status_code=400, detail="El archivo no es un ZIP")
+
+    # Carpeta destino
+    if payload.dest:
+        dest_dir = _safe_join(root, payload.dest)
+    else:
+        dest_dir = os.path.dirname(zip_path)
+    os.makedirs(dest_dir, exist_ok=True)
+
+    try:
+        with zipfile.ZipFile(zip_path, "r") as zf:
+            members = zf.infolist()
+
+            # — Seguridad: path traversal + ZIP bomb —
+            total_bytes = 0
+            for member in members:
+                member_real = os.path.realpath(os.path.join(dest_dir, member.filename))
+                if os.path.commonpath([root, member_real]) != root:
+                    raise HTTPException(
+                        status_code=400,
+                        detail=f"El ZIP contiene una ruta que escapa el dominio: {member.filename}",
+                    )
+                total_bytes += member.file_size
+                if total_bytes > MAX_EXTRACT_BYTES:
+                    raise HTTPException(
+                        status_code=413,
+                        detail=(
+                            f"El contenido descomprimido supera el límite de "
+                            f"{MAX_EXTRACT_BYTES // 1024 // 1024} MB"
+                        ),
+                    )
+
+            extracted_count = len(members)
+            zf.extractall(dest_dir)
+
+    except zipfile.BadZipFile:
+        raise HTTPException(status_code=400, detail="Archivo ZIP dañado o inválido")
+
+    # Cambiar propiedad de los ficheros recién extraídos al dueño del dominio
+    username = domain.user.username if domain.user else None
+    if username:
+        for dirpath, dirnames, filenames in os.walk(dest_dir):
+            try:
+                shutil.chown(dirpath, user=username, group=username)
+            except Exception:
+                pass
+            for fname in filenames:
+                try:
+                    shutil.chown(os.path.join(dirpath, fname), user=username, group=username)
+                except Exception:
+                    pass
+
+    return {
+        "status": "success",
+        "dest": _relative_path(root, dest_dir),
+        "files_extracted": extracted_count,
+    }

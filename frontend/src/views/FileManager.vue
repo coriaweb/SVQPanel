@@ -6,9 +6,11 @@
         <button class="btn btn-outline-secondary" @click="loadFiles" :disabled="!selectedDomainId || loading">
           <i class="bi bi-arrow-clockwise"></i>
         </button>
-        <label class="btn btn-primary mb-0" :class="{ disabled: !selectedDomainId }">
-          <i class="bi bi-upload"></i> Subir
-          <input type="file" multiple class="d-none" @change="uploadFiles" :disabled="!selectedDomainId" />
+        <label class="btn btn-primary mb-0" :class="{ disabled: !selectedDomainId || uploadProgress !== null }">
+          <span v-if="uploadProgress !== null" class="spinner-border spinner-border-sm me-1" role="status"></span>
+          <i v-else class="bi bi-upload"></i>
+          {{ uploadProgress !== null ? 'Subiendo…' : 'Subir' }}
+          <input type="file" multiple class="d-none" @change="uploadFiles" :disabled="!selectedDomainId || uploadProgress !== null" />
         </label>
       </div>
     </div>
@@ -16,6 +18,31 @@
     <div v-if="disabled" class="alert alert-warning">
       <i class="bi bi-exclamation-triangle-fill me-2"></i>
       El administrador de archivos no está habilitado en este servidor.
+    </div>
+
+    <!-- Barra de progreso de subida -->
+    <div v-if="uploadProgress !== null" class="card border-primary mb-3">
+      <div class="card-body py-2 px-3">
+        <div class="d-flex justify-content-between align-items-center mb-1">
+          <small class="fw-semibold text-primary">
+            <i class="bi bi-cloud-upload me-1"></i>
+            <span v-if="uploadProgress < 100">Subiendo archivos… {{ uploadProgress }}%</span>
+            <span v-else>Procesando en el servidor…</span>
+          </small>
+          <small class="text-muted">{{ uploadFileNames }}</small>
+        </div>
+        <div class="progress" style="height: 8px;">
+          <div
+            class="progress-bar progress-bar-striped"
+            :class="uploadProgress < 100 ? 'progress-bar-animated' : 'bg-success'"
+            role="progressbar"
+            :style="{ width: uploadProgress + '%' }"
+            :aria-valuenow="uploadProgress"
+            aria-valuemin="0"
+            aria-valuemax="100"
+          ></div>
+        </div>
+      </div>
     </div>
 
     <div class="row g-3 mb-3">
@@ -97,6 +124,16 @@
                     >
                       <i class="bi bi-download"></i>
                     </button>
+                    <button
+                      v-if="entry.type === 'file' && isZip(entry)"
+                      class="btn btn-outline-warning"
+                      title="Extraer ZIP aquí"
+                      :disabled="extracting === entry.path"
+                      @click="extractZip(entry)"
+                    >
+                      <span v-if="extracting === entry.path" class="spinner-border spinner-border-sm"></span>
+                      <i v-else class="bi bi-file-zip"></i>
+                    </button>
                     <button class="btn btn-outline-secondary" title="Renombrar" @click="renameEntry(entry)">
                       <i class="bi bi-input-cursor-text"></i>
                     </button>
@@ -152,6 +189,9 @@ export default {
     const editingPath = ref('')
     const editorContent = ref('')
     const saving = ref(false)
+    const uploadProgress = ref(null)   // null = idle, 0-100 = subiendo
+    const uploadFileNames = ref('')    // nombres de los archivos en subida
+    const extracting = ref(null)       // path del ZIP que se está extrayendo
 
     const breadcrumb = computed(() => '/' + (currentPath.value || ''))
 
@@ -214,14 +254,49 @@ export default {
     const uploadFiles = async (event) => {
       const files = event.target.files
       if (!files?.length) return
+
+      // Resumen de nombres para mostrar en la barra
+      const names = Array.from(files).map(f => f.name)
+      uploadFileNames.value = names.length <= 2
+        ? names.join(', ')
+        : `${names[0]} y ${names.length - 1} más`
+
+      uploadProgress.value = 0
       try {
-        await api.uploadDomainFiles(selectedDomainId.value, currentPath.value, files)
-        store.showNotification('Archivos subidos', 'success')
+        await api.uploadDomainFiles(
+          selectedDomainId.value,
+          currentPath.value,
+          files,
+          (pct) => { uploadProgress.value = pct }
+        )
+        store.showNotification(
+          `${files.length} archivo${files.length > 1 ? 's' : ''} subido${files.length > 1 ? 's' : ''} correctamente`,
+          'success'
+        )
         await loadFiles()
       } catch (error) {
         store.showNotification(`Error subiendo archivos: ${error.message}`, 'danger')
       } finally {
+        uploadProgress.value = null
+        uploadFileNames.value = ''
         event.target.value = ''
+      }
+    }
+
+    const extractZip = async (entry) => {
+      if (!confirm(`¿Extraer "${entry.name}" en esta carpeta?`)) return
+      extracting.value = entry.path
+      try {
+        const result = await api.extractDomainZip(selectedDomainId.value, entry.path)
+        store.showNotification(
+          `ZIP extraído correctamente (${result.files_extracted} elementos)`,
+          'success'
+        )
+        await loadFiles()
+      } catch (error) {
+        store.showNotification(`Error extrayendo ZIP: ${error.message}`, 'danger')
+      } finally {
+        extracting.value = null
       }
     }
 
@@ -312,14 +387,17 @@ export default {
       return editableExtensions.includes(ext)
     }
 
+    const isZip = (entry) => entry.name.toLowerCase().endsWith('.zip')
+
     onMounted(loadDomains)
 
     return {
       domains, entries, selectedDomainId, currentPath, breadcrumb, loading, disabled,
       showEditor, editingPath, editorContent, saving,
+      uploadProgress, uploadFileNames, extracting,
       loadFiles, changeDomain, openDirectory, goUp, createFolder, uploadFiles,
       editFile, saveFile, closeEditor, downloadFile, renameEntry, deleteEntry,
-      formatSize, formatDate, isEditable,
+      extractZip, formatSize, formatDate, isEditable, isZip,
     }
   },
 }

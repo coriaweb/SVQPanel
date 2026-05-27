@@ -169,18 +169,53 @@ class APIClient {
     return this.post(`/api/file-manager/domains/${domainId}/delete`, { path })
   }
 
-  uploadDomainFiles(domainId, path, files) {
-    const formData = new FormData()
-    formData.append('path', path || '')
-    Array.from(files || []).forEach(file => formData.append('files', file))
+  /**
+   * Sube archivos con soporte de progreso real vía XMLHttpRequest.
+   * @param {number} domainId
+   * @param {string} path  - carpeta destino relativa
+   * @param {FileList|File[]} files
+   * @param {(percent: number) => void} [onProgress] - callback 0–100
+   */
+  uploadDomainFiles(domainId, path, files, onProgress = null) {
+    return new Promise((resolve, reject) => {
+      const formData = new FormData()
+      formData.append('path', path || '')
+      Array.from(files || []).forEach(file => formData.append('files', file))
 
-    return this.request(`/api/file-manager/domains/${domainId}/upload`, {
-      method: 'POST',
-      headers: {
-        Authorization: `Bearer ${localStorage.getItem('token') || this.token}`
-      },
-      body: formData
+      const xhr = new XMLHttpRequest()
+      xhr.open('POST', `/api/file-manager/domains/${domainId}/upload`)
+      xhr.setRequestHeader('Authorization', `Bearer ${localStorage.getItem('token') || this.token}`)
+
+      if (onProgress) {
+        xhr.upload.addEventListener('progress', (e) => {
+          if (e.lengthComputable) onProgress(Math.round((e.loaded / e.total) * 100))
+        })
+      }
+
+      xhr.onload = () => {
+        const ct = xhr.getResponseHeader('content-type') || ''
+        let data = null
+        if (ct.includes('application/json')) {
+          try { data = JSON.parse(xhr.responseText) } catch { /* ignore */ }
+        }
+        if (xhr.status >= 200 && xhr.status < 300) {
+          resolve(data)
+        } else {
+          const msg = Array.isArray(data?.detail)
+            ? data.detail.map(e => `${e.loc?.slice(-1)[0] ?? ''}: ${e.msg}`).join(' | ')
+            : data?.detail || `Error ${xhr.status}`
+          reject(new Error(msg))
+        }
+      }
+
+      xhr.onerror = () => reject(new Error('Error de red durante la subida'))
+      xhr.onabort = () => reject(new Error('Subida cancelada'))
+      xhr.send(formData)
     })
+  }
+
+  extractDomainZip(domainId, path, dest = '') {
+    return this.post(`/api/file-manager/domains/${domainId}/extract`, { path, dest })
   }
 
   async downloadDomainFile(domainId, path) {
