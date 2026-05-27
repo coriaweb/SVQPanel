@@ -46,6 +46,11 @@
             </router-link>
           </li>
           <li v-if="currentUser?.is_admin">
+            <router-link to="/security" :class="{active: route.path === '/security'}">
+              <i class="bi bi-shield-lock"></i> Seguridad
+            </router-link>
+          </li>
+          <li v-if="currentUser?.is_admin">
             <router-link to="/settings" :class="{active: route.path === '/settings'}">
               <i class="bi bi-gear"></i> Configuración
             </router-link>

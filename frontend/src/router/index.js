@@ -8,6 +8,7 @@ import DNS from '../views/DNS.vue'
 import Mail from '../views/Mail.vue'
 import Settings from '../views/Settings.vue'
 import SystemServices from '../views/SystemServices.vue'
+import Security from '../views/Security.vue'
 import Login from '../views/Login.vue'
 
 const isAuthenticated = () => {
@@ -79,6 +80,12 @@ const routes = [
     path: '/system',
     name: 'SystemServices',
     component: SystemServices,
+    meta: { requiresAuth: true, requiresAdmin: true }
+  },
+  {
+    path: '/security',
+    name: 'Security',
+    component: Security,
     meta: { requiresAuth: true, requiresAdmin: true }
   }
 ]

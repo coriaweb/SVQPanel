@@ -364,6 +364,53 @@ class APIClient {
     )
   }
 
+  // ─── Seguridad (Fase 12) ────────────────────────────────────────────────
+
+  // Firewall
+  getFirewallStatus() { return this.get('/api/firewall/status') }
+  getFirewallRules(onlyActive = false) {
+    return this.get(`/api/firewall/rules${onlyActive ? '?only_active=true' : ''}`)
+  }
+  createFirewallRule(data)        { return this.post('/api/firewall/rules', data) }
+  updateFirewallRule(id, data)    { return this.put(`/api/firewall/rules/${id}`, data) }
+  deleteFirewallRule(id)          { return this.delete(`/api/firewall/rules/${id}`) }
+  applyFirewallRules()            { return this.post('/api/firewall/apply', {}) }
+
+  // Fail2ban
+  getFail2banStatus()             { return this.get('/api/fail2ban/status') }
+  getFail2banJails()              { return this.get('/api/fail2ban/jails') }
+  toggleFail2banJail(jail, enabled) {
+    return this.post(`/api/fail2ban/jails/${jail}/toggle?enabled=${enabled}`, {})
+  }
+  getBannedIps()                  { return this.get('/api/fail2ban/banned') }
+  unbanIp(ip, jail = null)        { return this.post('/api/fail2ban/unban', { ip, jail }) }
+  manualBanIp(data)               { return this.post('/api/fail2ban/ban', data) }
+  getFail2banWhitelist()          { return this.get('/api/fail2ban/whitelist') }
+  addFail2banWhitelist(ip)        { return this.post('/api/fail2ban/whitelist', { ip }) }
+  removeFail2banWhitelist(ip)     {
+    return this.delete(`/api/fail2ban/whitelist/${encodeURIComponent(ip)}`)
+  }
+
+  // IP Lists
+  getIpLists()                    { return this.get('/api/firewall/ip-lists') }
+  createIpList(data)              { return this.post('/api/firewall/ip-lists', data) }
+  updateIpList(id, data)          { return this.put(`/api/firewall/ip-lists/${id}`, data) }
+  deleteIpList(id)                { return this.delete(`/api/firewall/ip-lists/${id}`) }
+  refreshIpList(id)               { return this.post(`/api/firewall/ip-lists/${id}/refresh`, {}) }
+  previewIpList(id, limit = 50)   {
+    return this.get(`/api/firewall/ip-lists/${id}/preview?limit=${limit}`)
+  }
+
+  // Security monitor
+  getSecurityAudit(category = null, limit = 100) {
+    let url = `/api/security/audit?limit=${limit}`
+    if (category) url += `&category=${encodeURIComponent(category)}`
+    return this.get(url)
+  }
+  getActiveConnections(listening = false) {
+    return this.get(`/api/security/connections${listening ? '?listening=true' : ''}`)
+  }
+
   // Health check
   health() {
     return this.get('/api/health')
