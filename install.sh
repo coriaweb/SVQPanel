@@ -1474,8 +1474,9 @@ filter   = sshd
 maxretry = 5
 
 [svqpanel-auth]
-enabled  = false
-# Habilitar cuando el panel escriba logs de fallo de login a /opt/svqpanel/logs/auth.log
+enabled  = true
+# El panel escribe a este log las lineas 'auth_failed ip=X user=Y reason=Z'
+# desde Fase 12.6 (api/utils/auth_log.py)
 port     = http,https,8001
 filter   = svqpanel-auth
 logpath  = /opt/svqpanel/logs/auth.log
@@ -1517,16 +1518,31 @@ failregex = ^.* auth_failed ip=<HOST>.*$
 ignoreregex =
 F2BFILTEREOF
 
-# Asegurar que existe el log que mirará [svqpanel-auth] cuando se habilite,
-# si no fail2ban da error de "logpath not found" al activar el jail
-# (svqpanel.service corre como root, así que basta con permisos por defecto)
+# Asegurar que existe el log que vigila [svqpanel-auth]; si no fail2ban
+# da error de "logpath not found" al iniciar el jail
 mkdir -p /opt/svqpanel/logs
 touch /opt/svqpanel/logs/auth.log
+
+# logrotate para que auth.log no crezca sin freno
+cat > /etc/logrotate.d/svqpanel << 'LRTEOF'
+/opt/svqpanel/logs/auth.log {
+    weekly
+    rotate 8
+    compress
+    delaycompress
+    notifempty
+    missingok
+    create 0644 root root
+    postrotate
+        fail2ban-client reload svqpanel-auth >/dev/null 2>&1 || true
+    endscript
+}
+LRTEOF
 
 systemctl enable fail2ban >/dev/null 2>&1 || true
 systemctl restart fail2ban >/dev/null 2>&1 || systemctl start fail2ban
 
-echo -e "${GREEN}✓ fail2ban: jails activas (sshd, recidive$( [[ "$INSTALL_MAIL" == true ]] && echo ', dovecot, postfix-sasl' ))${NC}"
+echo -e "${GREEN}✓ fail2ban: jails activas (sshd, recidive, svqpanel-auth$( [[ "$INSTALL_MAIL" == true ]] && echo ', dovecot, postfix-sasl' ))${NC}"
 if [[ -n "$INSTALLER_IP" ]]; then
     echo -e "  ${GREEN}✓ Anti-lockout: $INSTALLER_IP en whitelist nftables + ignoreip fail2ban${NC}"
 fi

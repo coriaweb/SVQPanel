@@ -2,7 +2,7 @@
 Rutas de autenticación (login, logout, cambio de contraseña)
 """
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from sqlalchemy.orm import Session
 from api.models.database import get_db
 from api.models.models_user import User
@@ -14,24 +14,40 @@ from api.schemas.auth_schemas import (
     CurrentUserResponse
 )
 from api.dependencies import get_current_user, require_auth
+from api.utils.auth_log import log_auth_failed
 
 router = APIRouter()
 
 
 @router.post("/auth/login", response_model=LoginResponse, tags=["Authentication"])
-async def login(credentials: LoginRequest, db: Session = Depends(get_db)):
+async def login(
+    credentials: LoginRequest,
+    request:     Request,
+    db:          Session = Depends(get_db),
+):
     """
     Endpoint de login. Devuelve JWT token si las credenciales son correctas.
+    Los intentos fallidos se loguean a /opt/svqpanel/logs/auth.log para que
+    fail2ban (jail svqpanel-auth) pueda banear las IPs que hacen brute force.
     """
     user = db.query(User).filter(User.username == credentials.username).first()
 
-    if not user or not user.check_password(credentials.password):
+    if not user:
+        log_auth_failed(request, credentials.username, "unknown_user")
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Usuario o contraseña incorrectos"
+        )
+
+    if not user.check_password(credentials.password):
+        log_auth_failed(request, credentials.username, "bad_password")
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Usuario o contraseña incorrectos"
         )
 
     if not user.is_active:
+        log_auth_failed(request, credentials.username, "inactive_user")
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Usuario inactivo"
@@ -76,22 +92,24 @@ async def logout(user: User = Depends(require_auth)):
     tags=["Authentication"]
 )
 async def change_password(
-    request: ChangePasswordRequest,
-    user: User = Depends(require_auth),
-    db: Session = Depends(get_db)
+    payload:      ChangePasswordRequest,
+    http_request: Request,
+    user:         User    = Depends(require_auth),
+    db:           Session = Depends(get_db),
 ):
     """
     Cambia la contraseña del usuario actual.
     Requiere la contraseña actual para validación.
     """
-    if not user.check_password(request.current_password):
+    if not user.check_password(payload.current_password):
+        log_auth_failed(http_request, user.username, "bad_current_password")
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Contraseña actual incorrecta"
         )
 
     # Validación de nueva contraseña (ya hecha por Pydantic validator)
-    user.set_password(request.new_password)
+    user.set_password(payload.new_password)
     db.commit()
 
     return {
