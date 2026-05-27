@@ -28,6 +28,11 @@ class Settings(Base):
     # PHP
     php_default_version = Column(String(10), default="8.2")
 
+    # File Manager - Límites de subida
+    max_upload_mb = Column(Integer, default=100)              # MB máximo por archivo
+    max_text_file_mb = Column(Integer, default=2)             # MB máximo para editar en el panel
+    max_extract_mb = Column(Integer, default=500)             # MB máximo para extraer ZIPs
+
     # Timestamps
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 

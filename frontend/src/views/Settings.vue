@@ -149,6 +149,59 @@
         </div>
       </div>
 
+      <!-- File Manager - Límites de upload -->
+      <div class="col-12">
+        <div class="card">
+          <div class="card-header"><i class="bi bi-file-arrow-up me-2"></i> Gestor de Archivos - Límites</div>
+          <div class="card-body">
+            <div class="row g-3">
+              <div class="col-md-4">
+                <label class="form-label">Tamaño máximo de subida</label>
+                <div class="input-group">
+                  <input
+                    v-model.number="form.max_upload_mb"
+                    type="number"
+                    class="form-control"
+                    min="1"
+                    max="2048"
+                  />
+                  <span class="input-group-text">MB</span>
+                </div>
+                <div class="form-text">Límite por archivo en subidas</div>
+              </div>
+              <div class="col-md-4">
+                <label class="form-label">Máximo para editar en panel</label>
+                <div class="input-group">
+                  <input
+                    v-model.number="form.max_text_file_mb"
+                    type="number"
+                    class="form-control"
+                    min="1"
+                    max="100"
+                  />
+                  <span class="input-group-text">MB</span>
+                </div>
+                <div class="form-text">Para editar archivos de texto</div>
+              </div>
+              <div class="col-md-4">
+                <label class="form-label">Máximo para extraer ZIP</label>
+                <div class="input-group">
+                  <input
+                    v-model.number="form.max_extract_mb"
+                    type="number"
+                    class="form-control"
+                    min="1"
+                    max="5120"
+                  />
+                  <span class="input-group-text">MB</span>
+                </div>
+                <div class="form-text">Para descomprimir archivos</div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
       <!-- PHP Versions Management -->
       <div class="col-12">
         <div class="card">
@@ -373,6 +426,9 @@ export default {
       ipv6_gateway: '',
       network_interface: 'eth0',
       php_default_version: '8.2',
+      max_upload_mb: 100,
+      max_text_file_mb: 2,
+      max_extract_mb: 500,
     })
 
     const parsedRange = computed(() => {
@@ -416,6 +472,9 @@ export default {
         form.ipv6_gateway = data.ipv6_gateway || ''
         form.network_interface = data.network_interface || 'eth0'
         form.php_default_version = data.php_default_version || '8.2'
+        form.max_upload_mb = data.max_upload_mb || 100
+        form.max_text_file_mb = data.max_text_file_mb || 2
+        form.max_extract_mb = data.max_extract_mb || 500
       } catch (e) {
         store.showNotification('Error al cargar configuración', 'danger')
       } finally {
@@ -433,6 +492,9 @@ export default {
           ipv6_gateway: form.ipv6_gateway || null,
           network_interface: form.network_interface || 'eth0',
           php_default_version: form.php_default_version,
+          max_upload_mb: form.max_upload_mb,
+          max_text_file_mb: form.max_text_file_mb,
+          max_extract_mb: form.max_extract_mb,
         }
         const data = await api.updateSettings(payload)
         settings.value = data

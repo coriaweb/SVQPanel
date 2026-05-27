@@ -16,6 +16,9 @@ class SettingsUpdate(BaseModel):
     ipv6_gateway: Optional[str] = Field(None, max_length=50)
     network_interface: Optional[str] = Field(None, max_length=20)
     php_default_version: Optional[str] = Field(None, pattern="^(7\\.4|8\\.[0-5])$")
+    max_upload_mb: Optional[int] = Field(None, ge=1, le=2048)
+    max_text_file_mb: Optional[int] = Field(None, ge=1, le=100)
+    max_extract_mb: Optional[int] = Field(None, ge=1, le=5120)
 
     @field_validator("ipv6_range")
     @classmethod
@@ -52,6 +55,9 @@ class SettingsResponse(BaseModel):
     ipv6_gateway: Optional[str] = None
     network_interface: Optional[str] = "eth0"
     php_default_version: str
+    max_upload_mb: int = 100
+    max_text_file_mb: int = 2
+    max_extract_mb: int = 500
     updated_at: Optional[datetime] = None
 
     # Información calculada

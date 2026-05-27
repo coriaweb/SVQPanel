@@ -21,13 +21,19 @@ from api.dependencies import require_auth
 from api.models.database import get_db
 from api.models.models_domain import Domain
 from api.models.models_user import User
+from api.models.models_settings import Settings
 
 router = APIRouter()
 
 FILE_MANAGER_ENABLED = os.getenv("FILE_MANAGER_ENABLED", "true").lower() == "true"
-FILE_MANAGER_MAX_UPLOAD_MB = int(os.getenv("FILE_MANAGER_MAX_UPLOAD_MB", "100"))
-MAX_TEXT_FILE_BYTES = int(os.getenv("FILE_MANAGER_MAX_TEXT_FILE_MB", "2")) * 1024 * 1024
-MAX_EXTRACT_BYTES = int(os.getenv("FILE_MANAGER_MAX_EXTRACT_MB", "500")) * 1024 * 1024
+
+
+def get_upload_limits(db: Session) -> tuple[int, int, int]:
+    """Obtiene los límites de upload desde Settings. Retorna (max_upload_mb, max_text_mb, max_extract_mb)"""
+    settings = db.query(Settings).filter(Settings.id == 1).first()
+    if not settings:
+        return 100, 2, 500
+    return settings.max_upload_mb, settings.max_text_file_mb, settings.max_extract_mb
 
 
 class FileEntry(BaseModel):
@@ -197,8 +203,11 @@ def read_text_file(
 
     if not os.path.isfile(target):
         raise HTTPException(status_code=404, detail="Archivo no encontrado")
-    if os.path.getsize(target) > MAX_TEXT_FILE_BYTES:
-        raise HTTPException(status_code=413, detail="Archivo demasiado grande para editarlo en el panel")
+
+    _, max_text_mb, _ = get_upload_limits(db)
+    max_text_bytes = max_text_mb * 1024 * 1024
+    if os.path.getsize(target) > max_text_bytes:
+        raise HTTPException(status_code=413, detail=f"Archivo demasiado grande (máximo {max_text_mb} MB)")
 
     try:
         content = Path(target).read_text(encoding="utf-8")
@@ -261,7 +270,8 @@ async def upload_files(
     if not os.path.isdir(target_dir):
         raise HTTPException(status_code=404, detail="Carpeta no encontrada")
 
-    max_bytes = FILE_MANAGER_MAX_UPLOAD_MB * 1024 * 1024
+    max_upload_mb, _, _ = get_upload_limits(db)
+    max_bytes = max_upload_mb * 1024 * 1024
     saved: list[str] = []
     skipped: list[str] = []
 
@@ -283,7 +293,7 @@ async def upload_files(
                     os.remove(destination)
                     raise HTTPException(
                         status_code=413,
-                        detail=f"'{filename}' supera el limite de {FILE_MANAGER_MAX_UPLOAD_MB} MB",
+                        detail=f"El archivo '{filename}' supera el límite de {max_upload_mb} MB",
                     )
                 fh.write(chunk)
         _apply_domain_owner(domain, destination)
@@ -362,7 +372,7 @@ def extract_zip(
 
     Por defecto extrae en la misma carpeta donde está el ZIP.
     Se puede indicar un ``dest`` relativo para extraer en otro lugar.
-    Protege contra path-traversal y ZIP bombs (límite FILE_MANAGER_MAX_EXTRACT_MB).
+    Protege contra path-traversal y ZIP bombs.
     """
     _check_enabled()
     domain = _get_domain_or_404(domain_id, db, current_user)
@@ -381,6 +391,9 @@ def extract_zip(
         dest_dir = os.path.dirname(zip_path)
     os.makedirs(dest_dir, exist_ok=True)
 
+    _, _, max_extract_mb = get_upload_limits(db)
+    max_extract_bytes = max_extract_mb * 1024 * 1024
+
     try:
         with zipfile.ZipFile(zip_path, "r") as zf:
             members = zf.infolist()
@@ -395,13 +408,10 @@ def extract_zip(
                         detail=f"El ZIP contiene una ruta que escapa el dominio: {member.filename}",
                     )
                 total_bytes += member.file_size
-                if total_bytes > MAX_EXTRACT_BYTES:
+                if total_bytes > max_extract_bytes:
                     raise HTTPException(
                         status_code=413,
-                        detail=(
-                            f"El contenido descomprimido supera el límite de "
-                            f"{MAX_EXTRACT_BYTES // 1024 // 1024} MB"
-                        ),
+                        detail=f"El contenido descomprimido supera el límite de {max_extract_mb} MB",
                     )
 
             extracted_count = len(members)

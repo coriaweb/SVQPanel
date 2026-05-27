@@ -205,6 +205,10 @@ def _run_migrations():
             error       TEXT,
             created_at  TIMESTAMP    NOT NULL DEFAULT NOW()
         )""",
+        # Fase 11: límites de upload en settings
+        "ALTER TABLE settings ADD COLUMN IF NOT EXISTS max_upload_mb INTEGER DEFAULT 100",
+        "ALTER TABLE settings ADD COLUMN IF NOT EXISTS max_text_file_mb INTEGER DEFAULT 2",
+        "ALTER TABLE settings ADD COLUMN IF NOT EXISTS max_extract_mb INTEGER DEFAULT 500",
         "CREATE INDEX IF NOT EXISTS ix_security_audit_user_id            ON security_audit_log(user_id)",
         "CREATE INDEX IF NOT EXISTS ix_security_audit_category           ON security_audit_log(category)",
         "CREATE INDEX IF NOT EXISTS ix_security_audit_created_at         ON security_audit_log(created_at)",
@@ -264,6 +268,23 @@ app.include_router(ip_lists.router,         prefix="/api", tags=["IP Lists"])
 app.include_router(file_manager.router,     prefix="/api", tags=["File Manager"])
 # Autoconfig/Autodiscover sin prefijo (clientes de correo los buscan en rutas raíz)
 app.include_router(mail.router, prefix="", include_in_schema=False)
+
+# Manejo de errores HTTP 413 (Payload Too Large)
+@app.exception_handler(HTTPException)
+async def http_exception_handler(request, exc):
+    if exc.status_code == 413:
+        return JSONResponse(
+            status_code=413,
+            content={
+                "status": "error",
+                "message": exc.detail or "El archivo es demasiado grande",
+                "code": "PAYLOAD_TOO_LARGE"
+            }
+        )
+    return JSONResponse(
+        status_code=exc.status_code,
+        content={"status": "error", "message": exc.detail or "Error en la solicitud"}
+    )
 
 # Manejo de errores global
 @app.exception_handler(Exception)
