@@ -409,6 +409,10 @@ def _run_migrations():
         # SSL avanzado (force_https, HSTS)
         "ALTER TABLE domains ADD COLUMN IF NOT EXISTS force_https BOOLEAN NOT NULL DEFAULT FALSE",
         "ALTER TABLE domains ADD COLUMN IF NOT EXISTS hsts_enabled BOOLEAN NOT NULL DEFAULT FALSE",
+        # Rate limiting anti-abuso (Fase 19)
+        "ALTER TABLE domains ADD COLUMN IF NOT EXISTS rate_limit_enabled BOOLEAN NOT NULL DEFAULT FALSE",
+        "ALTER TABLE domains ADD COLUMN IF NOT EXISTS rate_limit_rps INTEGER NOT NULL DEFAULT 10",
+        "ALTER TABLE domains ADD COLUMN IF NOT EXISTS rate_limit_burst INTEGER NOT NULL DEFAULT 20",
         # ─────────────────────────────────────────────────────────────────
         # Fase 18: Notificaciones (avisos de cuota disco/tráfico al usuario)
         # ─────────────────────────────────────────────────────────────────

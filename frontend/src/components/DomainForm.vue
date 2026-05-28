@@ -184,6 +184,34 @@
         />
         <div class="form-text">Tiempo que NGINX cachea las respuestas PHP. Ej: 2, 30, 60.</div>
       </div>
+
+      <hr class="my-3" />
+      <p class="fw-semibold mb-2 text-muted small text-uppercase">Protección anti-abuso</p>
+
+      <div class="mb-2 form-check">
+        <input id="rate_limit" v-model="form.rate_limit_enabled" type="checkbox" class="form-check-input" />
+        <label for="rate_limit" class="form-check-label">
+          <i class="bi bi-shield-exclamation me-1"></i> Limitar peticiones por IP (NGINX)
+        </label>
+      </div>
+      <div v-if="form.rate_limit_enabled" class="mb-3 ps-4">
+        <div class="row g-2" style="max-width:360px">
+          <div class="col">
+            <label class="form-label small mb-1">Peticiones/seg por IP</label>
+            <input v-model.number="form.rate_limit_rps" type="number" min="1" max="1000"
+                   class="form-control form-control-sm" />
+          </div>
+          <div class="col">
+            <label class="form-label small mb-1">Ráfaga tolerada</label>
+            <input v-model.number="form.rate_limit_burst" type="number" min="0" max="1000"
+                   class="form-control form-control-sm" />
+          </div>
+        </div>
+        <div class="form-text">
+          Si una IP supera el ritmo, NGINX responde 429. Protege ante ataques o scripts abusivos
+          sin afectar al tráfico normal. Ej: 10 req/s, ráfaga 20.
+        </div>
+      </div>
     </template>
 
     <!-- Opciones extras (solo en creación) -->
@@ -344,6 +372,9 @@ export default {
       is_active:   props.domain?.is_active   ?? true,
       fastcgi_cache_enabled:     props.domain?.fastcgi_cache_enabled     ?? false,
       fastcgi_cache_ttl_minutes: props.domain?.fastcgi_cache_ttl_minutes ?? 60,
+      rate_limit_enabled: props.domain?.rate_limit_enabled ?? false,
+      rate_limit_rps:     props.domain?.rate_limit_rps     ?? 10,
+      rate_limit_burst:   props.domain?.rate_limit_burst   ?? 20,
       dns_enabled:  false,
       mail_enabled: false,
       selected_template_id: props.domain?.applied_template_id ?? null,
@@ -469,6 +500,22 @@ export default {
               props.domain.id,
               form.value.fastcgi_cache_enabled,
               form.value.fastcgi_cache_ttl_minutes,
+            )
+          }
+          // Rate limit: solo si cambió respecto al estado original (reescribe el vhost)
+          const prevRl      = props.domain.rate_limit_enabled ?? false
+          const prevRps     = props.domain.rate_limit_rps     ?? 10
+          const prevBurst   = props.domain.rate_limit_burst   ?? 20
+          const rlChanged =
+            form.value.rate_limit_enabled !== prevRl ||
+            (form.value.rate_limit_enabled &&
+              (form.value.rate_limit_rps !== prevRps || form.value.rate_limit_burst !== prevBurst))
+          if (rlChanged) {
+            await api.setDomainRateLimit(
+              props.domain.id,
+              form.value.rate_limit_enabled,
+              form.value.rate_limit_rps,
+              form.value.rate_limit_burst,
             )
           }
           // Aplicar plantilla si se seleccionó una (y es diferente a la actual)

@@ -812,6 +812,10 @@ class APIClient {
   markAllNotificationsRead() {
     return this.post('/api/notifications/read-all', {})
   }
+
+  setDomainRateLimit(domainId, enabled, rps, burst) {
+    return this.put(`/api/domains/${domainId}/rate-limit`, { enabled, rps, burst })
+  }
 }
 
 export default new APIClient()

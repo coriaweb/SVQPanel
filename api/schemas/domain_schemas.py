@@ -64,6 +64,10 @@ class DomainResponse(BaseModel):
     # Redirección y docroot personalizado (Fase 16)
     redirect_to:    Optional[str] = None
     custom_docroot: Optional[str] = None
+    # Rate limiting anti-abuso (Fase 19)
+    rate_limit_enabled: Optional[bool] = False
+    rate_limit_rps:     Optional[int]  = 10
+    rate_limit_burst:   Optional[int]  = 20
     created_at: Optional[datetime] = None
     updated_at: Optional[datetime] = None
 
