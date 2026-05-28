@@ -39,6 +39,11 @@ class Domain(Base):
     # php.ini overrides por dominio (JSON: {"memory_limit":"256M",...}) — Fase 14.3
     php_ini_overrides = Column(Text, nullable=True)
 
+    # Plantilla web aplicada (Fase 15)
+    applied_template_id   = Column(Integer, ForeignKey("web_templates.id", ondelete="SET NULL"), nullable=True)
+    applied_template_name = Column(String(64), nullable=True)
+    template_nginx_extra  = Column(Text, nullable=True)
+
     # Estadísticas
     disk_usage = Column(Integer, default=0)  # MB
     

@@ -742,6 +742,36 @@ class APIClient {
   restoreBackup(jobId, data) {
     return this.post(`/api/backups/${jobId}/restore`, data)
   }
+
+  // ─── Plantillas web (Fase 15) ───────────────────────────────────────────
+
+  getTemplates() {
+    return this.get('/api/templates')
+  }
+
+  getTemplate(id) {
+    return this.get(`/api/templates/${id}`)
+  }
+
+  createTemplate(data) {
+    return this.post('/api/templates', data)
+  }
+
+  updateTemplate(id, data) {
+    return this.put(`/api/templates/${id}`, data)
+  }
+
+  deleteTemplate(id) {
+    return this.delete(`/api/templates/${id}`)
+  }
+
+  applyTemplate(domainId, templateId, options = {}) {
+    return this.post(`/api/domains/${domainId}/apply-template`, {
+      template_id:  templateId,
+      enable_cache: options.enable_cache ?? null,
+      ttl_minutes:  options.ttl_minutes  ?? 60,
+    })
+  }
 }
 
 export default new APIClient()

@@ -160,6 +160,7 @@ def generate_nginx_config(
     fastcgi_cache_enabled: bool = False,
     fastcgi_cache_ttl_minutes: int = 60,
     php_socket_override: Optional[str] = None,
+    template_nginx_extra: Optional[str] = None,
 ) -> str:
     """Generate Nginx vhost configuration (Hestia-style paths)"""
 
@@ -177,18 +178,24 @@ def generate_nginx_config(
     if ipv6:
         server_names += f" {ipv6}"   # nginx acepta IPv6 sin corchetes en server_name
 
+    tpl_extra = ("\n" + template_nginx_extra.rstrip()) if template_nginx_extra else ""
+
     server_block = f"""upstream php_{backend_name} {{
     server unix:{php_socket};
 }}
 
 server {{
     listen 80;
-    {"listen [::]:" + "80;" if not ipv6 else "listen [" + ipv6 + "]:80 default_server;"}
+    {"listen [::]:\"80;\"" if not ipv6 else "listen [\"" + ipv6 + "\"]:80 default_server;"}
     server_name {server_names};
     root {public_html};
 
     index index.php index.html index.htm;
 {skip_block}
+    # Pasamos el upstream al template via variable para que los location blocks
+    # de la plantilla puedan usar $phpfpm_backend en lugar del nombre hardcodeado
+    set $phpfpm_backend php_{backend_name};
+{tpl_extra}
     location / {{
         try_files $uri $uri/ /index.php?$query_string;
     }}
@@ -228,8 +235,8 @@ server {{
     ssl_ciphers HIGH:!aNULL:!MD5;
 
     index index.php index.html index.htm;
-{skip_block}
-    location / {{
+{skip_block}    set $phpfpm_backend php_{backend_name};
+{tpl_extra}    location / {{
         try_files $uri $uri/ /index.php?$query_string;
     }}
 

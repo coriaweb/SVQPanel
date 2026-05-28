@@ -13,7 +13,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from api.models.database import create_tables, get_db
 from config.config import PANEL_NAME, PANEL_VERSION
 
-from api.routes import users, domains, php, ssl, ipv6, auth, settings, dns, system, mail, databases, firewall, fail2ban, security_monitor, ip_lists, file_manager, crowdsec, plans, sftp, crons, server_ips, backups
+from api.routes import users, domains, php, ssl, ipv6, auth, settings, dns, system, mail, databases, firewall, fail2ban, security_monitor, ip_lists, file_manager, crowdsec, plans, sftp, crons, server_ips, backups, templates
 
 # Crear app FastAPI
 app = FastAPI(
@@ -381,6 +381,28 @@ def _run_migrations():
         "CREATE INDEX IF NOT EXISTS ix_backup_records_user_id ON backup_records(user_id)",
         # Fase 15.1: restauración — distinguir copia de restauración
         "ALTER TABLE backup_records ADD COLUMN IF NOT EXISTS kind VARCHAR(20) NOT NULL DEFAULT 'backup'",
+        # ─────────────────────────────────────────────────────────────────
+        # Fase 15.2: Plantillas web (nginx + PHP-FPM presets)
+        # ─────────────────────────────────────────────────────────────────
+        """CREATE TABLE IF NOT EXISTS web_templates (
+            id                    SERIAL PRIMARY KEY,
+            name                  VARCHAR(64)  UNIQUE NOT NULL,
+            slug                  VARCHAR(64)  UNIQUE NOT NULL,
+            description           VARCHAR(255),
+            category              VARCHAR(32)  NOT NULL DEFAULT 'cms',
+            nginx_extra           TEXT,
+            php_ini_overrides     TEXT,
+            fastcgi_cache_default BOOLEAN NOT NULL DEFAULT FALSE,
+            is_builtin            BOOLEAN NOT NULL DEFAULT FALSE,
+            is_active             BOOLEAN NOT NULL DEFAULT TRUE,
+            created_at            TIMESTAMP NOT NULL DEFAULT NOW(),
+            updated_at            TIMESTAMP DEFAULT NOW()
+        )""",
+        "CREATE INDEX IF NOT EXISTS ix_web_templates_slug ON web_templates(slug)",
+        # Campos en domains para registrar la plantilla aplicada
+        "ALTER TABLE domains ADD COLUMN IF NOT EXISTS applied_template_id INTEGER REFERENCES web_templates(id) ON DELETE SET NULL",
+        "ALTER TABLE domains ADD COLUMN IF NOT EXISTS applied_template_name VARCHAR(64)",
+        "ALTER TABLE domains ADD COLUMN IF NOT EXISTS template_nginx_extra TEXT",
     ]
     with engine.connect() as conn:
         for sql in migrations:
@@ -389,6 +411,40 @@ def _run_migrations():
                 conn.commit()
             except Exception as e:
                 print(f"⚠ Migration skipped: {e}")
+
+    # Sembrar plantillas builtin si la tabla está vacía
+    _seed_builtin_templates(engine)
+
+def _seed_builtin_templates(engine):
+    """Inserta las plantillas builtin si no existen aún."""
+    from scripts.template_manager import BUILTIN_TEMPLATES
+    from api.models.database import SessionLocal
+    db = SessionLocal()
+    try:
+        from api.models.models_template import WebTemplate
+        for tpl in BUILTIN_TEMPLATES:
+            exists = db.query(WebTemplate).filter(WebTemplate.slug == tpl["slug"]).first()
+            if not exists:
+                obj = WebTemplate(
+                    name=tpl["name"],
+                    slug=tpl["slug"],
+                    description=tpl.get("description"),
+                    category=tpl.get("category", "cms"),
+                    nginx_extra=tpl.get("nginx_extra"),
+                    php_ini_overrides=tpl.get("php_ini_overrides"),
+                    fastcgi_cache_default=tpl.get("fastcgi_cache_default", False),
+                    is_builtin=True,
+                    is_active=True,
+                )
+                db.add(obj)
+        db.commit()
+        print(f"✓ Plantillas web: {len(BUILTIN_TEMPLATES)} builtin registradas")
+    except Exception as e:
+        db.rollback()
+        print(f"⚠ Error sembrando plantillas: {e}")
+    finally:
+        db.close()
+
 
 # Health check
 @app.get("/", tags=["Health"])
@@ -439,6 +495,7 @@ app.include_router(sftp.router,             prefix="/api", tags=["SFTP"])
 app.include_router(crons.router,            prefix="/api", tags=["Crons"])
 app.include_router(server_ips.router,       prefix="/api", tags=["Server IPs"])
 app.include_router(backups.router,          prefix="/api", tags=["Backups"])
+app.include_router(templates.router,        prefix="/api", tags=["Templates"])
 app.include_router(file_manager.router,     prefix="/api", tags=["File Manager"])
 # Autoconfig/Autodiscover sin prefijo (clientes de correo los buscan en rutas raíz)
 app.include_router(mail.router, prefix="", include_in_schema=False)

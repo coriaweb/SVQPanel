@@ -41,6 +41,60 @@
       <label for="is_active" class="form-check-label">Dominio activo</label>
     </div>
 
+    <!-- Plantilla web (creación Y edición) -->
+    <hr class="my-3" />
+    <p class="fw-semibold mb-2 text-muted small text-uppercase">
+      <i class="bi bi-layout-text-window-reverse me-1"></i> Plantilla web
+    </p>
+
+    <div class="mb-3">
+      <select v-model="form.selected_template_id" class="form-select">
+        <option :value="null">— Sin plantilla (configuración por defecto) —</option>
+        <optgroup
+          v-for="cat in templateCategories"
+          :key="cat.key"
+          :label="cat.label"
+        >
+          <option
+            v-for="tpl in templatesByCategory(cat.key)"
+            :key="tpl.id"
+            :value="tpl.id"
+          >{{ tpl.name }}</option>
+        </optgroup>
+      </select>
+    </div>
+
+    <!-- Preview de la plantilla seleccionada -->
+    <div v-if="selectedTemplate" class="alert alert-info py-2 px-3 mb-3 small">
+      <div class="fw-semibold mb-1">
+        <i class="bi bi-info-circle me-1"></i>{{ selectedTemplate.name }}
+      </div>
+      <div class="text-muted mb-2">{{ selectedTemplate.description }}</div>
+      <div class="d-flex flex-wrap gap-2">
+        <span v-if="selectedTemplate.fastcgi_cache_default" class="badge bg-warning text-dark">
+          <i class="bi bi-lightning-charge me-1"></i>Caché FastCGI activada
+        </span>
+        <span v-if="selectedTemplate.php_ini_overrides" class="badge bg-secondary">
+          <i class="bi bi-cpu me-1"></i>Overrides PHP ini
+        </span>
+        <span v-if="selectedTemplate.nginx_extra" class="badge bg-secondary">
+          <i class="bi bi-code me-1"></i>Config nginx extra
+        </span>
+        <template v-if="selectedTemplate.php_ini_overrides">
+          <span
+            v-for="(val, key) in parsedPhpOverrides"
+            :key="key"
+            class="badge bg-light text-dark border"
+          >{{ key }}: {{ val }}</span>
+        </template>
+      </div>
+      <!-- Al editar: aviso de que se aplicará al guardar -->
+      <div v-if="isEditing" class="mt-2 text-warning fw-semibold small">
+        <i class="bi bi-exclamation-triangle me-1"></i>
+        La plantilla se aplicará al hacer clic en "Actualizar Dominio"
+      </div>
+    </div>
+
     <!-- Rendimiento (solo al editar: requiere un dominio ya existente) -->
     <template v-if="isEditing">
       <hr class="my-3" />
@@ -103,6 +157,13 @@ import { ref, computed, onMounted } from 'vue'
 import { useMainStore } from '../stores/useMainStore'
 import api from '../services/api'
 
+const TEMPLATE_CATEGORIES = [
+  { key: 'cms',        label: 'CMS' },
+  { key: 'framework',  label: 'Frameworks' },
+  { key: 'ecommerce',  label: 'E-commerce' },
+  { key: 'other',      label: 'Otros' },
+]
+
 export default {
   name: 'DomainForm',
   props: {
@@ -117,6 +178,7 @@ export default {
     const isEditing = ref(!!props.domain)
     const users     = ref([])
     const localPhpVersions = ref([])
+    const templates = ref([])
 
     const isAdminOrReseller = computed(() =>
       ['admin', 'reseller'].includes(store.currentUser?.role)
@@ -136,7 +198,35 @@ export default {
       fastcgi_cache_ttl_minutes: props.domain?.fastcgi_cache_ttl_minutes ?? 60,
       dns_enabled:  false,
       mail_enabled: false,
+      selected_template_id: props.domain?.applied_template_id ?? null,
     })
+
+    // ── Plantillas ─────────────────────────────────────────────────────────
+
+    const templateCategories = TEMPLATE_CATEGORIES
+
+    const templatesByCategory = (cat) =>
+      templates.value.filter(t => t.category === cat)
+
+    const selectedTemplate = computed(() =>
+      form.value.selected_template_id
+        ? templates.value.find(t => t.id === form.value.selected_template_id) || null
+        : null
+    )
+
+    const parsedPhpOverrides = computed(() => {
+      if (!selectedTemplate.value?.php_ini_overrides) return {}
+      try { return JSON.parse(selectedTemplate.value.php_ini_overrides) }
+      catch { return {} }
+    })
+
+    const loadTemplates = async () => {
+      try {
+        templates.value = await api.getTemplates() || []
+      } catch { templates.value = [] }
+    }
+
+    // ── Usuarios / PHP ─────────────────────────────────────────────────────
 
     const loadUsers = async () => {
       if (!isAdminOrReseller.value) return
@@ -160,6 +250,8 @@ export default {
       }
     }
 
+    // ── Submit ─────────────────────────────────────────────────────────────
+
     const handleSubmit = async () => {
       loading.value = true
       try {
@@ -168,33 +260,60 @@ export default {
             php_version: form.value.php_version,
             is_active:   form.value.is_active,
           })
-          // Caché FastCGI: solo si cambió respecto al estado original (reescribe el vhost)
+          // Caché FastCGI: solo si cambió y no se va a aplicar plantilla (la plantilla lo gestiona)
           const prevEnabled = props.domain.fastcgi_cache_enabled ?? false
           const prevTtl     = props.domain.fastcgi_cache_ttl_minutes ?? 60
           const cacheChanged =
             form.value.fastcgi_cache_enabled !== prevEnabled ||
             (form.value.fastcgi_cache_enabled && form.value.fastcgi_cache_ttl_minutes !== prevTtl)
-          if (cacheChanged) {
+          if (cacheChanged && !form.value.selected_template_id) {
             await api.setDomainCache(
               props.domain.id,
               form.value.fastcgi_cache_enabled,
               form.value.fastcgi_cache_ttl_minutes,
             )
           }
-          store.showNotification('Dominio actualizado correctamente', 'success')
+          // Aplicar plantilla si se seleccionó una (y es diferente a la actual)
+          const prevTemplateId = props.domain?.applied_template_id ?? null
+          if (form.value.selected_template_id && form.value.selected_template_id !== prevTemplateId) {
+            await api.applyTemplate(props.domain.id, form.value.selected_template_id, {
+              ttl_minutes: form.value.fastcgi_cache_ttl_minutes,
+            })
+            store.showNotification(
+              `Plantilla "${selectedTemplate.value?.name}" aplicada correctamente`,
+              'success'
+            )
+          } else {
+            store.showNotification('Dominio actualizado correctamente', 'success')
+          }
         } else {
           const userId = isAdminOrReseller.value
             ? form.value.user_id
             : store.currentUser?.id
-          await api.createDomain({
-            domain_name: form.value.domain_name,
-            user_id:     userId,
-            php_version: form.value.php_version,
-            is_active:   form.value.is_active,
+          const created = await api.createDomain({
+            domain_name:  form.value.domain_name,
+            user_id:      userId,
+            php_version:  form.value.php_version,
+            is_active:    form.value.is_active,
             dns_enabled:  form.value.dns_enabled,
             mail_enabled: form.value.mail_enabled,
           })
-          store.showNotification('Dominio creado correctamente', 'success')
+          // Aplicar plantilla tras crear el dominio
+          if (form.value.selected_template_id && created?.id) {
+            try {
+              await api.applyTemplate(created.id, form.value.selected_template_id, {
+                ttl_minutes: 60,
+              })
+              store.showNotification(
+                `Dominio creado y plantilla "${selectedTemplate.value?.name}" aplicada`,
+                'success'
+              )
+            } catch {
+              store.showNotification('Dominio creado (la plantilla no se pudo aplicar)', 'warning')
+            }
+          } else {
+            store.showNotification('Dominio creado correctamente', 'success')
+          }
         }
         emit('submit')
       } catch (e) {
@@ -205,7 +324,7 @@ export default {
     }
 
     onMounted(async () => {
-      await Promise.all([loadUsers(), loadPHPVersions()])
+      await Promise.all([loadUsers(), loadPHPVersions(), loadTemplates()])
       // Si la versión guardada no está en la lista, seleccionar la primera disponible
       if (form.value.php_version && !availablePhpVersions.value.includes(form.value.php_version)) {
         form.value.php_version = availablePhpVersions.value[0] || '8.2'
@@ -217,6 +336,8 @@ export default {
     return {
       form, loading, isEditing, users,
       isAdminOrReseller, availablePhpVersions,
+      templates, templateCategories, templatesByCategory,
+      selectedTemplate, parsedPhpOverrides,
       handleSubmit,
     }
   }
