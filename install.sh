@@ -766,18 +766,15 @@ for PHP_VER in "${PHP_ARRAY[@]}"; do
         systemctl enable "php${PHP_VER}-fpm" 2>/dev/null && \
         systemctl start  "php${PHP_VER}-fpm" 2>/dev/null
 
-        # Red de seguridad global: disable_functions en el php.ini de FPM.
-        # Aunque cada dominio tiene su pool con hardening, esto cubre cualquier
-        # petición que no pase por un pool dedicado. Lista de hardening (Hestia).
+        # NOTA: NO fijamos disable_functions en el php.ini GLOBAL de FPM.
+        # El hardening se aplica por dominio en su pool dedicado (open_basedir +
+        # disable_functions). Hacerlo global rompería el toggle "relajar
+        # hardening" de un dominio, porque php_admin_value de un pool puede
+        # AÑADIR funciones bloqueadas pero NO quitar las ya fijadas globalmente.
+        # Dejamos disable_functions vacío en el global a propósito.
         PHP_INI_FPM="/etc/php/${PHP_VER}/fpm/php.ini"
-        DISABLE_FNS="pcntl_alarm,pcntl_fork,pcntl_waitpid,pcntl_wait,pcntl_wifexited,pcntl_wifstopped,pcntl_wifsignaled,pcntl_wifcontinued,pcntl_wexitstatus,pcntl_wtermsig,pcntl_wstopsig,pcntl_signal,pcntl_signal_get_handler,pcntl_signal_dispatch,pcntl_get_last_error,pcntl_strerror,pcntl_sigprocmask,pcntl_sigwaitinfo,pcntl_sigtimedwait,pcntl_exec,pcntl_getpriority,pcntl_setpriority,pcntl_async_signals,exec,system,passthru,shell_exec,proc_open,popen"
         if [[ -f "$PHP_INI_FPM" ]]; then
-            if grep -qE '^\s*disable_functions\s*=' "$PHP_INI_FPM"; then
-                sed -i "s|^\s*disable_functions\s*=.*|disable_functions = ${DISABLE_FNS}|" "$PHP_INI_FPM"
-            else
-                echo "disable_functions = ${DISABLE_FNS}" >> "$PHP_INI_FPM"
-            fi
-            echo -e "    ${GREEN}✓ Hardening disable_functions aplicado en PHP ${PHP_VER}${NC}"
+            sed -i "s|^\s*disable_functions\s*=.*|disable_functions =|" "$PHP_INI_FPM"
         fi
 
         # Verificar que FPM arrancó (socket debe existir)
