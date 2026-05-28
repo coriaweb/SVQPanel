@@ -104,6 +104,7 @@ class BackupRecordResponse(BaseModel):
     id:                int
     job_id:            int
     user_id:           Optional[int] = None
+    kind:              str = "backup"
     status:            str
     is_incremental:    bool
     backup_path:       Optional[str] = None
@@ -123,8 +124,31 @@ class BackupRecordResponse(BaseModel):
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# Snapshots en disco
+# ─────────────────────────────────────────────────────────────────────────────
+
+class BackupSnapshotResponse(BaseModel):
+    name:           str          # timestamp YYYYMMDD_HHMMSS
+    path:           str
+    size_bytes:     int
+    size_mb:        float
+    is_incremental: bool
+    db_count:       int
+    has_files:      bool
+    has_databases:  bool
+    has_mail:       bool
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # Trigger manual
 # ─────────────────────────────────────────────────────────────────────────────
 
 class BackupRunRequest(BaseModel):
     force_full: bool = False   # ignorar tipo y hacer copia completa
+
+
+class BackupRestoreRequest(BaseModel):
+    snapshot_name:     str = Field(..., pattern=r"^\d{8}_\d{6}$")
+    restore_files:     bool = True
+    restore_databases: bool = True
+    restore_mail:      bool = False

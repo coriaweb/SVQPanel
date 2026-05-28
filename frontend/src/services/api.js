@@ -713,6 +713,14 @@ class APIClient {
   testBackupSftp(jobId) {
     return this.post(`/api/backups/${jobId}/test-sftp`, {})
   }
+
+  getBackupSnapshots(jobId) {
+    return this.get(`/api/backups/${jobId}/snapshots`)
+  }
+
+  restoreBackup(jobId, data) {
+    return this.post(`/api/backups/${jobId}/restore`, data)
+  }
 }
 
 export default new APIClient()

@@ -25,6 +25,7 @@ from api.models.models_backup import BackupJob, BackupRecord
 from api.schemas.backup_schemas import (
     BackupJobCreate, BackupJobUpdate, BackupJobResponse,
     BackupRecordResponse, BackupRunRequest,
+    BackupSnapshotResponse, BackupRestoreRequest,
 )
 from api.dependencies import require_auth
 
@@ -115,6 +116,18 @@ def _record_response(rec: BackupRecord) -> BackupRecordResponse:
     return resp
 
 
+def _owner_and_paths(job: BackupJob, db: Session):
+    """Devuelve (username_dueño, domain_name, files_dest, mail_dest) del dominio del job."""
+    from scripts.utils import get_domain_root
+    domain = db.query(Domain).filter(Domain.id == job.domain_id).first()
+    owner = db.query(User).filter(User.id == domain.user_id).first() if domain else None
+    username = owner.username if owner else "root"
+    domain_name = domain.domain_name if domain else None
+    files_dest = get_domain_root(username, domain_name) if domain_name else None
+    mail_dest = f"/home/{username}/mail/{domain_name}" if domain_name else None
+    return username, domain_name, files_dest, mail_dest
+
+
 def _job_to_config(job: BackupJob) -> dict:
     """Convierte el job en el dict que espera BackupManager (con contraseña descifrada)."""
     return {
@@ -200,6 +213,52 @@ def _execute_backup(job_id: int, record_id: int, force_full: bool):
         record.finished_at       = datetime.utcnow()
 
         job.last_run = datetime.utcnow()
+        db.commit()
+
+    except Exception as exc:
+        rec = db.query(BackupRecord).filter(BackupRecord.id == record_id).first()
+        if rec:
+            rec.status = "failed"
+            rec.error_message = str(exc)
+            rec.finished_at = datetime.utcnow()
+            db.commit()
+    finally:
+        db.close()
+
+
+def _execute_restore(job_id: int, record_id: int, snapshot_name: str,
+                     restore_files: bool, restore_databases: bool, restore_mail: bool):
+    """Restaura un snapshot y actualiza el BackupRecord. Corre en BackgroundTasks."""
+    db = SessionLocal()
+    try:
+        job = db.query(BackupJob).filter(BackupJob.id == job_id).first()
+        record = db.query(BackupRecord).filter(BackupRecord.id == record_id).first()
+        if not job or not record:
+            return
+
+        record.status = "running"
+        db.commit()
+
+        username, domain_name, files_dest, mail_dest = _owner_and_paths(job, db)
+        snapshot_path = f"{job.local_path.rstrip('/')}/users/{username}/{domain_name}/{snapshot_name}"
+
+        from scripts.backup_manager import BackupManager
+        mgr = BackupManager()
+        res = mgr.restore_snapshot(
+            snapshot_path=snapshot_path,
+            files_dest=files_dest,
+            mail_dest=mail_dest,
+            restore_files=restore_files,
+            restore_databases=restore_databases,
+            restore_mail=restore_mail,
+        )
+
+        record.status        = res["status"]
+        record.backup_path    = snapshot_path
+        record.db_count       = res["db_count"]
+        record.log_output     = "\n".join(res["log"])[:50000]
+        record.error_message  = res["error"]
+        record.finished_at    = datetime.utcnow()
         db.commit()
 
     except Exception as exc:
@@ -398,3 +457,69 @@ async def test_sftp(
         return {"status": "error", "ok": False, "message": str(exc)}
 
     return {"status": "success" if ok else "error", "ok": ok, "message": message}
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Snapshots y restauración
+# ─────────────────────────────────────────────────────────────────────────────
+
+@router.get("/backups/{job_id}/snapshots", response_model=List[BackupSnapshotResponse])
+async def list_snapshots(
+    job_id: int,
+    current_user: User = Depends(require_auth),
+    db: Session = Depends(get_db),
+):
+    """Lista los snapshots locales disponibles para el dominio del job."""
+    job = _get_job_or_404(job_id, db)
+    _check_access(current_user, job)
+    username, domain_name, _, _ = _owner_and_paths(job, db)
+    if not domain_name:
+        return []
+    try:
+        from scripts.backup_manager import BackupManager
+        mgr = BackupManager()
+        return mgr.list_local_snapshots(job.local_path, username, domain_name)
+    except Exception:
+        return []
+
+
+@router.post("/backups/{job_id}/restore", response_model=BackupRecordResponse, status_code=status.HTTP_202_ACCEPTED)
+async def restore_backup(
+    job_id: int,
+    payload: BackupRestoreRequest,
+    background_tasks: BackgroundTasks,
+    current_user: User = Depends(require_auth),
+    db: Session = Depends(get_db),
+):
+    """Restaura un snapshot del job en segundo plano y devuelve el registro pendiente."""
+    job = _get_job_or_404(job_id, db)
+    _check_access(current_user, job)
+
+    if not (payload.restore_files or payload.restore_databases or payload.restore_mail):
+        raise HTTPException(status_code=400, detail="Selecciona al menos un contenido a restaurar")
+
+    username, domain_name, _, _ = _owner_and_paths(job, db)
+    if not domain_name:
+        raise HTTPException(status_code=400, detail="El job no tiene dominio asociado")
+
+    snapshot_path = f"{job.local_path.rstrip('/')}/users/{username}/{domain_name}/{payload.snapshot_name}"
+    if not os.path.isdir(snapshot_path):
+        raise HTTPException(status_code=404, detail="Snapshot no encontrado en disco")
+
+    record = BackupRecord(
+        job_id=job.id,
+        user_id=job.user_id,
+        kind="restore",
+        status="pending",
+        backup_path=snapshot_path,
+        started_at=datetime.utcnow(),
+    )
+    db.add(record)
+    db.commit()
+    db.refresh(record)
+
+    background_tasks.add_task(
+        _execute_restore, job.id, record.id, payload.snapshot_name,
+        payload.restore_files, payload.restore_databases, payload.restore_mail,
+    )
+    return _record_response(record)

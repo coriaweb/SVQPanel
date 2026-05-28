@@ -69,6 +69,25 @@ def _mysqldump_binary() -> Optional[str]:
     return None
 
 
+def _mariadb_binary() -> Optional[str]:
+    """Devuelve la ruta al cliente CLI de MariaDB/MySQL (para importar dumps)."""
+    explicit = [
+        "/usr/bin/mariadb",
+        "/usr/bin/mysql",
+        "/usr/local/bin/mariadb",
+        "/usr/local/bin/mysql",
+        "/opt/mariadb/bin/mariadb",
+    ]
+    for path in explicit:
+        if os.path.isfile(path) and os.access(path, os.X_OK):
+            return path
+    for name in ("mariadb", "mysql"):
+        found = shutil.which(name)
+        if found:
+            return found
+    return None
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # BackupManager
 # ─────────────────────────────────────────────────────────────────────────────
@@ -246,20 +265,24 @@ class BackupManager(SystemManager):
         src: str,
         dst: str,
         link_dest: Optional[str] = None,
+        delete: bool = True,
     ) -> Tuple[int, int, List[str]]:
         """
         Ejecuta rsync para copiar src → dst.
         Si link_dest se proporciona, usa --link-dest para hardlinks (incremental).
+        Si delete=True, elimina en destino lo que no esté en origen (backup);
+        en restauración se usa delete=False para superponer sin borrar.
 
         Returns: (files_transferred, files_total, log_lines)
         """
         cmd = [
             "rsync",
             "-aH",           # archivo, hardlinks
-            "--delete",      # eliminar en destino lo que no esté en origen
             "--stats",       # mostrar estadísticas al final
             "--no-human-readable",
         ]
+        if delete:
+            cmd.append("--delete")  # eliminar en destino lo que no esté en origen
 
         if link_dest and os.path.isdir(link_dest):
             cmd += [f"--link-dest={link_dest}"]
@@ -564,12 +587,182 @@ class BackupManager(SystemManager):
                     manifest = json.loads(manifest_file.read_text())
                 except Exception:
                     pass
+            db_dir = snap / "databases"
+            has_databases = db_dir.is_dir() and any(db_dir.iterdir())
+            size_bytes = self._dir_size(snap)
             result.append({
                 "name":           snap.name,
                 "path":           str(snap),
-                "size_bytes":     self._dir_size(snap),
+                "size_bytes":     size_bytes,
+                "size_mb":        round(size_bytes / 1048576, 2),
                 "is_incremental": manifest.get("is_incremental", False),
                 "db_count":       manifest.get("db_count", 0),
+                "has_files":      (snap / "files").is_dir(),
+                "has_databases":  has_databases,
+                "has_mail":       (snap / "mail").is_dir(),
                 "manifest":       manifest,
             })
         return result
+
+    # ─────────────────────────────────────────────────────────────────────────
+    # Restauración de un snapshot
+    # ─────────────────────────────────────────────────────────────────────────
+
+    def restore_snapshot(
+        self,
+        snapshot_path: str,
+        files_dest: Optional[str] = None,
+        mail_dest: Optional[str] = None,
+        restore_files: bool = True,
+        restore_databases: bool = True,
+        restore_mail: bool = False,
+    ) -> Dict[str, Any]:
+        """
+        Restaura el contenido de un snapshot a sus ubicaciones originales.
+
+        - Archivos: rsync del snapshot a files_dest (SIN --delete: superpone,
+          no borra ficheros creados después de la copia).
+        - Bases de datos: descomprime cada dump y lo importa en MariaDB
+          (CREATE DATABASE IF NOT EXISTS + import). Sobrescribe las tablas
+          incluidas en el dump.
+        - Correo: rsync del snapshot a mail_dest (también superpone).
+
+        Returns: dict con status, restored (lista), db_count, log, error.
+        """
+        result: Dict[str, Any] = {
+            "status":   "success",
+            "restored": [],
+            "db_count": 0,
+            "log":      [],
+            "error":    None,
+        }
+
+        snap = Path(snapshot_path)
+        if not snap.is_dir():
+            result["status"] = "failed"
+            result["error"] = f"Snapshot no encontrado: {snapshot_path}"
+            return result
+
+        try:
+            # ── Restaurar archivos web ────────────────────────────────────────
+            files_src = snap / "files"
+            if restore_files and files_src.is_dir() and files_dest:
+                os.makedirs(files_dest, exist_ok=True)
+                xf, _, log = self._rsync_files(
+                    src=str(files_src) + "/",
+                    dst=files_dest.rstrip("/") + "/",
+                    link_dest=None,
+                    delete=False,
+                )
+                result["restored"].append("files")
+                result["log"].append(f"Archivos restaurados en {files_dest} ({xf} transferidos)")
+                result["log"].extend(log[-5:])
+
+            # ── Restaurar bases de datos ──────────────────────────────────────
+            db_src = snap / "databases"
+            if restore_databases and db_src.is_dir():
+                for dump in sorted(db_src.iterdir()):
+                    if not dump.is_file():
+                        continue
+                    ok, log = self._restore_database(dump)
+                    result["log"].extend(log)
+                    if ok:
+                        result["db_count"] += 1
+                if result["db_count"]:
+                    result["restored"].append("databases")
+
+            # ── Restaurar correo ──────────────────────────────────────────────
+            mail_src = snap / "mail"
+            if restore_mail and mail_src.is_dir() and mail_dest:
+                os.makedirs(mail_dest, exist_ok=True)
+                xf, _, log = self._rsync_files(
+                    src=str(mail_src) + "/",
+                    dst=mail_dest.rstrip("/") + "/",
+                    link_dest=None,
+                    delete=False,
+                )
+                result["restored"].append("mail")
+                result["log"].append(f"Correo restaurado en {mail_dest} ({xf} transferidos)")
+                result["log"].extend(log[-5:])
+
+            if not result["restored"]:
+                result["status"] = "failed"
+                result["error"] = "No había nada que restaurar con las opciones indicadas"
+
+        except Exception as exc:
+            logger.exception("Error en restauración")
+            result["status"] = "failed"
+            result["error"] = str(exc)
+
+        return result
+
+    def _restore_database(self, dump_file: Path) -> Tuple[bool, List[str]]:
+        """
+        Descomprime e importa un dump (.sql.zst / .sql.gz) en MariaDB.
+        El nombre de la BD se deduce del fichero: {db}.sql.zst → {db}.
+        """
+        log_lines: List[str] = []
+        name = dump_file.name
+        # Quitar extensión de compresión y .sql → nombre de la BD
+        db_name = name
+        for suffix in (".zst", ".gz"):
+            if db_name.endswith(suffix):
+                db_name = db_name[: -len(suffix)]
+                break
+        if db_name.endswith(".sql"):
+            db_name = db_name[: -len(".sql")]
+
+        mariadb_bin = _mariadb_binary()
+        if not mariadb_bin:
+            log_lines.append(f"ERROR restore {db_name}: cliente mariadb/mysql no encontrado")
+            return False, log_lines
+
+        db_host = os.getenv("MARIADB_HOST", "localhost")
+        db_user = os.getenv("MARIADB_PANEL_USER", "svqpanel_admin")
+        db_pass = os.getenv("MARIADB_PANEL_PASSWORD", "")
+        env = os.environ.copy()
+        env["MYSQL_PWD"] = db_pass
+
+        try:
+            import subprocess
+            # Asegurar que la BD existe (subprocess directo para pasar MYSQL_PWD)
+            subprocess.run(
+                [mariadb_bin, f"--host={db_host}", f"--user={db_user}",
+                 "-e", f"CREATE DATABASE IF NOT EXISTS `{db_name}`"],
+                env=env, capture_output=True, text=True, timeout=30,
+            )
+
+            # Descompresor según extensión
+            if name.endswith(".zst"):
+                decomp = ["zstd", "-dc", str(dump_file)]
+            elif name.endswith(".gz"):
+                decomp = ["gzip", "-dc", str(dump_file)]
+            else:
+                decomp = ["cat", str(dump_file)]
+
+            decomp_proc = subprocess.Popen(decomp, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+            import_proc = subprocess.Popen(
+                [mariadb_bin, f"--host={db_host}", f"--user={db_user}", db_name],
+                stdin=decomp_proc.stdout, stdout=subprocess.PIPE, stderr=subprocess.PIPE, env=env,
+            )
+            decomp_proc.stdout.close()
+            _, imp_err = import_proc.communicate()
+            d_err = decomp_proc.stderr.read()
+            rc_imp = import_proc.returncode
+            rc_dec = decomp_proc.wait()
+
+            if rc_imp != 0:
+                msg = imp_err.decode(errors="replace")[:300] if imp_err else "import falló"
+                log_lines.append(f"ERROR restore {db_name}: {msg}")
+                return False, log_lines
+            if rc_dec != 0:
+                msg = d_err.decode(errors="replace")[:300] if d_err else "descompresión falló"
+                log_lines.append(f"ERROR descompresión {db_name}: {msg}")
+                return False, log_lines
+
+            log_lines.append(f"BD restaurada: {db_name}")
+            return True, log_lines
+
+        except Exception as exc:
+            log_lines.append(f"ERROR restore {db_name}: {exc}")
+            return False, log_lines

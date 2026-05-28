@@ -91,6 +91,11 @@ class BackupRecord(Base):
     # Snapshot del user_id en el momento de ejecución (para auditoría aunque se borre el job)
     user_id = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True)
 
+    # ── Tipo de operación ───────────────────────────────────────────────────
+    # backup  → copia de seguridad
+    # restore → restauración de un snapshot
+    kind = Column(String(20), default="backup", nullable=False)
+
     # ── Estado ────────────────────────────────────────────────────────────────
     # pending → running → success | failed | cancelled
     status = Column(String(20), default="pending", nullable=False)

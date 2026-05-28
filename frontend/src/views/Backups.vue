@@ -79,6 +79,10 @@
                             :disabled="runningJobId === job.id || !job.is_active" @click="runJob(job)">
                       <i class="bi bi-play-fill"></i>
                     </button>
+                    <button class="btn btn-outline-primary" title="Restaurar una copia"
+                            :disabled="runningJobId === job.id" @click="openRestore(job)">
+                      <i class="bi bi-arrow-counterclockwise"></i>
+                    </button>
                     <button class="btn btn-outline-secondary" title="Historial" @click="openHistory(job)">
                       <i class="bi bi-clock-history"></i>
                     </button>
@@ -254,6 +258,7 @@
               <table class="table table-sm align-middle mb-0">
                 <thead class="table-light">
                   <tr>
+                    <th>Op.</th>
                     <th>Fecha</th>
                     <th>Estado</th>
                     <th>Tipo</th>
@@ -267,6 +272,11 @@
                 <tbody>
                   <template v-for="r in records" :key="r.id">
                     <tr>
+                      <td>
+                        <span class="badge" :class="r.kind === 'restore' ? 'bg-dark' : 'bg-light text-dark border'">
+                          {{ r.kind === 'restore' ? 'Restaurar' : 'Copia' }}
+                        </span>
+                      </td>
                       <td class="small">{{ formatDateTime(r.started_at) }}</td>
                       <td><span :class="statusBadge(r.status)">{{ statusLabel(r.status) }}</span></td>
                       <td class="small">{{ r.is_incremental ? 'Incremental' : 'Completa' }}</td>
@@ -283,7 +293,7 @@
                       </td>
                     </tr>
                     <tr v-if="expanded === r.id">
-                      <td colspan="8" class="bg-light">
+                      <td colspan="9" class="bg-light">
                         <div v-if="r.error_message" class="text-danger small mb-2">{{ r.error_message }}</div>
                         <pre class="small mb-0" style="max-height:240px;overflow:auto;white-space:pre-wrap">{{ r.log_output || 'Sin log' }}</pre>
                       </td>
@@ -295,6 +305,87 @@
           </div>
           <div class="modal-footer">
             <button class="btn btn-secondary" @click="showHistory = false">Cerrar</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Modal restaurar -->
+    <div v-if="showRestore" class="modal d-block" tabindex="-1" style="background:rgba(0,0,0,.5)">
+      <div class="modal-dialog modal-lg modal-dialog-scrollable">
+        <div class="modal-content">
+          <div class="modal-header">
+            <h5 class="modal-title">Restaurar · {{ restoreJob?.name }}</h5>
+            <button type="button" class="btn-close" @click="showRestore = false"></button>
+          </div>
+          <div class="modal-body">
+            <div class="alert alert-warning d-flex gap-2 align-items-start">
+              <i class="bi bi-exclamation-triangle-fill mt-1"></i>
+              <div class="small">
+                La restauración <strong>sobrescribe</strong> los archivos y tablas con los de la copia
+                elegida. No borra archivos creados después de esa copia (se superpone). Elige qué
+                restaurar y la copia de origen.
+              </div>
+            </div>
+
+            <label class="form-label fw-semibold d-block">¿Qué restaurar?</label>
+            <div class="d-flex flex-wrap gap-4 mb-3">
+              <div class="form-check">
+                <input class="form-check-input" type="checkbox" id="resFiles" v-model="restoreOpts.files" />
+                <label class="form-check-label" for="resFiles"><i class="bi bi-folder"></i> Archivos web</label>
+              </div>
+              <div class="form-check">
+                <input class="form-check-input" type="checkbox" id="resDb" v-model="restoreOpts.databases" />
+                <label class="form-check-label" for="resDb"><i class="bi bi-database"></i> Bases de datos</label>
+              </div>
+              <div class="form-check">
+                <input class="form-check-input" type="checkbox" id="resMail" v-model="restoreOpts.mail" />
+                <label class="form-check-label" for="resMail"><i class="bi bi-envelope"></i> Correo</label>
+              </div>
+            </div>
+
+            <div v-if="snapshotsLoading" class="text-center py-4">
+              <div class="spinner-border" role="status"></div>
+            </div>
+            <div v-else-if="snapshots.length === 0" class="alert alert-secondary mb-0">
+              No hay copias guardadas en disco para este dominio.
+            </div>
+            <div v-else class="table-responsive">
+              <table class="table table-sm align-middle mb-0">
+                <thead class="table-light">
+                  <tr>
+                    <th>Copia (fecha)</th>
+                    <th>Contenido</th>
+                    <th>Tamaño</th>
+                    <th>Tipo</th>
+                    <th></th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr v-for="s in snapshots" :key="s.name">
+                    <td class="small">{{ formatSnapshot(s.name) }}</td>
+                    <td>
+                      <span v-if="s.has_files" class="badge bg-primary me-1">Web</span>
+                      <span v-if="s.has_databases" class="badge bg-info me-1">BD</span>
+                      <span v-if="s.has_mail" class="badge bg-warning text-dark">Correo</span>
+                    </td>
+                    <td class="small">{{ s.size_mb }} MB</td>
+                    <td class="small">{{ s.is_incremental ? 'Incremental' : 'Completa' }}</td>
+                    <td class="text-end">
+                      <button class="btn btn-sm btn-primary"
+                              :disabled="restoringSnap === s.name"
+                              @click="doRestore(s)">
+                        <span v-if="restoringSnap === s.name" class="spinner-border spinner-border-sm me-1"></span>
+                        <i v-else class="bi bi-arrow-counterclockwise"></i> Restaurar
+                      </button>
+                    </td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+          <div class="modal-footer">
+            <button class="btn btn-secondary" @click="showRestore = false">Cerrar</button>
           </div>
         </div>
       </div>
@@ -355,6 +446,13 @@ export default {
     const records = ref([])
     const historyLoading = ref(false)
     const expanded = ref(null)
+
+    const showRestore = ref(false)
+    const restoreJob = ref(null)
+    const snapshots = ref([])
+    const snapshotsLoading = ref(false)
+    const restoreOpts = ref({ files: true, databases: true, mail: false })
+    const restoringSnap = ref(null)
 
     const domainName = (id) => {
       const d = domains.value.find(x => x.id === id)
@@ -521,6 +619,69 @@ export default {
       }
     }
 
+    const openRestore = async (job) => {
+      restoreJob.value = job
+      restoreOpts.value = {
+        files: job.include_files,
+        databases: job.include_databases,
+        mail: job.include_mail,
+      }
+      showRestore.value = true
+      snapshotsLoading.value = true
+      snapshots.value = []
+      try {
+        snapshots.value = await api.getBackupSnapshots(job.id)
+      } catch (e) {
+        store.showNotification('Error cargando copias: ' + e.message, 'danger')
+      } finally {
+        snapshotsLoading.value = false
+      }
+    }
+
+    const doRestore = async (snap) => {
+      if (!restoreOpts.value.files && !restoreOpts.value.databases && !restoreOpts.value.mail) {
+        store.showNotification('Selecciona al menos un contenido a restaurar', 'warning')
+        return
+      }
+      const parts = []
+      if (restoreOpts.value.files) parts.push('archivos')
+      if (restoreOpts.value.databases) parts.push('bases de datos')
+      if (restoreOpts.value.mail) parts.push('correo')
+      if (!confirm(`¿Restaurar ${parts.join(', ')} desde la copia del ${formatSnapshot(snap.name)}?\nLos datos actuales serán sobrescritos.`)) return
+
+      restoringSnap.value = snap.name
+      try {
+        const rec = await api.restoreBackup(restoreJob.value.id, {
+          snapshot_name: snap.name,
+          restore_files: restoreOpts.value.files,
+          restore_databases: restoreOpts.value.databases,
+          restore_mail: restoreOpts.value.mail,
+        })
+        store.showNotification('Restauración iniciada…', 'info')
+        const final = await pollRecord(rec.id)
+        if (final && final.status === 'success') {
+          store.showNotification('Restauración completada', 'success')
+          showRestore.value = false
+        } else if (final && final.status === 'failed') {
+          store.showNotification('Restauración fallida: ' + (final.error_message || 'error'), 'danger')
+        } else {
+          store.showNotification('La restauración sigue en curso; revisa el historial.', 'warning')
+        }
+      } catch (e) {
+        store.showNotification('Error: ' + e.message, 'danger')
+      } finally {
+        restoringSnap.value = null
+      }
+    }
+
+    const formatSnapshot = (name) => {
+      // name = YYYYMMDD_HHMMSS
+      const m = /^(\d{4})(\d{2})(\d{2})_(\d{2})(\d{2})(\d{2})$/.exec(name)
+      if (!m) return name
+      const [, y, mo, d, h, mi] = m
+      return `${d}/${mo}/${y} ${h}:${mi}`
+    }
+
     const deleteJob = async (job) => {
       if (!confirm(`¿Eliminar el backup "${job.name}"? No se borran las copias ya guardadas en disco.`)) return
       try {
@@ -553,9 +714,11 @@ export default {
       testingSftp, sftpTestMsg, sftpTestOk,
       runningJobId,
       showHistory, historyJob, records, historyLoading, expanded,
+      showRestore, restoreJob, snapshots, snapshotsLoading, restoreOpts, restoringSnap,
       domainName, statusLabel, statusBadge,
       openCreate, openEdit, closeForm, submitForm, testSftp,
       runJob, openHistory, deleteJob,
+      openRestore, doRestore, formatSnapshot,
       formatDate, formatDateTime,
     }
   }

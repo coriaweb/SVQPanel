@@ -379,6 +379,8 @@ def _run_migrations():
         )""",
         "CREATE INDEX IF NOT EXISTS ix_backup_records_job_id  ON backup_records(job_id)",
         "CREATE INDEX IF NOT EXISTS ix_backup_records_user_id ON backup_records(user_id)",
+        # Fase 15.1: restauración — distinguir copia de restauración
+        "ALTER TABLE backup_records ADD COLUMN IF NOT EXISTS kind VARCHAR(20) NOT NULL DEFAULT 'backup'",
     ]
     with engine.connect() as conn:
         for sql in migrations:
