@@ -1809,6 +1809,74 @@ systemctl daemon-reload
 systemctl enable --now svqpanel-user-stats.timer >/dev/null 2>&1 || true
 
 echo -e "${GREEN}✓ systemd timer: svqpanel-user-stats.timer (horario)${NC}"
+
+# ─── Timer cada 4h para recalcular disk_usage por dominio ────────────────────
+cat > /etc/systemd/system/svqpanel-domain-stats.service << 'DSTEOF'
+[Unit]
+Description=SVQPanel — recalcula disk_usage por dominio
+After=network.target svqpanel.service
+
+[Service]
+Type=oneshot
+User=root
+WorkingDirectory=/opt/svqpanel
+ExecStart=/opt/svqpanel/venv/bin/python -m api.cli refresh_domain_stats
+TimeoutStartSec=600
+
+[Install]
+WantedBy=multi-user.target
+DSTEOF
+
+cat > /etc/systemd/system/svqpanel-domain-stats.timer << 'DSTTEOF'
+[Unit]
+Description=SVQPanel — timer cada 4h para disk_usage de dominios
+
+[Timer]
+OnBootSec=10min
+OnUnitActiveSec=4h
+Persistent=true
+Unit=svqpanel-domain-stats.service
+
+[Install]
+WantedBy=timers.target
+DSTTEOF
+
+# ─── Timer diario para sincronizar fechas de expiración SSL ──────────────────
+cat > /etc/systemd/system/svqpanel-ssl-check.service << 'SSLCEOF'
+[Unit]
+Description=SVQPanel — sincroniza ssl_expires desde certbot
+After=network.target svqpanel.service
+
+[Service]
+Type=oneshot
+User=root
+WorkingDirectory=/opt/svqpanel
+ExecStart=/opt/svqpanel/venv/bin/python -m api.cli refresh_ssl_expires
+TimeoutStartSec=120
+
+[Install]
+WantedBy=multi-user.target
+SSLCEOF
+
+cat > /etc/systemd/system/svqpanel-ssl-check.timer << 'SSLCTEOF'
+[Unit]
+Description=SVQPanel — timer diario para comprobación SSL (05:15)
+
+[Timer]
+OnCalendar=*-*-* 05:15:00
+Persistent=true
+Unit=svqpanel-ssl-check.service
+
+[Install]
+WantedBy=timers.target
+SSLCTEOF
+
+systemctl daemon-reload
+systemctl enable --now svqpanel-domain-stats.timer >/dev/null 2>&1 || true
+systemctl enable --now svqpanel-ssl-check.timer    >/dev/null 2>&1 || true
+
+echo -e "${GREEN}✓ systemd timer: svqpanel-domain-stats.timer (cada 4h)${NC}"
+echo -e "${GREEN}✓ systemd timer: svqpanel-ssl-check.timer (diario 05:15)${NC}"
 echo ""
 
 ###############################################################################
