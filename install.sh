@@ -205,6 +205,8 @@ apt-get install -y -qq \
     certbot \
     python3-certbot-nginx \
     rsyslog \
+    rsync \
+    zstd \
     mailutils
 
 echo -e "${GREEN}✓ Dependencias instaladas${NC}\n"
@@ -1553,6 +1555,10 @@ F2BFILTEREOF
 # da error de "logpath not found" al iniciar el jail
 mkdir -p /opt/svqpanel/logs
 touch /opt/svqpanel/logs/auth.log
+
+# Directorio raíz de copias de seguridad (destino local por defecto)
+mkdir -p /backups
+chmod 700 /backups
 
 # logrotate para que auth.log no crezca sin freno
 cat > /etc/logrotate.d/svqpanel << 'LRTEOF'

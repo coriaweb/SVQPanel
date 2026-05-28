@@ -676,6 +676,43 @@ class APIClient {
   toggleCron(cronId) {
     return this.post(`/api/crons/${cronId}/toggle`)
   }
+
+  // Backups
+  getBackupJobs() {
+    return this.get('/api/backups')
+  }
+
+  getBackupJob(jobId) {
+    return this.get(`/api/backups/${jobId}`)
+  }
+
+  createBackupJob(data) {
+    return this.post('/api/backups', data)
+  }
+
+  updateBackupJob(jobId, data) {
+    return this.put(`/api/backups/${jobId}`, data)
+  }
+
+  deleteBackupJob(jobId) {
+    return this.delete(`/api/backups/${jobId}`)
+  }
+
+  runBackupJob(jobId, forceFull = false) {
+    return this.post(`/api/backups/${jobId}/run`, { force_full: forceFull })
+  }
+
+  getBackupRecords(jobId) {
+    return this.get(`/api/backups/${jobId}/records`)
+  }
+
+  getBackupRecord(recordId) {
+    return this.get(`/api/backups/records/${recordId}`)
+  }
+
+  testBackupSftp(jobId) {
+    return this.post(`/api/backups/${jobId}/test-sftp`, {})
+  }
 }
 
 export default new APIClient()

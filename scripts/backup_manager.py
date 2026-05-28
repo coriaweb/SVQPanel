@@ -1,0 +1,572 @@
+"""
+BackupManager — Motor de copias de seguridad de SVQPanel
+
+Estrategia:
+  - Archivos web : rsync con --link-dest al snapshot anterior (incrementales)
+  - Bases de datos: mysqldump | zstd -3 (fallback a gzip si zstd no disponible)
+  - Correo        : rsync de /var/mail/vhosts/{dominio}/ (también incremental)
+  - Destino SFTP  : rsync sobre SSH al host remoto
+
+Estructura en disco:
+  {local_path}/users/{username}/{domain}/
+      20260528_120000/
+          files/           ← snapshot rsync
+          databases/
+              {db}.sql.zst ← dump comprimido
+          mail/            ← snapshot buzones
+          manifest.json    ← metadata del backup
+      latest/              ← copia del último snapshot completo (sin hardlinks)
+"""
+
+import json
+import os
+import shutil
+import subprocess
+import tempfile
+import time
+from datetime import datetime
+from pathlib import Path
+from typing import Optional, Dict, Any, List, Tuple
+
+from scripts.base import SystemManager
+
+import logging
+logger = logging.getLogger(__name__)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Helpers de compresión
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _has_zstd() -> bool:
+    """Comprueba si zstd está disponible en el sistema."""
+    return shutil.which("zstd") is not None
+
+
+def _compress_ext() -> str:
+    return ".zst" if _has_zstd() else ".gz"
+
+
+def _mysqldump_binary() -> Optional[str]:
+    """
+    Devuelve la ruta al binario de volcado de MariaDB/MySQL.
+    Busca rutas explícitas (systemd puede tener PATH reducido) y luego el PATH.
+    """
+    explicit = [
+        "/usr/bin/mariadb-dump",
+        "/usr/bin/mysqldump",
+        "/usr/local/bin/mariadb-dump",
+        "/usr/local/bin/mysqldump",
+        "/opt/mariadb/bin/mariadb-dump",
+    ]
+    for path in explicit:
+        if os.path.isfile(path) and os.access(path, os.X_OK):
+            return path
+    for name in ("mariadb-dump", "mysqldump"):
+        found = shutil.which(name)
+        if found:
+            return found
+    return None
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# BackupManager
+# ─────────────────────────────────────────────────────────────────────────────
+
+class BackupManager(SystemManager):
+    """Gestiona la creación de copias de seguridad de dominios."""
+
+    def __init__(self):
+        super().__init__(require_root=True)
+
+    # ─────────────────────────────────────────────────────────────────────────
+    # Punto de entrada principal
+    # ─────────────────────────────────────────────────────────────────────────
+
+    def run_backup(
+        self,
+        job_config: Dict[str, Any],
+        username: str,
+        domain_name: Optional[str],
+        files_path: Optional[str] = None,
+        mail_path: Optional[str] = None,
+        databases: Optional[List[Dict]] = None,
+        force_full: bool = False,
+    ) -> Dict[str, Any]:
+        """
+        Ejecuta un backup completo o incremental según la configuración del job.
+
+        Args:
+            job_config   : diccionario con los campos del BackupJob
+            username     : nombre del usuario del sistema
+            domain_name  : nombre del dominio (None = backup global)
+            files_path   : ruta absoluta de los archivos web a copiar (la calcula la ruta API)
+            mail_path    : ruta absoluta de los buzones de correo a copiar
+            databases    : lista de dicts con {db_name}
+            force_full   : ignorar tipo del job y hacer copia completa
+
+        Returns:
+            dict con status, backup_path, size_bytes, files_transferred, db_count, log, error
+        """
+        result: Dict[str, Any] = {
+            "status":            "success",
+            "backup_path":       None,
+            "size_bytes":        0,
+            "files_transferred": 0,
+            "files_total":       0,
+            "db_count":          0,
+            "is_incremental":    False,
+            "log":               [],
+            "error":             None,
+        }
+
+        ts = datetime.utcnow().strftime("%Y%m%d_%H%M%S")
+        dest_type = job_config.get("destination_type", "local")
+
+        try:
+            # ── Preparar directorio base ──────────────────────────────────────
+            if dest_type == "local":
+                base_dir = self._local_base(
+                    job_config.get("local_path", "/backups"),
+                    username,
+                    domain_name or "global",
+                )
+            else:
+                # Para SFTP usamos un directorio temporal local primero
+                base_dir = Path(tempfile.mkdtemp(prefix="svqbak_"))
+
+            snapshot_dir = base_dir / ts
+            snapshot_dir.mkdir(parents=True, exist_ok=True)
+            result["backup_path"] = str(snapshot_dir)
+
+            # ── Detectar si podemos hacer incremental ─────────────────────────
+            is_incremental = False
+            if not force_full and job_config.get("backup_type") == "incremental":
+                prev = self._find_previous_snapshot(base_dir)
+                if prev:
+                    is_incremental = True
+                    result["is_incremental"] = True
+                    result["log"].append(f"Modo incremental basado en: {prev.name}")
+
+            # ── Backup de archivos web ─────────────────────────────────────────
+            if job_config.get("include_files", True) and files_path:
+                src_path = files_path.rstrip("/") + "/"
+                if os.path.isdir(src_path):
+                    files_dir = snapshot_dir / "files"
+                    files_dir.mkdir(exist_ok=True)
+                    xf, xt, log = self._rsync_files(
+                        src=src_path,
+                        dst=str(files_dir) + "/",
+                        link_dest=str(prev / "files") if is_incremental and prev else None,
+                    )
+                    result["files_transferred"] += xf
+                    result["files_total"]       += xt
+                    result["log"].extend(log)
+                else:
+                    result["log"].append(f"WARN: directorio web no encontrado: {src_path}")
+
+            # ── Backup de bases de datos ──────────────────────────────────────
+            if job_config.get("include_databases", True) and databases:
+                db_dir = snapshot_dir / "databases"
+                db_dir.mkdir(exist_ok=True)
+                for db_info in databases:
+                    ok, log = self._dump_database(db_info, str(db_dir))
+                    result["log"].extend(log)
+                    if ok:
+                        result["db_count"] += 1
+
+            # ── Backup de correo ──────────────────────────────────────────────
+            if job_config.get("include_mail", False) and mail_path:
+                mail_src = mail_path.rstrip("/") + "/"
+                if os.path.isdir(mail_src):
+                    mail_dir = snapshot_dir / "mail"
+                    mail_dir.mkdir(exist_ok=True)
+                    xf, xt, log = self._rsync_files(
+                        src=mail_src,
+                        dst=str(mail_dir) + "/",
+                        link_dest=str(prev / "mail") if is_incremental and prev else None,
+                    )
+                    result["files_transferred"] += xf
+                    result["files_total"]       += xt
+                    result["log"].extend(log)
+                else:
+                    result["log"].append(f"WARN: directorio de correo no encontrado: {mail_src}")
+
+            # ── Escribir manifest ─────────────────────────────────────────────
+            manifest = {
+                "timestamp":        ts,
+                "domain":           domain_name,
+                "username":         username,
+                "is_incremental":   is_incremental,
+                "include_files":    job_config.get("include_files", True),
+                "include_databases":job_config.get("include_databases", True),
+                "include_mail":     job_config.get("include_mail", False),
+                "db_count":         result["db_count"],
+                "files_transferred":result["files_transferred"],
+            }
+            (snapshot_dir / "manifest.json").write_text(json.dumps(manifest, indent=2))
+
+            # ── Calcular tamaño total ─────────────────────────────────────────
+            result["size_bytes"] = self._dir_size(snapshot_dir)
+
+            # ── Subir a SFTP si destino remoto ────────────────────────────────
+            if dest_type == "sftp":
+                sftp_path, log = self._rsync_to_sftp(
+                    local_dir=str(snapshot_dir),
+                    job_config=job_config,
+                    username=username,
+                    domain_name=domain_name or "global",
+                    ts=ts,
+                )
+                result["log"].extend(log)
+                result["backup_path"] = sftp_path
+                # Limpiar directorio temporal
+                shutil.rmtree(str(base_dir), ignore_errors=True)
+
+            # ── Aplicar retención ─────────────────────────────────────────────
+            if dest_type == "local":
+                self._apply_retention(base_dir, job_config.get("retention_copies", 7))
+
+        except Exception as exc:
+            logger.exception("Error en backup")
+            result["status"] = "failed"
+            result["error"]  = str(exc)
+
+        return result
+
+    # ─────────────────────────────────────────────────────────────────────────
+    # Rsync local (con soporte --link-dest para incrementales)
+    # ─────────────────────────────────────────────────────────────────────────
+
+    def _rsync_files(
+        self,
+        src: str,
+        dst: str,
+        link_dest: Optional[str] = None,
+    ) -> Tuple[int, int, List[str]]:
+        """
+        Ejecuta rsync para copiar src → dst.
+        Si link_dest se proporciona, usa --link-dest para hardlinks (incremental).
+
+        Returns: (files_transferred, files_total, log_lines)
+        """
+        cmd = [
+            "rsync",
+            "-aH",           # archivo, hardlinks
+            "--delete",      # eliminar en destino lo que no esté en origen
+            "--stats",       # mostrar estadísticas al final
+            "--no-human-readable",
+        ]
+
+        if link_dest and os.path.isdir(link_dest):
+            cmd += [f"--link-dest={link_dest}"]
+
+        cmd += [src, dst]
+
+        rc, stdout, stderr = self.execute_command(cmd, check=False)
+
+        log_lines = []
+        files_transferred = 0
+        files_total = 0
+
+        if stdout:
+            for line in stdout.splitlines():
+                log_lines.append(line)
+                if "Number of files transferred:" in line:
+                    try:
+                        files_transferred = int(line.split(":")[-1].strip().replace(",", ""))
+                    except ValueError:
+                        pass
+                if "Number of files:" in line:
+                    try:
+                        # "Number of files: 1,234 (reg: 1,000, dir: 234)"
+                        part = line.split(":")[1].strip().split()[0].replace(",", "")
+                        files_total = int(part)
+                    except (ValueError, IndexError):
+                        pass
+
+        if rc != 0 and stderr:
+            log_lines.append(f"ERROR rsync: {stderr[:500]}")
+
+        return files_transferred, files_total, log_lines
+
+    # ─────────────────────────────────────────────────────────────────────────
+    # Dump de base de datos MariaDB
+    # ─────────────────────────────────────────────────────────────────────────
+
+    def _dump_database(
+        self,
+        db_info: Dict[str, str],
+        dest_dir: str,
+    ) -> Tuple[bool, List[str]]:
+        """
+        Vuelca una base de datos MariaDB con mariadb-dump/mysqldump y la comprime.
+
+        Usa las credenciales del usuario administrador del panel (MARIADB_PANEL_USER),
+        no las del cliente: las contraseñas de cliente se guardan hasheadas y no son
+        recuperables. El usuario admin del panel tiene privilegios sobre todas las BDs.
+
+        Args:
+            db_info  : {db_name}
+            dest_dir : directorio destino
+
+        Returns: (success, log_lines)
+        """
+        db_name  = db_info["db_name"]
+        ext      = _compress_ext()
+        out_file = os.path.join(dest_dir, f"{db_name}.sql{ext}")
+        log_lines: List[str] = []
+
+        binary = _mysqldump_binary()
+        if not binary:
+            log_lines.append(
+                f"ERROR dump {db_name}: cliente mariadb-dump/mysqldump no encontrado "
+                "(apt install mariadb-client)"
+            )
+            return False, log_lines
+
+        db_host = os.getenv("MARIADB_HOST", "localhost")
+        db_user = os.getenv("MARIADB_PANEL_USER", "svqpanel_admin")
+        db_pass = os.getenv("MARIADB_PANEL_PASSWORD", "")
+
+        # Contraseña vía variable de entorno (no aparece en la línea de comandos)
+        env = os.environ.copy()
+        env["MYSQL_PWD"] = db_pass
+
+        dump_cmd = [
+            binary,
+            "--single-transaction",
+            "--routines",
+            "--triggers",
+            "--skip-lock-tables",
+            f"--host={db_host}",
+            f"--user={db_user}",
+            db_name,
+        ]
+
+        try:
+            dump_proc = subprocess.Popen(
+                dump_cmd,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                env=env,
+            )
+
+            if _has_zstd():
+                compress_cmd = ["zstd", "-3", "-T0", "-o", out_file]
+                compress_proc = subprocess.Popen(
+                    compress_cmd,
+                    stdin=dump_proc.stdout,
+                    stderr=subprocess.PIPE,
+                )
+                dump_proc.stdout.close()
+                _, c_err = compress_proc.communicate()
+                d_err = dump_proc.stderr.read()
+                rc_dump     = dump_proc.wait()
+                rc_compress = compress_proc.returncode
+            else:
+                # Fallback gzip
+                with open(out_file, "wb") as fout:
+                    compress_proc = subprocess.Popen(
+                        ["gzip", "-c"],
+                        stdin=dump_proc.stdout,
+                        stdout=fout,
+                        stderr=subprocess.PIPE,
+                    )
+                    dump_proc.stdout.close()
+                    _, c_err = compress_proc.communicate()
+                    d_err = dump_proc.stderr.read()
+                    rc_dump     = dump_proc.wait()
+                    rc_compress = compress_proc.returncode
+
+            if rc_dump != 0:
+                msg = d_err.decode(errors="replace")[:300] if d_err else "mysqldump falló"
+                log_lines.append(f"ERROR dump {db_name}: {msg}")
+                return False, log_lines
+
+            if rc_compress != 0:
+                msg = c_err.decode(errors="replace")[:300] if c_err else "compresión falló"
+                log_lines.append(f"ERROR compresión {db_name}: {msg}")
+                return False, log_lines
+
+            size = os.path.getsize(out_file)
+            log_lines.append(f"DB {db_name}: {out_file} ({size // 1024} KB)")
+            return True, log_lines
+
+        except Exception as exc:
+            log_lines.append(f"ERROR dump {db_name}: {exc}")
+            return False, log_lines
+
+    # ─────────────────────────────────────────────────────────────────────────
+    # Rsync al destino SFTP remoto
+    # ─────────────────────────────────────────────────────────────────────────
+
+    def _rsync_to_sftp(
+        self,
+        local_dir: str,
+        job_config: Dict[str, Any],
+        username: str,
+        domain_name: str,
+        ts: str,
+    ) -> Tuple[str, List[str]]:
+        """
+        Transfiere el snapshot al servidor SFTP remoto vía rsync+SSH.
+
+        Returns: (remote_path, log_lines)
+        """
+        host      = job_config["sftp_host"]
+        port      = job_config.get("sftp_port", 22)
+        user      = job_config["sftp_user"]
+        base_path = job_config.get("sftp_path", "/backups").rstrip("/")
+        key_path  = job_config.get("sftp_key_path")
+
+        remote_path = f"{base_path}/users/{username}/{domain_name}/{ts}/"
+
+        ssh_opts = [
+            "ssh",
+            "-p", str(port),
+            "-o", "StrictHostKeyChecking=no",
+            "-o", "BatchMode=yes",        # sin prompts interactivos
+        ]
+        if key_path:
+            ssh_opts += ["-i", key_path]
+
+        cmd = [
+            "rsync",
+            "-aH",
+            "--stats",
+            "-e", " ".join(ssh_opts),
+            local_dir + "/",
+            f"{user}@{host}:{remote_path}",
+        ]
+
+        log_lines: List[str] = [f"Transfiriendo a SFTP {host}:{remote_path}"]
+        rc, stdout, stderr = self.execute_command(cmd, check=False)
+
+        if stdout:
+            log_lines.extend(stdout.splitlines()[-10:])
+        if rc != 0 and stderr:
+            log_lines.append(f"ERROR SFTP: {stderr[:300]}")
+
+        return remote_path, log_lines
+
+    # ─────────────────────────────────────────────────────────────────────────
+    # Helpers de directorios y retención
+    # ─────────────────────────────────────────────────────────────────────────
+
+    def _local_base(self, local_path: str, username: str, domain_name: str) -> Path:
+        """Devuelve (y crea) el directorio base de backups de un dominio."""
+        base = Path(local_path) / "users" / username / domain_name
+        base.mkdir(parents=True, exist_ok=True)
+        return base
+
+    def _find_previous_snapshot(self, base_dir: Path) -> Optional[Path]:
+        """
+        Busca el snapshot más reciente en base_dir (carpetas con formato YYYYMMDD_HHMMSS).
+        """
+        try:
+            snapshots = sorted(
+                [d for d in base_dir.iterdir() if d.is_dir() and len(d.name) == 15],
+                reverse=True,
+            )
+            return snapshots[0] if snapshots else None
+        except Exception:
+            return None
+
+    def _apply_retention(self, base_dir: Path, retention_copies: int) -> None:
+        """Elimina snapshots más antiguos que el límite de retención."""
+        try:
+            snapshots = sorted(
+                [d for d in base_dir.iterdir() if d.is_dir() and len(d.name) == 15],
+                reverse=True,
+            )
+            to_delete = snapshots[retention_copies:]
+            for snap in to_delete:
+                shutil.rmtree(str(snap), ignore_errors=True)
+                logger.info(f"Retención: eliminado snapshot {snap}")
+        except Exception as exc:
+            logger.warning(f"Error aplicando retención: {exc}")
+
+    def _dir_size(self, path: Path) -> int:
+        """Calcula el tamaño en bytes de un directorio (sin seguir symlinks)."""
+        total = 0
+        try:
+            for entry in os.scandir(path):
+                if entry.is_file(follow_symlinks=False):
+                    total += entry.stat(follow_symlinks=False).st_size
+                elif entry.is_dir(follow_symlinks=False):
+                    total += self._dir_size(Path(entry.path))
+        except Exception:
+            pass
+        return total
+
+    # ─────────────────────────────────────────────────────────────────────────
+    # Test de conectividad SFTP
+    # ─────────────────────────────────────────────────────────────────────────
+
+    def test_sftp_connection(self, job_config: Dict[str, Any]) -> Tuple[bool, str]:
+        """
+        Comprueba que el host SFTP es alcanzable con las credenciales del job.
+
+        Returns: (ok, message)
+        """
+        host     = job_config.get("sftp_host", "")
+        port     = job_config.get("sftp_port", 22)
+        user     = job_config.get("sftp_user", "")
+        key_path = job_config.get("sftp_key_path")
+
+        if not host or not user:
+            return False, "Host y usuario SFTP son obligatorios"
+
+        cmd = [
+            "ssh",
+            "-p", str(port),
+            "-o", "StrictHostKeyChecking=no",
+            "-o", "BatchMode=yes",
+            "-o", "ConnectTimeout=10",
+        ]
+        if key_path and os.path.isfile(key_path):
+            cmd += ["-i", key_path]
+
+        cmd += [f"{user}@{host}", "echo OK"]
+
+        rc, stdout, stderr = self.execute_command(cmd, check=False)
+        if rc == 0 and "OK" in stdout:
+            return True, "Conexión SFTP correcta"
+        return False, (stderr or "No se pudo conectar")[:200]
+
+    # ─────────────────────────────────────────────────────────────────────────
+    # Listar snapshots en disco
+    # ─────────────────────────────────────────────────────────────────────────
+
+    def list_local_snapshots(
+        self,
+        local_path: str,
+        username: str,
+        domain_name: str,
+    ) -> List[Dict[str, Any]]:
+        """Lista los snapshots locales disponibles para un dominio."""
+        base = Path(local_path) / "users" / username / domain_name
+        if not base.is_dir():
+            return []
+
+        result = []
+        for snap in sorted(base.iterdir(), reverse=True):
+            if not (snap.is_dir() and len(snap.name) == 15):
+                continue
+            manifest_file = snap / "manifest.json"
+            manifest = {}
+            if manifest_file.exists():
+                try:
+                    manifest = json.loads(manifest_file.read_text())
+                except Exception:
+                    pass
+            result.append({
+                "name":           snap.name,
+                "path":           str(snap),
+                "size_bytes":     self._dir_size(snap),
+                "is_incremental": manifest.get("is_incremental", False),
+                "db_count":       manifest.get("db_count", 0),
+                "manifest":       manifest,
+            })
+        return result

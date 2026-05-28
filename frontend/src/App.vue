@@ -60,6 +60,11 @@
               <i class="bi bi-clock-history"></i> Tareas Cron
             </router-link>
           </li>
+          <li>
+            <router-link to="/backups" :class="{active: route.path === '/backups'}">
+              <i class="bi bi-hdd-stack"></i> Copias de seguridad
+            </router-link>
+          </li>
           <li v-if="currentUser?.is_admin">
             <router-link to="/system" :class="{active: route.path === '/system'}">
               <i class="bi bi-hdd-rack"></i> Sistema

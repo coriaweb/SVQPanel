@@ -13,6 +13,7 @@ import FileManager from '../views/FileManager.vue'
 import Plans from '../views/Plans.vue'
 import MySftp from '../views/MySftp.vue'
 import Crons from '../views/Crons.vue'
+import Backups from '../views/Backups.vue'
 import ServerIPs from '../views/ServerIPs.vue'
 import Login from '../views/Login.vue'
 
@@ -115,6 +116,12 @@ const routes = [
     path: '/crons',
     name: 'Crons',
     component: Crons,
+    meta: { requiresAuth: true }
+  },
+  {
+    path: '/backups',
+    name: 'Backups',
+    component: Backups,
     meta: { requiresAuth: true }
   },
   {

@@ -13,7 +13,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from api.models.database import create_tables, get_db
 from config.config import PANEL_NAME, PANEL_VERSION
 
-from api.routes import users, domains, php, ssl, ipv6, auth, settings, dns, system, mail, databases, firewall, fail2ban, security_monitor, ip_lists, file_manager, crowdsec, plans, sftp, crons, server_ips
+from api.routes import users, domains, php, ssl, ipv6, auth, settings, dns, system, mail, databases, firewall, fail2ban, security_monitor, ip_lists, file_manager, crowdsec, plans, sftp, crons, server_ips, backups
 
 # Crear app FastAPI
 app = FastAPI(
@@ -332,6 +332,53 @@ def _run_migrations():
         "CREATE INDEX IF NOT EXISTS ix_server_ips_ip_type ON server_ips(ip_type)",
         # Timezone en settings
         "ALTER TABLE settings ADD COLUMN IF NOT EXISTS timezone VARCHAR(64) DEFAULT 'UTC'",
+        # ─────────────────────────────────────────────────────────────────
+        # Fase 15: Sistema de backups (jobs + historial de ejecuciones)
+        # ─────────────────────────────────────────────────────────────────
+        """CREATE TABLE IF NOT EXISTS backup_jobs (
+            id                SERIAL PRIMARY KEY,
+            user_id           INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+            domain_id         INTEGER REFERENCES domains(id) ON DELETE SET NULL,
+            name              VARCHAR(100) NOT NULL,
+            description       VARCHAR(255),
+            include_files     BOOLEAN NOT NULL DEFAULT TRUE,
+            include_databases BOOLEAN NOT NULL DEFAULT TRUE,
+            include_mail      BOOLEAN NOT NULL DEFAULT FALSE,
+            backup_type       VARCHAR(20)  NOT NULL DEFAULT 'incremental',
+            destination_type  VARCHAR(10)  NOT NULL DEFAULT 'local',
+            local_path        VARCHAR(512) NOT NULL DEFAULT '/backups',
+            sftp_host         VARCHAR(255),
+            sftp_port         INTEGER DEFAULT 22,
+            sftp_user         VARCHAR(64),
+            sftp_password     VARCHAR(500),
+            sftp_path         VARCHAR(512),
+            sftp_key_path     VARCHAR(512),
+            retention_copies  INTEGER NOT NULL DEFAULT 7,
+            is_active         BOOLEAN NOT NULL DEFAULT TRUE,
+            created_at        TIMESTAMP NOT NULL DEFAULT NOW(),
+            updated_at        TIMESTAMP DEFAULT NOW(),
+            last_run          TIMESTAMP
+        )""",
+        "CREATE INDEX IF NOT EXISTS ix_backup_jobs_user_id   ON backup_jobs(user_id)",
+        "CREATE INDEX IF NOT EXISTS ix_backup_jobs_domain_id ON backup_jobs(domain_id)",
+        """CREATE TABLE IF NOT EXISTS backup_records (
+            id                SERIAL PRIMARY KEY,
+            job_id            INTEGER NOT NULL REFERENCES backup_jobs(id) ON DELETE CASCADE,
+            user_id           INTEGER REFERENCES users(id) ON DELETE SET NULL,
+            status            VARCHAR(20) NOT NULL DEFAULT 'pending',
+            is_incremental    BOOLEAN NOT NULL DEFAULT FALSE,
+            backup_path       VARCHAR(1024),
+            size_bytes        BIGINT DEFAULT 0,
+            files_transferred INTEGER DEFAULT 0,
+            files_total       INTEGER DEFAULT 0,
+            db_count          INTEGER DEFAULT 0,
+            log_output        TEXT,
+            error_message     TEXT,
+            started_at        TIMESTAMP NOT NULL DEFAULT NOW(),
+            finished_at       TIMESTAMP
+        )""",
+        "CREATE INDEX IF NOT EXISTS ix_backup_records_job_id  ON backup_records(job_id)",
+        "CREATE INDEX IF NOT EXISTS ix_backup_records_user_id ON backup_records(user_id)",
     ]
     with engine.connect() as conn:
         for sql in migrations:
@@ -389,6 +436,7 @@ app.include_router(plans.router,            prefix="/api", tags=["Plans"])
 app.include_router(sftp.router,             prefix="/api", tags=["SFTP"])
 app.include_router(crons.router,            prefix="/api", tags=["Crons"])
 app.include_router(server_ips.router,       prefix="/api", tags=["Server IPs"])
+app.include_router(backups.router,          prefix="/api", tags=["Backups"])
 app.include_router(file_manager.router,     prefix="/api", tags=["File Manager"])
 # Autoconfig/Autodiscover sin prefijo (clientes de correo los buscan en rutas raíz)
 app.include_router(mail.router, prefix="", include_in_schema=False)
