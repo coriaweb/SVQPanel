@@ -197,21 +197,24 @@ async def get_system_updates(
     import subprocess
     from datetime import datetime as dt
     import os
+    import shutil
     try:
+        # Buscar apt-get y apt en el sistema
+        apt_get_path = shutil.which("apt-get") or "/usr/bin/apt-get"
+        apt_path = shutil.which("apt") or "/usr/bin/apt"
+
         # Refrescar índice APT
-        # Si el proceso corre como root, no es necesario sudo
-        # Si no, se intenta con sudo (requiere estar en sudoers sin contraseña)
         current_uid = os.getuid()
         is_root = current_uid == 0
 
         if is_root:
-            update_cmd = ["apt-get", "update", "-qq"]
-            list_cmd = ["apt", "list", "--upgradable"]
+            update_cmd = [apt_get_path, "update", "-qq"]
+            list_cmd = [apt_path, "list", "--upgradable"]
         else:
-            update_cmd = ["sudo", "apt-get", "update", "-qq"]
-            list_cmd = ["sudo", "apt", "list", "--upgradable"]
+            update_cmd = ["sudo", apt_get_path, "update", "-qq"]
+            list_cmd = ["sudo", apt_path, "list", "--upgradable"]
 
-        subprocess.run(update_cmd, capture_output=True, text=True, timeout=120)
+        update_result = subprocess.run(update_cmd, capture_output=True, text=True, timeout=120)
 
         # Listar actualizables
         result = subprocess.run(
@@ -262,9 +265,13 @@ async def run_system_upgrade(
     import subprocess
     import re
     import os
+    import shutil
 
     package = (body or {}).get("package", "").strip()
     try:
+        # Buscar apt-get en el sistema
+        apt_get_path = shutil.which("apt-get") or "/usr/bin/apt-get"
+
         if package:
             # Validar: solo caracteres seguros para nombre de paquete
             if not re.match(r'^[a-zA-Z0-9._+\-]+$', package):
@@ -275,14 +282,14 @@ async def run_system_upgrade(
 
         if package:
             if is_root:
-                cmd = ["apt-get", "install", "--only-upgrade", "-y", package]
+                cmd = [apt_get_path, "install", "--only-upgrade", "-y", package]
             else:
-                cmd = ["sudo", "apt-get", "install", "--only-upgrade", "-y", package]
+                cmd = ["sudo", apt_get_path, "install", "--only-upgrade", "-y", package]
         else:
             if is_root:
-                cmd = ["apt-get", "upgrade", "-y", "-o", "Dpkg::Options::=--force-confold"]
+                cmd = [apt_get_path, "upgrade", "-y", "-o", "Dpkg::Options::=--force-confold"]
             else:
-                cmd = ["sudo", "apt-get", "upgrade", "-y", "-o", "Dpkg::Options::=--force-confold"]
+                cmd = ["sudo", apt_get_path, "upgrade", "-y", "-o", "Dpkg::Options::=--force-confold"]
 
         result = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
         return {
