@@ -31,7 +31,7 @@
             class="btn btn-sm btn-outline-info font-monospace"
             @click="quickRegister(sip)"
           >
-            <i class="bi bi-plus me-1"></i>{{ sip.address }}/{{ sip.netmask }} ({{ sip.interface }})
+            <i class="bi bi-plus me-1"></i>{{ sip.address }}{{ sip.netmask }} ({{ sip.interface }})
           </button>
         </div>
       </div>
