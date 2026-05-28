@@ -180,13 +180,16 @@ def generate_nginx_config(
 
     tpl_extra = ("\n" + template_nginx_extra.rstrip()) if template_nginx_extra else ""
 
+    ipv6_listen_http  = f"listen [{ipv6}]:80 default_server;" if ipv6 else "listen [::]:80;"
+    ipv6_listen_https = f"listen [{ipv6}]:443 ssl http2 default_server;" if ipv6 else "listen [::]:443 ssl http2;"
+
     server_block = f"""upstream php_{backend_name} {{
     server unix:{php_socket};
 }}
 
 server {{
     listen 80;
-    {"listen [::]:\"80;\"" if not ipv6 else "listen [\"" + ipv6 + "\"]:80 default_server;"}
+    {ipv6_listen_http}
     server_name {server_names};
     root {public_html};
 
@@ -225,7 +228,7 @@ server {{
         server_block += f"""
 server {{
     listen 443 ssl http2;
-    {"listen [::]:" + "443 ssl http2;" if not ipv6 else "listen [" + ipv6 + "]:443 ssl http2 default_server;"}
+    {ipv6_listen_https}
     server_name {server_names};
     root {public_html};
 
