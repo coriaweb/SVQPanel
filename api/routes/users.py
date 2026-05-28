@@ -116,10 +116,16 @@ async def list_users(
 @router.get("/users/{user_id}", response_model=UserResponse)
 async def get_user(
     user_id: int,
-    current_user: User = Depends(require_admin),
+    current_user: User = Depends(require_auth),
     db: Session = Depends(get_db)
 ):
-    """Obtener un usuario por ID"""
+    """Obtener un usuario por ID. Admin puede ver cualquiera; usuario solo el suyo propio."""
+    # Un usuario normal solo puede ver su propia cuenta
+    if not current_user.is_admin and current_user.id != user_id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="No tienes permiso para ver este usuario"
+        )
     try:
         user = db.query(User).filter(User.id == user_id).first()
         if not user:
