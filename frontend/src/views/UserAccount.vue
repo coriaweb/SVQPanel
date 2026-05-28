@@ -125,6 +125,16 @@
             </div>
           </div>
 
+          <!-- 2FA — solo visible para el propio usuario o admin -->
+          <div v-if="isOwnAccount" class="card mb-3">
+            <div class="card-header">
+              <i class="bi bi-shield-lock me-1"></i> Autenticación de doble factor (2FA)
+            </div>
+            <div class="card-body">
+              <TwoFactorManager />
+            </div>
+          </div>
+
           <div class="card">
             <div class="card-header d-flex justify-content-between align-items-center">
               <span><i class="bi bi-globe2 me-1"></i> Dominios de {{ user.username }}</span>
@@ -357,7 +367,7 @@
 </template>
 
 <script>
-import { ref, onMounted } from 'vue'
+import { ref, computed, onMounted } from 'vue'
 import { useRoute } from 'vue-router'
 import { useMainStore } from '../stores/useMainStore'
 import api from '../services/api'
@@ -365,14 +375,19 @@ import Modal from '../components/Modal.vue'
 import UserForm from '../components/UserForm.vue'
 import IPv6Manager from '../components/IPv6Manager.vue'
 import SftpManager from '../components/SftpManager.vue'
+import TwoFactorManager from '../components/TwoFactorManager.vue'
 
 export default {
   name: 'UserAccount',
-  components: { Modal, UserForm, IPv6Manager, SftpManager },
+  components: { Modal, UserForm, IPv6Manager, SftpManager, TwoFactorManager },
   setup() {
     const route = useRoute()
     const store = useMainStore()
     const userId = parseInt(route.params.id)
+
+    // ¿El usuario viendo esta página es el propio dueño de la cuenta?
+    const currentUser = store.currentUser || JSON.parse(localStorage.getItem('user') || '{}')
+    const isOwnAccount = computed(() => currentUser?.id === userId)
 
     const user           = ref(null)
     const clients        = ref([])
@@ -577,6 +592,7 @@ export default {
       handleChangePHP, handleCreateSSL, handleDeleteSSL,
       handleDeleteDomain, handleAddDomain,
       onUserUpdated, onClientAdded, deleteClientConfirm,
+      isOwnAccount,
     }
   }
 }

@@ -285,6 +285,10 @@ def _run_migrations():
         "ALTER TABLE settings ADD COLUMN IF NOT EXISTS ssl_panel_enabled BOOLEAN DEFAULT FALSE",
         "ALTER TABLE settings ADD COLUMN IF NOT EXISTS ssl_panel_expires TIMESTAMP",
         "ALTER TABLE settings ADD COLUMN IF NOT EXISTS force_https BOOLEAN DEFAULT FALSE",
+        # 2FA
+        "ALTER TABLE users ADD COLUMN IF NOT EXISTS totp_secret VARCHAR(64)",
+        "ALTER TABLE users ADD COLUMN IF NOT EXISTS totp_enabled BOOLEAN DEFAULT FALSE",
+        "ALTER TABLE users ADD COLUMN IF NOT EXISTS totp_enabled_at TIMESTAMP",
     ]
     with engine.connect() as conn:
         for sql in migrations:

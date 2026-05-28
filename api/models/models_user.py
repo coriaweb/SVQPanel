@@ -67,6 +67,11 @@ class User(Base):
     sftp_password_set_at    = Column(DateTime, nullable=True)
     ssh_keys_count          = Column(Integer, default=0, nullable=False)
 
+    # 2FA — autenticación de dos factores (TOTP)
+    totp_secret     = Column(String(64), nullable=True)   # secreto TOTP cifrado en base32
+    totp_enabled    = Column(Boolean, default=False, nullable=False)
+    totp_enabled_at = Column(DateTime, nullable=True)
+
     # Relaciones
     domains      = relationship("Domain",         back_populates="user", cascade="all, delete-orphan")
     mail_domains = relationship("MailDomain",     back_populates="user", cascade="all, delete-orphan")

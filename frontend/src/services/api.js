@@ -622,6 +622,31 @@ class APIClient {
   changePassword(data) {
     return this.post('/api/auth/change-password', data)
   }
+
+  // 2FA
+  get2FAStatus() {
+    return this.get('/api/auth/2fa/status')
+  }
+
+  setup2FA() {
+    return this.get('/api/auth/2fa/setup')
+  }
+
+  enable2FA(code) {
+    return this.post('/api/auth/2fa/enable', { code })
+  }
+
+  disable2FA(code) {
+    return this.post('/api/auth/2fa/disable', { code })
+  }
+
+  verify2FA(tempToken, code) {
+    return this.request('/api/auth/2fa/verify', {
+      method: 'POST',
+      body: JSON.stringify({ temp_token: tempToken, code }),
+      skipAuthRedirect: true
+    })
+  }
 }
 
 export default new APIClient()

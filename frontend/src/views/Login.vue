@@ -6,7 +6,8 @@
         <p class="version">v0.1.0</p>
       </div>
 
-      <form @submit.prevent="handleLogin" class="login-form">
+      <!-- ── Paso 1: usuario + contraseña ── -->
+      <form v-if="!twoFARequired" @submit.prevent="handleLogin" class="login-form">
         <div class="form-group">
           <label for="username">Usuario</label>
           <input
@@ -45,6 +46,51 @@
         </button>
       </form>
 
+      <!-- ── Paso 2: código TOTP ── -->
+      <form v-else @submit.prevent="handleVerify2FA" class="login-form">
+        <div class="twofa-icon text-center mb-3">
+          <i class="bi bi-shield-lock-fill text-primary" style="font-size:2.5rem"></i>
+        </div>
+        <p class="text-center text-muted mb-3">
+          Introduce el código de 6 dígitos de tu aplicación autenticadora.
+        </p>
+
+        <div class="form-group">
+          <label for="totpCode">Código de verificación</label>
+          <input
+            id="totpCode"
+            v-model="totpCode"
+            type="text"
+            inputmode="numeric"
+            pattern="[0-9]{6}"
+            maxlength="6"
+            class="form-control text-center"
+            style="font-size:1.4rem; letter-spacing:0.3rem"
+            placeholder="000000"
+            required
+            autocomplete="one-time-code"
+            ref="totpInput"
+          />
+        </div>
+
+        <div v-if="error" class="alert alert-danger">
+          <i class="bi bi-exclamation-circle"></i> {{ error }}
+        </div>
+
+        <button
+          type="submit"
+          class="btn btn-primary btn-login"
+          :disabled="loading || totpCode.length !== 6"
+        >
+          <span v-if="loading" class="spinner-border spinner-border-sm me-2" role="status" aria-hidden="true"></span>
+          {{ loading ? 'Verificando...' : 'Verificar código' }}
+        </button>
+
+        <button type="button" class="btn btn-link w-100 mt-2 text-muted" @click="cancelTwoFA">
+          <i class="bi bi-arrow-left me-1"></i> Volver al login
+        </button>
+      </form>
+
       <div class="login-footer">
         <p class="text-muted">SVQPanel © 2026 - Panel de Control de Servidores</p>
       </div>
@@ -53,7 +99,7 @@
 </template>
 
 <script>
-import { ref } from 'vue'
+import { ref, nextTick } from 'vue'
 import { useRouter } from 'vue-router'
 import { useMainStore } from '../stores/useMainStore'
 import api from '../services/api'
@@ -63,43 +109,51 @@ export default {
   setup() {
     const router = useRouter()
     const store = useMainStore()
-    const credentials = ref({
-      username: '',
-      password: ''
-    })
-    const loading = ref(false)
-    const error = ref(null)
+    const credentials = ref({ username: '', password: '' })
+    const loading       = ref(false)
+    const error         = ref(null)
+    const twoFARequired = ref(false)
+    const tempToken     = ref(null)
+    const totpCode      = ref('')
+    const totpInput     = ref(null)
+
+    const _storeSession = (response) => {
+      localStorage.setItem('token', response.access_token)
+      localStorage.setItem('user', JSON.stringify({
+        id:       response.user_id,
+        username: response.username,
+        email:    response.email,
+        role:     response.role,
+        is_admin: response.is_admin,
+      }))
+      store.setCurrentUser({
+        id:       response.user_id,
+        username: response.username,
+        email:    response.email,
+        role:     response.role,
+        is_admin: response.is_admin,
+      })
+      store.setToken(response.access_token)
+    }
 
     const handleLogin = async () => {
-      error.value = null
+      error.value   = null
       loading.value = true
-
       try {
         const response = await api.login(credentials.value)
 
-        // Guardar token en localStorage
-        localStorage.setItem('token', response.access_token)
-        localStorage.setItem('user', JSON.stringify({
-          id: response.user_id,
-          username: response.username,
-          email: response.email,
-          role: response.role,
-          is_admin: response.is_admin
-        }))
-
-        // Actualizar store
-        store.setCurrentUser({
-          id: response.user_id,
-          username: response.username,
-          email: response.email,
-          role: response.role,
-          is_admin: response.is_admin
-        })
-        store.setToken(response.access_token)
-
-        // Redirect a dashboard
-        await router.push('/dashboard')
-        store.showNotification(`¡Bienvenido ${response.username}!`, 'success')
+        if (response.requires_2fa) {
+          // Guardar token temporal y mostrar paso 2FA
+          tempToken.value     = response.temp_token
+          twoFARequired.value = true
+          totpCode.value      = ''
+          await nextTick()
+          totpInput.value?.focus()
+        } else {
+          _storeSession(response)
+          await router.push('/dashboard')
+          store.showNotification(`¡Bienvenido ${response.username}!`, 'success')
+        }
       } catch (err) {
         error.value = err.message || 'Error al iniciar sesión'
         store.showNotification(error.value, 'danger')
@@ -108,11 +162,42 @@ export default {
       }
     }
 
+    const handleVerify2FA = async () => {
+      if (totpCode.value.length !== 6) return
+      error.value   = null
+      loading.value = true
+      try {
+        const response = await api.verify2FA(tempToken.value, totpCode.value)
+        _storeSession(response)
+        await router.push('/dashboard')
+        store.showNotification(`¡Bienvenido ${response.username}!`, 'success')
+      } catch (err) {
+        error.value    = err.message || 'Código incorrecto'
+        totpCode.value = ''
+        await nextTick()
+        totpInput.value?.focus()
+      } finally {
+        loading.value = false
+      }
+    }
+
+    const cancelTwoFA = () => {
+      twoFARequired.value = false
+      tempToken.value     = null
+      totpCode.value      = ''
+      error.value         = null
+    }
+
     return {
       credentials,
       loading,
       error,
-      handleLogin
+      twoFARequired,
+      totpCode,
+      totpInput,
+      handleLogin,
+      handleVerify2FA,
+      cancelTwoFA,
     }
   }
 }

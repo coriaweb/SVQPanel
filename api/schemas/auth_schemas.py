@@ -12,20 +12,6 @@ class LoginRequest(BaseModel):
     password: str
 
 
-class LoginResponse(BaseModel):
-    """Response del login"""
-    access_token: str
-    token_type: str = "bearer"
-    user_id: int
-    username: str
-    email: str
-    role: str
-    is_admin: bool
-
-    class Config:
-        from_attributes = True
-
-
 class ChangePasswordRequest(BaseModel):
     """Request para cambiar contraseña"""
     current_password: str
@@ -76,3 +62,49 @@ class CurrentUserResponse(BaseModel):
 
     class Config:
         from_attributes = True
+
+
+# ── 2FA ────────────────────────────────────────────────────────────────────────
+
+class TwoFASetupResponse(BaseModel):
+    """Response del setup inicial de 2FA: devuelve el QR y el secret"""
+    secret: str
+    qr_code: str          # imagen PNG en base64 (data:image/png;base64,...)
+    issuer: str
+    account_name: str
+
+
+class TwoFAEnableRequest(BaseModel):
+    """Request para confirmar y activar 2FA (verificar primer código)"""
+    code: str             # código de 6 dígitos del autenticador
+
+
+class TwoFADisableRequest(BaseModel):
+    """Request para desactivar 2FA (requiere código vigente)"""
+    code: str
+
+
+class TwoFAVerifyRequest(BaseModel):
+    """Request para el segundo paso del login cuando 2FA está activo"""
+    temp_token: str       # token temporal emitido tras usuario/contraseña correctos
+    code: str             # código TOTP de 6 dígitos
+
+
+class LoginResponse(BaseModel):
+    """Response del login normal (sin 2FA pendiente)"""
+    access_token: str
+    token_type: str = "bearer"
+    user_id: int
+    username: str
+    email: str
+    role: str
+    is_admin: bool
+
+    class Config:
+        from_attributes = True
+
+
+class LoginWith2FAResponse(BaseModel):
+    """Response del login cuando el usuario tiene 2FA activado"""
+    requires_2fa: bool = True
+    temp_token: str       # token de corta duración (5 min) solo para /auth/2fa/verify
