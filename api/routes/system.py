@@ -208,25 +208,30 @@ async def get_system_updates(
         is_root = current_uid == 0
 
         if is_root:
-            update_cmd = [apt_get_path, "update", "-qq"]
+            update_cmd = [apt_get_path, "update"]
             list_cmd = [apt_path, "list", "--upgradable"]
         else:
-            update_cmd = ["sudo", apt_get_path, "update", "-qq"]
+            update_cmd = ["sudo", apt_get_path, "update"]
             list_cmd = ["sudo", apt_path, "list", "--upgradable"]
 
+        # Ejecutar apt update (no silencioso para asegurar que funciona)
         update_result = subprocess.run(update_cmd, capture_output=True, text=True, timeout=120)
 
+        # No importa el resultado de update, continuamos con list
         # Listar actualizables
         result = subprocess.run(
             list_cmd,
             capture_output=True, text=True, timeout=60,
         )
 
-        if result.returncode != 0:
-            raise Exception(f"apt list falló: {result.stderr or 'sin error details'}")
+        if result.returncode != 0 and "WARNING" not in result.stdout:
+            raise Exception(f"apt list falló (code {result.returncode}): {result.stderr or result.stdout}")
 
         packages = []
         for line in result.stdout.splitlines():
+            # Saltar advertencias y líneas vacías
+            if not line.strip() or "WARNING:" in line or "Listing" in line:
+                continue
             if "upgradable from" not in line:
                 continue
             try:
