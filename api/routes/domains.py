@@ -2,8 +2,14 @@
 Rutas API para gestión de dominios
 """
 
+import os
 import socket
+import tarfile
+import tempfile
+from datetime import datetime
 from fastapi import APIRouter, Depends, HTTPException, status, Query
+from fastapi.responses import FileResponse
+from starlette.background import BackgroundTask
 from sqlalchemy.orm import Session
 from sqlalchemy.exc import IntegrityError
 from api.models.database import get_db
@@ -13,6 +19,7 @@ from api.schemas.domain_schemas import DomainCreate, DomainUpdate, DomainRespons
 from api.dependencies import require_admin, require_auth
 from scripts.domain_manager import DomainManager
 from scripts.domain_suspend_manager import DomainSuspendManager
+from scripts.utils import get_domain_root
 
 router = APIRouter()
 
@@ -652,6 +659,52 @@ async def get_domain_disk(
 # ─────────────────────────────────────────────────────────────────────────────
 # Suspensión individual de dominio
 # ─────────────────────────────────────────────────────────────────────────────
+
+@router.get("/domains/{domain_id}/download")
+async def download_domain_site(
+    domain_id:    int,
+    current_user: User = Depends(require_auth),
+    db:           Session = Depends(get_db),
+):
+    """
+    Genera al momento un .tar.gz con los archivos del dominio y lo sirve como
+    descarga (web: public_html, private, logs). Usa tarfile (Python) para no
+    depender del PATH del servicio. El temporal se borra tras el envío.
+    """
+    domain = db.query(Domain).filter(Domain.id == domain_id).first()
+    if not domain:
+        raise HTTPException(status_code=404, detail="Dominio no encontrado")
+    _check_access(current_user, domain, db)
+
+    owner = db.query(User).filter(User.id == domain.user_id).first()
+    if not owner:
+        raise HTTPException(status_code=404, detail="Propietario del dominio no encontrado")
+
+    domain_root = get_domain_root(owner.username, domain.domain_name)
+    if not os.path.isdir(domain_root):
+        raise HTTPException(status_code=404, detail="No se encontraron archivos del dominio en disco")
+
+    member = os.path.basename(domain_root)           # {domain}
+    stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    filename = f"{domain.domain_name}_{stamp}.tar.gz"
+
+    fd, tmp_path = tempfile.mkstemp(prefix="svqsite_", suffix=".tar.gz")
+    os.close(fd)
+    try:
+        with tarfile.open(tmp_path, "w:gz", compresslevel=6) as tar:
+            tar.add(domain_root, arcname=member)
+    except Exception as e:
+        if os.path.exists(tmp_path):
+            os.remove(tmp_path)
+        raise HTTPException(status_code=500, detail=f"No se pudo generar el archivo: {e}")
+
+    return FileResponse(
+        tmp_path,
+        media_type="application/gzip",
+        filename=filename,
+        background=BackgroundTask(lambda: os.path.exists(tmp_path) and os.remove(tmp_path)),
+    )
+
 
 @router.post("/domains/{domain_id}/suspend")
 async def suspend_domain(

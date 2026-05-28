@@ -142,6 +142,27 @@ class APIClient {
     return this.delete(`/api/domains/${domainId}`)
   }
 
+  async downloadDomainSite(domainId) {
+    const response = await fetch(
+      `/api/domains/${domainId}/download`,
+      { headers: this.getHeaders() }
+    )
+    if (!response.ok) {
+      let msg = `Error ${response.status}`
+      try {
+        const data = await response.json()
+        msg = data?.message || data?.detail || msg
+      } catch { /* respuesta no-JSON */ }
+      throw new Error(msg)
+    }
+    // Nombre sugerido por el servidor (Content-Disposition), si viene
+    const cd = response.headers.get('content-disposition') || ''
+    const m = /filename="?([^"]+)"?/.exec(cd)
+    const filename = m ? m[1] : `sitio_${domainId}.tar.gz`
+    const blob = await response.blob()
+    return { blob, filename }
+  }
+
   suspendDomain(domainId) {
     return this.post(`/api/domains/${domainId}/suspend`)
   }

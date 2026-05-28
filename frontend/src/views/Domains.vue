@@ -136,6 +136,15 @@
                     <button class="btn btn-outline-secondary" @click="openFileManager(domain)" title="Archivos">
                       <i class="bi bi-folder2-open"></i>
                     </button>
+                    <button
+                      class="btn btn-outline-primary"
+                      :disabled="downloadingId === domain.id"
+                      @click="downloadSite(domain)"
+                      title="Descargar sitio (.tar.gz)"
+                    >
+                      <span v-if="downloadingId === domain.id" class="spinner-border spinner-border-sm"></span>
+                      <i v-else class="bi bi-download"></i>
+                    </button>
                     <button class="btn btn-outline-warning" @click="openEditForm(domain)" title="Editar">
                       <i class="bi bi-pencil"></i>
                     </button>
@@ -589,6 +598,27 @@ export default {
       }
     }
 
+    const downloadingId = ref(null)
+    const downloadSite = async (domain) => {
+      downloadingId.value = domain.id
+      try {
+        store.showNotification(`Preparando descarga de ${domain.domain_name}…`, 'info')
+        const { blob, filename } = await api.downloadDomainSite(domain.id)
+        const url = URL.createObjectURL(blob)
+        const a = document.createElement('a')
+        a.href = url
+        a.download = filename
+        document.body.appendChild(a)
+        a.click()
+        a.remove()
+        URL.revokeObjectURL(url)
+      } catch (e) {
+        store.showNotification(`Error al descargar: ${e.message}`, 'danger')
+      } finally {
+        downloadingId.value = null
+      }
+    }
+
     const suspendDomain = async (domain) => {
       if (!confirm(`¿Suspender el dominio ${domain.domain_name}? Quedará inaccesible hasta que lo reactives.`)) return
       try {
@@ -636,6 +666,7 @@ export default {
       openIPv6Manager, closeIPv6Manager,
       openFileManager,
       deleteDomainConfirm, changePHP, suspendDomain, unsuspendDomain,
+      downloadingId, downloadSite,
       loadDomains, reloadDomains, getUserName,
       // Logs + disk
       showLogsViewer, logsDomain, logTab, logLines, logsData, logsLoading,
