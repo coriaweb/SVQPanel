@@ -232,14 +232,22 @@ async def get_system_updates(
             # Saltar advertencias y líneas vacías
             if not line.strip() or "WARNING:" in line or "Listing" in line:
                 continue
-            if "upgradable from" not in line:
+            # Formato: pkg/origin version arch [upgradable from: old_version]
+            if "[upgradable from:" not in line:
                 continue
             try:
-                left, right = line.split(" upgradable from ")
-                parts = left.split()
+                # Extraer nombre/origen y versión disponible (antes de [)
+                before_bracket = line[:line.index("[")].strip()
+                parts = before_bracket.split()
                 pkg_origin = parts[0]
                 new_ver    = parts[-1]
-                old_ver    = right.strip()
+
+                # Extraer versión antigua (dentro de [upgradable from: ...])
+                bracket_start = line.index("[upgradable from:")
+                bracket_end = line.index("]", bracket_start)
+                bracket_content = line[bracket_start:bracket_end + 1]
+                old_ver = bracket_content.replace("[upgradable from:", "").replace("]", "").strip()
+
                 pkg_name, _, origin = pkg_origin.partition("/")
                 packages.append({
                     "name":      pkg_name,
