@@ -249,6 +249,78 @@ def cmd_refresh_user_stats() -> int:
         db.close()
 
 
+def cmd_register_server_ips() -> int:
+    """
+    Detecta las IPs asignadas al sistema ('ip addr show') y las registra
+    en la tabla server_ips si todavía no existen.
+    Se llama una vez desde install.sh al final de la instalación.
+    Excluye loopback (127.x, ::1) y link-local (fe80::).
+    """
+    import subprocess
+    import ipaddress
+    import re
+    from api.models.models_server_ip import ServerIP
+
+    db = SessionLocal()
+    try:
+        proc = subprocess.run(
+            ["/sbin/ip", "-o", "addr", "show"],
+            capture_output=True, text=True, timeout=10,
+        )
+        registered = 0
+        skipped = 0
+        for line in proc.stdout.splitlines():
+            parts = line.split()
+            if len(parts) < 4:
+                continue
+            iface  = parts[1].rstrip(":")
+            family = parts[2]   # inet | inet6
+            cidr   = parts[3]   # addr/prefix
+            if family not in ("inet", "inet6"):
+                continue
+
+            addr, _, prefix = cidr.partition("/")
+
+            # Descartar loopback y link-local
+            if iface in ("lo", "lo0") or addr.startswith("127.") or addr == "::1":
+                continue
+            if addr.lower().startswith("fe80"):
+                continue
+
+            is_v6  = (family == "inet6")
+            netmask = f"/{prefix}" if prefix else None
+
+            # ¿Ya existe?
+            exists = db.query(ServerIP).filter(ServerIP.address == addr).first()
+            if exists:
+                skipped += 1
+                logger.info(f"  {addr} ya registrada, omitida")
+                continue
+
+            ip = ServerIP(
+                address=addr,
+                netmask=netmask,
+                interface=iface,
+                ip_type="shared",
+                is_ipv6=is_v6,
+                is_active=True,
+                note="Registrada automáticamente durante la instalación",
+            )
+            db.add(ip)
+            registered += 1
+            logger.info(f"  Registrada: {addr} ({iface}) {'IPv6' if is_v6 else 'IPv4'}")
+
+        db.commit()
+        logger.info(f"IPs registradas: {registered} nuevas, {skipped} ya existían")
+        return 0
+    except Exception as e:
+        logger.exception(f"register_server_ips falló: {e}")
+        db.rollback()
+        return 2
+    finally:
+        db.close()
+
+
 def main():
     parser = argparse.ArgumentParser(prog="api.cli", description="SVQPanel CLI")
     sub = parser.add_subparsers(dest="cmd", required=True)
@@ -259,6 +331,7 @@ def main():
     sub.add_parser("refresh_user_stats",   help="Recalcula disk + traffic por usuario")
     sub.add_parser("refresh_domain_stats", help="Recalcula disk_usage por dominio")
     sub.add_parser("refresh_ssl_expires",  help="Sincroniza fechas de expiración SSL desde certbot")
+    sub.add_parser("register_server_ips",  help="Registra las IPs del sistema en la BD (post-instalación)")
 
     args = parser.parse_args()
     if args.cmd == "refresh_ip_lists":
@@ -269,6 +342,8 @@ def main():
         sys.exit(cmd_refresh_domain_stats())
     if args.cmd == "refresh_ssl_expires":
         sys.exit(cmd_refresh_ssl_expires())
+    if args.cmd == "register_server_ips":
+        sys.exit(cmd_register_server_ips())
 
 
 if __name__ == "__main__":

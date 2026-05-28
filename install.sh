@@ -1972,6 +1972,16 @@ chmod 600 /opt/svqpanel/.credentials/admin.txt
 echo -e "${GREEN}✓ Usuario administrador creado${NC}\n"
 
 ###############################################################################
+# 14. REGISTRAR IPs DEL SERVIDOR EN EL PANEL
+###############################################################################
+echo -e "${YELLOW}Registrando IPs del servidor en el panel...${NC}"
+cd /opt/svqpanel
+/opt/svqpanel/venv/bin/python -m api.cli register_server_ips && \
+    echo -e "${GREEN}✓ IPs del servidor registradas automáticamente${NC}" || \
+    echo -e "${YELLOW}⚠ No se pudieron registrar las IPs (se pueden añadir manualmente en el panel)${NC}"
+echo ""
+
+###############################################################################
 # RESUMEN FINAL
 ###############################################################################
 echo -e "${GREEN}════════════════════════════════════════${NC}"
