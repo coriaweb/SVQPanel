@@ -135,18 +135,21 @@ class BackupManager(SystemManager):
                 # Para SFTP usamos un directorio temporal local primero
                 base_dir = Path(tempfile.mkdtemp(prefix="svqbak_"))
 
-            snapshot_dir = base_dir / ts
-            snapshot_dir.mkdir(parents=True, exist_ok=True)
-            result["backup_path"] = str(snapshot_dir)
-
-            # ── Detectar si podemos hacer incremental ─────────────────────────
+            # ── Detectar snapshot previo ANTES de crear el nuevo ──────────────
+            # (si no, _find_previous_snapshot devolvería el snapshot actual)
+            prev = None
             is_incremental = False
             if not force_full and job_config.get("backup_type") == "incremental":
                 prev = self._find_previous_snapshot(base_dir)
                 if prev:
                     is_incremental = True
-                    result["is_incremental"] = True
-                    result["log"].append(f"Modo incremental basado en: {prev.name}")
+
+            snapshot_dir = base_dir / ts
+            snapshot_dir.mkdir(parents=True, exist_ok=True)
+            result["backup_path"] = str(snapshot_dir)
+            if is_incremental and prev:
+                result["is_incremental"] = True
+                result["log"].append(f"Modo incremental basado en: {prev.name}")
 
             # ── Backup de archivos web ─────────────────────────────────────────
             if job_config.get("include_files", True) and files_path:
