@@ -14,6 +14,8 @@ from .utils import (
     reload_nginx,
     write_fastcgi_cache_zone,
     remove_fastcgi_cache_zone,
+    write_ratelimit_zone,
+    remove_ratelimit_zone,
 )
 
 logger = logging.getLogger(__name__)
@@ -324,11 +326,14 @@ class DomainManager(SystemManager):
         ipv4: str = None,
         force_https: bool = False,
         hsts: bool = False,
+        rate_limit_enabled: bool = False,
+        rate_limit_rps: int = 10,
+        rate_limit_burst: int = 20,
     ) -> dict:
         """
         Regenera la vhost completa del dominio con TODO el estado actual
-        (SSL, IPv6, cache, socket PHP dedicado). Punto único de verdad para
-        no perder ajustes al tocar una de las features.
+        (SSL, IPv6, cache, socket PHP dedicado, rate limit). Punto único de
+        verdad para no perder ajustes al tocar una de las features.
         """
         if not validate_domain(domain_name):
             raise ValueError(f"Invalid domain: {domain_name}")
@@ -339,6 +344,12 @@ class DomainManager(SystemManager):
             write_fastcgi_cache_zone(domain_name)
         else:
             remove_fastcgi_cache_zone(domain_name)
+
+        # Zona de rate limit (nivel http) debe existir antes que el vhost
+        if rate_limit_enabled:
+            write_ratelimit_zone(domain_name, rate_limit_rps)
+        else:
+            remove_ratelimit_zone(domain_name)
 
         config_content = generate_nginx_config(
             domain_name,
@@ -355,6 +366,8 @@ class DomainManager(SystemManager):
             ipv4=ipv4,
             force_https=force_https,
             hsts=hsts,
+            rate_limit_enabled=rate_limit_enabled,
+            rate_limit_burst=rate_limit_burst,
         )
         with open(nginx_config, "w") as f:
             f.write(config_content)
@@ -377,6 +390,9 @@ class DomainManager(SystemManager):
         ipv4: str = None,
         force_https: bool = False,
         hsts: bool = False,
+        rate_limit_enabled: bool = False,
+        rate_limit_rps: int = 10,
+        rate_limit_burst: int = 20,
     ) -> dict:
         """Activa o desactiva FastCGI cache. Delega en regenerate_vhost."""
         try:
@@ -389,6 +405,9 @@ class DomainManager(SystemManager):
                 ipv4=ipv4,
                 force_https=force_https,
                 hsts=hsts,
+                rate_limit_enabled=rate_limit_enabled,
+                rate_limit_rps=rate_limit_rps,
+                rate_limit_burst=rate_limit_burst,
             )
             logger.info(f"FastCGI cache {'enabled' if enabled else 'disabled'} para {domain_name}")
             return {

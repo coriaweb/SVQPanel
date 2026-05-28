@@ -541,6 +541,9 @@ async def set_domain_cache(
             ipv4=domain.ipv4,
             force_https=domain.force_https or False,
             hsts=domain.hsts_enabled or False,
+            rate_limit_enabled=domain.rate_limit_enabled or False,
+            rate_limit_rps=domain.rate_limit_rps or 10,
+            rate_limit_burst=domain.rate_limit_burst or 20,
         )
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error aplicando cache: {e}")
@@ -554,6 +557,75 @@ async def set_domain_cache(
         "domain": domain.domain_name,
         "fastcgi_cache_enabled": domain.fastcgi_cache_enabled,
         "fastcgi_cache_ttl_minutes": domain.fastcgi_cache_ttl_minutes,
+    }
+
+
+@router.put("/domains/{domain_id}/rate-limit")
+async def set_domain_rate_limit(
+    domain_id:    int,
+    payload:      dict,
+    current_user: User = Depends(require_auth),
+    db:           Session = Depends(get_db),
+):
+    """
+    Activa/desactiva el rate limiting (anti-abuso) de un dominio.
+    Body: {"enabled": bool, "rps": int, "burst": int}. Al superar el límite,
+    nginx responde 429.
+    """
+    enabled = bool(payload.get("enabled", False))
+    rps   = int(payload.get("rps")   or 10)
+    burst = int(payload.get("burst") or 20)
+    if rps < 1 or rps > 1000:
+        raise HTTPException(status_code=400, detail="rps fuera de rango (1-1000)")
+    if burst < 0 or burst > 1000:
+        raise HTTPException(status_code=400, detail="burst fuera de rango (0-1000)")
+
+    domain = db.query(Domain).filter(Domain.id == domain_id).first()
+    if not domain:
+        raise HTTPException(status_code=404, detail="Dominio no encontrado")
+    _check_access(current_user, domain, db)
+
+    owner = db.query(User).filter(User.id == domain.user_id).first()
+    if not owner:
+        raise HTTPException(status_code=500, detail="Propietario del dominio no encontrado")
+
+    from scripts import php_ini_manager as phpini
+    php_socket = phpini.pool_socket_path(domain.domain_name) if phpini.has_pool(domain.domain_name) else None
+
+    try:
+        DomainManager().regenerate_vhost(
+            username=owner.username,
+            domain_name=domain.domain_name,
+            php_version=domain.php_version,
+            ssl_enabled=domain.ssl_enabled,
+            ipv6=domain.ipv6,
+            fastcgi_cache_enabled=domain.fastcgi_cache_enabled,
+            fastcgi_cache_ttl_minutes=domain.fastcgi_cache_ttl_minutes,
+            php_socket_override=php_socket,
+            template_nginx_extra=domain.template_nginx_extra,
+            redirect_to=domain.redirect_to,
+            custom_docroot=domain.custom_docroot,
+            ipv4=domain.ipv4,
+            force_https=domain.force_https or False,
+            hsts=domain.hsts_enabled or False,
+            rate_limit_enabled=enabled,
+            rate_limit_rps=rps,
+            rate_limit_burst=burst,
+        )
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error aplicando rate limit: {e}")
+
+    domain.rate_limit_enabled = enabled
+    domain.rate_limit_rps     = rps
+    domain.rate_limit_burst   = burst
+    db.commit()
+    db.refresh(domain)
+    return {
+        "status": "ok",
+        "domain": domain.domain_name,
+        "rate_limit_enabled": domain.rate_limit_enabled,
+        "rate_limit_rps":     domain.rate_limit_rps,
+        "rate_limit_burst":   domain.rate_limit_burst,
     }
 
 
