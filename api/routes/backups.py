@@ -151,7 +151,8 @@ def _execute_backup(job_id: int, record_id: int, force_full: bool):
         db.commit()
 
         domain = db.query(Domain).filter(Domain.id == job.domain_id).first()
-        owner = db.query(User).filter(User.id == job.user_id).first()
+        # Los archivos viven bajo el home del DUEÑO del dominio, no el del creador del job
+        owner = db.query(User).filter(User.id == domain.user_id).first() if domain else None
         username = owner.username if owner else "root"
         domain_name = domain.domain_name if domain else None
 
