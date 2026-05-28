@@ -182,3 +182,94 @@ async def control_service(
         raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+
+# ─── Actualizaciones del sistema ─────────────────────────────────────────────
+
+@router.get("/system/updates")
+async def get_system_updates(
+    current_user=Depends(require_admin),
+):
+    """
+    Refresca la lista de paquetes APT y devuelve los que tienen actualización disponible.
+    Devuelve: { refreshed_at, packages: [{name, current, available, origin}] }
+    """
+    import subprocess
+    from datetime import datetime as dt
+    try:
+        # Refrescar índice (silencioso)
+        subprocess.run(
+            ["apt-get", "update", "-qq"],
+            capture_output=True, timeout=120,
+        )
+        # Listar actualizables
+        result = subprocess.run(
+            ["apt", "list", "--upgradable"],
+            capture_output=True, text=True, timeout=60,
+        )
+        packages = []
+        for line in result.stdout.splitlines():
+            # formato: paquete/buster-updates arch [nueva_versión] upgradable from [versión_actual]
+            if "upgradable from" not in line:
+                continue
+            # paquete/origen arch nueva_versión upgradable from vieja_versión
+            try:
+                left, right = line.split(" upgradable from ")
+                parts = left.split()
+                pkg_origin = parts[0]        # nombre/origen
+                new_ver    = parts[-1]        # nueva versión
+                old_ver    = right.strip()
+                pkg_name, _, origin = pkg_origin.partition("/")
+                packages.append({
+                    "name":      pkg_name,
+                    "current":   old_ver,
+                    "available": new_ver,
+                    "origin":    origin,
+                })
+            except Exception:
+                continue
+        return {
+            "refreshed_at": dt.utcnow().isoformat() + "Z",
+            "count":    len(packages),
+            "packages": packages,
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error comprobando actualizaciones: {str(e)}")
+
+
+@router.post("/system/updates/upgrade")
+async def run_system_upgrade(
+    body: dict = {},
+    current_user=Depends(require_admin),
+):
+    """
+    Ejecuta apt-get upgrade para un paquete concreto (body.package)
+    o para todos los paquetes si no se especifica.
+    """
+    import subprocess
+    package = (body or {}).get("package", "").strip()
+    try:
+        if package:
+            # Validar: solo caracteres seguros para nombre de paquete
+            import re
+            if not re.match(r'^[a-zA-Z0-9._+\-]+$', package):
+                raise HTTPException(status_code=400, detail="Nombre de paquete inválido")
+            cmd = ["apt-get", "install", "--only-upgrade", "-y", package]
+        else:
+            cmd = ["apt-get", "upgrade", "-y", "-o", "Dpkg::Options::=--force-confold"]
+
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
+        return {
+            "success":   result.returncode == 0,
+            "package":   package or "all",
+            "stdout":    result.stdout[-4000:] if result.stdout else "",
+            "stderr":    result.stderr[-2000:] if result.stderr else "",
+            "returncode": result.returncode,
+        }
+    except HTTPException:
+        raise
+    except subprocess.TimeoutExpired:
+        raise HTTPException(status_code=504, detail="Tiempo de espera agotado (apt-get)")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error actualizando: {str(e)}")
+

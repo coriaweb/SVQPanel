@@ -51,6 +51,8 @@ class DomainResponse(BaseModel):
     php_version: Optional[str] = None
     ssl_enabled: Optional[bool] = False
     ssl_expires: Optional[datetime] = None
+    force_https:  Optional[bool] = False
+    hsts_enabled: Optional[bool] = False
     ipv4: Optional[str] = None
     ipv6: Optional[str] = None
     is_active: Optional[bool] = True

@@ -333,6 +333,8 @@ async def update_domain(
                         redirect_to=db_domain.redirect_to,
                         custom_docroot=db_domain.custom_docroot,
                         ipv4=db_domain.ipv4,
+                        force_https=db_domain.force_https or False,
+                        hsts=db_domain.hsts_enabled or False,
                     )
                 except Exception as vhost_err:
                     # No bloquear la respuesta si falla nginx (log del error)
@@ -537,6 +539,8 @@ async def set_domain_cache(
             ipv6=domain.ipv6,
             php_socket_override=php_socket,
             ipv4=domain.ipv4,
+            force_https=domain.force_https or False,
+            hsts=domain.hsts_enabled or False,
         )
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error aplicando cache: {e}")
@@ -664,8 +668,8 @@ async def set_domain_php_config(
             ipv6=domain.ipv6,
             fastcgi_cache_enabled=domain.fastcgi_cache_enabled,
             fastcgi_cache_ttl_minutes=domain.fastcgi_cache_ttl_minutes,
-            php_socket_override=php_socket,
-        )
+            php_socket_override=php_socket,            force_https=domain.force_https or False,
+            hsts=domain.hsts_enabled or False,        )
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error regenerando vhost: {e}")
 

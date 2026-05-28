@@ -210,6 +210,8 @@ def generate_nginx_config(
     redirect_to: Optional[str] = None,
     custom_docroot: Optional[str] = None,
     ipv4: Optional[str] = None,
+    force_https: bool = False,
+    hsts: bool = False,
 ) -> str:
     """Generate Nginx vhost configuration (Hestia-style paths)"""
 
@@ -239,11 +241,32 @@ def generate_nginx_config(
     ipv6_listen_http  = f"listen [{ipv6}]:80 default_server;" if ipv6 else "listen [::]:80;"
     ipv6_listen_https = f"listen [{ipv6}]:443 ssl http2 default_server;" if ipv6 else "listen [::]:443 ssl http2;"
 
+    hsts_header = (
+        '    add_header Strict-Transport-Security "max-age=31536000; includeSubDomains; preload" always;'
+        if (hsts and ssl_enabled) else ""
+    )
+
+    # Si force_https: el bloque HTTP solo redirige a HTTPS
+    if force_https and ssl_enabled:
+        http_block = f"""server {{
+    listen {ipv4_listen_http};
+    {ipv6_listen_http}
+    server_name {server_names};
+    return 301 https://$server_name$request_uri;
+}}
+"""
+    else:
+        http_block = None  # se construye abajo
+
     server_block = f"""upstream php_{backend_name} {{
     server unix:{php_socket};
 }}
+"""
 
-server {{
+    if http_block:
+        server_block += http_block
+    else:
+        server_block += f"""server {{
     listen {ipv4_listen_http};
     {ipv6_listen_http}
     server_name {server_names};
@@ -292,6 +315,7 @@ server {{
     ssl_certificate_key /etc/letsencrypt/live/{domain}/privkey.pem;
     ssl_protocols TLSv1.2 TLSv1.3;
     ssl_ciphers HIGH:!aNULL:!MD5;
+{hsts_header}
 
     index index.php index.html index.htm;
 {skip_block}    set $phpfpm_backend php_{backend_name};

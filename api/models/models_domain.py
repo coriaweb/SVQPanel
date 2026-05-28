@@ -48,6 +48,10 @@ class Domain(Base):
     redirect_to    = Column(String(512), nullable=True)   # ej: https://otro.com
     custom_docroot = Column(String(512), nullable=True)   # ej: /home/user/web/domain/app/public
 
+    # SSL avanzado
+    force_https  = Column(Boolean, default=False, nullable=False)
+    hsts_enabled = Column(Boolean, default=False, nullable=False)
+
     # Estadísticas
     disk_usage = Column(Integer, default=0)  # MB
     

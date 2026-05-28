@@ -406,6 +406,9 @@ def _run_migrations():
         # Redirección 301 y docroot personalizado (Fase 16)
         "ALTER TABLE domains ADD COLUMN IF NOT EXISTS redirect_to VARCHAR(512)",
         "ALTER TABLE domains ADD COLUMN IF NOT EXISTS custom_docroot VARCHAR(512)",
+        # SSL avanzado (force_https, HSTS)
+        "ALTER TABLE domains ADD COLUMN IF NOT EXISTS force_https BOOLEAN NOT NULL DEFAULT FALSE",
+        "ALTER TABLE domains ADD COLUMN IF NOT EXISTS hsts_enabled BOOLEAN NOT NULL DEFAULT FALSE",
     ]
     with engine.connect() as conn:
         for sql in migrations:

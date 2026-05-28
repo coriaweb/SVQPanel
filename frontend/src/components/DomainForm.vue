@@ -208,7 +208,86 @@
       </div>
     </template>
 
-    <div class="d-flex gap-2">
+    <!-- ── Sección SSL (solo en edición) ─────────────────────────────────── -->
+    <template v-if="isEditing">
+      <hr class="my-3" />
+      <p class="fw-semibold mb-2 text-muted small text-uppercase">
+        <i class="bi bi-shield-lock me-1"></i> SSL / HTTPS
+      </p>
+
+      <div class="mb-2 form-check">
+        <input id="ssl_enabled" v-model="ssl.enabled" type="checkbox" class="form-check-input" />
+        <label for="ssl_enabled" class="form-check-label">
+          Habilitar SSL (Let's Encrypt) para este dominio
+        </label>
+      </div>
+
+      <div class="ps-4">
+        <template v-if="ssl.enabled">
+          <div class="mb-2 form-check">
+            <input id="force_https" v-model="ssl.force_https" type="checkbox" class="form-check-input" />
+            <label for="force_https" class="form-check-label">
+              Redirección automática HTTP → HTTPS
+            </label>
+          </div>
+          <div class="mb-3 form-check">
+            <input id="hsts_enabled" v-model="ssl.hsts_enabled" type="checkbox" class="form-check-input" />
+            <label for="hsts_enabled" class="form-check-label">
+              Activar HSTS <small class="text-muted">(Strict-Transport-Security)</small>
+            </label>
+          </div>
+
+          <!-- Email para certbot si no hay certificado aún -->
+          <div class="mb-3" v-if="!ssl.cert_info">
+            <label class="form-label small">Email para Let's Encrypt <span class="text-danger">*</span></label>
+            <input v-model="ssl.email" type="email" class="form-control form-control-sm"
+              placeholder="admin@ejemplo.com" />
+          </div>
+
+          <!-- Info del certificado existente -->
+          <div v-if="ssl.cert_info" class="mb-3">
+            <ul class="list-unstyled small bg-light rounded p-2 mb-1">
+              <li><strong>Expedido a:</strong> {{ ssl.cert_info.issued_to }}</li>
+              <li v-if="ssl.cert_info.sans?.length">
+                <strong>SANs:</strong> {{ ssl.cert_info.sans.join(', ') }}
+              </li>
+              <li><strong>Válido desde:</strong> {{ ssl.cert_info.not_before }}</li>
+              <li><strong>Válido hasta:</strong>
+                <span :class="isCertExpiringSoon(ssl.cert_info.not_after) ? 'text-danger fw-semibold' : ''">
+                  {{ ssl.cert_info.not_after }}
+                </span>
+              </li>
+              <li><strong>Algoritmo:</strong> {{ ssl.cert_info.signature_alg }}</li>
+              <li v-if="ssl.cert_info.key_size"><strong>Tamaño clave:</strong> {{ ssl.cert_info.key_size }} bits</li>
+              <li><strong>Emisor:</strong> {{ ssl.cert_info.issuer }}</li>
+            </ul>
+            <button type="button" class="btn btn-link btn-sm p-0 text-secondary"
+              @click="ssl.showCert = !ssl.showCert">
+              {{ ssl.showCert ? 'Ocultar certificado PEM' : 'Mostrar certificado PEM' }}
+            </button>
+            <pre v-if="ssl.showCert"
+              class="mt-2 small bg-dark text-light p-2 rounded"
+              style="max-height:200px;overflow:auto;white-space:pre-wrap;">{{ ssl.cert_info.pem }}</pre>
+          </div>
+        </template>
+
+        <div class="d-flex gap-2 flex-wrap">
+          <button type="button" class="btn btn-sm btn-success" @click="applySSL" :disabled="sslLoading">
+            <span v-if="sslLoading" class="spinner-border spinner-border-sm me-1"></span>
+            <template v-if="ssl.enabled">
+              {{ ssl.cert_info ? 'Actualizar SSL' : "Activar SSL (Let's Encrypt)" }}
+            </template>
+            <template v-else>Desactivar SSL</template>
+          </button>
+          <span v-if="sslMessage" :class="sslError ? 'text-danger small align-self-center' : 'text-success small align-self-center'">
+            {{ sslMessage }}
+          </span>
+        </div>
+      </div>
+    </template>
+    <!-- ── Fin sección SSL ────────────────────────────────────────────────── -->
+
+    <div class="d-flex gap-2 mt-3">
       <button type="submit" class="btn btn-primary" :disabled="loading">
         <span v-if="loading" class="spinner-border spinner-border-sm me-2"></span>
         {{ isEditing ? 'Actualizar' : 'Crear' }} Dominio
@@ -442,8 +521,67 @@ export default {
       }
     }
 
+    // ── SSL ────────────────────────────────────────────────────────────────
+
+    const ssl = ref({
+      enabled:      props.domain?.ssl_enabled  ?? false,
+      force_https:  props.domain?.force_https   ?? false,
+      hsts_enabled: props.domain?.hsts_enabled  ?? false,
+      email:        '',
+      cert_info:    null,
+      showCert:     false,
+    })
+    const sslLoading = ref(false)
+    const sslMessage = ref('')
+    const sslError   = ref(false)
+
+    const loadSSL = async () => {
+      if (!props.domain?.id) return
+      try {
+        const data = await api.getDomainSSL(props.domain.id)
+        ssl.value.enabled      = data.ssl_enabled      ?? ssl.value.enabled
+        ssl.value.force_https  = data.force_https      ?? ssl.value.force_https
+        ssl.value.hsts_enabled = data.hsts_enabled     ?? ssl.value.hsts_enabled
+        ssl.value.cert_info    = data.cert_info        || null
+      } catch { /* silencioso */ }
+    }
+
+    const isCertExpiringSoon = (dateStr) => {
+      if (!dateStr) return false
+      const expDate = new Date(dateStr)
+      const now = new Date()
+      const diffDays = (expDate - now) / (1000 * 60 * 60 * 24)
+      return diffDays < 15
+    }
+
+    const applySSL = async () => {
+      sslMessage.value = ''
+      sslError.value   = false
+      sslLoading.value = true
+      try {
+        const payload = {
+          enabled:      ssl.value.enabled,
+          force_https:  ssl.value.force_https,
+          hsts_enabled: ssl.value.hsts_enabled,
+        }
+        if (ssl.value.enabled && !ssl.value.cert_info && ssl.value.email) {
+          payload.email = ssl.value.email
+        }
+        await api.toggleDomainSSL(props.domain.id, payload)
+        sslMessage.value = ssl.value.enabled ? 'SSL activado correctamente.' : 'SSL desactivado.'
+        // Recargar info del cert
+        await loadSSL()
+      } catch (e) {
+        sslError.value   = true
+        sslMessage.value = 'Error: ' + (e.message || 'No se pudo aplicar SSL')
+      } finally {
+        sslLoading.value = false
+      }
+    }
+
     onMounted(async () => {
       await Promise.all([loadUsers(), loadPHPVersions(), loadTemplates(), loadServerIps()])
+      if (isEditing.value) loadSSL()
       // Si la versión guardada no está en la lista, seleccionar la primera disponible
       if (form.value.php_version && !availablePhpVersions.value.includes(form.value.php_version)) {
         form.value.php_version = availablePhpVersions.value[0] || '8.2'
@@ -460,6 +598,9 @@ export default {
       serverIps,
       redirectError, docrootError,
       handleSubmit,
+      // SSL
+      ssl, sslLoading, sslMessage, sslError,
+      applySSL, isCertExpiringSoon,
     }
   }
 }

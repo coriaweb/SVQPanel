@@ -15,7 +15,7 @@ import MySftp from '../views/MySftp.vue'
 import Crons from '../views/Crons.vue'
 import Backups from '../views/Backups.vue'
 import ServerIPs from '../views/ServerIPs.vue'
-import Login from '../views/Login.vue'
+import SystemUpdates from '../views/SystemUpdates.vue'
 
 const isAuthenticated = () => {
   return !!localStorage.getItem('token')
@@ -128,6 +128,12 @@ const routes = [
     path: '/server-ips',
     name: 'ServerIPs',
     component: ServerIPs,
+    meta: { requiresAuth: true, requiresAdmin: true }
+  },
+  {
+    path: '/system/updates',
+    name: 'SystemUpdates',
+    component: SystemUpdates,
     meta: { requiresAuth: true, requiresAdmin: true }
   }
 ]

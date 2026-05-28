@@ -1,7 +1,9 @@
 """SSL certificate management with Let's Encrypt"""
 
 import logging
+import os
 import subprocess
+from datetime import datetime, timezone
 from .base import SystemManager
 from .utils import validate_domain
 
@@ -60,6 +62,23 @@ class SSLManager(SystemManager):
             logger.error(f"Failed to create SSL: {str(e)}")
             raise
 
+    def create_ssl_with_email(self, domain_name: str, email: str) -> dict:
+        """Igual que create_ssl pero con email configurable."""
+        if not validate_domain(domain_name):
+            raise ValueError(f"Invalid domain: {domain_name}")
+        try:
+            self.execute_command([
+                "certbot", "certonly", "--nginx",
+                "-d", domain_name, "-d", f"www.{domain_name}",
+                "--non-interactive", "--agree-tos", "-m", email,
+            ])
+            self.execute_command(["systemctl", "enable", "certbot.timer"])
+            logger.info(f"SSL cert (with email) created: {domain_name}")
+            return {"success": True, "domain": domain_name}
+        except Exception as e:
+            logger.error(f"Failed to create SSL: {str(e)}")
+            raise
+
     def revoke_ssl(self, domain_name: str) -> dict:
         """
         Revoke SSL certificate
@@ -98,3 +117,95 @@ class SSLManager(SystemManager):
         except Exception as e:
             logger.error(f"Failed to revoke SSL: {str(e)}")
             raise
+
+    def get_cert_info(self, domain_name: str) -> dict:
+        """
+        Lee el certificado de /etc/letsencrypt/live/{domain}/cert.pem
+        y devuelve un dict con: issued_to, sans, not_before, not_after,
+        signature_alg, key_size, issuer, key_type, pem (cert completo).
+        Devuelve None si el cert no existe.
+        """
+        cert_path = f"/etc/letsencrypt/live/{domain_name}/fullchain.pem"
+        if not os.path.isfile(cert_path):
+            return None
+        try:
+            result = subprocess.run(
+                ["openssl", "x509", "-noout", "-text", "-in", cert_path],
+                capture_output=True, text=True, timeout=10
+            )
+            text = result.stdout
+
+            # subject CN
+            issued_to = None
+            for line in text.splitlines():
+                if "Subject:" in line and "CN" in line:
+                    parts = line.split("CN =")
+                    if len(parts) > 1:
+                        issued_to = parts[-1].strip().split(",")[0]
+                    break
+
+            # SANs
+            sans = []
+            in_san = False
+            for line in text.splitlines():
+                if "Subject Alternative Name:" in line:
+                    in_san = True
+                    continue
+                if in_san:
+                    sans = [s.replace("DNS:", "").strip()
+                            for s in line.split(",")
+                            if "DNS:" in s]
+                    break
+
+            # Fechas  (formato: May 25 23:34:19 2026 GMT)
+            not_before = not_after = None
+            for line in text.splitlines():
+                if "Not Before" in line:
+                    not_before = line.split(":", 1)[1].strip()
+                elif "Not After" in line:
+                    not_after = line.split(":", 1)[1].strip()
+
+            # Firma
+            signature_alg = None
+            for line in text.splitlines():
+                if "Signature Algorithm:" in line and signature_alg is None:
+                    signature_alg = line.split(":", 1)[1].strip()
+
+            # Tamaño de clave
+            key_result = subprocess.run(
+                ["openssl", "x509", "-noout", "-text", "-in", cert_path],
+                capture_output=True, text=True, timeout=10
+            )
+            key_size = None
+            key_type = None
+            for line in key_result.stdout.splitlines():
+                if "Public Key Algorithm:" in line:
+                    key_type = line.split(":", 1)[1].strip()
+                if "Public-Key:" in line or "RSA Public-Key:" in line:
+                    key_size = line.strip().strip("(").strip(")").split("(")[-1].split(" ")[0]
+
+            # Emisor
+            issuer = None
+            for line in text.splitlines():
+                if "Issuer:" in line:
+                    issuer = line.split(":", 1)[1].strip()
+                    break
+
+            # Cert PEM completo
+            with open(cert_path, "r") as f:
+                pem = f.read()
+
+            return {
+                "issued_to":     issued_to or domain_name,
+                "sans":          sans,
+                "not_before":    not_before,
+                "not_after":     not_after,
+                "signature_alg": signature_alg,
+                "key_size":      key_size,
+                "key_type":      key_type,
+                "issuer":        issuer,
+                "pem":           pem,
+            }
+        except Exception as e:
+            logger.warning(f"get_cert_info failed for {domain_name}: {e}")
+            return None

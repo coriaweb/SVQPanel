@@ -81,6 +81,11 @@
             </router-link>
           </li>
           <li v-if="currentUser?.is_admin">
+            <router-link to="/system/updates" :class="{active: route.path === '/system/updates'}">
+              <i class="bi bi-arrow-repeat"></i> Actualizaciones
+            </router-link>
+          </li>
+          <li v-if="currentUser?.is_admin">
             <router-link to="/settings" :class="{active: route.path === '/settings'}">
               <i class="bi bi-gear"></i> Configuración
             </router-link>
