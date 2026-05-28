@@ -13,7 +13,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from api.models.database import create_tables, get_db
 from config.config import PANEL_NAME, PANEL_VERSION
 
-from api.routes import users, domains, php, ssl, ipv6, auth, settings, dns, system, mail, databases, firewall, fail2ban, security_monitor, ip_lists, file_manager, crowdsec, plans, sftp, crons, server_ips, backups, templates
+from api.routes import users, domains, php, ssl, ipv6, auth, settings, dns, system, mail, databases, firewall, fail2ban, security_monitor, ip_lists, file_manager, crowdsec, plans, sftp, crons, server_ips, backups, templates, notifications
 
 # Crear app FastAPI
 app = FastAPI(
@@ -409,6 +409,23 @@ def _run_migrations():
         # SSL avanzado (force_https, HSTS)
         "ALTER TABLE domains ADD COLUMN IF NOT EXISTS force_https BOOLEAN NOT NULL DEFAULT FALSE",
         "ALTER TABLE domains ADD COLUMN IF NOT EXISTS hsts_enabled BOOLEAN NOT NULL DEFAULT FALSE",
+        # ─────────────────────────────────────────────────────────────────
+        # Fase 18: Notificaciones (avisos de cuota disco/tráfico al usuario)
+        # ─────────────────────────────────────────────────────────────────
+        """CREATE TABLE IF NOT EXISTS notifications (
+            id          SERIAL PRIMARY KEY,
+            user_id     INTEGER      NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+            level       VARCHAR(16)  NOT NULL DEFAULT 'info',
+            title       VARCHAR(128) NOT NULL,
+            message     TEXT         NOT NULL,
+            dedup_key   VARCHAR(64),
+            is_read     BOOLEAN      NOT NULL DEFAULT FALSE,
+            created_at  TIMESTAMP    NOT NULL DEFAULT NOW(),
+            read_at     TIMESTAMP
+        )""",
+        "CREATE INDEX IF NOT EXISTS ix_notifications_user_id   ON notifications(user_id)",
+        "CREATE INDEX IF NOT EXISTS ix_notifications_is_read   ON notifications(is_read)",
+        "CREATE INDEX IF NOT EXISTS ix_notifications_dedup     ON notifications(user_id, dedup_key, is_read)",
     ]
     with engine.connect() as conn:
         for sql in migrations:
@@ -503,6 +520,7 @@ app.include_router(server_ips.router,       prefix="/api", tags=["Server IPs"])
 app.include_router(backups.router,          prefix="/api", tags=["Backups"])
 app.include_router(templates.router,        prefix="/api", tags=["Templates"])
 app.include_router(file_manager.router,     prefix="/api", tags=["File Manager"])
+app.include_router(notifications.router,     prefix="/api", tags=["Notifications"])
 # Autoconfig/Autodiscover sin prefijo (clientes de correo los buscan en rutas raíz)
 app.include_router(mail.router, prefix="", include_in_schema=False)
 

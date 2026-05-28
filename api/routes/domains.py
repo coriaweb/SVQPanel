@@ -76,6 +76,18 @@ async def create_domain(
                     ),
                 )
 
+        # Validar cuota de disco (0 = sin límite). Bloquea crear nuevos
+        # dominios si ya se superó la cuota; lo existente no se toca.
+        if user.disk_quota_mb and user.disk_quota_mb > 0 and \
+           (user.disk_used_mb or 0) >= user.disk_quota_mb:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=(
+                    f"Cuota de disco superada ({user.disk_used_mb}/{user.disk_quota_mb} MB). "
+                    f"Libera espacio o sube el plan antes de crear nuevos dominios."
+                ),
+            )
+
         # Create domain in system (Nginx, directories, etc)
         domain_manager.create_domain(
             user.username,

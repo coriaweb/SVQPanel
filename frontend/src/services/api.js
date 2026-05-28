@@ -796,6 +796,22 @@ class APIClient {
   runSystemUpgrade(packageName) {
     return this.post('/api/system/updates/upgrade', packageName ? { package: packageName } : {})
   }
+
+  getNotifications(onlyUnread = false) {
+    return this.get(`/api/notifications?only_unread=${onlyUnread ? 'true' : 'false'}`)
+  }
+
+  getUnreadCount() {
+    return this.get('/api/notifications/unread-count')
+  }
+
+  markNotificationRead(id) {
+    return this.post(`/api/notifications/${id}/read`, {})
+  }
+
+  markAllNotificationsRead() {
+    return this.post('/api/notifications/read-all', {})
+  }
 }
 
 export default new APIClient()

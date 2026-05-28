@@ -17,7 +17,7 @@ from api.models.database import SessionLocal
 from api.models import (  # noqa: F401
     models_user, models_domain, models_settings, models_dns,
     models_mail, models_client_db, models_security, models_plan,
-    models_cron,
+    models_cron, models_notification,
 )
 from api.models.models_security import IpList, SecurityAuditLog
 from api.models.models_domain import Domain
@@ -213,10 +213,56 @@ def cmd_refresh_ssl_expires() -> int:
         db.close()
 
 
+def _eval_quota_notifications(db, user, kind, used_mb, quota_mb):
+    """
+    Genera/limpia avisos para un recurso (kind = 'disco' o 'tráfico').
+    - >=90% y <100%  → aviso warning (dedup_key quota_<kind>_90)
+    - >=100%         → aviso danger  (dedup_key quota_<kind>_100)
+    - <90%           → limpia ambos
+    quota_mb == 0 significa ilimitado: no se avisa de nada.
+    """
+    from scripts.notify import create_notification, clear_notification
+
+    key90  = f"quota_{kind}_90"
+    key100 = f"quota_{kind}_100"
+    label  = "disco" if kind == "disco" else "tráfico"
+
+    if not quota_mb or quota_mb <= 0:
+        clear_notification(db, user.id, key90)
+        clear_notification(db, user.id, key100)
+        return
+
+    pct = (used_mb / quota_mb) * 100
+
+    if pct >= 100:
+        clear_notification(db, user.id, key90)
+        create_notification(
+            db, user.id, "danger",
+            f"Cuota de {label} superada",
+            f"Has alcanzado el 100% de tu cuota de {label} "
+            f"({used_mb} MB de {quota_mb} MB). No podrás crear nuevos "
+            f"recursos hasta liberar espacio.",
+            dedup_key=key100,
+        )
+    elif pct >= 90:
+        clear_notification(db, user.id, key100)
+        create_notification(
+            db, user.id, "warning",
+            f"Cuota de {label} casi llena",
+            f"Estás usando el {pct:.0f}% de tu cuota de {label} "
+            f"({used_mb} MB de {quota_mb} MB). Considera liberar espacio.",
+            dedup_key=key90,
+        )
+    else:
+        clear_notification(db, user.id, key90)
+        clear_notification(db, user.id, key100)
+
+
 def cmd_refresh_user_stats() -> int:
     """
     Para cada usuario con home_dir definido, recalcula disk_used_mb y
     traffic_used_mb_month (mes en curso) parseando /home/{user}/web/.
+    Genera avisos de cuota al 90%/100%.
     """
     from scripts.user_stats import compute_user_stats
 
@@ -236,6 +282,8 @@ def cmd_refresh_user_stats() -> int:
             u.disk_used_mb          = disk_mb
             u.traffic_used_mb_month = traffic_mb
             u.stats_updated_at      = datetime.utcnow()
+            _eval_quota_notifications(db, u, "disco",   disk_mb,    u.disk_quota_mb)
+            _eval_quota_notifications(db, u, "tráfico", traffic_mb, u.traffic_quota_mb_month)
             updated += 1
             logger.info(f"  {u.username:20s} disk={disk_mb}MB traffic={traffic_mb}MB")
         db.commit()
