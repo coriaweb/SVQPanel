@@ -68,6 +68,7 @@ class DomainResponse(BaseModel):
     rate_limit_enabled: Optional[bool] = False
     rate_limit_rps:     Optional[int]  = 10
     rate_limit_burst:   Optional[int]  = 20
+    php_hardening_relaxed: Optional[bool] = False
     created_at: Optional[datetime] = None
     updated_at: Optional[datetime] = None
 

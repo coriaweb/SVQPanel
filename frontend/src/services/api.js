@@ -816,6 +816,10 @@ class APIClient {
   setDomainRateLimit(domainId, enabled, rps, burst) {
     return this.put(`/api/domains/${domainId}/rate-limit`, { enabled, rps, burst })
   }
+
+  setDomainPhpHardening(domainId, relaxed) {
+    return this.put(`/api/domains/${domainId}/php-hardening`, { relaxed })
+  }
 }
 
 export default new APIClient()

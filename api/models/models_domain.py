@@ -52,10 +52,14 @@ class Domain(Base):
     force_https  = Column(Boolean, default=False, nullable=False)
     hsts_enabled = Column(Boolean, default=False, nullable=False)
 
-    # Rate limiting (anti-abuso) — off por defecto
+    # Rate limiting anti-abuso (Fase 19) — off por defecto
     rate_limit_enabled = Column(Boolean, default=False, nullable=False)
-    rate_limit_rps     = Column(Integer, default=10, nullable=False)   # peticiones/seg por IP
-    rate_limit_burst   = Column(Integer, default=20, nullable=False)   # ráfaga tolerada
+    rate_limit_rps     = Column(Integer, default=10, nullable=False)
+    rate_limit_burst   = Column(Integer, default=20, nullable=False)
+
+    # Hardening PHP relajado (Fase 20): si True este dominio permite
+    # exec/system/etc. open_basedir y el resto del hardening se mantienen.
+    php_hardening_relaxed = Column(Boolean, default=False, nullable=False)
 
     # Estadísticas
     disk_usage = Column(Integer, default=0)  # MB

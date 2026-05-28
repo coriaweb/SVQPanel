@@ -212,6 +212,22 @@
           sin afectar al tráfico normal. Ej: 10 req/s, ráfaga 20.
         </div>
       </div>
+
+      <hr class="my-3" />
+      <p class="fw-semibold mb-2 text-muted small text-uppercase">Seguridad PHP</p>
+
+      <div class="mb-2 form-check">
+        <input id="php_hardening" v-model="form.php_hardening_relaxed" type="checkbox" class="form-check-input" />
+        <label for="php_hardening" class="form-check-label">
+          <i class="bi bi-terminal me-1"></i> Permitir funciones de sistema (exec, shell_exec…)
+        </label>
+      </div>
+      <div class="form-text ps-4">
+        Por seguridad, este dominio bloquea funciones PHP peligrosas (exec, system, shell_exec,
+        passthru, proc_open, popen) que usan la mayoría de los malware. Actívalo solo si una
+        aplicación legítima las necesita. El aislamiento del sitio (open_basedir) se mantiene
+        siempre. Afecta únicamente a este dominio.
+      </div>
     </template>
 
     <!-- Opciones extras (solo en creación) -->
@@ -375,6 +391,7 @@ export default {
       rate_limit_enabled: props.domain?.rate_limit_enabled ?? false,
       rate_limit_rps:     props.domain?.rate_limit_rps     ?? 10,
       rate_limit_burst:   props.domain?.rate_limit_burst   ?? 20,
+      php_hardening_relaxed: props.domain?.php_hardening_relaxed ?? false,
       dns_enabled:  false,
       mail_enabled: false,
       selected_template_id: props.domain?.applied_template_id ?? null,
@@ -516,6 +533,14 @@ export default {
               form.value.rate_limit_enabled,
               form.value.rate_limit_rps,
               form.value.rate_limit_burst,
+            )
+          }
+          // Hardening PHP: solo si cambió (reescribe el pool + vhost)
+          const prevHardening = props.domain.php_hardening_relaxed ?? false
+          if (form.value.php_hardening_relaxed !== prevHardening) {
+            await api.setDomainPhpHardening(
+              props.domain.id,
+              form.value.php_hardening_relaxed,
             )
           }
           // Aplicar plantilla si se seleccionó una (y es diferente a la actual)

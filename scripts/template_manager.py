@@ -329,16 +329,21 @@ class TemplateManager(SystemManager):
             use_cache = enable_cache
 
         # ── PHP ini overrides ─────────────────────────────────────────────
-        php_socket_override = None
+        # Todos los dominios tienen pool dedicado (con bloque de seguridad).
+        # Si el template trae overrides, reescribimos el pool con ellos; si no,
+        # el pool existente se mantiene. El socket SIEMPRE es el dedicado.
+        from scripts.php_ini_manager import write_pool, pool_socket_path, has_pool
+        php_socket_override = pool_socket_path(domain_name) if has_pool(domain_name) else None
+        relax = getattr(domain_row, "php_hardening_relaxed", False) or False
         if template_row.php_ini_overrides:
             try:
                 overrides = json.loads(template_row.php_ini_overrides)
-                from scripts.php_ini_manager import write_pool, pool_socket_path
                 ok, msg = write_pool(
                     domain=domain_name,
                     version=php_version,
                     owner=username,
                     overrides=overrides,
+                    relax_hardening=relax,
                 )
                 if ok:
                     php_socket_override = pool_socket_path(domain_name)
@@ -375,6 +380,10 @@ class TemplateManager(SystemManager):
                 php_socket_override=php_socket_override,
                 template_nginx_extra=template_row.nginx_extra,
                 ipv4=getattr(domain_row, 'ipv4', None),
+                force_https=getattr(domain_row, 'force_https', False) or False,
+                hsts=getattr(domain_row, 'hsts_enabled', False) or False,
+                rate_limit_enabled=getattr(domain_row, 'rate_limit_enabled', False) or False,
+                rate_limit_burst=getattr(domain_row, 'rate_limit_burst', 20) or 20,
             )
             with open(nginx_config_path, "w") as f:
                 f.write(config)

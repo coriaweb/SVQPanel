@@ -44,6 +44,64 @@ POOL_DIR_TMPL = "/etc/php/{ver}/fpm/pool.d/svqpanel-{domain}.conf"
 PHP_INI_TMPL  = "/etc/php/{ver}/fpm/php.ini"
 PHP_VERSIONS  = ["7.4", "8.0", "8.1", "8.2", "8.3", "8.4", "8.5"]
 
+# ─────────────────────────────────────────────────────────────────────────────
+# Seguridad: hardening PHP aplicado SIEMPRE a cada pool de dominio.
+# Lista de disable_functions tomada de Hestia. Dos bloques:
+#   - pcntl_*: no aplican en FPM, deshabilitarlas es gratis y cero falsos positivos.
+#   - exec/system/...: las que usan las webshells. Se quitan al "relajar" un dominio.
+# ─────────────────────────────────────────────────────────────────────────────
+_PCNTL_FUNCS = (
+    "pcntl_alarm,pcntl_fork,pcntl_waitpid,pcntl_wait,pcntl_wifexited,"
+    "pcntl_wifstopped,pcntl_wifsignaled,pcntl_wifcontinued,pcntl_wexitstatus,"
+    "pcntl_wtermsig,pcntl_wstopsig,pcntl_signal,pcntl_signal_get_handler,"
+    "pcntl_signal_dispatch,pcntl_get_last_error,pcntl_strerror,pcntl_sigprocmask,"
+    "pcntl_sigwaitinfo,pcntl_sigtimedwait,pcntl_exec,pcntl_getpriority,"
+    "pcntl_setpriority,pcntl_async_signals"
+)
+_EXEC_FUNCS = "exec,system,passthru,shell_exec,proc_open,popen"
+
+DISABLE_FUNCTIONS_FULL    = f"{_PCNTL_FUNCS},{_EXEC_FUNCS}"
+DISABLE_FUNCTIONS_RELAXED = _PCNTL_FUNCS   # mantiene pcntl bloqueado, permite exec/system
+
+
+def domain_tmp_dir(owner: str, domain: str) -> str:
+    """Directorio tmp aislado por dominio (sesiones + uploads)."""
+    from scripts.utils import get_domain_root
+    return f"{get_domain_root(owner, domain)}/tmp"
+
+
+def _security_block(owner: str, domain: str, relax_hardening: bool = False) -> List[str]:
+    """
+    Líneas php_admin_value de seguridad que se inyectan SIEMPRE en el pool.
+    El cliente no puede sobrescribirlas (php_admin_value = cap duro).
+    """
+    from scripts.utils import get_public_html, get_domain_private
+    public_html = get_public_html(owner, domain)
+    private     = get_domain_private(owner, domain)
+    tmp         = domain_tmp_dir(owner, domain)
+    open_basedir = f"{public_html}:{private}:{tmp}:/tmp"
+    disable_fns = DISABLE_FUNCTIONS_RELAXED if relax_hardening else DISABLE_FUNCTIONS_FULL
+    return [
+        f"php_admin_value[open_basedir] = {open_basedir}",
+        f"php_admin_value[disable_functions] = {disable_fns}",
+        f"php_admin_value[upload_tmp_dir] = {tmp}",
+        f"php_admin_value[session.save_path] = {tmp}",
+    ]
+
+
+def ensure_domain_tmp(owner: str, domain: str) -> None:
+    """
+    Crea {domain_root}/tmp con owner www-data (PHP-FPM corre como www-data).
+    Idempotente. Mode 0700: solo FPM escribe/lee ahí (sesiones, uploads).
+    """
+    tmp = domain_tmp_dir(owner, domain)
+    try:
+        os.makedirs(tmp, exist_ok=True)
+        subprocess.run(["chown", "www-data:www-data", tmp], check=False, env=_SYS_ENV)
+        subprocess.run(["chmod", "0700", tmp], check=False, env=_SYS_ENV)
+    except (OSError, FileNotFoundError) as e:
+        logger.warning(f"ensure_domain_tmp({domain}): {e}")
+
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Parsers / helpers
@@ -161,7 +219,8 @@ def validate_overrides(version: str, overrides: Dict[str, str]) -> Tuple[bool, L
 # ─────────────────────────────────────────────────────────────────────────────
 # Generación del pool FPM
 # ─────────────────────────────────────────────────────────────────────────────
-def _pool_content(domain: str, owner: str, overrides: Dict[str, str]) -> str:
+def _pool_content(domain: str, owner: str, overrides: Dict[str, str],
+                  relax_hardening: bool = False) -> str:
     backend = domain.replace(".", "_").replace("-", "_")
     socket = pool_socket_path(domain)
     lines = [
@@ -178,7 +237,12 @@ def _pool_content(domain: str, owner: str, overrides: Dict[str, str]) -> str:
         "pm.process_idle_timeout = 10s",
         "pm.max_requests = 500",
         "",
+        "; --- Seguridad (cap duro, no overridable por el cliente) ---",
     ]
+    # Bloque de seguridad SIEMPRE (open_basedir, disable_functions, tmp aislado)
+    lines.extend(_security_block(owner, domain, relax_hardening))
+    lines.append("")
+    # Overrides opcionales del cliente (van después; no pueden tocar php_admin_value)
     for key, raw in overrides.items():
         spec = PHP_INI_DIRECTIVES.get(key)
         if not spec:
@@ -208,16 +272,20 @@ def _reload_fpm(version: str) -> Tuple[bool, str]:
     return (r.returncode == 0), (r.stderr.strip() or "ok")
 
 
-def write_pool(domain: str, version: str, owner: str, overrides: Dict[str, str]) -> Tuple[bool, str]:
+def write_pool(domain: str, version: str, owner: str, overrides: Dict[str, str],
+               relax_hardening: bool = False) -> Tuple[bool, str]:
     """Escribe el pool del dominio para la versión dada y recarga FPM."""
     remove_pool(domain, except_version=version, reload_fpm=True)
+
+    # Asegurar el tmp aislado del dominio (sesiones/uploads, owner www-data)
+    ensure_domain_tmp(owner, domain)
 
     path = get_pool_path(version, domain)
     if not os.path.isdir(os.path.dirname(path)):
         return False, f"PHP {version} no está instalado ({os.path.dirname(path)} no existe)"
     try:
         with open(path, "w") as f:
-            f.write(_pool_content(domain, owner, overrides))
+            f.write(_pool_content(domain, owner, overrides, relax_hardening))
     except OSError as e:
         return False, f"no pude escribir el pool: {e}"
 

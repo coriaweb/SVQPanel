@@ -94,16 +94,10 @@ async def toggle_ssl(
         db.refresh(domain)
 
         # Regenerar vhost con el nuevo estado SSL
-        import json as _json
         from scripts import php_ini_manager as phpini
-        php_sock = None
-        if domain.php_ini_overrides:
-            try:
-                ov = _json.loads(domain.php_ini_overrides)
-            except (ValueError, TypeError):
-                ov = {}
-            if ov:
-                php_sock = phpini.pool_socket_path(domain.domain_name)
+        # Todos los dominios tienen pool dedicado → usar su socket
+        php_sock = (phpini.pool_socket_path(domain.domain_name)
+                    if phpini.has_pool(domain.domain_name) else None)
 
         domain_mgr.regenerate_vhost(
             username=owner.username,
@@ -120,6 +114,9 @@ async def toggle_ssl(
             ipv4=domain.ipv4,
             force_https=domain.force_https,
             hsts=domain.hsts_enabled,
+            rate_limit_enabled=domain.rate_limit_enabled or False,
+            rate_limit_rps=domain.rate_limit_rps or 10,
+            rate_limit_burst=domain.rate_limit_burst or 20,
         )
 
         return _domain_ssl_response(domain, ssl_manager)

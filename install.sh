@@ -766,7 +766,22 @@ for PHP_VER in "${PHP_ARRAY[@]}"; do
         systemctl enable "php${PHP_VER}-fpm" 2>/dev/null && \
         systemctl start  "php${PHP_VER}-fpm" 2>/dev/null
 
+        # Red de seguridad global: disable_functions en el php.ini de FPM.
+        # Aunque cada dominio tiene su pool con hardening, esto cubre cualquier
+        # petición que no pase por un pool dedicado. Lista de hardening (Hestia).
+        PHP_INI_FPM="/etc/php/${PHP_VER}/fpm/php.ini"
+        DISABLE_FNS="pcntl_alarm,pcntl_fork,pcntl_waitpid,pcntl_wait,pcntl_wifexited,pcntl_wifstopped,pcntl_wifsignaled,pcntl_wifcontinued,pcntl_wexitstatus,pcntl_wtermsig,pcntl_wstopsig,pcntl_signal,pcntl_signal_get_handler,pcntl_signal_dispatch,pcntl_get_last_error,pcntl_strerror,pcntl_sigprocmask,pcntl_sigwaitinfo,pcntl_sigtimedwait,pcntl_exec,pcntl_getpriority,pcntl_setpriority,pcntl_async_signals,exec,system,passthru,shell_exec,proc_open,popen"
+        if [[ -f "$PHP_INI_FPM" ]]; then
+            if grep -qE '^\s*disable_functions\s*=' "$PHP_INI_FPM"; then
+                sed -i "s|^\s*disable_functions\s*=.*|disable_functions = ${DISABLE_FNS}|" "$PHP_INI_FPM"
+            else
+                echo "disable_functions = ${DISABLE_FNS}" >> "$PHP_INI_FPM"
+            fi
+            echo -e "    ${GREEN}✓ Hardening disable_functions aplicado en PHP ${PHP_VER}${NC}"
+        fi
+
         # Verificar que FPM arrancó (socket debe existir)
+        systemctl restart "php${PHP_VER}-fpm" 2>/dev/null
         sleep 1
         if [[ -S "/run/php/php${PHP_VER}-fpm.sock" ]]; then
             echo -e "    ${GREEN}✓ PHP ${PHP_VER}-fpm arrancado y socket activo${NC}"
@@ -781,6 +796,18 @@ for PHP_VER in "${PHP_ARRAY[@]}"; do
 done
 
 echo -e "${GREEN}✓ PHP instalado: ${PHP_INSTALLED[*]:-ninguno}${NC}\n"
+
+# Zona global de rate limiting para nginx (status 429). Las zonas por dominio
+# las crea el panel on-demand. Se deja aquí para que exista desde el inicio.
+mkdir -p /etc/nginx/conf.d
+if [[ ! -f /etc/nginx/conf.d/svqpanel-ratelimit-global.conf ]]; then
+    cat > /etc/nginx/conf.d/svqpanel-ratelimit-global.conf << 'RLGEOF'
+# SVQPanel — rate limiting (nivel http)
+# Las zonas (limit_req_zone) las define cada dominio en su propio fichero.
+limit_req_status 429;
+RLGEOF
+    echo -e "${GREEN}✓ Zona global de rate limiting nginx creada${NC}"
+fi
 
 ###############################################################################
 # 7. CONFIGURAR POSTGRESQL
@@ -2000,6 +2027,14 @@ cd /opt/svqpanel
 /opt/svqpanel/venv/bin/python -m api.cli register_server_ips && \
     echo -e "${GREEN}✓ IPs del servidor registradas automáticamente${NC}" || \
     echo -e "${YELLOW}⚠ No se pudieron registrar las IPs (se pueden añadir manualmente en el panel)${NC}"
+echo ""
+
+# Crear pools PHP-FPM dedicados (open_basedir + disable_functions + tmp) para
+# cualquier dominio preexistente (reinstalación sobre datos previos).
+echo -e "${YELLOW}Aplicando aislamiento PHP por dominio...${NC}"
+/opt/svqpanel/venv/bin/python -m api.cli migrate_php_pools && \
+    echo -e "${GREEN}✓ Pools PHP-FPM con seguridad aplicados${NC}" || \
+    echo -e "${YELLOW}⚠ migrate_php_pools tuvo incidencias (revisar logs)${NC}"
 echo ""
 
 ###############################################################################

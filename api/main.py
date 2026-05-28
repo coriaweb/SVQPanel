@@ -413,6 +413,8 @@ def _run_migrations():
         "ALTER TABLE domains ADD COLUMN IF NOT EXISTS rate_limit_enabled BOOLEAN NOT NULL DEFAULT FALSE",
         "ALTER TABLE domains ADD COLUMN IF NOT EXISTS rate_limit_rps INTEGER NOT NULL DEFAULT 10",
         "ALTER TABLE domains ADD COLUMN IF NOT EXISTS rate_limit_burst INTEGER NOT NULL DEFAULT 20",
+        # Hardening PHP relajado por dominio (Fase 20)
+        "ALTER TABLE domains ADD COLUMN IF NOT EXISTS php_hardening_relaxed BOOLEAN NOT NULL DEFAULT FALSE",
         # ─────────────────────────────────────────────────────────────────
         # Fase 18: Notificaciones (avisos de cuota disco/tráfico al usuario)
         # ─────────────────────────────────────────────────────────────────

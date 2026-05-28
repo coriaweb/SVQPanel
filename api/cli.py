@@ -369,6 +369,90 @@ def cmd_register_server_ips() -> int:
         db.close()
 
 
+def cmd_migrate_php_pools(dry_run: bool = False, only_domain: str = None) -> int:
+    """
+    Crea el pool PHP-FPM dedicado (con bloque de seguridad: open_basedir +
+    disable_functions + tmp aislado) para los dominios que aún no lo tengan,
+    y repunta su vhost al socket dedicado. Idempotente.
+    """
+    import json as _json
+    from scripts import php_ini_manager as phpini
+    from scripts.domain_manager import DomainManager
+
+    db = SessionLocal()
+    try:
+        domains = db.query(Domain).all()
+        mgr = DomainManager()
+        created = 0
+        skipped = 0
+        failed = 0
+        for d in domains:
+            if only_domain and d.domain_name != only_domain:
+                continue
+            owner = db.query(User).filter(User.id == d.user_id).first()
+            if not owner:
+                logger.warning(f"  {d.domain_name}: sin propietario, omitido")
+                continue
+            if phpini.has_pool(d.domain_name):
+                skipped += 1
+                logger.info(f"  {d.domain_name}: ya tiene pool, omitido")
+                continue
+
+            try:
+                overrides = _json.loads(d.php_ini_overrides) if d.php_ini_overrides else {}
+            except (ValueError, TypeError):
+                overrides = {}
+            relax = getattr(d, "php_hardening_relaxed", False) or False
+            version = d.php_version or "8.2"
+
+            if dry_run:
+                logger.info(f"  {d.domain_name}: crearía pool (ver={version}, relax={relax})")
+                created += 1
+                continue
+
+            # 1) crear pool + tmp + recargar FPM
+            ok, msg = phpini.write_pool(d.domain_name, version, owner.username, overrides, relax)
+            if not ok:
+                failed += 1
+                logger.error(f"  {d.domain_name}: write_pool falló: {msg}")
+                continue
+            # 2) repuntar vhost al socket dedicado, preservando TODO el estado
+            try:
+                mgr.regenerate_vhost(
+                    username=owner.username,
+                    domain_name=d.domain_name,
+                    php_version=version,
+                    ssl_enabled=d.ssl_enabled or False,
+                    ipv6=d.ipv6,
+                    fastcgi_cache_enabled=d.fastcgi_cache_enabled or False,
+                    fastcgi_cache_ttl_minutes=d.fastcgi_cache_ttl_minutes or 60,
+                    php_socket_override=phpini.pool_socket_path(d.domain_name),
+                    template_nginx_extra=d.template_nginx_extra,
+                    redirect_to=d.redirect_to,
+                    custom_docroot=d.custom_docroot,
+                    ipv4=d.ipv4,
+                    force_https=d.force_https or False,
+                    hsts=d.hsts_enabled or False,
+                    rate_limit_enabled=d.rate_limit_enabled or False,
+                    rate_limit_rps=d.rate_limit_rps or 10,
+                    rate_limit_burst=d.rate_limit_burst or 20,
+                )
+            except Exception as e:
+                failed += 1
+                logger.error(f"  {d.domain_name}: regenerate_vhost falló: {e}")
+                continue
+            created += 1
+            logger.info(f"  {d.domain_name}: pool creado (ver={version})")
+
+        logger.info(f"migrate_php_pools: {created} creados, {skipped} ya tenían, {failed} fallidos")
+        return 0 if failed == 0 else 1
+    except Exception as e:
+        logger.exception(f"migrate_php_pools falló: {e}")
+        return 2
+    finally:
+        db.close()
+
+
 def main():
     parser = argparse.ArgumentParser(prog="api.cli", description="SVQPanel CLI")
     sub = parser.add_subparsers(dest="cmd", required=True)
@@ -381,6 +465,10 @@ def main():
     sub.add_parser("refresh_ssl_expires",  help="Sincroniza fechas de expiración SSL desde certbot")
     sub.add_parser("register_server_ips",  help="Registra las IPs del sistema en la BD (post-instalación)")
 
+    p_pools = sub.add_parser("migrate_php_pools", help="Crea pool PHP-FPM dedicado (seguridad) para dominios sin él")
+    p_pools.add_argument("--dry-run", action="store_true", help="Solo muestra lo que haría")
+    p_pools.add_argument("--domain", default=None, help="Migrar solo este dominio")
+
     args = parser.parse_args()
     if args.cmd == "refresh_ip_lists":
         sys.exit(cmd_refresh_ip_lists(force=args.force))
@@ -392,6 +480,8 @@ def main():
         sys.exit(cmd_refresh_ssl_expires())
     if args.cmd == "register_server_ips":
         sys.exit(cmd_register_server_ips())
+    if args.cmd == "migrate_php_pools":
+        sys.exit(cmd_migrate_php_pools(dry_run=args.dry_run, only_domain=args.domain))
 
 
 if __name__ == "__main__":

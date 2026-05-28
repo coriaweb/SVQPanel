@@ -14,8 +14,6 @@ from .utils import (
     reload_nginx,
     write_fastcgi_cache_zone,
     remove_fastcgi_cache_zone,
-    write_ratelimit_zone,
-    remove_ratelimit_zone,
 )
 
 logger = logging.getLogger(__name__)
@@ -149,12 +147,21 @@ class DomainManager(SystemManager):
                 self.execute_command(["chown", f"www-data:{username}", log_file])
                 self.execute_command(["chmod", "640", log_file])
 
-            # Crear configuración Nginx
+            # Crear el pool PHP-FPM dedicado (aislamiento: open_basedir +
+            # disable_functions + tmp propio). Todos los dominios lo tienen.
+            from scripts import php_ini_manager as phpini
+            ok, msg = phpini.write_pool(domain_name, php_version, username, {})
+            if not ok:
+                raise RuntimeError(f"No se pudo crear el pool PHP-FPM: {msg}")
+            php_socket = phpini.pool_socket_path(domain_name)
+
+            # Crear configuración Nginx (apuntando al socket dedicado)
             config_content = generate_nginx_config(
                 domain_name,
                 username,
                 php_version,
-                ssl_enabled=False
+                ssl_enabled=False,
+                php_socket_override=php_socket,
             )
 
             with open(nginx_config, "w") as f:
@@ -218,6 +225,13 @@ class DomainManager(SystemManager):
             if self.file_exists(nginx_config):
                 self.execute_command(["rm", "-f", nginx_config])
                 logger.info(f"Removed Nginx config: {nginx_config}")
+
+            # Eliminar el pool PHP-FPM dedicado del dominio (todas las versiones)
+            try:
+                from scripts import php_ini_manager as phpini
+                phpini.remove_pool(domain_name)
+            except Exception as pool_err:
+                logger.warning(f"No se pudo eliminar el pool de {domain_name}: {pool_err}")
 
             # Eliminar directorio del dominio si se conoce el usuario
             if cleanup_dirs and username:
@@ -310,14 +324,11 @@ class DomainManager(SystemManager):
         ipv4: str = None,
         force_https: bool = False,
         hsts: bool = False,
-        rate_limit_enabled: bool = False,
-        rate_limit_rps: int = 10,
-        rate_limit_burst: int = 20,
     ) -> dict:
         """
         Regenera la vhost completa del dominio con TODO el estado actual
-        (SSL, IPv6, cache, socket PHP dedicado, rate limit). Punto único de
-        verdad para no perder ajustes al tocar una de las features.
+        (SSL, IPv6, cache, socket PHP dedicado). Punto único de verdad para
+        no perder ajustes al tocar una de las features.
         """
         if not validate_domain(domain_name):
             raise ValueError(f"Invalid domain: {domain_name}")
@@ -328,13 +339,6 @@ class DomainManager(SystemManager):
             write_fastcgi_cache_zone(domain_name)
         else:
             remove_fastcgi_cache_zone(domain_name)
-
-        # La zona de rate limit (nivel http) debe existir ANTES de que el
-        # vhost la referencie; si está desactivado, se elimina.
-        if rate_limit_enabled:
-            write_ratelimit_zone(domain_name, rate_limit_rps)
-        else:
-            remove_ratelimit_zone(domain_name)
 
         config_content = generate_nginx_config(
             domain_name,
@@ -351,8 +355,6 @@ class DomainManager(SystemManager):
             ipv4=ipv4,
             force_https=force_https,
             hsts=hsts,
-            rate_limit_enabled=rate_limit_enabled,
-            rate_limit_burst=rate_limit_burst,
         )
         with open(nginx_config, "w") as f:
             f.write(config_content)
@@ -375,9 +377,6 @@ class DomainManager(SystemManager):
         ipv4: str = None,
         force_https: bool = False,
         hsts: bool = False,
-        rate_limit_enabled: bool = False,
-        rate_limit_rps: int = 10,
-        rate_limit_burst: int = 20,
     ) -> dict:
         """Activa o desactiva FastCGI cache. Delega en regenerate_vhost."""
         try:
@@ -390,9 +389,6 @@ class DomainManager(SystemManager):
                 ipv4=ipv4,
                 force_https=force_https,
                 hsts=hsts,
-                rate_limit_enabled=rate_limit_enabled,
-                rate_limit_rps=rate_limit_rps,
-                rate_limit_burst=rate_limit_burst,
             )
             logger.info(f"FastCGI cache {'enabled' if enabled else 'disabled'} para {domain_name}")
             return {

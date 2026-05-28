@@ -76,18 +76,6 @@ async def create_domain(
                     ),
                 )
 
-        # Validar cuota de disco (0 = sin límite). Bloquea crear nuevos
-        # dominios si ya se superó la cuota; lo existente no se toca.
-        if user.disk_quota_mb and user.disk_quota_mb > 0 and \
-           (user.disk_used_mb or 0) >= user.disk_quota_mb:
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail=(
-                    f"Cuota de disco superada ({user.disk_used_mb}/{user.disk_quota_mb} MB). "
-                    f"Libera espacio o sube el plan antes de crear nuevos dominios."
-                ),
-            )
-
         # Create domain in system (Nginx, directories, etc)
         domain_manager.create_domain(
             user.username,
@@ -274,18 +262,21 @@ async def update_domain(
             domain_manager.change_php_version(db_domain.domain_name, domain_update.php_version)
             db_domain.php_version = domain_update.php_version
 
-            # Si el dominio tiene php.ini propio, recrear el pool en la nueva versión
-            if db_domain.php_ini_overrides:
-                import json
-                from scripts import php_ini_manager as phpini
-                owner = db.query(User).filter(User.id == db_domain.user_id).first()
-                try:
-                    overrides = json.loads(db_domain.php_ini_overrides)
-                except (ValueError, TypeError):
-                    overrides = {}
-                if overrides and owner:
-                    phpini.write_pool(db_domain.domain_name, db_domain.php_version,
-                                      owner.username, overrides)
+            # Recrear SIEMPRE el pool dedicado en la nueva versión (todos los
+            # dominios tienen pool con el bloque de seguridad). write_pool hace
+            # remove_pool(except_version) → migra de versión. El socket no cambia
+            # de ruta, así que el vhost no necesita tocarse para el socket.
+            import json
+            from scripts import php_ini_manager as phpini
+            owner = db.query(User).filter(User.id == db_domain.user_id).first()
+            try:
+                overrides = json.loads(db_domain.php_ini_overrides) if db_domain.php_ini_overrides else {}
+            except (ValueError, TypeError):
+                overrides = {}
+            if owner:
+                phpini.write_pool(db_domain.domain_name, db_domain.php_version,
+                                  owner.username, overrides,
+                                  relax_hardening=db_domain.php_hardening_relaxed or False)
 
         if domain_update.is_active is not None:
             db_domain.is_active = domain_update.is_active
@@ -322,16 +313,10 @@ async def update_domain(
             owner = db.query(User).filter(User.id == db_domain.user_id).first()
             if owner:
                 try:
-                    import json
                     from scripts import php_ini_manager as phpini
-                    php_sock = None
-                    if db_domain.php_ini_overrides:
-                        try:
-                            ov = json.loads(db_domain.php_ini_overrides)
-                        except (ValueError, TypeError):
-                            ov = {}
-                        if ov:
-                            php_sock = phpini.pool_socket_path(db_domain.domain_name)
+                    # Todos los dominios tienen pool dedicado → usar su socket
+                    php_sock = (phpini.pool_socket_path(db_domain.domain_name)
+                                if phpini.has_pool(db_domain.domain_name) else None)
                     domain_manager.regenerate_vhost(
                         username=owner.username,
                         domain_name=db_domain.domain_name,
@@ -556,9 +541,6 @@ async def set_domain_cache(
             ipv4=domain.ipv4,
             force_https=domain.force_https or False,
             hsts=domain.hsts_enabled or False,
-            rate_limit_enabled=domain.rate_limit_enabled or False,
-            rate_limit_rps=domain.rate_limit_rps or 10,
-            rate_limit_burst=domain.rate_limit_burst or 20,
         )
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error aplicando cache: {e}")
@@ -572,78 +554,6 @@ async def set_domain_cache(
         "domain": domain.domain_name,
         "fastcgi_cache_enabled": domain.fastcgi_cache_enabled,
         "fastcgi_cache_ttl_minutes": domain.fastcgi_cache_ttl_minutes,
-    }
-
-
-@router.put("/domains/{domain_id}/rate-limit")
-async def set_domain_rate_limit(
-    domain_id:    int,
-    payload:      dict,
-    current_user: User = Depends(require_auth),
-    db:           Session = Depends(get_db),
-):
-    """
-    Activa/desactiva el rate limiting (anti-abuso) de un dominio.
-    Body: {"enabled": bool, "rps": int, "burst": int}
-    - rps:   peticiones por segundo permitidas por IP (1-1000)
-    - burst: ráfaga tolerada por encima del rps (0-1000)
-    Al superar el límite, nginx responde 429.
-    """
-    enabled = bool(payload.get("enabled", False))
-    rps   = int(payload.get("rps")   or 10)
-    burst = int(payload.get("burst") or 20)
-    if rps < 1 or rps > 1000:
-        raise HTTPException(status_code=400, detail="rps fuera de rango (1-1000)")
-    if burst < 0 or burst > 1000:
-        raise HTTPException(status_code=400, detail="burst fuera de rango (0-1000)")
-
-    domain = db.query(Domain).filter(Domain.id == domain_id).first()
-    if not domain:
-        raise HTTPException(status_code=404, detail="Dominio no encontrado")
-    _check_access(current_user, domain, db)
-
-    owner = db.query(User).filter(User.id == domain.user_id).first()
-    if not owner:
-        raise HTTPException(status_code=500, detail="Propietario del dominio no encontrado")
-
-    # Preservar socket dedicado si el dominio tiene php.ini propio
-    from scripts import php_ini_manager as phpini
-    php_socket = phpini.pool_socket_path(domain.domain_name) if phpini.has_pool(domain.domain_name) else None
-
-    try:
-        DomainManager().regenerate_vhost(
-            username=owner.username,
-            domain_name=domain.domain_name,
-            php_version=domain.php_version,
-            ssl_enabled=domain.ssl_enabled,
-            ipv6=domain.ipv6,
-            fastcgi_cache_enabled=domain.fastcgi_cache_enabled,
-            fastcgi_cache_ttl_minutes=domain.fastcgi_cache_ttl_minutes,
-            php_socket_override=php_socket,
-            template_nginx_extra=domain.template_nginx_extra,
-            redirect_to=domain.redirect_to,
-            custom_docroot=domain.custom_docroot,
-            ipv4=domain.ipv4,
-            force_https=domain.force_https or False,
-            hsts=domain.hsts_enabled or False,
-            rate_limit_enabled=enabled,
-            rate_limit_rps=rps,
-            rate_limit_burst=burst,
-        )
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Error aplicando rate limit: {e}")
-
-    domain.rate_limit_enabled = enabled
-    domain.rate_limit_rps     = rps
-    domain.rate_limit_burst   = burst
-    db.commit()
-    db.refresh(domain)
-    return {
-        "status": "ok",
-        "domain": domain.domain_name,
-        "rate_limit_enabled": domain.rate_limit_enabled,
-        "rate_limit_rps":     domain.rate_limit_rps,
-        "rate_limit_burst":   domain.rate_limit_burst,
     }
 
 
@@ -714,7 +624,8 @@ async def set_domain_php_config(
 ):
     """
     Aplica overrides php.ini para el dominio. Body: {"overrides": {...}}.
-    Lista vacía = vuelve al php.ini global (borra el pool dedicado).
+    Lista vacía = pool solo con el bloque de seguridad (el pool dedicado es
+    permanente; nunca se borra aquí, solo en delete_domain).
     """
     import json
     from scripts import php_ini_manager as phpini
@@ -735,18 +646,20 @@ async def set_domain_php_config(
     # Filtrar vacíos
     overrides = {k: str(v).strip() for k, v in overrides.items() if str(v).strip() != ""}
 
-    php_socket = None
     if overrides:
         ok, errors = phpini.validate_overrides(domain.php_version, overrides)
         if not ok:
             raise HTTPException(status_code=400, detail="; ".join(errors))
-        ok, msg = phpini.write_pool(domain.domain_name, domain.php_version, owner.username, overrides)
-        if not ok:
-            raise HTTPException(status_code=500, detail=f"Error creando pool PHP: {msg}")
-        php_socket = phpini.pool_socket_path(domain.domain_name)
-    else:
-        # Sin overrides → borrar pool y volver al socket global
-        phpini.remove_pool(domain.domain_name)
+
+    # Reescribir SIEMPRE el pool (con o sin overrides; el bloque de seguridad
+    # y el socket dedicado se mantienen). El pool solo se borra en delete_domain.
+    ok, msg = phpini.write_pool(
+        domain.domain_name, domain.php_version, owner.username, overrides,
+        relax_hardening=domain.php_hardening_relaxed or False,
+    )
+    if not ok:
+        raise HTTPException(status_code=500, detail=f"Error escribiendo pool PHP: {msg}")
+    php_socket = phpini.pool_socket_path(domain.domain_name)
 
     # Regenerar vhost preservando TODO el estado del dominio
     try:
@@ -779,7 +692,82 @@ async def set_domain_php_config(
         "status":    "ok",
         "domain":    domain.domain_name,
         "overrides": overrides,
-        "dedicated_pool": php_socket is not None,
+        "dedicated_pool": True,
+    }
+
+
+@router.put("/domains/{domain_id}/php-hardening")
+async def set_domain_php_hardening(
+    domain_id:    int,
+    payload:      dict,
+    current_user: User = Depends(require_auth),
+    db:           Session = Depends(get_db),
+):
+    """
+    Relaja o restaura el hardening PHP de un dominio. Body: {"relaxed": bool}.
+    relaxed=True permite exec/system/shell_exec/... SOLO en este dominio (su
+    pool aislado); open_basedir y el resto del hardening se mantienen.
+    Es seguro para el sistema (solo afecta a este pool), así que lo pueden
+    activar admin y propietario.
+    """
+    from scripts import php_ini_manager as phpini
+    import json
+
+    relaxed = bool(payload.get("relaxed", False))
+
+    domain = db.query(Domain).filter(Domain.id == domain_id).first()
+    if not domain:
+        raise HTTPException(status_code=404, detail="Dominio no encontrado")
+    _check_access(current_user, domain, db)
+
+    owner = db.query(User).filter(User.id == domain.user_id).first()
+    if not owner:
+        raise HTTPException(status_code=500, detail="Propietario no encontrado")
+
+    try:
+        overrides = json.loads(domain.php_ini_overrides) if domain.php_ini_overrides else {}
+    except (ValueError, TypeError):
+        overrides = {}
+
+    # Reescribir el pool con el nuevo nivel de hardening
+    ok, msg = phpini.write_pool(
+        domain.domain_name, domain.php_version, owner.username, overrides,
+        relax_hardening=relaxed,
+    )
+    if not ok:
+        raise HTTPException(status_code=500, detail=f"Error escribiendo pool PHP: {msg}")
+
+    # Regenerar vhost (socket dedicado) preservando estado
+    try:
+        DomainManager().regenerate_vhost(
+            username=owner.username,
+            domain_name=domain.domain_name,
+            php_version=domain.php_version,
+            ssl_enabled=domain.ssl_enabled,
+            ipv6=domain.ipv6,
+            fastcgi_cache_enabled=domain.fastcgi_cache_enabled,
+            fastcgi_cache_ttl_minutes=domain.fastcgi_cache_ttl_minutes,
+            php_socket_override=phpini.pool_socket_path(domain.domain_name),
+            template_nginx_extra=domain.template_nginx_extra,
+            redirect_to=domain.redirect_to,
+            custom_docroot=domain.custom_docroot,
+            ipv4=domain.ipv4,
+            force_https=domain.force_https or False,
+            hsts=domain.hsts_enabled or False,
+            rate_limit_enabled=domain.rate_limit_enabled or False,
+            rate_limit_rps=domain.rate_limit_rps or 10,
+            rate_limit_burst=domain.rate_limit_burst or 20,
+        )
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error regenerando vhost: {e}")
+
+    domain.php_hardening_relaxed = relaxed
+    db.commit()
+    db.refresh(domain)
+    return {
+        "status": "ok",
+        "domain": domain.domain_name,
+        "php_hardening_relaxed": domain.php_hardening_relaxed,
     }
 
 
