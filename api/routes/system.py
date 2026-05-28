@@ -240,7 +240,7 @@ async def get_system_updates(
                 before_bracket = line[:line.index("[")].strip()
                 parts = before_bracket.split()
                 pkg_origin = parts[0]
-                new_ver    = parts[-1]
+                new_ver    = parts[1]  # Es el segundo campo (versión, no arch)
 
                 # Extraer versión antigua (dentro de [upgradable from: ...])
                 bracket_start = line.index("[upgradable from:")
