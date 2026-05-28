@@ -71,6 +71,11 @@
             </router-link>
           </li>
           <li v-if="currentUser?.is_admin">
+            <router-link to="/server-ips" :class="{active: route.path === '/server-ips'}">
+              <i class="bi bi-hdd-network"></i> Gestión de IPs
+            </router-link>
+          </li>
+          <li v-if="currentUser?.is_admin">
             <router-link to="/settings" :class="{active: route.path === '/settings'}">
               <i class="bi bi-gear"></i> Configuración
             </router-link>

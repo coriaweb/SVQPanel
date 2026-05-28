@@ -27,6 +27,7 @@ class SettingsUpdate(BaseModel):
     max_extract_mb: Optional[int] = Field(None, ge=1, le=5120)
     panel_hostname: Optional[str] = Field(None, max_length=255)
     force_https: Optional[bool] = None
+    timezone: Optional[str] = Field(None, max_length=64)
 
     @field_validator("ipv6_range")
     @classmethod
@@ -71,6 +72,8 @@ class SettingsResponse(BaseModel):
     ssl_panel_expires: Optional[datetime] = None
     force_https: bool = False
     updated_at: Optional[datetime] = None
+
+    timezone: str = "UTC"
 
     # Información calculada
     ipv6_total_ips: Optional[int] = None      # IPs disponibles en el rango

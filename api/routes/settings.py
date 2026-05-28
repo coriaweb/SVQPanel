@@ -249,3 +249,93 @@ async def revoke_panel_ssl(
         "success": True,
         "message": "Certificado SSL del panel revocado. El panel vuelve a HTTP."
     }
+
+
+# ─── Timezone ────────────────────────────────────────────────────────────────
+
+@router.get("/settings/timezones")
+async def list_timezones(current_user=Depends(require_admin)):
+    """
+    Devuelve la lista de zonas horarias disponibles en el sistema.
+    Intenta usar zoneinfo (Python ≥3.9); si no, usa pytz como fallback.
+    """
+    try:
+        from zoneinfo import available_timezones
+        zones = sorted(available_timezones())
+    except ImportError:
+        try:
+            import pytz
+            zones = pytz.all_timezones
+        except ImportError:
+            # Fallback mínimo con zonas comunes
+            zones = [
+                "UTC", "Europe/Madrid", "Europe/London", "Europe/Paris",
+                "Europe/Berlin", "Europe/Rome", "America/New_York",
+                "America/Chicago", "America/Denver", "America/Los_Angeles",
+                "America/Sao_Paulo", "America/Argentina/Buenos_Aires",
+                "America/Mexico_City", "Asia/Tokyo", "Asia/Shanghai",
+                "Asia/Dubai", "Asia/Kolkata", "Australia/Sydney",
+                "Pacific/Auckland",
+            ]
+    return {"timezones": zones}
+
+
+@router.get("/settings/timezone-current")
+async def get_current_timezone(current_user=Depends(require_admin)):
+    """
+    Lee la zona horaria actual del sistema operativo (timedatectl).
+    """
+    import subprocess
+    try:
+        r = subprocess.run(
+            ["timedatectl", "show", "--property=Timezone", "--value"],
+            capture_output=True, text=True, timeout=5,
+        )
+        tz = r.stdout.strip() or "UTC"
+    except Exception:
+        tz = "UTC"
+    return {"timezone": tz}
+
+
+@router.post("/settings/timezone")
+async def set_timezone(
+    data: dict,
+    current_user=Depends(require_admin),
+    db: Session = Depends(get_db),
+):
+    """
+    Cambia la zona horaria del servidor via timedatectl y la guarda en BD.
+    Body: { "timezone": "Europe/Madrid" }
+    """
+    import subprocess
+    import re
+
+    tz = (data.get("timezone") or "").strip()
+    if not tz or not re.match(r'^[A-Za-z_/+\-0-9]+$', tz):
+        raise HTTPException(status_code=400, detail="Zona horaria no válida")
+
+    # Validar que existe en zoneinfo o en timedatectl
+    try:
+        r = subprocess.run(
+            ["timedatectl", "set-timezone", tz],
+            capture_output=True, text=True, timeout=10,
+        )
+        if r.returncode != 0:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Zona horaria no reconocida por el sistema: {tz}"
+            )
+    except FileNotFoundError:
+        # timedatectl no disponible (entorno de desarrollo)
+        pass
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+    # Guardar en BD
+    settings = get_or_create_settings(db)
+    settings.timezone = tz
+    db.commit()
+
+    return {"success": True, "timezone": tz, "message": f"Zona horaria cambiada a {tz}"}

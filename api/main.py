@@ -13,7 +13,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from api.models.database import create_tables, get_db
 from config.config import PANEL_NAME, PANEL_VERSION
 
-from api.routes import users, domains, php, ssl, ipv6, auth, settings, dns, system, mail, databases, firewall, fail2ban, security_monitor, ip_lists, file_manager, crowdsec, plans, sftp, crons
+from api.routes import users, domains, php, ssl, ipv6, auth, settings, dns, system, mail, databases, firewall, fail2ban, security_monitor, ip_lists, file_manager, crowdsec, plans, sftp, crons, server_ips
 
 # Crear app FastAPI
 app = FastAPI(
@@ -312,6 +312,26 @@ def _run_migrations():
         )""",
         "CREATE INDEX IF NOT EXISTS ix_cron_jobs_user_id ON cron_jobs(user_id)",
         "CREATE INDEX IF NOT EXISTS ix_cron_jobs_domain_id ON cron_jobs(domain_id)",
+        # ─────────────────────────────────────────────────────────────────
+        # IPs del servidor (gestión de red)
+        # ─────────────────────────────────────────────────────────────────
+        """CREATE TABLE IF NOT EXISTS server_ips (
+            id            SERIAL PRIMARY KEY,
+            address       VARCHAR(45)  UNIQUE NOT NULL,
+            netmask       VARCHAR(48),
+            interface     VARCHAR(20)  NOT NULL DEFAULT 'eth0',
+            ip_type       VARCHAR(20)  NOT NULL DEFAULT 'shared',
+            is_ipv6       BOOLEAN      NOT NULL DEFAULT FALSE,
+            nat_ip        VARCHAR(45),
+            owner_user_id INTEGER      REFERENCES users(id) ON DELETE SET NULL,
+            is_active     BOOLEAN      NOT NULL DEFAULT TRUE,
+            note          VARCHAR(255),
+            created_at    TIMESTAMP    NOT NULL DEFAULT NOW(),
+            updated_at    TIMESTAMP    DEFAULT NOW()
+        )""",
+        "CREATE INDEX IF NOT EXISTS ix_server_ips_ip_type ON server_ips(ip_type)",
+        # Timezone en settings
+        "ALTER TABLE settings ADD COLUMN IF NOT EXISTS timezone VARCHAR(64) DEFAULT 'UTC'",
     ]
     with engine.connect() as conn:
         for sql in migrations:
@@ -368,6 +388,7 @@ app.include_router(crowdsec.router,         prefix="/api", tags=["CrowdSec"])
 app.include_router(plans.router,            prefix="/api", tags=["Plans"])
 app.include_router(sftp.router,             prefix="/api", tags=["SFTP"])
 app.include_router(crons.router,            prefix="/api", tags=["Crons"])
+app.include_router(server_ips.router,       prefix="/api", tags=["Server IPs"])
 app.include_router(file_manager.router,     prefix="/api", tags=["File Manager"])
 # Autoconfig/Autodiscover sin prefijo (clientes de correo los buscan en rutas raíz)
 app.include_router(mail.router, prefix="", include_in_schema=False)

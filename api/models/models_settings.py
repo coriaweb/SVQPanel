@@ -40,6 +40,9 @@ class Settings(Base):
     ssl_panel_expires = Column(DateTime, nullable=True)       # Fecha de expiración del cert
     force_https = Column(Boolean, default=False)              # Redirigir HTTP → HTTPS del panel
 
+    # Sistema
+    timezone = Column(String(64), default="UTC")             # Zona horaria del servidor
+
     # Timestamps
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 

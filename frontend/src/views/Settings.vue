@@ -444,6 +444,40 @@
         </div>
       </div>
 
+      <!-- Zona Horaria del Servidor -->
+      <div class="col-md-6">
+        <div class="card">
+          <div class="card-header d-flex justify-content-between align-items-center">
+            <span><i class="bi bi-clock-history me-1"></i> Zona Horaria del Servidor</span>
+            <span v-if="tzCurrent" class="badge bg-secondary font-monospace">{{ tzCurrent }}</span>
+          </div>
+          <div class="card-body">
+            <label class="form-label">Seleccionar zona horaria</label>
+            <div class="input-group mb-2">
+              <input
+                v-model="tzSearch"
+                type="text"
+                class="form-control"
+                placeholder="Filtrar... (ej: Europe, Madrid)"
+              />
+            </div>
+            <select v-model="tzSelected" class="form-select" size="5" style="height:auto">
+              <option v-for="tz in filteredTimezones" :key="tz" :value="tz">{{ tz }}</option>
+            </select>
+            <div class="form-text">Zona horaria actual del SO: <strong>{{ tzCurrent || '…' }}</strong></div>
+            <button
+              class="btn btn-sm btn-outline-primary mt-2"
+              @click="saveTimezone"
+              :disabled="!tzSelected || tzSaving"
+            >
+              <span v-if="tzSaving" class="spinner-border spinner-border-sm me-1"></span>
+              <i v-else class="bi bi-clock me-1"></i>
+              Aplicar zona horaria
+            </button>
+          </div>
+        </div>
+      </div>
+
       <!-- Panel info -->
       <div class="col-md-6">
         <div class="card">
@@ -731,6 +765,49 @@ export default {
       }
     }
 
+    // ─── Timezone ─────────────────────────────────────────────────────────────
+
+    const tzCurrent   = ref('')
+    const tzSelected  = ref('')
+    const tzSearch    = ref('')
+    const tzList      = ref([])
+    const tzSaving    = ref(false)
+
+    const filteredTimezones = computed(() => {
+      if (!tzSearch.value) return tzList.value
+      const q = tzSearch.value.toLowerCase()
+      return tzList.value.filter(tz => tz.toLowerCase().includes(q))
+    })
+
+    const loadTimezones = async () => {
+      try {
+        const r = await api.get('/api/settings/timezones')
+        tzList.value = r.data?.timezones || []
+      } catch { /* silencioso */ }
+    }
+
+    const loadCurrentTimezone = async () => {
+      try {
+        const r = await api.get('/api/settings/timezone-current')
+        tzCurrent.value  = r.data?.timezone || 'UTC'
+        tzSelected.value = tzCurrent.value
+      } catch { /* silencioso */ }
+    }
+
+    const saveTimezone = async () => {
+      if (!tzSelected.value) return
+      tzSaving.value = true
+      try {
+        await api.post('/api/settings/timezone', { timezone: tzSelected.value })
+        tzCurrent.value = tzSelected.value
+        store.showNotification(`Zona horaria cambiada a ${tzSelected.value}`, 'success')
+      } catch (e) {
+        store.showNotification('Error al cambiar la zona horaria: ' + e.message, 'danger')
+      } finally {
+        tzSaving.value = false
+      }
+    }
+
     // ─── SSL del Panel ────────────────────────────────────────────────────────
 
     const formatExpiry = (isoDate) => {
@@ -779,6 +856,8 @@ export default {
     onMounted(async () => {
       await loadSettings()
       await loadPHPStatus()
+      loadTimezones()
+      loadCurrentTimezone()
     })
 
     return {
@@ -789,6 +868,8 @@ export default {
       confirmUninstall, uninstallPHP,
       sslForm, sslLoading, showRevokeConfirm,
       issueSSL, revokeSSL, formatExpiry,
+      tzCurrent, tzSelected, tzSearch, tzList, tzSaving,
+      filteredTimezones, saveTimezone,
     }
   }
 }

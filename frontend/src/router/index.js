@@ -13,6 +13,7 @@ import FileManager from '../views/FileManager.vue'
 import Plans from '../views/Plans.vue'
 import MySftp from '../views/MySftp.vue'
 import Crons from '../views/Crons.vue'
+import ServerIPs from '../views/ServerIPs.vue'
 import Login from '../views/Login.vue'
 
 const isAuthenticated = () => {
@@ -115,6 +116,12 @@ const routes = [
     name: 'Crons',
     component: Crons,
     meta: { requiresAuth: true }
+  },
+  {
+    path: '/server-ips',
+    name: 'ServerIPs',
+    component: ServerIPs,
+    meta: { requiresAuth: true, requiresAdmin: true }
   }
 ]
 
