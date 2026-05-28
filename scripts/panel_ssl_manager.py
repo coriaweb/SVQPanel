@@ -351,6 +351,17 @@ PANEL_BACKEND_PORT = int(os.environ.get("PANEL_PORT", 8001))
 # Puerto público del frontend (Vite build servido por nginx)
 PANEL_FRONTEND_PATH = "/opt/svqpanel/frontend/dist"
 
+# Proxy a la UI web de Rspamd (controller en 127.0.0.1:11334).
+# Debe incluirse en todas las plantillas de vhost, si no /rspamd/ da 404.
+RSPAMD_LOCATION = """    # Rspamd web UI
+    location /rspamd/ {
+        proxy_pass http://127.0.0.1:11334/;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    }
+"""
+
 
 def _validate_hostname(hostname: str) -> bool:
     """Valida que el hostname sea un FQDN razonable."""
@@ -478,6 +489,7 @@ server {{
         try_files $uri $uri/ /index.html;
     }}
 
+{RSPAMD_LOCATION}
     # API backend
     location /api/ {{
         proxy_pass http://127.0.0.1:{PANEL_BACKEND_PORT};
@@ -521,6 +533,7 @@ server {{
         try_files $uri $uri/ /index.html;
     }}
 
+{RSPAMD_LOCATION}
     location /api/ {{
         proxy_pass http://127.0.0.1:{PANEL_BACKEND_PORT};
         proxy_set_header Host $host;
@@ -555,6 +568,7 @@ server {{
         try_files $uri $uri/ /index.html;
     }}
 
+{RSPAMD_LOCATION}
     location /api/ {{
         proxy_pass http://127.0.0.1:{PANEL_BACKEND_PORT};
         proxy_set_header Host $host;
