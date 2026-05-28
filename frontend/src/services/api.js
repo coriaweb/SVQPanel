@@ -501,6 +501,7 @@ class APIClient {
 
   // Firewall
   getFirewallStatus() { return this.get('/api/firewall/status') }
+  getFirewallSystemPorts() { return this.get('/api/firewall/system-ports') }
   getFirewallRules(onlyActive = false) {
     return this.get(`/api/firewall/rules${onlyActive ? '?only_active=true' : ''}`)
   }

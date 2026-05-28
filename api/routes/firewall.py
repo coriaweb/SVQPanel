@@ -260,3 +260,65 @@ async def firewall_status(
         whitelist_count  = whitelist_count,
         banned_count     = banned_count,
     )
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Puertos del sistema (lee el firewall REAL del kernel, no la BD)
+# ─────────────────────────────────────────────────────────────────────────────
+@router.get("/firewall/system-ports")
+async def firewall_system_ports(_: dict = Depends(require_admin)):
+    """
+    Devuelve la política de la cadena input y los puertos abiertos por el
+    esqueleto base del firewall (los que SVQPanel deja abiertos de serie:
+    web, correo, SSH, DNS). Se lee del ruleset activo (nft), así refleja la
+    realidad del kernel aunque no estén en la tabla de reglas del panel.
+    """
+    import subprocess
+    import re
+
+    out = ""
+    try:
+        r = subprocess.run(
+            ["/usr/sbin/nft", "list", "chain", "inet", "svqpanel", "input"],
+            capture_output=True, text=True, timeout=10,
+        )
+        out = r.stdout
+    except Exception as e:
+        return {"available": False, "error": str(e), "policy": None, "ports": []}
+
+    # Política de la cadena (drop / accept)
+    pol = re.search(r"policy\s+(\w+)", out)
+    policy = pol.group(1) if pol else "unknown"
+
+    # Servicios conocidos por puerto, para mostrar nombre amigable
+    known = {
+        "22": "SSH", "53": "DNS", "80": "HTTP", "443": "HTTPS",
+        "25": "SMTP", "587": "Submission", "465": "SMTPS",
+        "143": "IMAP", "993": "IMAPS", "110": "POP3", "995": "POP3S",
+    }
+
+    # Extraer puertos de líneas 'tcp dport ... accept' / 'udp dport ... accept'
+    ports = []
+    seen = set()
+    for m in re.finditer(r"(tcp|udp)\s+dport\s+(\{[^}]*\}|\d+)\s+accept", out):
+        proto = m.group(1)
+        raw = m.group(2).strip("{} ")
+        for p in (x.strip() for x in raw.split(",")):
+            if not p.isdigit():
+                continue
+            key = f"{proto}/{p}"
+            if key in seen:
+                continue
+            seen.add(key)
+            ports.append({
+                "port":    int(p),
+                "proto":   proto,
+                "service": known.get(p, "—"),
+            })
+    ports.sort(key=lambda x: x["port"])
+
+    return {
+        "available": True,
+        "policy":    policy,          # 'drop' = seguro (cierra todo lo no permitido)
+        "ports":     ports,
+    }

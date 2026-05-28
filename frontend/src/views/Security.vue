@@ -75,9 +75,35 @@
 
     <!-- ═══════════════════════════ Firewall ═══════════════════════════ -->
     <div v-if="tab==='firewall'">
+      <!-- Puertos del sistema (firewall real del kernel) -->
+      <div class="card shadow-sm mb-3">
+        <div class="card-header d-flex justify-content-between align-items-center">
+          <h5 class="mb-0"><i class="bi bi-hdd-network me-1"></i> Puertos del sistema</h5>
+          <span v-if="sysPorts.policy" class="badge"
+                :class="sysPorts.policy === 'drop' ? 'bg-success' : 'bg-warning text-dark'">
+            Política: {{ sysPorts.policy === 'drop' ? 'DROP (seguro)' : sysPorts.policy }}
+          </span>
+        </div>
+        <div class="card-body">
+          <p class="text-muted small mb-2">
+            Puertos que el firewall deja abiertos de serie para los servicios del panel.
+            Se leen del firewall activo del sistema. La política <strong>DROP</strong> significa que
+            todo lo que no esté aquí (ni en tus reglas) queda bloqueado.
+          </p>
+          <div v-if="!sysPorts.available" class="text-muted small">No se pudo leer el firewall del sistema.</div>
+          <div v-else class="d-flex flex-wrap gap-2">
+            <span v-for="p in sysPorts.ports" :key="p.proto + p.port"
+                  class="badge bg-light text-dark border">
+              <i class="bi bi-door-open me-1"></i>{{ p.port }}/{{ p.proto }}
+              <span v-if="p.service !== '—'" class="text-muted">· {{ p.service }}</span>
+            </span>
+          </div>
+        </div>
+      </div>
+
       <div class="card shadow-sm mb-3">
         <div class="card-header d-flex justify-content-between">
-          <h5 class="mb-0">Reglas firewall</h5>
+          <h5 class="mb-0">Reglas personalizadas</h5>
           <div class="d-flex gap-2">
             <button class="btn btn-sm btn-outline-secondary" @click="loadFirewall">
               <i class="bi bi-arrow-clockwise"></i>
@@ -776,6 +802,7 @@ const f2bStatus = ref(null)
 
 const rules     = ref([])
 const loadingFw = ref(false)
+const sysPorts  = ref({ available: false, policy: null, ports: [] })
 
 const jails    = ref([])
 const banned   = ref([])
@@ -850,6 +877,8 @@ async function loadFirewall() {
   catch (e) { alert('Error cargando reglas: ' + e.message) }
   finally  { loadingFw.value = false }
   loadStatus()
+  try { sysPorts.value = await api.getFirewallSystemPorts() }
+  catch (e) { console.error(e) }
 }
 
 async function loadFail2ban() {
