@@ -102,7 +102,7 @@
                     <i class="bi bi-shield-lock me-2"></i> Doble factor (2FA)
                   </router-link>
                   <div class="dropdown-divider"></div>
-                  <button class="dropdown-item text-danger" @click="handleLogout; dropdownOpen=false">
+                  <button class="dropdown-item text-danger" @click="logout">
                     <i class="bi bi-box-arrow-right me-2"></i> Cerrar sesión
                   </button>
                 </div>
@@ -160,12 +160,18 @@ export default {
 
     const dropdownOpen = ref(false)
 
+    const logout = async () => {
+      dropdownOpen.value = false
+      await handleLogout()
+    }
+
     return {
       route,
       notification,
       isAuthenticated,
       currentUser,
       handleLogout,
+      logout,
       dropdownOpen,
     }
   }
