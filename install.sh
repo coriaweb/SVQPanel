@@ -1202,6 +1202,21 @@ systemctl enable svqpanel
 echo -e "${GREEN}✓ Servicio systemd creado${NC}\n"
 
 ###############################################################################
+# 11B. CONFIGURAR SUDOERS PARA APT (panel de actualizaciones)
+###############################################################################
+echo -e "${YELLOW}Configurando sudoers para panel de actualizaciones...${NC}"
+
+SUDOERS_FILE="/etc/sudoers.d/svqpanel-apt"
+cat > "$SUDOERS_FILE" << 'SUDOERSEOF'
+# SVQPanel — permisos para apt-get/apt (panel de actualizaciones)
+root ALL=(ALL) NOPASSWD: /usr/bin/apt-get, /usr/bin/apt
+SUDOERSEOF
+chmod 0440 "$SUDOERS_FILE"
+visudo -c -f "$SUDOERS_FILE" >/dev/null 2>&1 && \
+    echo -e "${GREEN}✓ Sudoers configurado para apt${NC}\n" || \
+    echo -e "${YELLOW}⚠ Advertencia: sudoers no se configuró correctamente${NC}\n"
+
+###############################################################################
 # 12. CREAR NGINX CONFIG
 ###############################################################################
 if [[ "$WEBSERVER" == "nginx" || "$WEBSERVER" == "apache+nginx" ]]; then

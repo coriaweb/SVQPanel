@@ -196,28 +196,41 @@ async def get_system_updates(
     """
     import subprocess
     from datetime import datetime as dt
+    import os
     try:
-        # Refrescar índice (silencioso)
-        subprocess.run(
-            ["/usr/bin/apt-get", "update", "-qq"],
-            capture_output=True, timeout=120,
-        )
+        # Refrescar índice APT
+        # Si el proceso corre como root, no es necesario sudo
+        # Si no, se intenta con sudo (requiere estar en sudoers sin contraseña)
+        current_uid = os.getuid()
+        is_root = current_uid == 0
+
+        if is_root:
+            update_cmd = ["apt-get", "update", "-qq"]
+            list_cmd = ["apt", "list", "--upgradable"]
+        else:
+            update_cmd = ["sudo", "apt-get", "update", "-qq"]
+            list_cmd = ["sudo", "apt", "list", "--upgradable"]
+
+        subprocess.run(update_cmd, capture_output=True, text=True, timeout=120)
+
         # Listar actualizables
         result = subprocess.run(
-            ["/usr/bin/apt", "list", "--upgradable"],
+            list_cmd,
             capture_output=True, text=True, timeout=60,
         )
+
+        if result.returncode != 0:
+            raise Exception(f"apt list falló: {result.stderr or 'sin error details'}")
+
         packages = []
         for line in result.stdout.splitlines():
-            # formato: paquete/buster-updates arch [nueva_versión] upgradable from [versión_actual]
             if "upgradable from" not in line:
                 continue
-            # paquete/origen arch nueva_versión upgradable from vieja_versión
             try:
                 left, right = line.split(" upgradable from ")
                 parts = left.split()
-                pkg_origin = parts[0]        # nombre/origen
-                new_ver    = parts[-1]        # nueva versión
+                pkg_origin = parts[0]
+                new_ver    = parts[-1]
                 old_ver    = right.strip()
                 pkg_name, _, origin = pkg_origin.partition("/")
                 packages.append({
@@ -247,16 +260,29 @@ async def run_system_upgrade(
     o para todos los paquetes si no se especifica.
     """
     import subprocess
+    import re
+    import os
+
     package = (body or {}).get("package", "").strip()
     try:
         if package:
             # Validar: solo caracteres seguros para nombre de paquete
-            import re
             if not re.match(r'^[a-zA-Z0-9._+\-]+$', package):
                 raise HTTPException(status_code=400, detail="Nombre de paquete inválido")
-            cmd = ["/usr/bin/apt-get", "install", "--only-upgrade", "-y", package]
+
+        # Detección de root
+        is_root = os.getuid() == 0
+
+        if package:
+            if is_root:
+                cmd = ["apt-get", "install", "--only-upgrade", "-y", package]
+            else:
+                cmd = ["sudo", "apt-get", "install", "--only-upgrade", "-y", package]
         else:
-            cmd = ["/usr/bin/apt-get", "upgrade", "-y", "-o", "Dpkg::Options::=--force-confold"]
+            if is_root:
+                cmd = ["apt-get", "upgrade", "-y", "-o", "Dpkg::Options::=--force-confold"]
+            else:
+                cmd = ["sudo", "apt-get", "upgrade", "-y", "-o", "Dpkg::Options::=--force-confold"]
 
         result = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
         return {
