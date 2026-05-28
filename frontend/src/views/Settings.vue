@@ -782,14 +782,14 @@ export default {
     const loadTimezones = async () => {
       try {
         const r = await api.get('/api/settings/timezones')
-        tzList.value = r.data?.timezones || []
+        tzList.value = r?.timezones || []
       } catch { /* silencioso */ }
     }
 
     const loadCurrentTimezone = async () => {
       try {
         const r = await api.get('/api/settings/timezone-current')
-        tzCurrent.value  = r.data?.timezone || 'UTC'
+        tzCurrent.value  = r?.timezone || 'UTC'
         tzSelected.value = tzCurrent.value
       } catch { /* silencioso */ }
     }

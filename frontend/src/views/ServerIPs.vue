@@ -259,8 +259,7 @@ export default {
     async function loadIPs() {
       loading.value = true
       try {
-        const r = await api.get('/api/server-ips')
-        ips.value = r.data
+        ips.value = await api.get('/api/server-ips')
       } catch (e) {
         showToast('Error al cargar IPs', 'danger')
       } finally {
@@ -271,10 +270,10 @@ export default {
     async function scanSystem() {
       scanning.value = true
       try {
-        const r = await api.get('/api/server-ips/system')
-        systemIPs.value = r.data
-        if (r.data.length === 0) showToast('No se detectaron IPs en el sistema', 'warning')
-        else showToast(`${r.data.length} IP(s) detectadas en el sistema`)
+        const data = await api.get('/api/server-ips/system')
+        systemIPs.value = data
+        if (data.length === 0) showToast('No se detectaron IPs en el sistema', 'warning')
+        else showToast(`${data.length} IP(s) detectadas en el sistema`)
       } catch (e) {
         showToast('Error al escanear el sistema', 'danger')
       } finally {
