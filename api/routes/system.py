@@ -199,12 +199,12 @@ async def get_system_updates(
     try:
         # Refrescar índice (silencioso)
         subprocess.run(
-            ["apt-get", "update", "-qq"],
+            ["/usr/bin/apt-get", "update", "-qq"],
             capture_output=True, timeout=120,
         )
         # Listar actualizables
         result = subprocess.run(
-            ["apt", "list", "--upgradable"],
+            ["/usr/bin/apt", "list", "--upgradable"],
             capture_output=True, text=True, timeout=60,
         )
         packages = []
@@ -254,9 +254,9 @@ async def run_system_upgrade(
             import re
             if not re.match(r'^[a-zA-Z0-9._+\-]+$', package):
                 raise HTTPException(status_code=400, detail="Nombre de paquete inválido")
-            cmd = ["apt-get", "install", "--only-upgrade", "-y", package]
+            cmd = ["/usr/bin/apt-get", "install", "--only-upgrade", "-y", package]
         else:
-            cmd = ["apt-get", "upgrade", "-y", "-o", "Dpkg::Options::=--force-confold"]
+            cmd = ["/usr/bin/apt-get", "upgrade", "-y", "-o", "Dpkg::Options::=--force-confold"]
 
         result = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
         return {
