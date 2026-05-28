@@ -374,6 +374,7 @@ class TemplateManager(SystemManager):
                 fastcgi_cache_ttl_minutes=ttl_minutes,
                 php_socket_override=php_socket_override,
                 template_nginx_extra=template_row.nginx_extra,
+                ipv4=getattr(domain_row, 'ipv4', None),
             )
             with open(nginx_config_path, "w") as f:
                 f.write(config)

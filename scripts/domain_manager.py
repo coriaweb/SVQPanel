@@ -305,6 +305,7 @@ class DomainManager(SystemManager):
         template_nginx_extra: str = None,
         redirect_to: str = None,
         custom_docroot: str = None,
+        ipv4: str = None,
     ) -> dict:
         """
         Regenera la vhost completa del dominio con TODO el estado actual
@@ -333,6 +334,7 @@ class DomainManager(SystemManager):
             template_nginx_extra=template_nginx_extra,
             redirect_to=redirect_to,
             custom_docroot=custom_docroot,
+            ipv4=ipv4,
         )
         with open(nginx_config, "w") as f:
             f.write(config_content)
@@ -352,6 +354,7 @@ class DomainManager(SystemManager):
         ssl_enabled: bool = False,
         ipv6: str = None,
         php_socket_override: str = None,
+        ipv4: str = None,
     ) -> dict:
         """Activa o desactiva FastCGI cache. Delega en regenerate_vhost."""
         try:
@@ -361,6 +364,7 @@ class DomainManager(SystemManager):
                 fastcgi_cache_enabled=enabled,
                 fastcgi_cache_ttl_minutes=ttl_minutes,
                 php_socket_override=php_socket_override,
+                ipv4=ipv4,
             )
             logger.info(f"FastCGI cache {'enabled' if enabled else 'disabled'} para {domain_name}")
             return {

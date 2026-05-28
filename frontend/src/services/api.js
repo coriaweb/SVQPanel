@@ -772,6 +772,12 @@ class APIClient {
       ttl_minutes:  options.ttl_minutes  ?? 60,
     })
   }
+
+  // ─── IPs del servidor (Fase 16) ─────────────────────────────────────────
+
+  getServerIps() {
+    return this.get('/api/server-ips')
+  }
 }
 
 export default new APIClient()

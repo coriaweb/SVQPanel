@@ -41,6 +41,28 @@
       <label for="is_active" class="form-check-label">Dominio activo</label>
     </div>
 
+    <!-- IPv4 del servidor (solo al editar) -->
+    <template v-if="isEditing">
+      <hr class="my-3" />
+      <p class="fw-semibold mb-2 text-muted small text-uppercase">
+        <i class="bi bi-hdd-network me-1"></i> IP del servidor (IPv4)
+      </p>
+      <div class="mb-3">
+        <select v-model="form.ipv4" class="form-select">
+          <option :value="null">— IP compartida (cualquier interfaz) —</option>
+          <option
+            v-for="ip in serverIps"
+            :key="ip.address"
+            :value="ip.address"
+          >{{ ip.address }}{{ ip.note ? ' — ' + ip.note : '' }}</option>
+        </select>
+        <div class="form-text">
+          Nginx escuchará en esta IP para el dominio.
+          Útil para hosting multisitio con IPs dedicadas.
+        </div>
+      </div>
+    </template>
+
     <!-- Redirección y docroot (solo al editar) -->
     <template v-if="isEditing">
       <hr class="my-3" />
@@ -224,7 +246,8 @@ export default {
     const isEditing = ref(!!props.domain)
     const users     = ref([])
     const localPhpVersions = ref([])
-    const templates = ref([])
+    const templates  = ref([])
+    const serverIps  = ref([])
 
     const isAdminOrReseller = computed(() =>
       ['admin', 'reseller'].includes(store.currentUser?.role)
@@ -249,6 +272,8 @@ export default {
       redirect_enabled: !!(props.domain?.redirect_to),
       redirect_to:      props.domain?.redirect_to    || '',
       custom_docroot:   props.domain?.custom_docroot || '',
+      // IPv4 dedicada
+      ipv4: props.domain?.ipv4 || null,
     })
 
     const redirectError = ref('')
@@ -277,6 +302,15 @@ export default {
       try {
         templates.value = await api.getTemplates() || []
       } catch { templates.value = [] }
+    }
+
+    const loadServerIps = async () => {
+      if (!isEditing.value) return
+      try {
+        const data = await api.getServerIps() || []
+        // Solo IPv4 activas
+        serverIps.value = data.filter(ip => !ip.is_ipv6 && ip.is_active)
+      } catch { serverIps.value = [] }
     }
 
     // ── Usuarios / PHP ─────────────────────────────────────────────────────
@@ -341,6 +375,7 @@ export default {
           await api.updateDomain(props.domain.id, {
             php_version: form.value.php_version,
             is_active:   form.value.is_active,
+            ipv4:        form.value.ipv4 || null,
             redirect_to:    form.value.redirect_enabled ? form.value.redirect_to.trim() : '',
             custom_docroot: !form.value.redirect_enabled ? form.value.custom_docroot.trim() : '',
           })
@@ -408,7 +443,7 @@ export default {
     }
 
     onMounted(async () => {
-      await Promise.all([loadUsers(), loadPHPVersions(), loadTemplates()])
+      await Promise.all([loadUsers(), loadPHPVersions(), loadTemplates(), loadServerIps()])
       // Si la versión guardada no está en la lista, seleccionar la primera disponible
       if (form.value.php_version && !availablePhpVersions.value.includes(form.value.php_version)) {
         form.value.php_version = availablePhpVersions.value[0] || '8.2'
@@ -422,6 +457,7 @@ export default {
       isAdminOrReseller, availablePhpVersions,
       templates, templateCategories, templatesByCategory,
       selectedTemplate, parsedPhpOverrides,
+      serverIps,
       redirectError, docrootError,
       handleSubmit,
     }

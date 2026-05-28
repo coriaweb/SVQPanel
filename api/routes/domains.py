@@ -277,8 +277,13 @@ async def update_domain(
 
         if domain_update.is_active is not None:
             db_domain.is_active = domain_update.is_active
-        if domain_update.ipv4 is not None:
-            db_domain.ipv4 = domain_update.ipv4
+
+        ipv4_changed = False
+        if 'ipv4' in domain_update.model_fields_set:
+            new_ipv4 = domain_update.ipv4 or None
+            if new_ipv4 != db_domain.ipv4:
+                db_domain.ipv4 = new_ipv4
+                ipv4_changed = True
         if domain_update.ipv6 is not None:
             db_domain.ipv6 = domain_update.ipv6
 
@@ -301,7 +306,7 @@ async def update_domain(
         db.refresh(db_domain)
 
         # Regenerar vhost si cambió algún parámetro que afecta a nginx
-        if redir_changed or docroot_changed:
+        if redir_changed or docroot_changed or ipv4_changed:
             owner = db.query(User).filter(User.id == db_domain.user_id).first()
             if owner:
                 try:
@@ -327,6 +332,7 @@ async def update_domain(
                         template_nginx_extra=db_domain.template_nginx_extra,
                         redirect_to=db_domain.redirect_to,
                         custom_docroot=db_domain.custom_docroot,
+                        ipv4=db_domain.ipv4,
                     )
                 except Exception as vhost_err:
                     # No bloquear la respuesta si falla nginx (log del error)
@@ -514,6 +520,7 @@ async def set_domain_cache(
             ssl_enabled=domain.ssl_enabled,
             ipv6=domain.ipv6,
             php_socket_override=php_socket,
+            ipv4=domain.ipv4,
         )
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error aplicando cache: {e}")

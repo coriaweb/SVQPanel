@@ -156,12 +156,15 @@ def _generate_redirect_config(
     redirect_to: str,
     ssl_enabled: bool = False,
     ipv6: Optional[str] = None,
+    ipv4: Optional[str] = None,
 ) -> str:
     """Genera un vhost nginx que redirige permanentemente (301) a redirect_to."""
     server_names = f"{domain} www.{domain}"
     if ipv6:
         server_names += f" {ipv6}"
 
+    ipv4_listen_http  = f"{ipv4}:80" if ipv4 else "80"
+    ipv4_listen_https = f"{ipv4}:443" if ipv4 else "443"
     ipv6_listen_http  = f"listen [{ipv6}]:80 default_server;" if ipv6 else "listen [::]:80;"
     ipv6_listen_https = f"listen [{ipv6}]:443 ssl http2 default_server;" if ipv6 else "listen [::]:443 ssl http2;"
 
@@ -169,7 +172,7 @@ def _generate_redirect_config(
     destination = redirect_to.rstrip("/")
 
     config = f"""server {{
-    listen 80;
+    listen {ipv4_listen_http};
     {ipv6_listen_http}
     server_name {server_names};
 
@@ -179,7 +182,7 @@ def _generate_redirect_config(
     if ssl_enabled:
         config += f"""
 server {{
-    listen 443 ssl http2;
+    listen {ipv4_listen_https} ssl http2;
     {ipv6_listen_https}
     server_name {server_names};
 
@@ -206,12 +209,13 @@ def generate_nginx_config(
     template_nginx_extra: Optional[str] = None,
     redirect_to: Optional[str] = None,
     custom_docroot: Optional[str] = None,
+    ipv4: Optional[str] = None,
 ) -> str:
     """Generate Nginx vhost configuration (Hestia-style paths)"""
 
     # Si hay redirección activa, generar vhost mínimo de 301
     if redirect_to:
-        return _generate_redirect_config(domain, redirect_to, ssl_enabled, ipv6)
+        return _generate_redirect_config(domain, redirect_to, ssl_enabled, ipv6, ipv4)
 
     # Docroot: personalizado o el estándar
     public_html = custom_docroot or get_public_html(user, domain)
@@ -230,6 +234,8 @@ def generate_nginx_config(
 
     tpl_extra = ("\n" + template_nginx_extra.rstrip()) if template_nginx_extra else ""
 
+    ipv4_listen_http  = f"{ipv4}:80" if ipv4 else "80"
+    ipv4_listen_https = f"{ipv4}:443" if ipv4 else "443"
     ipv6_listen_http  = f"listen [{ipv6}]:80 default_server;" if ipv6 else "listen [::]:80;"
     ipv6_listen_https = f"listen [{ipv6}]:443 ssl http2 default_server;" if ipv6 else "listen [::]:443 ssl http2;"
 
@@ -238,7 +244,7 @@ def generate_nginx_config(
 }}
 
 server {{
-    listen 80;
+    listen {ipv4_listen_http};
     {ipv6_listen_http}
     server_name {server_names};
     root {public_html};
@@ -277,7 +283,7 @@ server {{
     if ssl_enabled:
         server_block += f"""
 server {{
-    listen 443 ssl http2;
+    listen {ipv4_listen_https} ssl http2;
     {ipv6_listen_https}
     server_name {server_names};
     root {public_html};
