@@ -40,15 +40,23 @@ class UserManager(SystemManager):
             if ret == 0:
                 raise ValueError(f"User already exists: {username}")
 
-            # Create user with home directory
+            # Create user with home directory.
+            # Shell nologin por defecto: los clientes NO tienen acceso SSH/shell
+            # salvo que se active explícitamente (opt-in). El acceso SFTP se
+            # gestiona aparte vía el grupo 'sftponly' (chroot, internal-sftp).
             logger.info(f"Creating user: {username}")
             self.execute_command([
                 "useradd",
                 "-m",           # Create home directory
-                "-s", "/bin/bash",
+                "-s", "/usr/sbin/nologin",
                 "-d", home_dir,
                 username
             ])
+
+            # Home a 711: el dueño entra, pero otros usuarios NO pueden listar
+            # su contenido (evita que un cliente husmee el home de otro).
+            # www-data sí puede atravesar para servir la web (web/ es 750 user:www-data).
+            self.execute_command(["chmod", "711", home_dir])
 
             # Set password if provided (usando chpasswd via stdin)
             if password:

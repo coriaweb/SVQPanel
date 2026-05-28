@@ -198,6 +198,7 @@ class PanelSSLManager(SystemManager):
             f"    ssl_ciphers         HIGH:!aNULL:!MD5;\n"
             f"    ssl_session_cache   shared:SSL:10m;\n"
             f"    ssl_session_timeout 10m;\n"
+            f"    add_header Strict-Transport-Security \"max-age=31536000; includeSubDomains\" always;\n"
             f"\n"
         )
 

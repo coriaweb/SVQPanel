@@ -806,6 +806,12 @@ RLGEOF
     echo -e "${GREEN}✓ Zona global de rate limiting nginx creada${NC}"
 fi
 
+# Endurecimiento global de nginx (nivel http): ocultar versión en banners/errores
+cat > /etc/nginx/conf.d/svqpanel-hardening.conf << 'NGHEOF'
+# SVQPanel — endurecimiento global nginx
+server_tokens off;
+NGHEOF
+
 ###############################################################################
 # 7. CONFIGURAR POSTGRESQL
 ###############################################################################
@@ -1169,7 +1175,8 @@ cat > /opt/svqpanel/.env << ENVEOF
 DATABASE_URL=postgresql://panel_user:panel_password_123@localhost/panel_db
 PANEL_NAME=SVQPanel
 PANEL_VERSION=0.1.0
-PANEL_HOST=0.0.0.0
+# La API solo escucha en localhost; se sirve al exterior vía nginx (443).
+PANEL_HOST=127.0.0.1
 PANEL_PORT=8001
 DEBUG=False
 SECRET_KEY=${SECRET_KEY_VAL}
@@ -1194,7 +1201,11 @@ ROUNDCUBE_ENABLED=${ROUNDCUBE_ENABLED_VAL}
 ROUNDCUBE_URL=${ROUNDCUBE_URL_VAL}
 ENVEOF
 
-echo -e "${GREEN}✓ Archivo .env creado${NC}\n"
+# El .env contiene credenciales (SECRET_KEY, BD, MariaDB) → solo root
+chmod 600 /opt/svqpanel/.env
+chown root:root /opt/svqpanel/.env
+
+echo -e "${GREEN}✓ Archivo .env creado (permisos 600)${NC}\n"
 
 ###############################################################################
 # 11. CREAR SYSTEMD SERVICE
@@ -1211,7 +1222,7 @@ Type=simple
 User=root
 WorkingDirectory=/opt/svqpanel
 Environment="PATH=/opt/svqpanel/venv/bin"
-ExecStart=/opt/svqpanel/venv/bin/uvicorn api.main:app --host 0.0.0.0 --port 8001
+ExecStart=/opt/svqpanel/venv/bin/uvicorn api.main:app --host 127.0.0.1 --port 8001
 Restart=always
 RestartSec=10
 TimeoutStartSec=30
@@ -1261,6 +1272,11 @@ server {
     server_name _;
 
     client_max_body_size 100M;
+
+    # Cabeceras de seguridad
+    add_header X-Frame-Options "SAMEORIGIN" always;
+    add_header X-Content-Type-Options "nosniff" always;
+    add_header Referrer-Policy "strict-origin-when-cross-origin" always;
 
     # Servir frontend estático (Vue3 dist)
     root /opt/svqpanel/frontend/dist;
@@ -1461,24 +1477,40 @@ table inet svqpanel {
     set f2b_v6 { type ipv6_addr; flags timeout; }
 
     chain input {
-        type filter hook input priority filter; policy accept;
+        # Política DROP: todo lo que no se acepte explícitamente se descarta.
+        type filter hook input priority filter; policy drop;
 
         # Tráfico local y conexiones ya establecidas
         iif "lo" accept
         ct state { established, related } accept
         ct state invalid drop
 
-        # ICMP básico
+        # ICMP básico (ping, path MTU, etc.)
         ip  protocol icmp icmp type { echo-request, destination-unreachable, time-exceeded, parameter-problem } accept
         ip6 nexthdr  icmpv6 icmpv6 type { echo-request, destination-unreachable, packet-too-big, time-exceeded, parameter-problem, nd-router-solicit, nd-router-advert, nd-neighbor-solicit, nd-neighbor-advert } accept
 
-        # Whitelist con prioridad máxima
+        # Bans dinámicos de fail2ban PRIMERO (un baneado no entra ni al 443)
+        ip  saddr @f2b_v4 drop
+        ip6 saddr @f2b_v6 drop
+
+        # Whitelist (IPs de confianza: acceso total)
         ip  saddr @whitelist_v4 accept
         ip6 saddr @whitelist_v6 accept
 
-        # Bans dinámicos de fail2ban
-        ip  saddr @f2b_v4 drop
-        ip6 saddr @f2b_v6 drop
+        # ── Puertos PÚBLICOS de los servicios del panel ──────────────────
+        # SSH
+        tcp dport 22 accept
+        # Web (nginx)
+        tcp dport { 80, 443 } accept
+        # Correo: SMTP, submission, IMAP(S), POP3(S)
+        tcp dport { 25, 587, 465, 143, 993, 110, 995 } accept
+        # DNS (BIND) — consultas entrantes a las zonas alojadas
+        tcp dport 53 accept
+        udp dport 53 accept
+
+        # NOTA: la API del panel (8001) NO se abre: solo escucha en 127.0.0.1
+        # y se sirve por nginx (443). MariaDB/PostgreSQL/Redis/rspamd/crowdsec
+        # son localhost-only por diseño.
     }
 }
 
@@ -1509,7 +1541,7 @@ systemctl enable nftables >/dev/null 2>&1 || true
 nft -f /etc/nftables.conf
 systemctl restart nftables >/dev/null 2>&1 || systemctl start nftables
 
-echo -e "${GREEN}✓ nftables: tabla 'inet svqpanel' activa (política ACCEPT)${NC}"
+echo -e "${GREEN}✓ nftables: tabla 'inet svqpanel' activa (política DROP + puertos del panel abiertos)${NC}"
 
 # ─── fail2ban ────────────────────────────────────────────────────────────────
 IGNOREIP="127.0.0.1/8 ::1"
