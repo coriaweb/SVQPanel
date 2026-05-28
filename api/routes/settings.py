@@ -3,12 +3,13 @@ Rutas API para configuración del panel
 """
 
 import ipaddress
+from datetime import datetime
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 from api.models.database import get_db
 from api.models.models_settings import Settings
 from api.models.models_domain import Domain
-from api.schemas.settings_schemas import SettingsUpdate, SettingsResponse
+from api.schemas.settings_schemas import SettingsUpdate, SettingsResponse, IssuePanelSSLRequest
 from api.dependencies import require_admin, require_auth
 
 router = APIRouter()
@@ -155,4 +156,96 @@ async def get_next_ipv6(
         "range": settings.ipv6_range,
         "network_interface": settings.network_interface or "eth0",
         "used_count": len(used)
+    }
+
+
+@router.post("/settings/issue-ssl")
+async def issue_panel_ssl(
+    data: IssuePanelSSLRequest,
+    current_user=Depends(require_admin),
+    db: Session = Depends(get_db)
+):
+    """
+    Emite un certificado Let's Encrypt para el hostname del panel y configura
+    nginx para servirlo por HTTPS.
+    """
+    from scripts.panel_ssl_manager import PanelSSLManager
+
+    settings = get_or_create_settings(db)
+
+    try:
+        mgr = PanelSSLManager()
+        result = mgr.issue_ssl(data.hostname, data.email, data.force_https)
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+    except RuntimeError as e:
+        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(e))
+    except PermissionError:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Se necesitan privilegios de root para emitir el certificado"
+        )
+    except Exception as e:
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(e))
+
+    # Actualizar BD
+    settings.panel_hostname = data.hostname
+    settings.ssl_panel_enabled = True
+    settings.force_https = data.force_https
+    if result.get("expires"):
+        try:
+            settings.ssl_panel_expires = datetime.fromisoformat(result["expires"])
+        except Exception:
+            pass
+    db.commit()
+    db.refresh(settings)
+
+    return {
+        "success": True,
+        "hostname": data.hostname,
+        "ssl_enabled": True,
+        "force_https": data.force_https,
+        "expires": result.get("expires"),
+        "message": f"Certificado SSL emitido correctamente para {data.hostname}"
+    }
+
+
+@router.post("/settings/revoke-ssl")
+async def revoke_panel_ssl(
+    current_user=Depends(require_admin),
+    db: Session = Depends(get_db)
+):
+    """
+    Revoca el certificado SSL del panel y vuelve a HTTP simple.
+    """
+    from scripts.panel_ssl_manager import PanelSSLManager
+
+    settings = get_or_create_settings(db)
+
+    if not settings.panel_hostname:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="No hay hostname configurado para el panel"
+        )
+
+    try:
+        mgr = PanelSSLManager()
+        mgr.revoke_ssl(settings.panel_hostname)
+    except PermissionError:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Se necesitan privilegios de root para revocar el certificado"
+        )
+    except Exception as e:
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(e))
+
+    settings.ssl_panel_enabled = False
+    settings.ssl_panel_expires = None
+    settings.force_https = False
+    db.commit()
+    db.refresh(settings)
+
+    return {
+        "success": True,
+        "message": "Certificado SSL del panel revocado. El panel vuelve a HTTP."
     }

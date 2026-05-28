@@ -112,8 +112,19 @@
           </div>
         </template>
 
-        <!-- ═══ USER: lista de dominios ═══ -->
+        <!-- ═══ USER: SFTP + lista de dominios ═══ -->
         <template v-else>
+
+          <!-- SFTP -->
+          <div class="card mb-3">
+            <div class="card-header">
+              <i class="bi bi-folder-symlink me-1"></i> Acceso SFTP
+            </div>
+            <div class="card-body">
+              <SftpManager :user-id="user.id" />
+            </div>
+          </div>
+
           <div class="card">
             <div class="card-header d-flex justify-content-between align-items-center">
               <span><i class="bi bi-globe2 me-1"></i> Dominios de {{ user.username }}</span>
@@ -353,10 +364,11 @@ import api from '../services/api'
 import Modal from '../components/Modal.vue'
 import UserForm from '../components/UserForm.vue'
 import IPv6Manager from '../components/IPv6Manager.vue'
+import SftpManager from '../components/SftpManager.vue'
 
 export default {
   name: 'UserAccount',
-  components: { Modal, UserForm, IPv6Manager },
+  components: { Modal, UserForm, IPv6Manager, SftpManager },
   setup() {
     const route = useRoute()
     const store = useMainStore()

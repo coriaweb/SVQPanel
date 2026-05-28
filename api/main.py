@@ -13,7 +13,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from api.models.database import create_tables, get_db
 from config.config import PANEL_NAME, PANEL_VERSION
 
-from api.routes import users, domains, php, ssl, ipv6, auth, settings, dns, system, mail, databases, firewall, fail2ban, security_monitor, ip_lists, file_manager, crowdsec, plans
+from api.routes import users, domains, php, ssl, ipv6, auth, settings, dns, system, mail, databases, firewall, fail2ban, security_monitor, ip_lists, file_manager, crowdsec, plans, sftp
 
 # Crear app FastAPI
 app = FastAPI(
@@ -247,6 +247,44 @@ def _run_migrations():
         "ALTER TABLE users ADD COLUMN IF NOT EXISTS disk_used_mb INTEGER DEFAULT 0",
         "ALTER TABLE users ADD COLUMN IF NOT EXISTS traffic_used_mb_month INTEGER DEFAULT 0",
         "ALTER TABLE users ADD COLUMN IF NOT EXISTS stats_updated_at TIMESTAMP",
+        # ─────────────────────────────────────────────────────────────────
+        # Fase 14: FastCGI cache por dominio (nginx)
+        # ─────────────────────────────────────────────────────────────────
+        "ALTER TABLE domains ADD COLUMN IF NOT EXISTS fastcgi_cache_enabled BOOLEAN NOT NULL DEFAULT FALSE",
+        "ALTER TABLE domains ADD COLUMN IF NOT EXISTS fastcgi_cache_ttl_minutes INTEGER NOT NULL DEFAULT 60",
+        # ─────────────────────────────────────────────────────────────────
+        # Fase 14.2: SFTP por usuario (chroot, password, SSH keys)
+        # ─────────────────────────────────────────────────────────────────
+        "ALTER TABLE users ADD COLUMN IF NOT EXISTS sftp_enabled BOOLEAN NOT NULL DEFAULT FALSE",
+        "ALTER TABLE users ADD COLUMN IF NOT EXISTS sftp_password_set_at TIMESTAMP",
+        "ALTER TABLE users ADD COLUMN IF NOT EXISTS ssh_keys_count INTEGER NOT NULL DEFAULT 0",
+        # ─────────────────────────────────────────────────────────────────
+        # Fase 14.3: php.ini por dominio (pool FPM dedicado)
+        # ─────────────────────────────────────────────────────────────────
+        "ALTER TABLE domains ADD COLUMN IF NOT EXISTS php_ini_overrides TEXT",
+        # ─────────────────────────────────────────────────────────────────
+        # Fase 14.4: cuentas SFTP adicionales (subcuentas con jaula bind-mount)
+        # ─────────────────────────────────────────────────────────────────
+        """CREATE TABLE IF NOT EXISTS sftp_accounts (
+            id              SERIAL PRIMARY KEY,
+            owner_id        INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+            username        VARCHAR(64)  UNIQUE NOT NULL,
+            label           VARCHAR(32)  NOT NULL,
+            target_path     VARCHAR(512) NOT NULL,
+            jail_path       VARCHAR(512) NOT NULL,
+            mount_name      VARCHAR(64)  NOT NULL,
+            password_set_at TIMESTAMP,
+            ssh_keys_count  INTEGER      NOT NULL DEFAULT 0,
+            created_at      TIMESTAMP    NOT NULL DEFAULT NOW()
+        )""",
+        "CREATE INDEX IF NOT EXISTS ix_sftp_accounts_owner_id ON sftp_accounts(owner_id)",
+        # ─────────────────────────────────────────────────────────────────
+        # SSL del propio panel (hostname + certificado)
+        # ─────────────────────────────────────────────────────────────────
+        "ALTER TABLE settings ADD COLUMN IF NOT EXISTS panel_hostname VARCHAR(255)",
+        "ALTER TABLE settings ADD COLUMN IF NOT EXISTS ssl_panel_enabled BOOLEAN DEFAULT FALSE",
+        "ALTER TABLE settings ADD COLUMN IF NOT EXISTS ssl_panel_expires TIMESTAMP",
+        "ALTER TABLE settings ADD COLUMN IF NOT EXISTS force_https BOOLEAN DEFAULT FALSE",
     ]
     with engine.connect() as conn:
         for sql in migrations:
@@ -301,6 +339,7 @@ app.include_router(security_monitor.router, prefix="/api", tags=["Security Monit
 app.include_router(ip_lists.router,         prefix="/api", tags=["IP Lists"])
 app.include_router(crowdsec.router,         prefix="/api", tags=["CrowdSec"])
 app.include_router(plans.router,            prefix="/api", tags=["Plans"])
+app.include_router(sftp.router,             prefix="/api", tags=["SFTP"])
 app.include_router(file_manager.router,     prefix="/api", tags=["File Manager"])
 # Autoconfig/Autodiscover sin prefijo (clientes de correo los buscan en rutas raíz)
 app.include_router(mail.router, prefix="", include_in_schema=False)

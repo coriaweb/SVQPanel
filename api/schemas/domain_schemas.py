@@ -34,6 +34,9 @@ class DomainResponse(BaseModel):
     ipv6: Optional[str] = None
     is_active: Optional[bool] = True
     disk_usage: Optional[int] = 0
+    # FastCGI cache (Fase 14)
+    fastcgi_cache_enabled:     Optional[bool] = False
+    fastcgi_cache_ttl_minutes: Optional[int] = 60
     created_at: Optional[datetime] = None
     updated_at: Optional[datetime] = None
 

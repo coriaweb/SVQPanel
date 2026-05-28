@@ -192,6 +192,7 @@ apt-get install -y -qq \
     lsb-release \
     unzip \
     zip \
+    acl \
     openssl \
     libssl-dev \
     python3 \
@@ -202,6 +203,7 @@ apt-get install -y -qq \
     postgresql-contrib \
     postgresql-server-dev-all \
     certbot \
+    python3-certbot-nginx \
     rsyslog \
     mailutils
 
@@ -1690,6 +1692,50 @@ CSACQEOF
 
     echo -e "${GREEN}✓ CrowdSec instalado${NC}\n"
 fi
+
+###############################################################################
+# 12D. SFTP (acceso SFTP-only con chroot para clientes)
+#
+# Crea el grupo 'sftponly' y un snippet de sshd que aplica chroot al home
+# y fuerza internal-sftp (sin shell). El panel mete/saca usuarios del grupo
+# desde la UI (UserAccount → Acceso SFTP).
+###############################################################################
+echo -e "${YELLOW}Configurando SFTP (grupo sftponly + sshd)...${NC}"
+
+groupadd sftponly 2>/dev/null && \
+    echo -e "  ${GREEN}✓ Grupo sftponly creado${NC}" || \
+    echo -e "  ${YELLOW}⚠ Grupo sftponly ya existía${NC}"
+
+# ACL necesario para las subcuentas SFTP (acceso quirúrgico sin tocar owner/grupo)
+apt-get install -y -qq acl 2>/dev/null || true
+
+mkdir -p /etc/ssh/sshd_config.d
+cat > /etc/ssh/sshd_config.d/svqpanel-sftponly.conf << 'SFTPEOF'
+# SVQPanel — Match Group para usuarios SFTP-only (chroot al home)
+# Generado por install.sh; no editar a mano (el panel lo regenera).
+Match Group sftponly
+    ChrootDirectory %h
+    ForceCommand internal-sftp
+    AllowTcpForwarding no
+    X11Forwarding no
+    PermitTunnel no
+    AllowAgentForwarding no
+    PasswordAuthentication yes
+    PubkeyAuthentication yes
+SFTPEOF
+
+# Asegurar que sshd_config incluye el directorio sshd_config.d (Debian 12+ ya lo trae)
+if ! grep -qE '^\s*Include\s+/etc/ssh/sshd_config\.d/' /etc/ssh/sshd_config; then
+    echo "Include /etc/ssh/sshd_config.d/*.conf" >> /etc/ssh/sshd_config
+fi
+
+if sshd -t 2>/dev/null; then
+    systemctl reload ssh 2>/dev/null || systemctl reload sshd 2>/dev/null || true
+    echo -e "  ${GREEN}✓ sshd configurado para SFTP-only (chroot al home)${NC}"
+else
+    echo -e "  ${RED}✗ sshd -t falló; revisa /etc/ssh/sshd_config.d/svqpanel-sftponly.conf${NC}"
+fi
+echo ""
 
 # ─── Systemd timer para refresco diario de IP lists ──────────────────────────
 cat > /etc/systemd/system/svqpanel-iplist-refresh.service << 'IPLRSEOF'

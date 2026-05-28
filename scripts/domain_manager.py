@@ -11,7 +11,9 @@ from .utils import (
     get_domain_private,
     get_nginx_config_path,
     generate_nginx_config,
-    reload_nginx
+    reload_nginx,
+    write_fastcgi_cache_zone,
+    remove_fastcgi_cache_zone,
 )
 
 logger = logging.getLogger(__name__)
@@ -289,6 +291,80 @@ class DomainManager(SystemManager):
         except Exception as e:
             logger.error(f"Failed to update nginx IPv6: {str(e)}")
             raise
+
+    def regenerate_vhost(
+        self,
+        username: str,
+        domain_name: str,
+        php_version: str,
+        ssl_enabled: bool = False,
+        ipv6: str = None,
+        fastcgi_cache_enabled: bool = False,
+        fastcgi_cache_ttl_minutes: int = 60,
+        php_socket_override: str = None,
+    ) -> dict:
+        """
+        Regenera la vhost completa del dominio con TODO el estado actual
+        (SSL, IPv6, cache, socket PHP dedicado). Punto único de verdad para
+        no perder ajustes al tocar una de las features.
+        """
+        if not validate_domain(domain_name):
+            raise ValueError(f"Invalid domain: {domain_name}")
+
+        nginx_config = get_nginx_config_path(domain_name)
+
+        if fastcgi_cache_enabled:
+            write_fastcgi_cache_zone(domain_name)
+        else:
+            remove_fastcgi_cache_zone(domain_name)
+
+        config_content = generate_nginx_config(
+            domain_name,
+            username,
+            php_version,
+            ssl_enabled=ssl_enabled,
+            ipv6=ipv6,
+            fastcgi_cache_enabled=fastcgi_cache_enabled,
+            fastcgi_cache_ttl_minutes=fastcgi_cache_ttl_minutes,
+            php_socket_override=php_socket_override,
+        )
+        with open(nginx_config, "w") as f:
+            f.write(config_content)
+
+        if not reload_nginx():
+            raise RuntimeError("Nginx reload failed tras regenerar vhost")
+
+        return {"success": True, "domain": domain_name}
+
+    def set_fastcgi_cache(
+        self,
+        username: str,
+        domain_name: str,
+        php_version: str,
+        enabled: bool,
+        ttl_minutes: int = 60,
+        ssl_enabled: bool = False,
+        ipv6: str = None,
+        php_socket_override: str = None,
+    ) -> dict:
+        """Activa o desactiva FastCGI cache. Delega en regenerate_vhost."""
+        try:
+            self.regenerate_vhost(
+                username, domain_name, php_version,
+                ssl_enabled=ssl_enabled, ipv6=ipv6,
+                fastcgi_cache_enabled=enabled,
+                fastcgi_cache_ttl_minutes=ttl_minutes,
+                php_socket_override=php_socket_override,
+            )
+            logger.info(f"FastCGI cache {'enabled' if enabled else 'disabled'} para {domain_name}")
+            return {
+                "success": True, "domain": domain_name,
+                "fastcgi_cache_enabled": enabled, "ttl_minutes": ttl_minutes,
+            }
+        except Exception as e:
+            logger.error(f"Failed to set FastCGI cache for {domain_name}: {e}")
+            raise
+
 
     def change_php_version(
         self,

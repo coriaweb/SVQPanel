@@ -8,6 +8,7 @@ from typing import List
 from api.models.database import get_db
 from api.models.models_dns import DnsZone, DnsRecord
 from api.models.models_domain import Domain
+from api.models.models_user import User
 from api.models.models_settings import Settings
 from api.schemas.dns_schemas import (
     DnsZoneCreate, DnsZoneUpdate, DnsZoneResponse, DnsZoneListItem,
@@ -137,6 +138,26 @@ async def create_zone(
     existing = db.query(DnsZone).filter(DnsZone.domain_name == data.domain_name).first()
     if existing:
         raise HTTPException(status_code=409, detail="La zona ya existe")
+
+    # Validar límite de zonas DNS del plan (dueño = propietario del dominio)
+    owner_domain = db.query(Domain).filter(Domain.domain_name == data.domain_name).first()
+    if owner_domain:
+        owner = db.query(User).filter(User.id == owner_domain.user_id).first()
+        if owner and getattr(owner, "dns_zones_limit", 0) and owner.dns_zones_limit > 0:
+            zone_count = (
+                db.query(DnsZone)
+                .join(Domain, DnsZone.domain_name == Domain.domain_name)
+                .filter(Domain.user_id == owner.id)
+                .count()
+            )
+            if zone_count >= owner.dns_zones_limit:
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail=(
+                        f"Límite de zonas DNS del plan alcanzado "
+                        f"({zone_count}/{owner.dns_zones_limit})."
+                    ),
+                )
 
     ipv4 = data.ip_address or _get_server_ipv4(db)
     soa_ns = data.soa_ns or "ns1.svqpanel.local"

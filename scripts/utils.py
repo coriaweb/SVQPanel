@@ -71,19 +71,106 @@ def get_nginx_config_path(domain: str) -> str:
     return f"/etc/nginx/sites-available/{domain}"
 
 
+# ─────────────────────────────────────────────────────────────────────────────
+# FastCGI cache (Fase 14)
+# ─────────────────────────────────────────────────────────────────────────────
+FASTCGI_CACHE_ROOT = "/var/cache/nginx/fastcgi"
+FASTCGI_CACHE_GLOBAL_CONF = "/etc/nginx/conf.d/svqpanel-fastcgi-cache-global.conf"
+FASTCGI_CACHE_GLOBAL_CONTENT = '''# SVQPanel — directivas FastCGI cache compartidas (nivel http)
+# fastcgi_cache_key debe declararse UNA sola vez en todo nginx; aquí lo
+# centralizamos. Las zonas (keys_zone) las define cada dominio en su
+# propio fichero svqpanel-cache-{domain}.conf.
+fastcgi_cache_key "$scheme$request_method$host$request_uri";
+'''
+
+
+def get_fastcgi_cache_conf_path(domain: str) -> str:
+    """Ruta del fichero conf en /etc/nginx/conf.d/ con la zona de cache del dominio."""
+    return f"/etc/nginx/conf.d/svqpanel-cache-{domain}.conf"
+
+
+def get_fastcgi_cache_dir(domain: str) -> str:
+    """Directorio donde nginx guarda los ficheros cacheados de un dominio."""
+    return f"{FASTCGI_CACHE_ROOT}/{domain}"
+
+
+def fastcgi_cache_zone_name(domain: str) -> str:
+    """Nombre de la keys_zone nginx (alfanumérico). Limita a 32 chars."""
+    safe = domain.replace('.', '_').replace('-', '_')[:24]
+    return f"SVQ_{safe}"
+
+
+def generate_fastcgi_cache_zone_conf(domain: str) -> str:
+    """
+    Devuelve el contenido del fichero /etc/nginx/conf.d/svqpanel-cache-{domain}.conf.
+    Define la zona de cache (keys_zone) que se referencia desde la vhost.
+    """
+    cache_dir = get_fastcgi_cache_dir(domain)
+    zone = fastcgi_cache_zone_name(domain)
+    return f"""# SVQPanel — FastCGI cache zone para {domain}
+fastcgi_cache_path {cache_dir}
+    levels=1:2
+    keys_zone={zone}:10m
+    max_size=500m
+    inactive=1h
+    use_temp_path=off;
+"""
+
+
+def _fastcgi_cache_block(domain: str, ttl_minutes: int) -> str:
+    """
+    Devuelve el snippet que se inserta DENTRO del 'location ~ \\.php$' cuando
+    la cache está habilitada para este dominio.
+    Bypass automático para WordPress/WooCommerce admin/logueados/POST.
+    """
+    zone = fastcgi_cache_zone_name(domain)
+    return f"""
+        # ── FastCGI cache (SVQPanel) ─────────────────────────────────────
+        fastcgi_cache_bypass $skip_cache;
+        fastcgi_no_cache     $skip_cache;
+        fastcgi_cache        {zone};
+        fastcgi_cache_valid  200 301 302 {ttl_minutes}m;
+        fastcgi_cache_valid  404 1m;
+        fastcgi_cache_use_stale error timeout invalid_header updating http_500 http_503;
+        fastcgi_cache_lock   on;
+        add_header X-Cache-Status $upstream_cache_status always;
+"""
+
+
+def _skip_cache_block() -> str:
+    """Variable $skip_cache compartida por http/https — se evalúa a nivel server."""
+    return """
+    # ── $skip_cache: bypass de FastCGI cache para admin/POST/logueados ─
+    set $skip_cache 0;
+    if ($request_method = POST)              { set $skip_cache 1; }
+    if ($query_string != "")                 { set $skip_cache 1; }
+    if ($request_uri ~* "/wp-admin/|/xmlrpc.php|wp-.*\\.php|/feed/|/sitemap(_index)?\\.xml") { set $skip_cache 1; }
+    if ($http_cookie ~* "comment_author|wordpress_[a-f0-9]+|wp-postpass|wordpress_no_cache|wordpress_logged_in|woocommerce_items_in_cart|woocommerce_cart_hash|wp_woocommerce_session") {
+        set $skip_cache 1;
+    }
+"""
+
+
 def generate_nginx_config(
     domain: str,
     user: str,
     php_version: str,
     ssl_enabled: bool = False,
-    ipv6: Optional[str] = None
+    ipv6: Optional[str] = None,
+    fastcgi_cache_enabled: bool = False,
+    fastcgi_cache_ttl_minutes: int = 60,
+    php_socket_override: Optional[str] = None,
 ) -> str:
     """Generate Nginx vhost configuration (Hestia-style paths)"""
 
     public_html = get_public_html(user, domain)
     logs_dir = get_domain_logs(user, domain)
-    php_socket = f"/run/php/php{php_version}-fpm.sock"
+    # Si el dominio tiene php.ini propio, usa su pool dedicado
+    php_socket = php_socket_override or f"/run/php/php{php_version}-fpm.sock"
     backend_name = domain.replace('.', '_').replace('-', '_')
+
+    skip_block  = _skip_cache_block() if fastcgi_cache_enabled else ""
+    cache_block = _fastcgi_cache_block(domain, fastcgi_cache_ttl_minutes) if fastcgi_cache_enabled else ""
 
     # server_name incluye IPv6 cuando está asignada (para acceso por IP directa)
     server_names = f"{domain} www.{domain}"
@@ -101,7 +188,7 @@ server {{
     root {public_html};
 
     index index.php index.html index.htm;
-
+{skip_block}
     location / {{
         try_files $uri $uri/ /index.php?$query_string;
     }}
@@ -111,7 +198,7 @@ server {{
         fastcgi_pass php_{backend_name};
         fastcgi_index index.php;
         fastcgi_param SCRIPT_FILENAME $document_root$fastcgi_script_name;
-        include fastcgi_params;
+        include fastcgi_params;{cache_block}
     }}
 
     location ~ /\\.ht {{
@@ -141,7 +228,7 @@ server {{
     ssl_ciphers HIGH:!aNULL:!MD5;
 
     index index.php index.html index.htm;
-
+{skip_block}
     location / {{
         try_files $uri $uri/ /index.php?$query_string;
     }}
@@ -151,7 +238,7 @@ server {{
         fastcgi_pass php_{backend_name};
         fastcgi_index index.php;
         fastcgi_param SCRIPT_FILENAME $document_root$fastcgi_script_name;
-        include fastcgi_params;
+        include fastcgi_params;{cache_block}
     }}
 
     location ~ /\\.ht {{
@@ -164,6 +251,77 @@ server {{
 """
 
     return server_block
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Helpers de cache (lectura/escritura/purga)
+# ─────────────────────────────────────────────────────────────────────────────
+def ensure_fastcgi_cache_root() -> None:
+    """
+    Crea /var/cache/nginx/fastcgi/ con permisos correctos para que nginx
+    pueda escribir. Crea también el conf global con fastcgi_cache_key.
+    Idempotente.
+    """
+    import os
+    import subprocess
+    os.makedirs(FASTCGI_CACHE_ROOT, exist_ok=True)
+    try:
+        subprocess.run(["chown", "-R", "www-data:www-data", FASTCGI_CACHE_ROOT], check=False)
+    except FileNotFoundError:
+        pass
+    # Conf global con fastcgi_cache_key (nivel http) — se incluye una sola vez
+    if not os.path.isfile(FASTCGI_CACHE_GLOBAL_CONF):
+        with open(FASTCGI_CACHE_GLOBAL_CONF, "w") as f:
+            f.write(FASTCGI_CACHE_GLOBAL_CONTENT)
+
+
+def write_fastcgi_cache_zone(domain: str) -> str:
+    """Escribe /etc/nginx/conf.d/svqpanel-cache-{domain}.conf con la zona. Devuelve la ruta."""
+    import os
+    ensure_fastcgi_cache_root()
+    os.makedirs(get_fastcgi_cache_dir(domain), exist_ok=True)
+    try:
+        import subprocess
+        subprocess.run(["chown", "-R", "www-data:www-data", get_fastcgi_cache_dir(domain)], check=False)
+    except FileNotFoundError:
+        pass
+    path = get_fastcgi_cache_conf_path(domain)
+    with open(path, "w") as f:
+        f.write(generate_fastcgi_cache_zone_conf(domain))
+    return path
+
+
+def remove_fastcgi_cache_zone(domain: str) -> None:
+    """Borra el fichero de zona y el directorio de cache de un dominio."""
+    import os
+    import shutil
+    path = get_fastcgi_cache_conf_path(domain)
+    if os.path.isfile(path):
+        os.remove(path)
+    cache_dir = get_fastcgi_cache_dir(domain)
+    if os.path.isdir(cache_dir):
+        shutil.rmtree(cache_dir, ignore_errors=True)
+
+
+def purge_fastcgi_cache(domain: str) -> int:
+    """
+    Vacía el directorio de cache del dominio (sin borrar el dir). Devuelve
+    el número de bytes liberados aproximado.
+    """
+    import os
+    cache_dir = get_fastcgi_cache_dir(domain)
+    if not os.path.isdir(cache_dir):
+        return 0
+    freed = 0
+    for root, dirs, files in os.walk(cache_dir):
+        for name in files:
+            fp = os.path.join(root, name)
+            try:
+                freed += os.path.getsize(fp)
+                os.remove(fp)
+            except OSError:
+                pass
+    return freed
 
 
 def reload_nginx() -> bool:

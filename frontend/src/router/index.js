@@ -11,6 +11,7 @@ import SystemServices from '../views/SystemServices.vue'
 import Security from '../views/Security.vue'
 import FileManager from '../views/FileManager.vue'
 import Plans from '../views/Plans.vue'
+import MySftp from '../views/MySftp.vue'
 import Login from '../views/Login.vue'
 
 const isAuthenticated = () => {
@@ -58,6 +59,12 @@ const routes = [
     path: '/files',
     name: 'FileManager',
     component: FileManager,
+    meta: { requiresAuth: true }
+  },
+  {
+    path: '/sftp',
+    name: 'MySftp',
+    component: MySftp,
     meta: { requiresAuth: true }
   },
   {

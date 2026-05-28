@@ -329,6 +329,121 @@
         </div>
       </div>
 
+      <!-- SSL del Panel -->
+      <div class="col-12">
+        <div class="card border-success">
+          <div class="card-header bg-success text-white d-flex justify-content-between align-items-center">
+            <span><i class="bi bi-shield-lock me-2"></i> SSL del Panel</span>
+            <span v-if="settings?.ssl_panel_enabled" class="badge bg-light text-success">
+              <i class="bi bi-check-circle-fill me-1"></i> Activo
+            </span>
+            <span v-else class="badge bg-light text-secondary">
+              <i class="bi bi-x-circle me-1"></i> Sin SSL
+            </span>
+          </div>
+          <div class="card-body">
+            <div class="row g-3">
+              <div class="col-md-6">
+                <label class="form-label fw-bold">Hostname del panel</label>
+                <input
+                  v-model="sslForm.hostname"
+                  type="text"
+                  class="form-control font-monospace"
+                  placeholder="panel.tudominio.com"
+                  :disabled="settings?.ssl_panel_enabled"
+                />
+                <div class="form-text">
+                  El dominio (o subdominio) que apunta a la IP de este servidor. Debe tener el DNS ya configurado.
+                </div>
+
+                <label class="form-label fw-bold mt-3">Email para Let's Encrypt</label>
+                <input
+                  v-model="sslForm.email"
+                  type="email"
+                  class="form-control"
+                  placeholder="admin@tudominio.com"
+                  :disabled="settings?.ssl_panel_enabled"
+                />
+                <div class="form-text">
+                  Se usa para notificaciones de renovación del certificado.
+                </div>
+
+                <div class="form-check form-switch mt-3">
+                  <input
+                    id="force_https"
+                    v-model="sslForm.force_https"
+                    class="form-check-input"
+                    type="checkbox"
+                    role="switch"
+                    :disabled="settings?.ssl_panel_enabled"
+                  />
+                  <label for="force_https" class="form-check-label">
+                    Forzar HTTPS (redirigir HTTP → HTTPS automáticamente)
+                  </label>
+                </div>
+              </div>
+
+              <!-- Estado SSL -->
+              <div class="col-md-6">
+                <div v-if="settings?.ssl_panel_enabled" class="bg-success bg-opacity-10 border border-success rounded p-3 h-100">
+                  <div class="fw-bold text-success mb-2">
+                    <i class="bi bi-shield-check me-1"></i> Certificado activo
+                  </div>
+                  <div class="small">
+                    <div class="mb-1">
+                      <span class="text-muted">Hostname:</span>
+                      <strong class="font-monospace ms-1">{{ settings.panel_hostname }}</strong>
+                    </div>
+                    <div class="mb-1">
+                      <span class="text-muted">Expira:</span>
+                      <strong class="ms-1">{{ formatExpiry(settings.ssl_panel_expires) }}</strong>
+                    </div>
+                    <div class="mb-1">
+                      <span class="text-muted">Forzar HTTPS:</span>
+                      <span :class="settings.force_https ? 'text-success' : 'text-secondary'" class="ms-1 fw-bold">
+                        {{ settings.force_https ? 'Sí' : 'No' }}
+                      </span>
+                    </div>
+                  </div>
+                  <div class="mt-3">
+                    <button
+                      class="btn btn-sm btn-outline-danger"
+                      @click="showRevokeConfirm = true"
+                      :disabled="sslLoading"
+                    >
+                      <i class="bi bi-shield-x me-1"></i> Revocar certificado
+                    </button>
+                  </div>
+                </div>
+                <div v-else class="bg-light rounded p-3 d-flex flex-column align-items-center justify-content-center h-100 text-center">
+                  <i class="bi bi-shield-exclamation fs-2 text-warning mb-2"></i>
+                  <p class="mb-1 small text-muted">El panel funciona por <strong>HTTP</strong>.</p>
+                  <p class="mb-0 small text-muted">Emite un certificado SSL para habilitarlo por HTTPS.</p>
+                </div>
+              </div>
+
+              <!-- Botón emitir -->
+              <div v-if="!settings?.ssl_panel_enabled" class="col-12">
+                <button
+                  class="btn btn-success"
+                  @click="issueSSL"
+                  :disabled="sslLoading || !sslForm.hostname || !sslForm.email"
+                >
+                  <span v-if="sslLoading" class="spinner-border spinner-border-sm me-2"></span>
+                  <i v-else class="bi bi-shield-lock me-2"></i>
+                  Emitir certificado SSL para el panel
+                </button>
+                <div class="form-text text-warning mt-1">
+                  <i class="bi bi-exclamation-triangle me-1"></i>
+                  El hostname debe apuntar a la IP <strong>{{ settings?.server_ipv4 || 'del servidor' }}</strong> antes de continuar.
+                  Este proceso puede tardar unos segundos.
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
       <!-- Panel info -->
       <div class="col-md-6">
         <div class="card">
@@ -363,6 +478,31 @@
           <i v-else class="bi bi-floppy me-2"></i>
           Guardar configuración
         </button>
+      </div>
+    </div>
+
+    <!-- Modal de confirmación para revocar SSL del panel -->
+    <div v-if="showRevokeConfirm" class="modal d-block" tabindex="-1" style="background:rgba(0,0,0,.5)">
+      <div class="modal-dialog modal-dialog-centered">
+        <div class="modal-content">
+          <div class="modal-header bg-danger text-white">
+            <h5 class="modal-title"><i class="bi bi-shield-x me-2"></i> Revocar SSL del Panel</h5>
+            <button type="button" class="btn-close btn-close-white" @click="showRevokeConfirm = false"></button>
+          </div>
+          <div class="modal-body">
+            <p>¿Estás seguro de que quieres <strong>revocar el certificado SSL</strong> del panel?</p>
+            <p class="text-muted small mb-0">
+              El panel volverá a servirse solo por HTTP. Los certificados de Let's Encrypt se eliminarán del servidor.
+            </p>
+          </div>
+          <div class="modal-footer">
+            <button class="btn btn-secondary" @click="showRevokeConfirm = false">Cancelar</button>
+            <button class="btn btn-danger" @click="revokeSSL" :disabled="sslLoading">
+              <span v-if="sslLoading" class="spinner-border spinner-border-sm me-1"></span>
+              Confirmar revocación
+            </button>
+          </div>
+        </div>
       </div>
     </div>
 
@@ -411,6 +551,15 @@ export default {
     const loading = ref(true)
     const saving = ref(false)
     const settings = ref(null)
+
+    // SSL del panel
+    const sslLoading = ref(false)
+    const showRevokeConfirm = ref(false)
+    const sslForm = reactive({
+      hostname: '',
+      email: '',
+      force_https: true,
+    })
 
     // PHP state
     const phpVersions = ref([])
@@ -475,6 +624,10 @@ export default {
         form.max_upload_mb = data.max_upload_mb || 100
         form.max_text_file_mb = data.max_text_file_mb || 2
         form.max_extract_mb = data.max_extract_mb || 500
+        // SSL del panel
+        sslForm.hostname = data.panel_hostname || ''
+        sslForm.email = ''
+        sslForm.force_https = data.force_https ?? true
       } catch (e) {
         store.showNotification('Error al cargar configuración', 'danger')
       } finally {
@@ -578,6 +731,51 @@ export default {
       }
     }
 
+    // ─── SSL del Panel ────────────────────────────────────────────────────────
+
+    const formatExpiry = (isoDate) => {
+      if (!isoDate) return '—'
+      try {
+        return new Date(isoDate).toLocaleDateString('es-ES', {
+          day: '2-digit', month: 'long', year: 'numeric'
+        })
+      } catch {
+        return isoDate
+      }
+    }
+
+    const issueSSL = async () => {
+      if (!sslForm.hostname || !sslForm.email) return
+      sslLoading.value = true
+      try {
+        await api.issuePanelSSL({
+          hostname: sslForm.hostname,
+          email: sslForm.email,
+          force_https: sslForm.force_https,
+        })
+        store.showNotification('Certificado SSL emitido correctamente. El panel ya está disponible por HTTPS.', 'success')
+        await loadSettings()
+      } catch (e) {
+        store.showNotification('Error al emitir SSL: ' + e.message, 'danger')
+      } finally {
+        sslLoading.value = false
+      }
+    }
+
+    const revokeSSL = async () => {
+      sslLoading.value = true
+      try {
+        await api.revokePanelSSL()
+        store.showNotification('Certificado SSL del panel revocado.', 'success')
+        showRevokeConfirm.value = false
+        await loadSettings()
+      } catch (e) {
+        store.showNotification('Error al revocar SSL: ' + e.message, 'danger')
+      } finally {
+        sslLoading.value = false
+      }
+    }
+
     onMounted(async () => {
       await loadSettings()
       await loadPHPStatus()
@@ -589,6 +787,8 @@ export default {
       uninstallTarget,
       loadPHPStatus, installPHP, enablePHP, disablePHP,
       confirmUninstall, uninstallPHP,
+      sslForm, sslLoading, showRevokeConfirm,
+      issueSSL, revokeSSL, formatExpiry,
     }
   }
 }

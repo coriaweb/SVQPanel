@@ -8,6 +8,12 @@ from datetime import datetime
 import ipaddress
 
 
+from pydantic import BaseModel, Field, field_validator
+from typing import Optional
+from datetime import datetime
+import ipaddress
+
+
 class SettingsUpdate(BaseModel):
     panel_name: Optional[str] = Field(None, max_length=255)
     server_ipv4: Optional[str] = Field(None, max_length=45)
@@ -19,6 +25,8 @@ class SettingsUpdate(BaseModel):
     max_upload_mb: Optional[int] = Field(None, ge=1, le=2048)
     max_text_file_mb: Optional[int] = Field(None, ge=1, le=100)
     max_extract_mb: Optional[int] = Field(None, ge=1, le=5120)
+    panel_hostname: Optional[str] = Field(None, max_length=255)
+    force_https: Optional[bool] = None
 
     @field_validator("ipv6_range")
     @classmethod
@@ -58,6 +66,10 @@ class SettingsResponse(BaseModel):
     max_upload_mb: int = 100
     max_text_file_mb: int = 2
     max_extract_mb: int = 500
+    panel_hostname: Optional[str] = None
+    ssl_panel_enabled: bool = False
+    ssl_panel_expires: Optional[datetime] = None
+    force_https: bool = False
     updated_at: Optional[datetime] = None
 
     # Información calculada
@@ -66,3 +78,9 @@ class SettingsResponse(BaseModel):
 
     class Config:
         from_attributes = True
+
+
+class IssuePanelSSLRequest(BaseModel):
+    hostname: str = Field(..., min_length=3, max_length=255)
+    email: str = Field(..., max_length=255)
+    force_https: bool = True

@@ -31,6 +31,13 @@ class Domain(Base):
     # Estado
     is_active = Column(Boolean, default=True)
     
+    # FastCGI cache (Fase 14)
+    fastcgi_cache_enabled    = Column(Boolean, default=False, nullable=False)
+    fastcgi_cache_ttl_minutes = Column(Integer, default=60, nullable=False)
+
+    # php.ini overrides por dominio (JSON: {"memory_limit":"256M",...}) — Fase 14.3
+    php_ini_overrides = Column(Text, nullable=True)
+
     # Estadísticas
     disk_usage = Column(Integer, default=0)  # MB
     

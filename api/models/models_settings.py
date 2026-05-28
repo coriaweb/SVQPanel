@@ -7,6 +7,7 @@ from datetime import datetime
 from api.models.database import Base
 
 
+
 class Settings(Base):
     __tablename__ = "settings"
 
@@ -32,6 +33,12 @@ class Settings(Base):
     max_upload_mb = Column(Integer, default=100)              # MB máximo por archivo
     max_text_file_mb = Column(Integer, default=2)             # MB máximo para editar en el panel
     max_extract_mb = Column(Integer, default=500)             # MB máximo para extraer ZIPs
+
+    # SSL del propio panel
+    panel_hostname = Column(String(255), nullable=True)       # Hostname del panel (ej: panel.midominio.com)
+    ssl_panel_enabled = Column(Boolean, default=False)        # SSL emitido y activo para el panel
+    ssl_panel_expires = Column(DateTime, nullable=True)       # Fecha de expiración del cert
+    force_https = Column(Boolean, default=False)              # Redirigir HTTP → HTTPS del panel
 
     # Timestamps
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)

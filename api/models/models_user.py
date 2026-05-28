@@ -62,6 +62,11 @@ class User(Base):
     shell_path = Column(String(255), default="/bin/bash")
     home_dir = Column(String(255), nullable=True)  # /home/usuario
 
+    # SFTP (Fase 14.2)
+    sftp_enabled            = Column(Boolean, default=False, nullable=False)
+    sftp_password_set_at    = Column(DateTime, nullable=True)
+    ssh_keys_count          = Column(Integer, default=0, nullable=False)
+
     # Relaciones
     domains      = relationship("Domain",         back_populates="user", cascade="all, delete-orphan")
     mail_domains = relationship("MailDomain",     back_populates="user", cascade="all, delete-orphan")

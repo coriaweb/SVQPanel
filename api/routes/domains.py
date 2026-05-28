@@ -56,6 +56,18 @@ async def create_domain(
                 detail="Usuario no encontrado"
             )
 
+        # Validar límite de dominios del usuario (0 = sin límite)
+        if user.domains_limit and user.domains_limit > 0:
+            current_count = db.query(Domain).filter(Domain.user_id == user.id).count()
+            if current_count >= user.domains_limit:
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail=(
+                        f"Límite de dominios alcanzado ({current_count}/{user.domains_limit}). "
+                        f"Elimina un dominio o sube el plan del usuario."
+                    ),
+                )
+
         # Create domain in system (Nginx, directories, etc)
         domain_manager.create_domain(
             user.username,
@@ -242,6 +254,19 @@ async def update_domain(
             domain_manager.change_php_version(db_domain.domain_name, domain_update.php_version)
             db_domain.php_version = domain_update.php_version
 
+            # Si el dominio tiene php.ini propio, recrear el pool en la nueva versión
+            if db_domain.php_ini_overrides:
+                import json
+                from scripts import php_ini_manager as phpini
+                owner = db.query(User).filter(User.id == db_domain.user_id).first()
+                try:
+                    overrides = json.loads(db_domain.php_ini_overrides)
+                except (ValueError, TypeError):
+                    overrides = {}
+                if overrides and owner:
+                    phpini.write_pool(db_domain.domain_name, db_domain.php_version,
+                                      owner.username, overrides)
+
         if domain_update.is_active is not None:
             db_domain.is_active = domain_update.is_active
         if domain_update.ipv4 is not None:
@@ -297,6 +322,15 @@ async def delete_domain(
 
         # Delete domain from system (nginx config + directorios)
         domain_manager.delete_domain(db_domain.domain_name, username=username)
+
+        # Limpiar pool PHP dedicado y zona de cache si existían
+        try:
+            from scripts import php_ini_manager as phpini
+            from scripts.utils import remove_fastcgi_cache_zone
+            phpini.remove_pool(db_domain.domain_name)
+            remove_fastcgi_cache_zone(db_domain.domain_name)
+        except Exception as e:
+            print(f"Warning: limpieza pool/cache de {db_domain.domain_name}: {e}")
 
         db.delete(db_domain)
         db.commit()
@@ -380,6 +414,188 @@ async def get_domain_logs(
         }
     except OSError as e:
         raise HTTPException(status_code=500, detail=f"Error leyendo log: {e}")
+
+
+@router.put("/domains/{domain_id}/cache")
+async def set_domain_cache(
+    domain_id:   int,
+    payload:     dict,
+    current_user: User = Depends(require_auth),
+    db:           Session = Depends(get_db),
+):
+    """
+    Activa/desactiva FastCGI cache para un dominio.
+    Body: {"enabled": bool, "ttl_minutes": int}
+    """
+    enabled = bool(payload.get("enabled", False))
+    ttl_minutes = int(payload.get("ttl_minutes") or 60)
+    if ttl_minutes < 1 or ttl_minutes > 1440:
+        raise HTTPException(status_code=400, detail="ttl_minutes fuera de rango (1-1440)")
+
+    domain = db.query(Domain).filter(Domain.id == domain_id).first()
+    if not domain:
+        raise HTTPException(status_code=404, detail="Dominio no encontrado")
+    _check_access(current_user, domain, db)
+
+    owner = db.query(User).filter(User.id == domain.user_id).first()
+    if not owner:
+        raise HTTPException(status_code=500, detail="Propietario del dominio no encontrado")
+
+    # Si el dominio tiene php.ini propio, preservar su socket dedicado
+    from scripts import php_ini_manager as phpini
+    php_socket = phpini.pool_socket_path(domain.domain_name) if phpini.has_pool(domain.domain_name) else None
+
+    try:
+        DomainManager().set_fastcgi_cache(
+            username=owner.username,
+            domain_name=domain.domain_name,
+            php_version=domain.php_version,
+            enabled=enabled,
+            ttl_minutes=ttl_minutes,
+            ssl_enabled=domain.ssl_enabled,
+            ipv6=domain.ipv6,
+            php_socket_override=php_socket,
+        )
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error aplicando cache: {e}")
+
+    domain.fastcgi_cache_enabled = enabled
+    domain.fastcgi_cache_ttl_minutes = ttl_minutes
+    db.commit()
+    db.refresh(domain)
+    return {
+        "status": "ok",
+        "domain": domain.domain_name,
+        "fastcgi_cache_enabled": domain.fastcgi_cache_enabled,
+        "fastcgi_cache_ttl_minutes": domain.fastcgi_cache_ttl_minutes,
+    }
+
+
+@router.post("/domains/{domain_id}/cache/purge")
+async def purge_domain_cache(
+    domain_id:   int,
+    current_user: User = Depends(require_auth),
+    db:           Session = Depends(get_db),
+):
+    """Vacía el directorio de cache FastCGI del dominio."""
+    from scripts.utils import purge_fastcgi_cache
+
+    domain = db.query(Domain).filter(Domain.id == domain_id).first()
+    if not domain:
+        raise HTTPException(status_code=404, detail="Dominio no encontrado")
+    _check_access(current_user, domain, db)
+
+    freed = purge_fastcgi_cache(domain.domain_name)
+    return {
+        "status":      "purged",
+        "domain":      domain.domain_name,
+        "freed_bytes": freed,
+        "freed_mb":    freed // (1024 * 1024),
+    }
+
+
+@router.get("/domains/{domain_id}/php-config")
+async def get_domain_php_config(
+    domain_id:   int,
+    current_user: User = Depends(require_auth),
+    db:           Session = Depends(get_db),
+):
+    """
+    Devuelve los overrides php.ini actuales del dominio, los valores por
+    defecto del servidor y el catálogo de directivas editables.
+    """
+    import json
+    from scripts import php_ini_manager as phpini
+
+    domain = db.query(Domain).filter(Domain.id == domain_id).first()
+    if not domain:
+        raise HTTPException(status_code=404, detail="Dominio no encontrado")
+    _check_access(current_user, domain, db)
+
+    overrides = {}
+    if domain.php_ini_overrides:
+        try:
+            overrides = json.loads(domain.php_ini_overrides)
+        except (ValueError, TypeError):
+            overrides = {}
+
+    return {
+        "domain":        domain.domain_name,
+        "php_version":   domain.php_version,
+        "overrides":     overrides,
+        "server_defaults": phpini.server_defaults(domain.php_version),
+        "directives":    phpini.PHP_INI_DIRECTIVES,
+        "has_pool":      phpini.has_pool(domain.domain_name) is not None,
+    }
+
+
+@router.put("/domains/{domain_id}/php-config")
+async def set_domain_php_config(
+    domain_id:   int,
+    payload:     dict,
+    current_user: User = Depends(require_auth),
+    db:           Session = Depends(get_db),
+):
+    """
+    Aplica overrides php.ini para el dominio. Body: {"overrides": {...}}.
+    Lista vacía = vuelve al php.ini global (borra el pool dedicado).
+    """
+    import json
+    from scripts import php_ini_manager as phpini
+
+    overrides = payload.get("overrides") or {}
+    if not isinstance(overrides, dict):
+        raise HTTPException(status_code=400, detail="overrides debe ser un objeto")
+
+    domain = db.query(Domain).filter(Domain.id == domain_id).first()
+    if not domain:
+        raise HTTPException(status_code=404, detail="Dominio no encontrado")
+    _check_access(current_user, domain, db)
+
+    owner = db.query(User).filter(User.id == domain.user_id).first()
+    if not owner:
+        raise HTTPException(status_code=500, detail="Propietario no encontrado")
+
+    # Filtrar vacíos
+    overrides = {k: str(v).strip() for k, v in overrides.items() if str(v).strip() != ""}
+
+    php_socket = None
+    if overrides:
+        ok, errors = phpini.validate_overrides(domain.php_version, overrides)
+        if not ok:
+            raise HTTPException(status_code=400, detail="; ".join(errors))
+        ok, msg = phpini.write_pool(domain.domain_name, domain.php_version, owner.username, overrides)
+        if not ok:
+            raise HTTPException(status_code=500, detail=f"Error creando pool PHP: {msg}")
+        php_socket = phpini.pool_socket_path(domain.domain_name)
+    else:
+        # Sin overrides → borrar pool y volver al socket global
+        phpini.remove_pool(domain.domain_name)
+
+    # Regenerar vhost preservando cache + ssl + ipv6
+    try:
+        DomainManager().regenerate_vhost(
+            username=owner.username,
+            domain_name=domain.domain_name,
+            php_version=domain.php_version,
+            ssl_enabled=domain.ssl_enabled,
+            ipv6=domain.ipv6,
+            fastcgi_cache_enabled=domain.fastcgi_cache_enabled,
+            fastcgi_cache_ttl_minutes=domain.fastcgi_cache_ttl_minutes,
+            php_socket_override=php_socket,
+        )
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error regenerando vhost: {e}")
+
+    domain.php_ini_overrides = json.dumps(overrides) if overrides else None
+    db.commit()
+
+    return {
+        "status":    "ok",
+        "domain":    domain.domain_name,
+        "overrides": overrides,
+        "dedicated_pool": php_socket is not None,
+    }
 
 
 @router.get("/domains/{domain_id}/disk")

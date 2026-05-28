@@ -23,9 +23,10 @@ class APIClient {
 
   async request(endpoint, options = {}) {
     const url = `${this.baseURL}${endpoint}`
+    const { skipAuthRedirect = false, ...restOptions } = options
     const config = {
       headers: this.getHeaders(),
-      ...options
+      ...restOptions
     }
 
     try {
@@ -45,19 +46,20 @@ class APIClient {
       }
 
       if (!response.ok) {
-        // Si es 401, limpiar token y redirigir a login
-        if (response.status === 401) {
+        // Si es 401, limpiar token y redirigir a login (excepto en el propio endpoint de login)
+        if (response.status === 401 && !skipAuthRedirect) {
           localStorage.removeItem('token')
           localStorage.removeItem('user')
           window.location.href = '/login'
           throw new Error('Sesión expirada. Por favor inicia sesión nuevamente.')
         }
-        // data.detail puede ser string (error normal) o array (errores de validación Pydantic)
+        // El panel usa {"status":"error","message":"..."} en el handler global.
+        // FastAPI también puede devolver {"detail": "..."} o {"detail": [...]} (validación Pydantic).
         let errorMessage
         if (Array.isArray(data?.detail)) {
           errorMessage = data.detail.map(e => `${e.loc?.slice(-1)[0] ?? ''}: ${e.msg}`).join(' | ')
         } else {
-          errorMessage = data?.detail || `Error ${response.status}`
+          errorMessage = data?.message || data?.detail || `Error ${response.status}`
         }
         throw new Error(errorMessage)
       }
@@ -342,6 +344,14 @@ class APIClient {
     return this.put('/api/settings', data)
   }
 
+  issuePanelSSL(data) {
+    return this.post('/api/settings/issue-ssl', data)
+  }
+
+  revokePanelSSL() {
+    return this.post('/api/settings/revoke-ssl', {})
+  }
+
   getNextIPv6() {
     return this.get('/api/settings/next-ipv6')
   }
@@ -495,12 +505,59 @@ class APIClient {
     return this.get(`/api/firewall/ip-lists/${id}/preview?limit=${limit}`)
   }
 
+  // php.ini por dominio
+  getDomainPhpConfig(domainId) {
+    return this.get(`/api/domains/${domainId}/php-config`)
+  }
+  setDomainPhpConfig(domainId, overrides) {
+    return this.put(`/api/domains/${domainId}/php-config`, { overrides })
+  }
+
+  // FastCGI cache por dominio
+  setDomainCache(domainId, enabled, ttlMinutes = 60) {
+    return this.put(`/api/domains/${domainId}/cache`, { enabled, ttl_minutes: ttlMinutes })
+  }
+  purgeDomainCache(domainId) {
+    return this.post(`/api/domains/${domainId}/cache/purge`, {})
+  }
+
   // Logs y disk por dominio
   getDomainLogs(domainId, type = 'access', lines = 200) {
     return this.get(`/api/domains/${domainId}/logs?type=${type}&lines=${lines}`)
   }
   getDomainDisk(domainId) {
     return this.get(`/api/domains/${domainId}/disk`)
+  }
+
+  // SFTP
+  getSftpStatus(userId)           { return this.get(`/api/users/${userId}/sftp`) }
+  setSftpEnabled(userId, enabled) {
+    return this.post(`/api/users/${userId}/sftp/enable`, { enabled })
+  }
+  setSftpPassword(userId, password) {
+    return this.put(`/api/users/${userId}/sftp/password`, { password })
+  }
+  addSftpKey(userId, publicKey) {
+    return this.post(`/api/users/${userId}/sftp/keys`, { public_key: publicKey })
+  }
+  removeSftpKey(userId, fingerprint) {
+    return this.delete(`/api/users/${userId}/sftp/keys/${encodeURIComponent(fingerprint)}`)
+  }
+  // SFTP subcuentas
+  getSftpFolders(userId)          { return this.get(`/api/users/${userId}/sftp/folders`) }
+  getSftpAccounts(userId)         { return this.get(`/api/users/${userId}/sftp/accounts`) }
+  createSftpAccount(userId, data) { return this.post(`/api/users/${userId}/sftp/accounts`, data) }
+  deleteSftpAccount(userId, accId) {
+    return this.delete(`/api/users/${userId}/sftp/accounts/${accId}`)
+  }
+  setSftpAccountPassword(userId, accId, password) {
+    return this.put(`/api/users/${userId}/sftp/accounts/${accId}/password`, { password })
+  }
+  addSftpAccountKey(userId, accId, publicKey) {
+    return this.post(`/api/users/${userId}/sftp/accounts/${accId}/keys`, { public_key: publicKey })
+  }
+  removeSftpAccountKey(userId, accId, fingerprint) {
+    return this.delete(`/api/users/${userId}/sftp/accounts/${accId}/keys/${encodeURIComponent(fingerprint)}`)
   }
 
   // Plans
@@ -547,7 +604,11 @@ class APIClient {
 
   // Authentication
   login(credentials) {
-    return this.post('/api/auth/login', credentials)
+    return this.request('/api/auth/login', {
+      method: 'POST',
+      body: JSON.stringify(credentials),
+      skipAuthRedirect: true
+    })
   }
 
   logout() {

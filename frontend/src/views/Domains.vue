@@ -35,6 +35,7 @@
                 <th>PHP</th>
                 <th>SSL</th>
                 <th>IPv6</th>
+                <th>Cache</th>
                 <th>Tamaño</th>
                 <th>Estado</th>
                 <th>Acciones</th>
@@ -92,6 +93,18 @@
                   </button>
                 </td>
                 <td>
+                  <button
+                    class="btn btn-sm py-0 px-1"
+                    :class="domain.fastcgi_cache_enabled ? 'btn-success' : 'btn-outline-secondary'"
+                    :title="domain.fastcgi_cache_enabled
+                            ? `FastCGI cache activo (${domain.fastcgi_cache_ttl_minutes}m)`
+                            : 'FastCGI cache desactivado — clic para configurar'"
+                    @click="openCacheManager(domain)"
+                  >
+                    <i :class="domain.fastcgi_cache_enabled ? 'bi bi-lightning-fill' : 'bi bi-lightning'"></i>
+                  </button>
+                </td>
+                <td>
                   <span v-if="diskInfo[domain.id]" class="small font-monospace" :title="`public_html: ${formatMB(diskInfo[domain.id].public_html_mb)} — logs: ${formatMB(diskInfo[domain.id].logs_mb)}`">
                     {{ formatMB(diskInfo[domain.id].public_html_mb) }}
                   </span>
@@ -105,6 +118,9 @@
                 </td>
                 <td>
                   <div class="btn-group btn-group-sm">
+                    <button class="btn btn-outline-dark" @click="openPhpManager(domain)" title="Configuración PHP (php.ini)">
+                      <i class="bi bi-filetype-php"></i>
+                    </button>
                     <button class="btn btn-outline-info" @click="openLogsViewer(domain)" title="Ver registros (access/error)">
                       <i class="bi bi-binoculars"></i>
                     </button>
@@ -150,6 +166,104 @@
     <!-- Modal: IPv6 -->
     <Modal v-if="selectedDomain" :isOpen="showIPv6Manager" :title="'IPv6 — ' + selectedDomain.domain_name" @close="closeIPv6Manager">
       <IPv6Manager :domain="selectedDomain" @reload="reloadDomains" />
+    </Modal>
+
+    <!-- Modal: FastCGI cache por dominio -->
+    <Modal v-if="cacheDomain" :isOpen="showCacheManager"
+           :title="'FastCGI Cache — ' + cacheDomain.domain_name" @close="closeCacheManager">
+      <div class="mb-3">
+        <p class="small text-muted mb-2">
+          Cachea las respuestas de PHP-FPM directamente en nginx. Acelera mucho sitios estáticos/WordPress
+          de lectura. <strong>Bypass automático</strong> para POST, query strings, admin de WordPress y
+          usuarios logueados (cookies WP/WooCommerce).
+        </p>
+        <div class="form-check form-switch mb-3">
+          <input class="form-check-input" type="checkbox" id="cacheSwitch"
+                 v-model="cacheForm.enabled" :disabled="cacheSaving">
+          <label class="form-check-label" for="cacheSwitch">
+            <strong>{{ cacheForm.enabled ? 'Cache activa' : 'Cache desactivada' }}</strong>
+          </label>
+        </div>
+        <div v-if="cacheForm.enabled" class="mb-3">
+          <label class="form-label small">TTL (minutos)</label>
+          <input type="number" class="form-control form-control-sm" style="max-width: 200px;"
+                 v-model.number="cacheForm.ttl_minutes" min="1" max="1440">
+          <small class="text-muted">Tiempo de vida de cada página cacheada. Default: 60 minutos.</small>
+        </div>
+      </div>
+
+      <div class="d-flex gap-2 justify-content-between">
+        <button v-if="cacheDomain.fastcgi_cache_enabled"
+                class="btn btn-sm btn-outline-warning" @click="purgeCache" :disabled="cacheSaving">
+          <i class="bi bi-trash3 me-1"></i> Purgar cache ahora
+        </button>
+        <div class="d-flex gap-2 ms-auto">
+          <button class="btn btn-sm btn-outline-secondary" @click="closeCacheManager" :disabled="cacheSaving">
+            Cancelar
+          </button>
+          <button class="btn btn-sm btn-primary" @click="saveCache" :disabled="cacheSaving">
+            <span v-if="cacheSaving" class="spinner-border spinner-border-sm me-1"></span>
+            Guardar y aplicar
+          </button>
+        </div>
+      </div>
+    </Modal>
+
+    <!-- Modal: configuración PHP por dominio -->
+    <Modal v-if="phpDomain" :isOpen="showPhpManager"
+           :title="'PHP — ' + phpDomain.domain_name" @close="closePhpManager">
+      <div v-if="phpLoading" class="text-center py-4">
+        <div class="spinner-border spinner-border-sm"></div>
+      </div>
+      <div v-else>
+        <p class="small text-muted mb-3">
+          Ajustes php.ini propios de este dominio (PHP {{ phpDomain.php_version }}).
+          Vacío = usa el valor global del servidor. <strong>No puedes superar el límite del servidor.</strong>
+        </p>
+
+        <table class="table table-sm align-middle">
+          <thead class="table-light">
+            <tr>
+              <th>Directiva</th>
+              <th style="width: 140px;">Valor</th>
+              <th style="width: 120px;">Servidor</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr v-for="(spec, key) in phpDirectives" :key="key">
+              <td>
+                <div>{{ spec.label }}</div>
+                <code class="small text-muted">{{ key }}</code>
+              </td>
+              <td>
+                <select v-if="spec.type === 'bool'" class="form-select form-select-sm" v-model="phpForm[key]">
+                  <option value="">(servidor)</option>
+                  <option value="On">On</option>
+                  <option value="Off">Off</option>
+                </select>
+                <input v-else class="form-control form-control-sm" v-model="phpForm[key]"
+                       :placeholder="phpDefaults[key] || '(servidor)'">
+              </td>
+              <td class="small text-muted font-monospace">{{ phpDefaults[key] ?? '—' }}</td>
+            </tr>
+          </tbody>
+        </table>
+
+        <div class="d-flex justify-content-between mt-3">
+          <small class="text-muted align-self-center">
+            <i class="bi bi-info-circle me-1"></i>
+            <span v-if="phpHasPool" class="text-success">Pool dedicado activo</span>
+            <span v-else>Usando php.ini global</span>
+          </small>
+          <div class="d-flex gap-2">
+            <button class="btn btn-sm btn-outline-secondary" @click="closePhpManager" :disabled="phpSaving">Cancelar</button>
+            <button class="btn btn-sm btn-primary" @click="savePhpConfig" :disabled="phpSaving">
+              <span v-if="phpSaving" class="spinner-border spinner-border-sm me-1"></span>
+              Guardar y aplicar
+            </button>
+          </div>
+        </div>
+      </div>
     </Modal>
 
     <!-- Modal: visor de logs por dominio -->
@@ -235,6 +349,22 @@ export default {
     // Disco por dominio (cache: {domainId: {public_html_mb, ...}})
     const diskInfo = ref({})
 
+    // FastCGI cache
+    const showCacheManager = ref(false)
+    const cacheDomain      = ref(null)
+    const cacheForm        = ref({ enabled: false, ttl_minutes: 60 })
+    const cacheSaving      = ref(false)
+
+    // PHP config (php.ini por dominio)
+    const showPhpManager = ref(false)
+    const phpDomain      = ref(null)
+    const phpLoading     = ref(false)
+    const phpSaving      = ref(false)
+    const phpDirectives  = ref({})
+    const phpDefaults    = ref({})
+    const phpForm        = ref({})
+    const phpHasPool     = ref(false)
+
     // Rol del usuario actual
     const isAdminOrReseller = computed(() =>
       ['admin', 'reseller'].includes(store.currentUser?.role)
@@ -270,6 +400,89 @@ export default {
       if (!mb) return '0 MB'
       if (mb >= 1024) return (mb / 1024).toFixed(mb % 1024 === 0 ? 0 : 1) + ' GB'
       return mb + ' MB'
+    }
+
+    // ─── FastCGI cache ───────────────────────────────────────────────────────
+    const openCacheManager = (d) => {
+      cacheDomain.value = d
+      cacheForm.value = {
+        enabled: d.fastcgi_cache_enabled || false,
+        ttl_minutes: d.fastcgi_cache_ttl_minutes || 60,
+      }
+      showCacheManager.value = true
+    }
+    const closeCacheManager = () => {
+      showCacheManager.value = false
+      cacheDomain.value = null
+    }
+    const saveCache = async () => {
+      cacheSaving.value = true
+      try {
+        await api.setDomainCache(cacheDomain.value.id, cacheForm.value.enabled, cacheForm.value.ttl_minutes)
+        store.showNotification(cacheForm.value.enabled ? 'Cache activada' : 'Cache desactivada', 'success')
+        closeCacheManager()
+        await loadDomains()
+      } catch (e) {
+        store.showNotification('Error: ' + e.message, 'danger')
+      } finally {
+        cacheSaving.value = false
+      }
+    }
+    const purgeCache = async () => {
+      if (!confirm(`¿Purgar la cache de ${cacheDomain.value.domain_name}?`)) return
+      cacheSaving.value = true
+      try {
+        const r = await api.purgeDomainCache(cacheDomain.value.id)
+        store.showNotification(`Cache purgada — ${r.freed_mb} MB liberados`, 'success')
+      } catch (e) {
+        store.showNotification('Error purgando: ' + e.message, 'danger')
+      } finally {
+        cacheSaving.value = false
+      }
+    }
+
+    // ─── PHP config ──────────────────────────────────────────────────────────
+    const openPhpManager = async (domain) => {
+      phpDomain.value = domain
+      showPhpManager.value = true
+      phpLoading.value = true
+      try {
+        const cfg = await api.getDomainPhpConfig(domain.id)
+        phpDirectives.value = cfg.directives || {}
+        phpDefaults.value   = cfg.server_defaults || {}
+        phpHasPool.value    = cfg.has_pool
+        // Inicializar el form: override actual o vacío
+        const form = {}
+        for (const key of Object.keys(phpDirectives.value)) {
+          form[key] = (cfg.overrides && cfg.overrides[key] != null) ? cfg.overrides[key] : ''
+        }
+        phpForm.value = form
+      } catch (e) {
+        store.showNotification('Error cargando config PHP: ' + e.message, 'danger')
+      } finally {
+        phpLoading.value = false
+      }
+    }
+    const closePhpManager = () => {
+      showPhpManager.value = false
+      phpDomain.value = null
+    }
+    const savePhpConfig = async () => {
+      phpSaving.value = true
+      try {
+        // Enviar solo los no vacíos
+        const overrides = {}
+        for (const [k, v] of Object.entries(phpForm.value)) {
+          if (String(v).trim() !== '') overrides[k] = String(v).trim()
+        }
+        await api.setDomainPhpConfig(phpDomain.value.id, overrides)
+        store.showNotification('Configuración PHP aplicada', 'success')
+        closePhpManager()
+      } catch (e) {
+        store.showNotification('Error: ' + e.message, 'danger')
+      } finally {
+        phpSaving.value = false
+      }
     }
 
     // ─── Logs ────────────────────────────────────────────────────────────────
@@ -388,6 +601,13 @@ export default {
       showLogsViewer, logsDomain, logTab, logLines, logsData, logsLoading,
       diskInfo, loadDiskInfo, formatMB,
       openLogsViewer, closeLogsViewer, switchLog, loadLogs,
+      // FastCGI cache
+      showCacheManager, cacheDomain, cacheForm, cacheSaving,
+      openCacheManager, closeCacheManager, saveCache, purgeCache,
+      // PHP config
+      showPhpManager, phpDomain, phpLoading, phpSaving,
+      phpDirectives, phpDefaults, phpForm, phpHasPool,
+      openPhpManager, closePhpManager, savePhpConfig,
     }
   }
 }

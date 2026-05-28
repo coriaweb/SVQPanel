@@ -544,7 +544,7 @@ async def create_mailbox(
     md = _get_mail_domain_or_404(domain_id, db)
     _require_edit(md, current_user)
 
-    # Comprobar límite de buzones
+    # Comprobar límite de buzones por dominio de correo
     if md.max_mailboxes > 0:
         current_count = db.query(Mailbox).filter(
             Mailbox.mail_domain_id == md.id
@@ -552,7 +552,25 @@ async def create_mailbox(
         if current_count >= md.max_mailboxes:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f"Límite de {md.max_mailboxes} buzones alcanzado"
+                detail=f"Límite de {md.max_mailboxes} buzones alcanzado en este dominio"
+            )
+
+    # Comprobar límite de buzones del PLAN (total del usuario, todos sus dominios)
+    owner = md.user
+    if owner and owner.mailboxes_limit and owner.mailboxes_limit > 0:
+        total_mailboxes = (
+            db.query(Mailbox)
+            .join(MailDomain, Mailbox.mail_domain_id == MailDomain.id)
+            .filter(MailDomain.user_id == owner.id)
+            .count()
+        )
+        if total_mailboxes >= owner.mailboxes_limit:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=(
+                    f"Límite de buzones del plan alcanzado "
+                    f"({total_mailboxes}/{owner.mailboxes_limit})."
+                ),
             )
 
     # Comprobar que el buzón no existe ya
