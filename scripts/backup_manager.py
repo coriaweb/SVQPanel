@@ -298,7 +298,8 @@ class BackupManager(SystemManager):
         if stdout:
             for line in stdout.splitlines():
                 log_lines.append(line)
-                if "Number of files transferred:" in line:
+                # rsync moderno emite "Number of regular files transferred: N"
+                if "regular files transferred:" in line:
                     try:
                         files_transferred = int(line.split(":")[-1].strip().replace(",", ""))
                     except ValueError:
