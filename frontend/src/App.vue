@@ -82,20 +82,26 @@
               <i class="bi bi-server"></i> SVQPanel v0.1.0
             </span>
             <div class="navbar-user">
-              <router-link
-                v-if="currentUser"
-                :to="`/users/${currentUser.id}/account`"
-                class="text-white text-decoration-none me-3"
-                title="Mi cuenta / 2FA"
-              >
-                <i class="bi bi-person-circle"></i> {{ currentUser?.username || 'Usuario' }}
-              </router-link>
-              <span v-else class="text-white me-3">
-                <i class="bi bi-person-circle"></i> {{ currentUser?.username || 'Usuario' }}
-              </span>
-              <button class="btn btn-sm btn-outline-light" @click="handleLogout">
-                <i class="bi bi-box-arrow-right"></i> Salir
-              </button>
+              <!-- Dropdown usuario -->
+              <div class="user-dropdown" v-if="currentUser" @mouseenter="dropdownOpen=true" @mouseleave="dropdownOpen=false">
+                <button class="btn btn-sm btn-outline-light user-dropdown-trigger">
+                  <i class="bi bi-person-circle me-1"></i>
+                  {{ currentUser.username }}
+                  <i class="bi bi-chevron-down ms-1" style="font-size:.7rem"></i>
+                </button>
+                <div class="user-dropdown-menu" v-show="dropdownOpen">
+                  <router-link :to="`/users/${currentUser.id}/account`" class="dropdown-item" @click="dropdownOpen=false">
+                    <i class="bi bi-person me-2"></i> Mi cuenta
+                  </router-link>
+                  <router-link :to="`/users/${currentUser.id}/account`" class="dropdown-item" @click="dropdownOpen=false">
+                    <i class="bi bi-shield-lock me-2"></i> Doble factor (2FA)
+                  </router-link>
+                  <div class="dropdown-divider"></div>
+                  <button class="dropdown-item text-danger" @click="handleLogout; dropdownOpen=false">
+                    <i class="bi bi-box-arrow-right me-2"></i> Cerrar sesión
+                  </button>
+                </div>
+              </div>
             </div>
           </div>
         </nav>
@@ -122,7 +128,7 @@
 <script>
 import { useRoute, useRouter } from 'vue-router'
 import { useMainStore } from './stores/useMainStore'
-import { computed } from 'vue'
+import { computed, ref } from 'vue'
 import api from './services/api'
 
 export default {
@@ -147,12 +153,15 @@ export default {
       await router.push('/login')
     }
 
+    const dropdownOpen = ref(false)
+
     return {
       route,
       notification,
       isAuthenticated,
       currentUser,
-      handleLogout
+      handleLogout,
+      dropdownOpen,
     }
   }
 }
@@ -171,5 +180,58 @@ export default {
 .btn-outline-light:hover {
   background-color: rgba(255, 255, 255, 0.1);
   border-color: white;
+}
+
+/* Dropdown usuario */
+.user-dropdown {
+  position: relative;
+}
+
+.user-dropdown-trigger {
+  display: flex;
+  align-items: center;
+}
+
+.user-dropdown-menu {
+  position: absolute;
+  right: 0;
+  top: calc(100% + 4px);
+  background: #fff;
+  border: 1px solid #dee2e6;
+  border-radius: 8px;
+  box-shadow: 0 4px 16px rgba(0,0,0,.15);
+  min-width: 190px;
+  z-index: 9999;
+  padding: 4px 0;
+}
+
+.user-dropdown-menu .dropdown-item {
+  display: flex;
+  align-items: center;
+  padding: 8px 16px;
+  color: #333;
+  text-decoration: none;
+  font-size: .9rem;
+  cursor: pointer;
+  background: none;
+  border: none;
+  width: 100%;
+  text-align: left;
+  transition: background .15s;
+}
+
+.user-dropdown-menu .dropdown-item:hover {
+  background: #f0f4ff;
+  color: #4a6cf7;
+}
+
+.user-dropdown-menu .dropdown-item.text-danger:hover {
+  background: #fff0f0;
+  color: #dc3545;
+}
+
+.user-dropdown-menu .dropdown-divider {
+  margin: 4px 0;
+  border-top: 1px solid #dee2e6;
 }
 </style>

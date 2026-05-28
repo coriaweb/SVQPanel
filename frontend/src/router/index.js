@@ -47,7 +47,7 @@ const routes = [
     path: '/users/:id/account',
     name: 'UserAccount',
     component: UserAccount,
-    meta: { requiresAuth: true, requiresAdmin: true }
+    meta: { requiresAuth: true, requiresAdminOrOwn: true }
   },
   {
     path: '/domains',
@@ -130,6 +130,15 @@ router.beforeEach((to, from, next) => {
   if (to.meta.requiresAdmin && !user.is_admin) {
     next('/dashboard')
     return
+  }
+
+  // Si la ruta requiere ser admin O ser el propio usuario (/users/:id/account)
+  if (to.meta.requiresAdminOrOwn) {
+    const ownId = parseInt(to.params.id)
+    if (!user.is_admin && user.id !== ownId) {
+      next('/dashboard')
+      return
+    }
   }
 
   // Si la ruta requiere admin o reseller
