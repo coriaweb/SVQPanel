@@ -29,7 +29,10 @@ def _check_cron_access(current_user: User, cron: CronJob):
 
 
 def _get_username_for_user(user: User) -> str:
-    """Devuelve el nombre de usuario del sistema para ejecutar el cron."""
+    """Devuelve el nombre de usuario del sistema para ejecutar el cron.
+    Los admins del panel corren como root en el sistema."""
+    if user.is_admin:
+        return "root"
     return user.username
 
 
