@@ -15,6 +15,19 @@ from api.dependencies import require_admin, require_auth
 router = APIRouter()
 
 
+def _timedatectl_bin():
+    """
+    Ruta absoluta a timedatectl. El servicio systemd corre con PATH reducido
+    (solo el venv), así que invocar 'timedatectl' a secas da FileNotFoundError.
+    Devuelve None si no existe (entorno de desarrollo sin systemd).
+    """
+    import os, shutil
+    for path in ("/usr/bin/timedatectl", "/bin/timedatectl", "/usr/sbin/timedatectl"):
+        if os.path.isfile(path) and os.access(path, os.X_OK):
+            return path
+    return shutil.which("timedatectl")
+
+
 def get_or_create_settings(db: Session) -> Settings:
     """Devuelve la configuración del panel (la crea si no existe)"""
     settings = db.query(Settings).filter(Settings.id == 1).first()
@@ -286,14 +299,17 @@ async def get_current_timezone(current_user=Depends(require_admin)):
     Lee la zona horaria actual del sistema operativo (timedatectl).
     """
     import subprocess
-    try:
-        r = subprocess.run(
-            ["timedatectl", "show", "--property=Timezone", "--value"],
-            capture_output=True, text=True, timeout=5,
-        )
-        tz = r.stdout.strip() or "UTC"
-    except Exception:
-        tz = "UTC"
+    tz = "UTC"
+    binary = _timedatectl_bin()
+    if binary:
+        try:
+            r = subprocess.run(
+                [binary, "show", "--property=Timezone", "--value"],
+                capture_output=True, text=True, timeout=5,
+            )
+            tz = r.stdout.strip() or "UTC"
+        except Exception:
+            tz = "UTC"
     return {"timezone": tz}
 
 
@@ -314,24 +330,24 @@ async def set_timezone(
     if not tz or not re.match(r'^[A-Za-z_/+\-0-9]+$', tz):
         raise HTTPException(status_code=400, detail="Zona horaria no válida")
 
-    # Validar que existe en zoneinfo o en timedatectl
-    try:
-        r = subprocess.run(
-            ["timedatectl", "set-timezone", tz],
-            capture_output=True, text=True, timeout=10,
-        )
-        if r.returncode != 0:
-            raise HTTPException(
-                status_code=400,
-                detail=f"Zona horaria no reconocida por el sistema: {tz}"
+    # Aplicar en el SO via timedatectl (ruta absoluta: el servicio tiene PATH reducido)
+    binary = _timedatectl_bin()
+    if binary:
+        try:
+            r = subprocess.run(
+                [binary, "set-timezone", tz],
+                capture_output=True, text=True, timeout=10,
             )
-    except FileNotFoundError:
-        # timedatectl no disponible (entorno de desarrollo)
-        pass
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+            if r.returncode != 0:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Zona horaria no reconocida por el sistema: {tz}"
+                )
+        except HTTPException:
+            raise
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=str(e))
+    # Si no hay timedatectl (entorno de desarrollo), solo se guarda en BD
 
     # Guardar en BD
     settings = get_or_create_settings(db)
