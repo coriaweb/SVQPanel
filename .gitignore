@@ -47,6 +47,11 @@ ENV/
 # Claude Code: settings locales pueden contener rutas/comandos con secretos
 .claude/settings.local.json
 
+# Credenciales locales de servidores (nunca subir a git)
+SERVER_CREDENTIALS.md
+server_credentials.md
+*.credentials.md
+
 # Base de datos
 *.db
 *.sqlite

@@ -113,7 +113,10 @@
                   </button>
                 </td>
                 <td>
-                  <span v-if="domain.is_active" class="badge bg-success">Activo</span>
+                  <span v-if="domain.is_suspended" class="badge bg-warning text-dark">
+                    <i class="bi bi-pause-circle me-1"></i>Suspendido
+                  </span>
+                  <span v-else-if="domain.is_active" class="badge bg-success">Activo</span>
                   <span v-else class="badge bg-danger">Inactivo</span>
                 </td>
                 <td>
@@ -135,6 +138,22 @@
                     </button>
                     <button class="btn btn-outline-warning" @click="openEditForm(domain)" title="Editar">
                       <i class="bi bi-pencil"></i>
+                    </button>
+                    <button
+                      v-if="!domain.is_suspended"
+                      class="btn btn-outline-warning text-warning"
+                      @click="suspendDomain(domain)"
+                      title="Suspender dominio"
+                    >
+                      <i class="bi bi-pause-circle"></i>
+                    </button>
+                    <button
+                      v-else
+                      class="btn btn-outline-success"
+                      @click="unsuspendDomain(domain)"
+                      title="Reactivar dominio"
+                    >
+                      <i class="bi bi-play-circle"></i>
                     </button>
                     <button class="btn btn-outline-danger" @click="deleteDomainConfirm(domain.id)" title="Eliminar">
                       <i class="bi bi-trash"></i>
@@ -570,6 +589,27 @@ export default {
       }
     }
 
+    const suspendDomain = async (domain) => {
+      if (!confirm(`¿Suspender el dominio ${domain.domain_name}? Quedará inaccesible hasta que lo reactives.`)) return
+      try {
+        await api.suspendDomain(domain.id)
+        store.showNotification(`Dominio ${domain.domain_name} suspendido`, 'warning')
+        await loadDomains()
+      } catch (e) {
+        store.showNotification(`Error al suspender: ${e.message}`, 'danger')
+      }
+    }
+
+    const unsuspendDomain = async (domain) => {
+      try {
+        await api.unsuspendDomain(domain.id)
+        store.showNotification(`Dominio ${domain.domain_name} reactivado`, 'success')
+        await loadDomains()
+      } catch (e) {
+        store.showNotification(`Error al reactivar: ${e.message}`, 'danger')
+      }
+    }
+
     const changePHP = async (domain, event) => {
       const version = event.target.value
       try {
@@ -595,7 +635,7 @@ export default {
       openSSLManager, closeSSLManager,
       openIPv6Manager, closeIPv6Manager,
       openFileManager,
-      deleteDomainConfirm, changePHP,
+      deleteDomainConfirm, changePHP, suspendDomain, unsuspendDomain,
       loadDomains, reloadDomains, getUserName,
       // Logs + disk
       showLogsViewer, logsDomain, logTab, logLines, logsData, logsLoading,

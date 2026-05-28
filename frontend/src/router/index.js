@@ -12,6 +12,7 @@ import Security from '../views/Security.vue'
 import FileManager from '../views/FileManager.vue'
 import Plans from '../views/Plans.vue'
 import MySftp from '../views/MySftp.vue'
+import Crons from '../views/Crons.vue'
 import Login from '../views/Login.vue'
 
 const isAuthenticated = () => {
@@ -108,6 +109,12 @@ const routes = [
     name: 'Plans',
     component: Plans,
     meta: { requiresAuth: true, requiresAdminOrReseller: true }
+  },
+  {
+    path: '/crons',
+    name: 'Crons',
+    component: Crons,
+    meta: { requiresAuth: true }
   }
 ]
 

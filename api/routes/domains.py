@@ -12,6 +12,7 @@ from api.models.models_domain import Domain
 from api.schemas.domain_schemas import DomainCreate, DomainUpdate, DomainResponse
 from api.dependencies import require_admin, require_auth
 from scripts.domain_manager import DomainManager
+from scripts.domain_suspend_manager import DomainSuspendManager
 
 router = APIRouter()
 
@@ -646,3 +647,66 @@ async def get_domain_disk(
         "total_mb":         total_bytes // (1024 * 1024),
         "total_bytes":      total_bytes,
     }
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Suspensión individual de dominio
+# ─────────────────────────────────────────────────────────────────────────────
+
+@router.post("/domains/{domain_id}/suspend")
+async def suspend_domain(
+    domain_id:    int,
+    current_user: User = Depends(require_auth),
+    db:           Session = Depends(get_db),
+):
+    """Suspende un dominio individualmente (admin o propietario)"""
+    domain = db.query(Domain).filter(Domain.id == domain_id).first()
+    if not domain:
+        raise HTTPException(status_code=404, detail="Dominio no encontrado")
+    _check_access(current_user, domain, db)
+
+    if domain.is_suspended:
+        return {"status": "ok", "message": "El dominio ya estaba suspendido"}
+
+    try:
+        from datetime import datetime
+        mgr = DomainSuspendManager()
+        result = mgr.suspend_domain(domain.domain_name)
+        domain.is_suspended = True
+        domain.is_active    = False
+        db.commit()
+        return {"status": "success", "message": result["message"]}
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/domains/{domain_id}/unsuspend")
+async def unsuspend_domain(
+    domain_id:    int,
+    current_user: User = Depends(require_auth),
+    db:           Session = Depends(get_db),
+):
+    """Reactiva un dominio suspendido (admin o propietario)"""
+    domain = db.query(Domain).filter(Domain.id == domain_id).first()
+    if not domain:
+        raise HTTPException(status_code=404, detail="Dominio no encontrado")
+    _check_access(current_user, domain, db)
+
+    if not domain.is_suspended:
+        return {"status": "ok", "message": "El dominio no estaba suspendido"}
+
+    try:
+        mgr = DomainSuspendManager()
+        result = mgr.unsuspend_domain(domain.domain_name)
+        if not result["success"]:
+            raise HTTPException(status_code=500, detail=result["message"])
+        domain.is_suspended = False
+        domain.is_active    = True
+        db.commit()
+        return {"status": "success", "message": result["message"]}
+    except HTTPException:
+        raise
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=str(e))

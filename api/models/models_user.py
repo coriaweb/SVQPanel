@@ -76,6 +76,7 @@ class User(Base):
     domains      = relationship("Domain",         back_populates="user", cascade="all, delete-orphan")
     mail_domains = relationship("MailDomain",     back_populates="user", cascade="all, delete-orphan")
     databases    = relationship("ClientDatabase", back_populates="user", cascade="all, delete-orphan")
+    cron_jobs    = relationship("CronJob",        back_populates="user", cascade="all, delete-orphan")
     # Nota: los clientes de un reseller se consultan por parent_id directamente en las rutas
     
     def set_password(self, password: str):

@@ -142,6 +142,14 @@ class APIClient {
     return this.delete(`/api/domains/${domainId}`)
   }
 
+  suspendDomain(domainId) {
+    return this.post(`/api/domains/${domainId}/suspend`)
+  }
+
+  unsuspendDomain(domainId) {
+    return this.post(`/api/domains/${domainId}/unsuspend`)
+  }
+
   // File Manager
   getFileManagerDomains() {
     return this.get('/api/file-manager/domains')
@@ -646,6 +654,27 @@ class APIClient {
       body: JSON.stringify({ temp_token: tempToken, code }),
       skipAuthRedirect: true
     })
+  }
+
+  // Cron jobs
+  getCrons() {
+    return this.get('/api/crons')
+  }
+
+  createCron(data) {
+    return this.post('/api/crons', data)
+  }
+
+  updateCron(cronId, data) {
+    return this.put(`/api/crons/${cronId}`, data)
+  }
+
+  deleteCron(cronId) {
+    return this.delete(`/api/crons/${cronId}`)
+  }
+
+  toggleCron(cronId) {
+    return this.post(`/api/crons/${cronId}/toggle`)
   }
 }
 

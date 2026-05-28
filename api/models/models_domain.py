@@ -29,7 +29,8 @@ class Domain(Base):
     ipv6 = Column(String(45), nullable=True)
     
     # Estado
-    is_active = Column(Boolean, default=True)
+    is_active     = Column(Boolean, default=True)
+    is_suspended  = Column(Boolean, default=False, nullable=False)  # suspendido individualmente
     
     # FastCGI cache (Fase 14)
     fastcgi_cache_enabled    = Column(Boolean, default=False, nullable=False)
@@ -49,6 +50,7 @@ class Domain(Base):
     # Relaciones
     user      = relationship("User",           back_populates="domains")
     databases = relationship("ClientDatabase", back_populates="domain", cascade="all, delete-orphan")
+    cron_jobs = relationship("CronJob",        back_populates="domain")
     
     def __repr__(self):
         return f"<Domain {self.domain_name}>"

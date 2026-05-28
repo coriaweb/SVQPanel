@@ -55,6 +55,11 @@
               <i class="bi bi-envelope"></i> Correo
             </router-link>
           </li>
+          <li>
+            <router-link to="/crons" :class="{active: route.path === '/crons'}">
+              <i class="bi bi-clock-history"></i> Tareas Cron
+            </router-link>
+          </li>
           <li v-if="currentUser?.is_admin">
             <router-link to="/system" :class="{active: route.path === '/system'}">
               <i class="bi bi-hdd-rack"></i> Sistema

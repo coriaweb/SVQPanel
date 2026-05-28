@@ -13,7 +13,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from api.models.database import create_tables, get_db
 from config.config import PANEL_NAME, PANEL_VERSION
 
-from api.routes import users, domains, php, ssl, ipv6, auth, settings, dns, system, mail, databases, firewall, fail2ban, security_monitor, ip_lists, file_manager, crowdsec, plans, sftp
+from api.routes import users, domains, php, ssl, ipv6, auth, settings, dns, system, mail, databases, firewall, fail2ban, security_monitor, ip_lists, file_manager, crowdsec, plans, sftp, crons
 
 # Crear app FastAPI
 app = FastAPI(
@@ -291,6 +291,27 @@ def _run_migrations():
         "ALTER TABLE users ADD COLUMN IF NOT EXISTS totp_enabled_at TIMESTAMP",
         # Asegurar longitud correcta si la columna ya existía con 64 chars
         "ALTER TABLE users ALTER COLUMN totp_secret TYPE VARCHAR(256)",
+        # Suspensión individual de dominio
+        "ALTER TABLE domains ADD COLUMN IF NOT EXISTS is_suspended BOOLEAN DEFAULT FALSE",
+        # Cron jobs de clientes
+        """CREATE TABLE IF NOT EXISTS cron_jobs (
+            id         SERIAL PRIMARY KEY,
+            user_id    INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+            domain_id  INTEGER REFERENCES domains(id) ON DELETE SET NULL,
+            minute     VARCHAR(20) NOT NULL DEFAULT '*',
+            hour       VARCHAR(20) NOT NULL DEFAULT '*',
+            day        VARCHAR(20) NOT NULL DEFAULT '*',
+            month      VARCHAR(20) NOT NULL DEFAULT '*',
+            weekday    VARCHAR(20) NOT NULL DEFAULT '*',
+            command    TEXT NOT NULL,
+            comment    VARCHAR(255),
+            is_active  BOOLEAN NOT NULL DEFAULT TRUE,
+            created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+            updated_at TIMESTAMP DEFAULT NOW(),
+            last_run   TIMESTAMP
+        )""",
+        "CREATE INDEX IF NOT EXISTS ix_cron_jobs_user_id ON cron_jobs(user_id)",
+        "CREATE INDEX IF NOT EXISTS ix_cron_jobs_domain_id ON cron_jobs(domain_id)",
     ]
     with engine.connect() as conn:
         for sql in migrations:
@@ -346,6 +367,7 @@ app.include_router(ip_lists.router,         prefix="/api", tags=["IP Lists"])
 app.include_router(crowdsec.router,         prefix="/api", tags=["CrowdSec"])
 app.include_router(plans.router,            prefix="/api", tags=["Plans"])
 app.include_router(sftp.router,             prefix="/api", tags=["SFTP"])
+app.include_router(crons.router,            prefix="/api", tags=["Crons"])
 app.include_router(file_manager.router,     prefix="/api", tags=["File Manager"])
 # Autoconfig/Autodiscover sin prefijo (clientes de correo los buscan en rutas raíz)
 app.include_router(mail.router, prefix="", include_in_schema=False)
