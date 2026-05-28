@@ -41,6 +41,29 @@
       <label for="is_active" class="form-check-label">Dominio activo</label>
     </div>
 
+    <!-- Rendimiento (solo al editar: requiere un dominio ya existente) -->
+    <template v-if="isEditing">
+      <hr class="my-3" />
+      <p class="fw-semibold mb-2 text-muted small text-uppercase">Rendimiento</p>
+
+      <div class="mb-2 form-check">
+        <input id="fcgi_cache" v-model="form.fastcgi_cache_enabled" type="checkbox" class="form-check-input" />
+        <label for="fcgi_cache" class="form-check-label">
+          <i class="bi bi-lightning-charge me-1"></i> Habilitar caché FastCGI (NGINX)
+        </label>
+      </div>
+      <div v-if="form.fastcgi_cache_enabled" class="mb-3 ps-4">
+        <label class="form-label small mb-1">Duración de la caché (minutos)</label>
+        <input
+          v-model.number="form.fastcgi_cache_ttl_minutes"
+          type="number" min="1" max="1440"
+          class="form-control form-control-sm"
+          style="max-width:160px"
+        />
+        <div class="form-text">Tiempo que NGINX cachea las respuestas PHP. Ej: 2, 30, 60.</div>
+      </div>
+    </template>
+
     <!-- Opciones extras (solo en creación) -->
     <template v-if="!isEditing">
       <hr class="my-3" />
@@ -109,6 +132,8 @@ export default {
       user_id:     props.domain?.user_id     || (isAdminOrReseller.value ? '' : store.currentUser?.id),
       php_version: props.domain?.php_version || '',
       is_active:   props.domain?.is_active   ?? true,
+      fastcgi_cache_enabled:     props.domain?.fastcgi_cache_enabled     ?? false,
+      fastcgi_cache_ttl_minutes: props.domain?.fastcgi_cache_ttl_minutes ?? 60,
       dns_enabled:  false,
       mail_enabled: false,
     })
@@ -143,6 +168,19 @@ export default {
             php_version: form.value.php_version,
             is_active:   form.value.is_active,
           })
+          // Caché FastCGI: solo si cambió respecto al estado original (reescribe el vhost)
+          const prevEnabled = props.domain.fastcgi_cache_enabled ?? false
+          const prevTtl     = props.domain.fastcgi_cache_ttl_minutes ?? 60
+          const cacheChanged =
+            form.value.fastcgi_cache_enabled !== prevEnabled ||
+            (form.value.fastcgi_cache_enabled && form.value.fastcgi_cache_ttl_minutes !== prevTtl)
+          if (cacheChanged) {
+            await api.setDomainCache(
+              props.domain.id,
+              form.value.fastcgi_cache_enabled,
+              form.value.fastcgi_cache_ttl_minutes,
+            )
+          }
           store.showNotification('Dominio actualizado correctamente', 'success')
         } else {
           const userId = isAdminOrReseller.value
