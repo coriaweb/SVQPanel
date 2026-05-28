@@ -777,23 +777,25 @@ class APIClient {
 
   getServerIps() {
     return this.get('/api/server-ips/available')
-  },
+  }
 
   // ── SSL por dominio ──────────────────────────────────────────────────────
   getDomainSSL(domainId) {
     return this.get(`/api/domains/${domainId}/ssl`)
-  },
+  }
+
   toggleDomainSSL(domainId, data) {
     return this.put(`/api/domains/${domainId}/ssl/toggle`, data)
-  },
+  }
 
   // ── Actualizaciones del sistema ──────────────────────────────────────────
   getSystemUpdates() {
     return this.get('/api/system/updates')
-  },
+  }
+
   runSystemUpgrade(packageName) {
     return this.post('/api/system/updates/upgrade', packageName ? { package: packageName } : {})
-  },
+  }
 }
 
 export default new APIClient()
