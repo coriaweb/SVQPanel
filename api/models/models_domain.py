@@ -44,6 +44,10 @@ class Domain(Base):
     applied_template_name = Column(String(64), nullable=True)
     template_nginx_extra  = Column(Text, nullable=True)
 
+    # Redirección 301 y docroot personalizado (Fase 16)
+    redirect_to    = Column(String(512), nullable=True)   # ej: https://otro.com
+    custom_docroot = Column(String(512), nullable=True)   # ej: /home/user/web/domain/app/public
+
     # Estadísticas
     disk_usage = Column(Integer, default=0)  # MB
     

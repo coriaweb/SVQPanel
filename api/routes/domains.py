@@ -282,8 +282,59 @@ async def update_domain(
         if domain_update.ipv6 is not None:
             db_domain.ipv6 = domain_update.ipv6
 
+        # Redirección y docroot personalizado (Fase 16)
+        # Se aceptan strings vacíos para "borrar" el valor
+        redir_changed   = False
+        docroot_changed = False
+        if 'redirect_to' in domain_update.model_fields_set:
+            new_redir = domain_update.redirect_to or None
+            if new_redir != db_domain.redirect_to:
+                db_domain.redirect_to = new_redir
+                redir_changed = True
+        if 'custom_docroot' in domain_update.model_fields_set:
+            new_docroot = domain_update.custom_docroot or None
+            if new_docroot != db_domain.custom_docroot:
+                db_domain.custom_docroot = new_docroot
+                docroot_changed = True
+
         db.commit()
         db.refresh(db_domain)
+
+        # Regenerar vhost si cambió algún parámetro que afecta a nginx
+        if redir_changed or docroot_changed:
+            owner = db.query(User).filter(User.id == db_domain.user_id).first()
+            if owner:
+                try:
+                    import json
+                    from scripts import php_ini_manager as phpini
+                    php_sock = None
+                    if db_domain.php_ini_overrides:
+                        try:
+                            ov = json.loads(db_domain.php_ini_overrides)
+                        except (ValueError, TypeError):
+                            ov = {}
+                        if ov:
+                            php_sock = phpini.pool_socket_path(db_domain.domain_name)
+                    domain_manager.regenerate_vhost(
+                        username=owner.username,
+                        domain_name=db_domain.domain_name,
+                        php_version=db_domain.php_version or "8.2",
+                        ssl_enabled=db_domain.ssl_enabled or False,
+                        ipv6=db_domain.ipv6,
+                        fastcgi_cache_enabled=db_domain.fastcgi_cache_enabled or False,
+                        fastcgi_cache_ttl_minutes=db_domain.fastcgi_cache_ttl_minutes or 60,
+                        php_socket_override=php_sock,
+                        template_nginx_extra=db_domain.template_nginx_extra,
+                        redirect_to=db_domain.redirect_to,
+                        custom_docroot=db_domain.custom_docroot,
+                    )
+                except Exception as vhost_err:
+                    # No bloquear la respuesta si falla nginx (log del error)
+                    import logging
+                    logging.getLogger(__name__).warning(
+                        f"regenerate_vhost falló para {db_domain.domain_name}: {vhost_err}"
+                    )
+
         return db_domain
     except HTTPException:
         raise

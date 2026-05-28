@@ -41,6 +41,52 @@
       <label for="is_active" class="form-check-label">Dominio activo</label>
     </div>
 
+    <!-- Redirección y docroot (solo al editar) -->
+    <template v-if="isEditing">
+      <hr class="my-3" />
+      <p class="fw-semibold mb-2 text-muted small text-uppercase">
+        <i class="bi bi-arrow-right-circle me-1"></i> Redirección y raíz de documentos
+      </p>
+
+      <div class="mb-2 form-check">
+        <input id="redirect_enabled" v-model="form.redirect_enabled" type="checkbox" class="form-check-input" />
+        <label for="redirect_enabled" class="form-check-label">
+          Redirigir este dominio a otra URL (301 permanente)
+        </label>
+      </div>
+      <div v-if="form.redirect_enabled" class="mb-3 ps-4">
+        <label class="form-label small mb-1">URL de destino</label>
+        <input
+          v-model="form.redirect_to"
+          type="url"
+          class="form-control"
+          :class="{ 'is-invalid': redirectError }"
+          placeholder="https://otro-dominio.com"
+        />
+        <div v-if="redirectError" class="invalid-feedback">{{ redirectError }}</div>
+        <div class="form-text">El dominio responderá con HTTP 301 a esta URL en todas las rutas.</div>
+      </div>
+
+      <div class="mb-3" v-if="!form.redirect_enabled">
+        <label class="form-label small mb-1">
+          Raíz de documentos personalizada
+          <span class="text-muted fw-normal">(opcional)</span>
+        </label>
+        <input
+          v-model="form.custom_docroot"
+          type="text"
+          class="form-control"
+          :class="{ 'is-invalid': docrootError }"
+          placeholder="/home/usuario/web/dominio/app/public"
+        />
+        <div v-if="docrootError" class="invalid-feedback">{{ docrootError }}</div>
+        <div class="form-text">
+          Ruta absoluta en el servidor. Dejar vacío para usar
+          <code>/home/usuario/web/dominio/public_html</code> (por defecto).
+        </div>
+      </div>
+    </template>
+
     <!-- Plantilla web (creación Y edición) -->
     <hr class="my-3" />
     <p class="fw-semibold mb-2 text-muted small text-uppercase">
@@ -199,7 +245,14 @@ export default {
       dns_enabled:  false,
       mail_enabled: false,
       selected_template_id: props.domain?.applied_template_id ?? null,
+      // Redirección y docroot (Fase 16)
+      redirect_enabled: !!(props.domain?.redirect_to),
+      redirect_to:      props.domain?.redirect_to    || '',
+      custom_docroot:   props.domain?.custom_docroot || '',
     })
+
+    const redirectError = ref('')
+    const docrootError  = ref('')
 
     // ── Plantillas ─────────────────────────────────────────────────────────
 
@@ -253,12 +306,43 @@ export default {
     // ── Submit ─────────────────────────────────────────────────────────────
 
     const handleSubmit = async () => {
+      // Validaciones de redirección y docroot antes de enviar
+      redirectError.value = ''
+      docrootError.value  = ''
+
+      if (isEditing.value) {
+        if (form.value.redirect_enabled) {
+          const url = form.value.redirect_to.trim()
+          if (!url) {
+            redirectError.value = 'Introduce la URL de destino.'
+            return
+          }
+          if (!/^https?:\/\//i.test(url)) {
+            redirectError.value = 'La URL debe empezar por http:// o https://'
+            return
+          }
+        }
+        if (!form.value.redirect_enabled && form.value.custom_docroot.trim()) {
+          const dr = form.value.custom_docroot.trim()
+          if (!dr.startsWith('/')) {
+            docrootError.value = 'Debe ser una ruta absoluta (empieza por /).'
+            return
+          }
+          if (dr.includes('..')) {
+            docrootError.value = 'La ruta no puede contener "..".'
+            return
+          }
+        }
+      }
+
       loading.value = true
       try {
         if (isEditing.value) {
           await api.updateDomain(props.domain.id, {
             php_version: form.value.php_version,
             is_active:   form.value.is_active,
+            redirect_to:    form.value.redirect_enabled ? form.value.redirect_to.trim() : '',
+            custom_docroot: !form.value.redirect_enabled ? form.value.custom_docroot.trim() : '',
           })
           // Caché FastCGI: solo si cambió y no se va a aplicar plantilla (la plantilla lo gestiona)
           const prevEnabled = props.domain.fastcgi_cache_enabled ?? false
@@ -338,6 +422,7 @@ export default {
       isAdminOrReseller, availablePhpVersions,
       templates, templateCategories, templatesByCategory,
       selectedTemplate, parsedPhpOverrides,
+      redirectError, docrootError,
       handleSubmit,
     }
   }

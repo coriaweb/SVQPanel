@@ -151,6 +151,49 @@ def _skip_cache_block() -> str:
 """
 
 
+def _generate_redirect_config(
+    domain: str,
+    redirect_to: str,
+    ssl_enabled: bool = False,
+    ipv6: Optional[str] = None,
+) -> str:
+    """Genera un vhost nginx que redirige permanentemente (301) a redirect_to."""
+    server_names = f"{domain} www.{domain}"
+    if ipv6:
+        server_names += f" {ipv6}"
+
+    ipv6_listen_http  = f"listen [{ipv6}]:80 default_server;" if ipv6 else "listen [::]:80;"
+    ipv6_listen_https = f"listen [{ipv6}]:443 ssl http2 default_server;" if ipv6 else "listen [::]:443 ssl http2;"
+
+    # Asegurarse de que redirect_to no termina en /
+    destination = redirect_to.rstrip("/")
+
+    config = f"""server {{
+    listen 80;
+    {ipv6_listen_http}
+    server_name {server_names};
+
+    return 301 {destination}$request_uri;
+}}
+"""
+    if ssl_enabled:
+        config += f"""
+server {{
+    listen 443 ssl http2;
+    {ipv6_listen_https}
+    server_name {server_names};
+
+    ssl_certificate /etc/letsencrypt/live/{domain}/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/{domain}/privkey.pem;
+    ssl_protocols TLSv1.2 TLSv1.3;
+    ssl_ciphers HIGH:!aNULL:!MD5;
+
+    return 301 {destination}$request_uri;
+}}
+"""
+    return config
+
+
 def generate_nginx_config(
     domain: str,
     user: str,
@@ -161,10 +204,17 @@ def generate_nginx_config(
     fastcgi_cache_ttl_minutes: int = 60,
     php_socket_override: Optional[str] = None,
     template_nginx_extra: Optional[str] = None,
+    redirect_to: Optional[str] = None,
+    custom_docroot: Optional[str] = None,
 ) -> str:
     """Generate Nginx vhost configuration (Hestia-style paths)"""
 
-    public_html = get_public_html(user, domain)
+    # Si hay redirección activa, generar vhost mínimo de 301
+    if redirect_to:
+        return _generate_redirect_config(domain, redirect_to, ssl_enabled, ipv6)
+
+    # Docroot: personalizado o el estándar
+    public_html = custom_docroot or get_public_html(user, domain)
     logs_dir = get_domain_logs(user, domain)
     # Si el dominio tiene php.ini propio, usa su pool dedicado
     php_socket = php_socket_override or f"/run/php/php{php_version}-fpm.sock"

@@ -302,6 +302,9 @@ class DomainManager(SystemManager):
         fastcgi_cache_enabled: bool = False,
         fastcgi_cache_ttl_minutes: int = 60,
         php_socket_override: str = None,
+        template_nginx_extra: str = None,
+        redirect_to: str = None,
+        custom_docroot: str = None,
     ) -> dict:
         """
         Regenera la vhost completa del dominio con TODO el estado actual
@@ -327,6 +330,9 @@ class DomainManager(SystemManager):
             fastcgi_cache_enabled=fastcgi_cache_enabled,
             fastcgi_cache_ttl_minutes=fastcgi_cache_ttl_minutes,
             php_socket_override=php_socket_override,
+            template_nginx_extra=template_nginx_extra,
+            redirect_to=redirect_to,
+            custom_docroot=custom_docroot,
         )
         with open(nginx_config, "w") as f:
             f.write(config_content)
