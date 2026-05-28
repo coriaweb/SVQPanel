@@ -776,7 +776,7 @@ class APIClient {
   // ─── IPs del servidor (Fase 16) ─────────────────────────────────────────
 
   getServerIps() {
-    return this.get('/api/server-ips')
+    return this.get('/api/server-ips/available')
   }
 }
 

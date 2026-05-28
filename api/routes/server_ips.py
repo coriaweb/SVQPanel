@@ -16,7 +16,7 @@ from api.models.models_user import User
 from api.schemas.server_ip_schemas import (
     ServerIPCreate, ServerIPUpdate, ServerIPResponse, SystemIPInfo
 )
-from api.dependencies import require_admin
+from api.dependencies import require_admin, require_auth
 
 router = APIRouter()
 
@@ -68,6 +68,24 @@ async def list_server_ips(
 ):
     """Lista todas las IPs registradas en el panel."""
     ips = db.query(ServerIP).order_by(ServerIP.is_ipv6, ServerIP.address).all()
+    return [_to_response(db, ip) for ip in ips]
+
+
+@router.get("/server-ips/available", response_model=List[ServerIPResponse])
+async def list_available_ips(
+    current_user=Depends(require_auth),
+    db: Session = Depends(get_db),
+):
+    """
+    Lista las IPs IPv4 activas del servidor disponibles para asignar a dominios.
+    Accesible para cualquier usuario autenticado (para el selector en DomainForm).
+    """
+    ips = (
+        db.query(ServerIP)
+        .filter(ServerIP.is_ipv6 == False, ServerIP.is_active == True)  # noqa: E712
+        .order_by(ServerIP.address)
+        .all()
+    )
     return [_to_response(db, ip) for ip in ips]
 
 
