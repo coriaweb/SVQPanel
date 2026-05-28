@@ -82,7 +82,15 @@
               <i class="bi bi-server"></i> SVQPanel v0.1.0
             </span>
             <div class="navbar-user">
-              <span class="text-white me-3">
+              <router-link
+                v-if="currentUser"
+                :to="`/users/${currentUser.id}/account`"
+                class="text-white text-decoration-none me-3"
+                title="Mi cuenta / 2FA"
+              >
+                <i class="bi bi-person-circle"></i> {{ currentUser?.username || 'Usuario' }}
+              </router-link>
+              <span v-else class="text-white me-3">
                 <i class="bi bi-person-circle"></i> {{ currentUser?.username || 'Usuario' }}
               </span>
               <button class="btn btn-sm btn-outline-light" @click="handleLogout">
