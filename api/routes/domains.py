@@ -341,6 +341,22 @@ async def update_domain(
                         f"regenerate_vhost falló para {db_domain.domain_name}: {vhost_err}"
                     )
 
+        # Actualizar IP de salida SMTP en Postfix si cambió la IPv4
+        if ipv4_changed:
+            try:
+                from scripts import mail_manager as mail_mod
+                mm = mail_mod.MailManager()
+                if mm.mail_available():
+                    if db_domain.ipv4:
+                        mm.set_domain_sender_ip(db_domain.domain_name, db_domain.ipv4)
+                    else:
+                        mm.remove_domain_sender_ip(db_domain.domain_name)
+            except Exception as mail_err:
+                import logging
+                logging.getLogger(__name__).warning(
+                    f"set_domain_sender_ip falló para {db_domain.domain_name}: {mail_err}"
+                )
+
         return db_domain
     except HTTPException:
         raise

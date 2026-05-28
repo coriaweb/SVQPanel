@@ -13,6 +13,7 @@ Ficheros gestionados:
 """
 
 import os
+import re
 import shutil
 import logging
 from .base import SystemManager
@@ -27,6 +28,11 @@ class MailManager(SystemManager):
     VMAIL_GID   = 5000
     POSTFIX_DIR = "/etc/postfix"
     DOVECOT_USERS = "/etc/dovecot/users"
+    SENDER_TRANSPORT_MAP  = "sender_dependent_transport"
+    POSTFIX_MAIN_CF       = "/etc/postfix/main.cf"
+    POSTFIX_MASTER_CF     = "/etc/postfix/master.cf"
+    _MASTER_START = "# BEGIN SVQPANEL_SMTP_BIND"
+    _MASTER_END   = "# END SVQPANEL_SMTP_BIND"
 
     def __init__(self):
         super().__init__(require_root=True)
@@ -397,6 +403,107 @@ class MailManager(SystemManager):
         self._map_remove("virtual_alias", f"@{domain_name}")
         self._reload_postfix()
         return {"success": True}
+
+    # ─────────────────────────────────────────────────────────────────────
+    # IP de salida SMTP por dominio (sender_dependent_default_transport_maps)
+    # ─────────────────────────────────────────────────────────────────────
+
+    def _transport_name(self, ipv4: str) -> str:
+        """smtp_185_104_188_71 para 185.104.188.71"""
+        return "smtp_" + ipv4.replace(".", "_")
+
+    def _ensure_main_cf_sender_transport(self):
+        """
+        Garantiza que main.cf tiene sender_dependent_default_transport_maps
+        apuntando a nuestro hash. Solo escribe si no existe ya.
+        """
+        map_path = self._map_path(self.SENDER_TRANSPORT_MAP)
+        directive = f"sender_dependent_default_transport_maps = hash:{map_path}"
+        try:
+            with open(self.POSTFIX_MAIN_CF, "r", encoding="utf-8") as f:
+                content = f.read()
+        except FileNotFoundError:
+            return
+        if "sender_dependent_default_transport_maps" not in content:
+            with open(self.POSTFIX_MAIN_CF, "a", encoding="utf-8") as f:
+                f.write(f"\n# SVQPanel: IP de salida por dominio\n{directive}\n")
+            logger.info("main.cf: sender_dependent_default_transport_maps añadido")
+
+    def _rebuild_master_cf_smtp_binds(self):
+        """
+        Regenera la sección marcada en master.cf con un transporte smtp_X_X_X_X
+        por cada IP única presente en sender_dependent_transport.
+        Si no quedan entradas, elimina la sección.
+        """
+        entries = self._read_map(self.SENDER_TRANSPORT_MAP)
+        # Extraer IPs únicas de los valores  "smtp_X_X_X_X:"
+        unique: dict[str, str] = {}
+        for val in entries.values():
+            name = val.rstrip(":")
+            if name.startswith("smtp_") and "_" in name[5:]:
+                ip = name[5:].replace("_", ".")
+                unique[name] = ip
+
+        # Construir bloque
+        lines = [self._MASTER_START]
+        for name in sorted(unique):
+            ip = unique[name]
+            lines.append(f"{name} unix  -       -       n       -       -       smtp")
+            lines.append(f"  -o smtp_bind_address={ip}")
+            lines.append(f"  -o smtp_bind_address6=")
+        lines.append(self._MASTER_END)
+        new_block = "\n".join(lines) + "\n"
+
+        try:
+            with open(self.POSTFIX_MASTER_CF, "r", encoding="utf-8") as f:
+                content = f.read()
+        except FileNotFoundError:
+            return
+
+        pattern = re.escape(self._MASTER_START) + r".*?" + re.escape(self._MASTER_END) + r"\n?"
+        if re.search(pattern, content, flags=re.DOTALL):
+            if unique:
+                content = re.sub(pattern, new_block, content, flags=re.DOTALL)
+            else:
+                # Sin IPs: eliminar bloque completo
+                content = re.sub(r"\n?" + pattern, "", content, flags=re.DOTALL)
+        elif unique:
+            content += "\n" + new_block
+
+        tmp = self.POSTFIX_MASTER_CF + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as f:
+            f.write(content)
+        os.replace(tmp, self.POSTFIX_MASTER_CF)
+        logger.info("master.cf: sección SVQPANEL_SMTP_BIND actualizada")
+
+    def set_domain_sender_ip(self, domain_name: str, ipv4: str):
+        """
+        Configura la IP de salida SMTP para un dominio.
+        - Añade @domain → smtp_X_X_X_X: en sender_dependent_transport
+        - Garantiza el transporte en master.cf y la directiva en main.cf
+        """
+        if not self.mail_available():
+            return {"success": False, "reason": "postfix_not_installed"}
+        transport = self._transport_name(ipv4)
+        self._map_set(self.SENDER_TRANSPORT_MAP, f"@{domain_name}", f"{transport}:")
+        self._ensure_main_cf_sender_transport()
+        self._rebuild_master_cf_smtp_binds()
+        self._reload_postfix()
+        logger.info(f"set_domain_sender_ip: {domain_name} → {ipv4}")
+        return {"success": True, "domain": domain_name, "ip": ipv4}
+
+    def remove_domain_sender_ip(self, domain_name: str):
+        """
+        Elimina la IP de salida SMTP personalizada de un dominio.
+        El dominio pasará a usar la IP por defecto del servidor.
+        """
+        if not self.mail_available():
+            return {"success": False, "reason": "postfix_not_installed"}
+        self._map_remove(self.SENDER_TRANSPORT_MAP, f"@{domain_name}")
+        self._rebuild_master_cf_smtp_binds()
+        self._reload_postfix()
+        logger.info(f"remove_domain_sender_ip: {domain_name} → IP por defecto")
+        return {"success": True, "domain": domain_name}
 
     # ─────────────────────────────────────────────────────────────────────
     # Utilidades de estado
