@@ -1,7 +1,12 @@
 <template>
   <div>
-    <div class="d-flex justify-content-between align-items-center mb-4">
-      <h2><i class="bi bi-database"></i> Bases de Datos</h2>
+    <div class="db-head">
+      <div>
+        <h2><i class="bi bi-database"></i> Bases de Datos</h2>
+        <p class="text-muted mb-0">
+          {{ databases.length }} {{ databases.length === 1 ? 'base de datos' : 'bases de datos' }} · MariaDB
+        </p>
+      </div>
       <button class="btn btn-primary" @click="openCreateForm" v-if="!isMariaDBDisabled">
         <i class="bi bi-plus-circle"></i> Crear BD
       </button>
@@ -378,3 +383,8 @@ export default {
   }
 }
 </script>
+
+<style scoped>
+.db-head { display: flex; align-items: flex-start; justify-content: space-between; gap: var(--sp-4); margin-bottom: var(--sp-5); flex-wrap: wrap; }
+.db-head h2 { margin: 0 0 2px; }
+</style>
