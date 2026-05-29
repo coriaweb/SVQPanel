@@ -1,0 +1,167 @@
+/* ============================================================
+   SVQPanel — Design Tokens
+   Sistema de diseño 2026. Cargar en main.js ANTES de cualquier
+   estilo de Bootstrap. Todo cascadea por variables: cambiar
+   data-theme en <html> conmuta light/dark sin tocar componentes.
+   ============================================================ */
+
+:root {
+  /* ===== Brand / Primary (índigo "control") ===== */
+  --brand-50:  #eef2ff;
+  --brand-100: #e0e7ff;
+  --brand-200: #c7d2fe;
+  --brand-300: #a5b4fc;
+  --brand-400: #818cf8;
+  --brand-500: #6366f1;
+  --brand-600: #4f46e5;
+  --brand-700: #4338ca;
+  --brand-800: #3730a3;
+  --brand-900: #312e81;
+
+  /* ===== Semantic surfaces (LIGHT) ===== */
+  --bg:            #f7f8fa;
+  --bg-subtle:     #f1f3f7;
+  --surface:       #ffffff;
+  --surface-2:     #fbfcfe;
+  --surface-inset: #f3f5f9;
+  --border:        #e6e8ee;
+  --border-strong: #d3d7e0;
+
+  /* ===== Text ===== */
+  --text:           #1a1d27;
+  --text-secondary: #565c6e;
+  --text-muted:     #8b91a3;
+  --text-inverse:   #ffffff;
+  --text-on-brand:  #ffffff;
+
+  /* ===== Estados semánticos ===== */
+  --color-primary:       var(--brand-600);
+  --color-primary-hover: var(--brand-700);
+
+  --success: #16a34a;  --success-bg: #e9f7ef;  --success-border: #bbe7cb;
+  --warning: #d97706;  --warning-bg: #fdf3e3;  --warning-border: #f5dca8;
+  --danger:  #dc2626;  --danger-bg:  #fdecec;  --danger-border:  #f6c7c7;
+  --info:    #0891b2;  --info-bg:    #e6f6fb;  --info-border:    #b8e6f2;
+
+  /* ===== Radios ===== */
+  --r-sm: 8px;
+  --r-md: 12px;
+  --r-lg: 16px;
+  --r-xl: 20px;
+  --r-pill: 999px;
+
+  /* ===== Sombras (sutiles, por capas) ===== */
+  --shadow-xs: 0 1px 2px rgba(16,20,35,.04);
+  --shadow-sm: 0 1px 3px rgba(16,20,35,.06), 0 1px 2px rgba(16,20,35,.04);
+  --shadow-md: 0 4px 12px rgba(16,20,35,.07), 0 2px 4px rgba(16,20,35,.04);
+  --shadow-lg: 0 12px 32px rgba(16,20,35,.10), 0 4px 8px rgba(16,20,35,.05);
+  --shadow-focus: 0 0 0 3px rgba(79,70,229,.18);
+
+  /* ===== Espaciado (escala 4px) ===== */
+  --sp-1: 4px;  --sp-2: 8px;  --sp-3: 12px;  --sp-4: 16px;
+  --sp-5: 20px; --sp-6: 24px; --sp-8: 32px;  --sp-10: 40px; --sp-12: 48px;
+
+  /* ===== Tipografía ===== */
+  --font-sans: "Inter", "Inter var", -apple-system, BlinkMacSystemFont,
+               "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  --font-mono: "JetBrains Mono", "SF Mono", "Cascadia Code", Consolas,
+               "Liberation Mono", monospace;
+
+  --fs-xs: 12px;  --fs-sm: 13px;  --fs-base: 14px; --fs-md: 15px;
+  --fs-lg: 18px;  --fs-xl: 22px;  --fs-2xl: 28px;  --fs-3xl: 34px;
+  --lh-tight: 1.2; --lh-normal: 1.5; --lh-relaxed: 1.7;
+  --fw-regular: 400; --fw-medium: 500; --fw-semibold: 600; --fw-bold: 700;
+
+  /* ===== Layout ===== */
+  --sidebar-w: 248px;
+  --sidebar-w-collapsed: 64px;
+  --topbar-h: 60px;
+  --content-max: 1280px;
+
+  /* ===== Motion ===== */
+  --ease: cubic-bezier(.4,0,.2,1);
+  --ease-out: cubic-bezier(.16,1,.3,1);
+  --t-fast: 120ms; --t-base: 180ms; --t-slow: 260ms;
+
+  color-scheme: light;
+}
+
+/* ===================== DARK ===================== */
+[data-theme="dark"] {
+  --bg:            #0c0e14;
+  --bg-subtle:     #0a0c11;
+  --surface:       #14171f;
+  --surface-2:     #1a1e28;
+  --surface-inset: #0f1218;
+  --border:        #242936;
+  --border-strong: #323847;
+
+  --text:           #f0f2f6;
+  --text-secondary: #aab1c2;
+  --text-muted:     #6b7385;
+  --text-inverse:   #14171f;
+
+  --color-primary:       var(--brand-500);
+  --color-primary-hover: var(--brand-400);
+
+  --success: #34d399;  --success-bg: #0e2a20;  --success-border: #1d5a43;
+  --warning: #fbbf24;  --warning-bg: #2c220c;  --warning-border: #5a4717;
+  --danger:  #f87171;  --danger-bg:  #2c1414;  --danger-border:  #5a2626;
+  --info:    #38bdf8;  --info-bg:    #0a2530;  --info-border:    #16586e;
+
+  --shadow-xs: 0 1px 2px rgba(0,0,0,.3);
+  --shadow-sm: 0 1px 3px rgba(0,0,0,.4);
+  --shadow-md: 0 4px 12px rgba(0,0,0,.45);
+  --shadow-lg: 0 16px 40px rgba(0,0,0,.55);
+  --shadow-focus: 0 0 0 3px rgba(99,102,241,.30);
+
+  color-scheme: dark;
+}
+
+/* ============================================================
+   Base / reset mínimo
+   ============================================================ */
+* { box-sizing: border-box; }
+html, body, #app { height: 100%; margin: 0; }
+
+body {
+  font-family: var(--font-sans);
+  font-size: var(--fs-base);
+  line-height: var(--lh-normal);
+  color: var(--text);
+  background: var(--bg);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  text-rendering: optimizeLegibility;
+  transition: background var(--t-base) var(--ease), color var(--t-base) var(--ease);
+}
+
+a { color: var(--color-primary); }
+
+::-webkit-scrollbar { width: 10px; height: 10px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb {
+  background: var(--border-strong);
+  border-radius: var(--r-pill);
+  border: 2px solid var(--bg);
+}
+::-webkit-scrollbar-thumb:hover { background: var(--text-muted); }
+
+/* ============================================================
+   Animaciones reutilizables
+   ============================================================ */
+@keyframes svq-spin   { to { transform: rotate(360deg); } }
+@keyframes svq-shimmer { 0% { background-position: 100% 0; } 100% { background-position: -100% 0; } }
+@keyframes svq-pulse  { 0%,100% { opacity: 1; } 50% { opacity: .4; } }
+
+.svq-skeleton {
+  background: linear-gradient(90deg, var(--surface-inset) 25%,
+              var(--surface-2) 37%, var(--surface-inset) 63%);
+  background-size: 400% 100%;
+  animation: svq-shimmer 1.4s ease infinite;
+  border-radius: var(--r-sm);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation-duration: .01ms !important; transition-duration: .01ms !important; }
+}

@@ -9,6 +9,23 @@ export const useMainStore = defineStore('main', () => {
   const currentUser = ref(JSON.parse(localStorage.getItem('user') || 'null'))
   const token = ref(localStorage.getItem('token') || null)
   const isAuthenticated = ref(!!token.value)
+  const theme = ref(localStorage.getItem('theme') || 'light')
+  const sidebarCollapsed = ref(localStorage.getItem('sidebarCollapsed') === '1')
+
+  const applyTheme = (value) => {
+    theme.value = value
+    document.documentElement.dataset.theme = value
+    localStorage.setItem('theme', value)
+  }
+
+  const toggleTheme = () => {
+    applyTheme(theme.value === 'dark' ? 'light' : 'dark')
+  }
+
+  const toggleSidebar = () => {
+    sidebarCollapsed.value = !sidebarCollapsed.value
+    localStorage.setItem('sidebarCollapsed', sidebarCollapsed.value ? '1' : '0')
+  }
 
   const showNotification = (message, type = 'success', duration = 3000) => {
     notification.value = { message, type }
@@ -62,6 +79,11 @@ export const useMainStore = defineStore('main', () => {
     currentUser,
     token,
     isAuthenticated,
+    theme,
+    sidebarCollapsed,
+    applyTheme,
+    toggleTheme,
+    toggleSidebar,
     showNotification,
     setLoading,
     updateUsers,

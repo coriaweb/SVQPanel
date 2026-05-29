@@ -1,189 +1,126 @@
 <template>
-  <div class="d-flex h-100">
-    <!-- Solo mostrar layout si está autenticado -->
-    <template v-if="isAuthenticated">
-      <!-- Sidebar -->
-      <nav class="sidebar" style="width: 250px;">
-        <div class="p-3 border-bottom">
-          <h5 class="mb-0">
-            <i class="bi bi-server"></i> SVQPanel
-          </h5>
+  <div class="app-shell" v-if="isAuthenticated">
+    <!-- ===== Sidebar ===== -->
+    <aside class="sidebar" :class="{ 'is-collapsed': sidebarCollapsed }">
+      <div class="sidebar__brand">
+        <div class="brand-mark"><i class="bi bi-hexagon-fill"></i></div>
+        <span class="brand-name" v-if="!sidebarCollapsed">SVQPanel</span>
+        <button class="sidebar__toggle" @click="store.toggleSidebar()" :title="sidebarCollapsed ? 'Expandir' : 'Colapsar'">
+          <i class="bi" :class="sidebarCollapsed ? 'bi-chevron-right' : 'bi-chevron-left'"></i>
+        </button>
+      </div>
+
+      <nav class="sidebar__nav">
+        <div class="nav-group" v-for="group in visibleGroups" :key="group.label">
+          <p class="nav-group__label" v-if="!sidebarCollapsed">{{ group.label }}</p>
+          <div class="nav-group__sep" v-else></div>
+          <router-link
+            v-for="item in group.items"
+            :key="item.to"
+            :to="item.to"
+            class="nav-item"
+            :class="{ active: isActive(item.to) }"
+            :title="sidebarCollapsed ? item.label : ''"
+          >
+            <i class="bi" :class="item.icon"></i>
+            <span class="nav-item__label" v-if="!sidebarCollapsed">{{ item.label }}</span>
+          </router-link>
         </div>
-        <ul class="sidebar-nav">
-          <li>
-            <router-link to="/dashboard" :class="{active: route.path === '/dashboard'}">
-              <i class="bi bi-speedometer2"></i> Dashboard
-            </router-link>
-          </li>
-          <li v-if="currentUser?.is_admin">
-            <router-link to="/users" :class="{active: route.path === '/users'}">
-              <i class="bi bi-people"></i> Usuarios
-            </router-link>
-          </li>
-          <li v-if="['admin','reseller'].includes(currentUser?.role)">
-            <router-link to="/plans" :class="{active: route.path === '/plans'}">
-              <i class="bi bi-stack"></i> Planes
-            </router-link>
-          </li>
-          <li>
-            <router-link to="/domains" :class="{active: route.path === '/domains'}">
-              <i class="bi bi-globe"></i> Dominios
-            </router-link>
-          </li>
-          <li>
-            <router-link to="/files" :class="{active: route.path === '/files'}">
-              <i class="bi bi-folder2-open"></i> Archivos
-            </router-link>
-          </li>
-          <li v-if="currentUser?.role !== 'admin'">
-            <router-link to="/sftp" :class="{active: route.path === '/sftp'}">
-              <i class="bi bi-folder-symlink"></i> Acceso SFTP
-            </router-link>
-          </li>
-          <li>
-            <router-link to="/databases" :class="{active: route.path === '/databases'}">
-              <i class="bi bi-database"></i> Bases de Datos
-            </router-link>
-          </li>
-          <li>
-            <router-link to="/dns" :class="{active: route.path === '/dns'}">
-              <i class="bi bi-diagram-3"></i> DNS
-            </router-link>
-          </li>
-          <li>
-            <router-link to="/mail" :class="{active: route.path === '/mail'}">
-              <i class="bi bi-envelope"></i> Correo
-            </router-link>
-          </li>
-          <li>
-            <router-link to="/crons" :class="{active: route.path === '/crons'}">
-              <i class="bi bi-clock-history"></i> Tareas Cron
-            </router-link>
-          </li>
-          <li>
-            <router-link to="/backups" :class="{active: route.path === '/backups'}">
-              <i class="bi bi-hdd-stack"></i> Copias de seguridad
-            </router-link>
-          </li>
-          <li v-if="currentUser?.is_admin">
-            <router-link to="/system" :class="{active: route.path === '/system'}">
-              <i class="bi bi-hdd-rack"></i> Sistema
-            </router-link>
-          </li>
-          <li v-if="currentUser?.is_admin">
-            <router-link to="/security" :class="{active: route.path === '/security'}">
-              <i class="bi bi-shield-lock"></i> Seguridad
-            </router-link>
-          </li>
-          <li v-if="currentUser?.is_admin">
-            <router-link to="/server-ips" :class="{active: route.path === '/server-ips'}">
-              <i class="bi bi-hdd-network"></i> Gestión de IPs
-            </router-link>
-          </li>
-          <li v-if="currentUser?.is_admin">
-            <router-link to="/system/updates" :class="{active: route.path === '/system/updates'}">
-              <i class="bi bi-arrow-repeat"></i> Actualizaciones
-            </router-link>
-          </li>
-          <li v-if="currentUser?.is_admin">
-            <router-link to="/settings" :class="{active: route.path === '/settings'}">
-              <i class="bi bi-gear"></i> Configuración
-            </router-link>
-          </li>
-        </ul>
       </nav>
 
-      <!-- Main Content -->
-      <div style="flex: 1; overflow-y: auto;">
-        <!-- Navbar -->
-        <nav class="navbar">
-          <div class="container-fluid d-flex justify-content-between">
-            <span class="navbar-brand text-white">
-              <i class="bi bi-server"></i> SVQPanel v0.1.0
+      <div class="sidebar__footer">
+        <button class="nav-item nav-item--btn" @click="store.toggleTheme()" :title="sidebarCollapsed ? 'Cambiar tema' : ''">
+          <i class="bi" :class="theme === 'dark' ? 'bi-sun' : 'bi-moon-stars'"></i>
+          <span class="nav-item__label" v-if="!sidebarCollapsed">{{ theme === 'dark' ? 'Modo claro' : 'Modo oscuro' }}</span>
+        </button>
+      </div>
+    </aside>
+
+    <!-- ===== Main ===== -->
+    <div class="app-main">
+      <header class="topbar">
+        <div class="topbar__left">
+          <button class="icon-btn topbar__menu" @click="store.toggleSidebar()" title="Menú">
+            <i class="bi bi-list"></i>
+          </button>
+          <nav class="breadcrumb">
+            <i class="bi bi-house-door breadcrumb__home"></i>
+            <span class="breadcrumb__crumb" v-for="(crumb, i) in breadcrumbs" :key="i">
+              <span class="breadcrumb__sep">/</span>
+              <span class="breadcrumb__item" :class="{ 'is-current': i === breadcrumbs.length - 1 }">{{ crumb }}</span>
             </span>
-            <div class="navbar-user">
-              <!-- Campana de notificaciones -->
-              <div class="notif-dropdown" v-if="currentUser" @mouseenter="notifOpen=true" @mouseleave="notifOpen=false">
-                <button class="btn btn-sm btn-outline-light position-relative me-2" @click="openNotifs">
-                  <i class="bi bi-bell"></i>
-                  <span v-if="unreadCount > 0"
-                        class="position-absolute top-0 start-100 translate-middle badge rounded-pill bg-danger">
-                    {{ unreadCount > 99 ? '99+' : unreadCount }}
-                  </span>
-                </button>
-                <div class="notif-menu" v-show="notifOpen">
-                  <div class="notif-header d-flex justify-content-between align-items-center">
-                    <span class="fw-semibold">Notificaciones</span>
-                    <button v-if="unreadCount > 0" class="btn btn-link btn-sm p-0 text-decoration-none"
-                            @click="markAllRead">Marcar todas leídas</button>
-                  </div>
-                  <div v-if="!notifs.length" class="notif-empty text-muted">
-                    No tienes notificaciones.
-                  </div>
-                  <div v-else class="notif-list">
-                    <div v-for="n in notifs" :key="n.id"
-                         class="notif-item" :class="{unread: !n.is_read}"
-                         @click="markRead(n)">
-                      <div class="d-flex align-items-start gap-2">
-                        <i class="bi" :class="iconFor(n.level)"></i>
-                        <div class="flex-grow-1">
-                          <div class="notif-title">{{ n.title }}</div>
-                          <div class="notif-msg">{{ n.message }}</div>
-                          <div class="notif-time">{{ formatTime(n.created_at) }}</div>
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-                </div>
-              </div>
-
-              <!-- Dropdown usuario -->
-              <div class="user-dropdown" v-if="currentUser" @mouseenter="dropdownOpen=true" @mouseleave="dropdownOpen=false">
-                <button class="btn btn-sm btn-outline-light user-dropdown-trigger">
-                  <i class="bi bi-person-circle me-1"></i>
-                  {{ currentUser.username }}
-                  <i class="bi bi-chevron-down ms-1" style="font-size:.7rem"></i>
-                </button>
-                <div class="user-dropdown-menu" v-show="dropdownOpen">
-                  <router-link :to="`/users/${currentUser.id}/account`" class="dropdown-item" @click="dropdownOpen=false">
-                    <i class="bi bi-person me-2"></i> Mi cuenta
-                  </router-link>
-                  <router-link :to="`/users/${currentUser.id}/account`" class="dropdown-item" @click="dropdownOpen=false">
-                    <i class="bi bi-shield-lock me-2"></i> Doble factor (2FA)
-                  </router-link>
-                  <div class="dropdown-divider"></div>
-                  <button class="dropdown-item text-danger" @click="logout">
-                    <i class="bi bi-box-arrow-right me-2"></i> Cerrar sesión
-                  </button>
-                </div>
-              </div>
-            </div>
-          </div>
-        </nav>
-
-        <!-- Content -->
-        <div class="main-content">
-          <router-view></router-view>
+          </nav>
         </div>
-      </div>
-    </template>
 
-    <!-- Si no está autenticado, solo mostrar router-view (Login) -->
-    <router-view v-else></router-view>
+        <div class="topbar__right">
+          <button class="search-trigger" disabled title="Búsqueda global (próximamente)">
+            <i class="bi bi-search"></i>
+            <span class="search-trigger__hint">Buscar</span>
+            <kbd>⌘K</kbd>
+          </button>
 
-    <!-- Toast Notifications -->
-    <div class="alert-toast">
-      <div v-if="notification" :class="['alert', `alert-${notification.type}`]" role="alert">
-        {{ notification.message }}
-      </div>
+          <div class="user-menu" @mouseenter="dropdownOpen = true" @mouseleave="dropdownOpen = false">
+            <button class="user-menu__trigger">
+              <span class="avatar">{{ userInitials }}</span>
+              <span class="user-menu__name">{{ currentUser?.username }}</span>
+              <i class="bi bi-chevron-down"></i>
+            </button>
+            <transition name="dropdown">
+              <div class="user-menu__panel" v-show="dropdownOpen">
+                <div class="user-menu__head">
+                  <span class="avatar avatar--lg">{{ userInitials }}</span>
+                  <div>
+                    <p class="user-menu__head-name">{{ currentUser?.username }}</p>
+                    <p class="user-menu__head-role">{{ currentUser?.role || (currentUser?.is_admin ? 'admin' : 'usuario') }}</p>
+                  </div>
+                </div>
+                <router-link :to="`/users/${currentUser.id}/account`" class="dropdown-item" @click="dropdownOpen = false">
+                  <i class="bi bi-person"></i> Mi cuenta
+                </router-link>
+                <router-link :to="`/users/${currentUser.id}/account`" class="dropdown-item" @click="dropdownOpen = false">
+                  <i class="bi bi-shield-lock"></i> Doble factor (2FA)
+                </router-link>
+                <button class="dropdown-item" @click="store.toggleTheme()">
+                  <i class="bi" :class="theme === 'dark' ? 'bi-sun' : 'bi-moon-stars'"></i>
+                  {{ theme === 'dark' ? 'Modo claro' : 'Modo oscuro' }}
+                </button>
+                <div class="dropdown-sep"></div>
+                <button class="dropdown-item dropdown-item--danger" @click="logout">
+                  <i class="bi bi-box-arrow-right"></i> Cerrar sesión
+                </button>
+              </div>
+            </transition>
+          </div>
+        </div>
+      </header>
+
+      <!-- Backdrop móvil cuando el sidebar está abierto -->
+      <div class="app-backdrop" @click="store.toggleSidebar()"></div>
+
+      <main class="app-content">
+        <router-view></router-view>
+      </main>
+    </div>
+
+    <!-- Toast -->
+    <div class="toast-stack">
+      <transition name="toast">
+        <div v-if="notification" class="toast" :class="`toast--${notification.type}`">
+          <i class="bi" :class="toastIcon(notification.type)"></i>
+          <span>{{ notification.message }}</span>
+        </div>
+      </transition>
     </div>
   </div>
+
+  <!-- Sin autenticar -->
+  <router-view v-else></router-view>
 </template>
 
 <script>
 import { useRoute, useRouter } from 'vue-router'
 import { useMainStore } from './stores/useMainStore'
-import { computed, ref, watch, onMounted, onUnmounted } from 'vue'
+import { computed, ref } from 'vue'
 import api from './services/api'
 
 export default {
@@ -192,249 +129,379 @@ export default {
     const route = useRoute()
     const router = useRouter()
     const store = useMainStore()
+
     const notification = computed(() => store.notification)
     const isAuthenticated = computed(() => store.isAuthenticated)
     const currentUser = computed(() => store.currentUser)
+    const theme = computed(() => store.theme)
+    const sidebarCollapsed = computed(() => store.sidebarCollapsed)
+    const dropdownOpen = ref(false)
 
-    const handleLogout = async () => {
-      try {
-        await api.logout()
-      } catch (error) {
-        console.error('Error en logout:', error)
-      }
+    // ===== Definición de navegación agrupada =====
+    const navGroups = [
+      {
+        label: 'Hosting',
+        items: [
+          { to: '/dashboard', label: 'Dashboard',      icon: 'bi-speedometer2' },
+          { to: '/domains',   label: 'Dominios',        icon: 'bi-globe2' },
+          { to: '/databases', label: 'Bases de datos',  icon: 'bi-database' },
+          { to: '/mail',      label: 'Correo',          icon: 'bi-envelope' },
+          { to: '/dns',       label: 'DNS',             icon: 'bi-diagram-3' },
+        ],
+      },
+      {
+        label: 'Archivos',
+        items: [
+          { to: '/files',   label: 'Archivos',     icon: 'bi-folder2-open' },
+          { to: '/sftp',    label: 'Acceso SFTP',  icon: 'bi-folder-symlink', roles: ['notAdmin'] },
+          { to: '/crons',   label: 'Tareas Cron',  icon: 'bi-clock-history' },
+          { to: '/backups', label: 'Copias',       icon: 'bi-hdd-stack' },
+        ],
+      },
+      {
+        label: 'Administración',
+        items: [
+          { to: '/users',      label: 'Usuarios',  icon: 'bi-people',       roles: ['admin'] },
+          { to: '/plans',      label: 'Planes',    icon: 'bi-stack',        roles: ['admin', 'reseller'] },
+          { to: '/server-ips', label: 'IPs',       icon: 'bi-hdd-network',  roles: ['admin'] },
+        ],
+      },
+      {
+        label: 'Sistema',
+        items: [
+          { to: '/system',         label: 'Servicios',       icon: 'bi-hdd-rack',     roles: ['admin'] },
+          { to: '/security',       label: 'Seguridad',       icon: 'bi-shield-lock',  roles: ['admin'] },
+          { to: '/system/updates', label: 'Actualizaciones', icon: 'bi-arrow-repeat', roles: ['admin'] },
+          { to: '/settings',       label: 'Configuración',   icon: 'bi-gear',         roles: ['admin'] },
+        ],
+      },
+    ]
 
+    const canSee = (item) => {
+      if (!item.roles) return true
+      const u = currentUser.value || {}
+      return item.roles.some((r) => {
+        if (r === 'admin') return u.is_admin
+        if (r === 'notAdmin') return !u.is_admin
+        return u.role === r
+      })
+    }
+
+    const visibleGroups = computed(() =>
+      navGroups
+        .map((g) => ({ ...g, items: g.items.filter(canSee) }))
+        .filter((g) => g.items.length > 0)
+    )
+
+    const isActive = (to) =>
+      to === '/dashboard' ? route.path === to : route.path.startsWith(to)
+
+    // ===== Breadcrumbs =====
+    const titleByPath = {}
+    navGroups.forEach((g) => g.items.forEach((it) => { titleByPath[it.to] = it.label }))
+    const breadcrumbs = computed(() => {
+      const match = Object.keys(titleByPath)
+        .filter((p) => isActive(p))
+        .sort((a, b) => b.length - a.length)[0]
+      return match ? [titleByPath[match]] : [route.name || 'Inicio']
+    })
+
+    const userInitials = computed(() => {
+      const n = currentUser.value?.username || '?'
+      return n.slice(0, 2).toUpperCase()
+    })
+
+    const toastIcon = (type) => ({
+      success: 'bi-check-circle-fill',
+      danger:  'bi-exclamation-octagon-fill',
+      error:   'bi-exclamation-octagon-fill',
+      warning: 'bi-exclamation-triangle-fill',
+      info:    'bi-info-circle-fill',
+    }[type] || 'bi-info-circle-fill')
+
+    const logout = async () => {
+      dropdownOpen.value = false
+      try { await api.logout() } catch (e) { console.error('Error en logout:', e) }
       store.logout()
       store.showNotification('Sesión cerrada correctamente', 'success')
       await router.push('/login')
     }
 
-    const dropdownOpen = ref(false)
-
-    const logout = async () => {
-      dropdownOpen.value = false
-      await handleLogout()
-    }
-
-    // ─── Notificaciones ───────────────────────────────────────────────
-    const notifOpen    = ref(false)
-    const notifs       = ref([])
-    const unreadCount  = ref(0)
-    let   pollTimer    = null
-
-    const loadUnread = async () => {
-      if (!store.isAuthenticated) return
-      try {
-        const r = await api.getUnreadCount()
-        unreadCount.value = r?.unread || 0
-      } catch { /* silencioso */ }
-    }
-
-    const openNotifs = async () => {
-      try {
-        notifs.value = await api.getNotifications(false)
-      } catch { notifs.value = [] }
-    }
-
-    const markRead = async (n) => {
-      if (n.is_read) return
-      try {
-        await api.markNotificationRead(n.id)
-        n.is_read = true
-        unreadCount.value = Math.max(0, unreadCount.value - 1)
-      } catch { /* silencioso */ }
-    }
-
-    const markAllRead = async () => {
-      try {
-        await api.markAllNotificationsRead()
-        notifs.value.forEach(n => { n.is_read = true })
-        unreadCount.value = 0
-      } catch { /* silencioso */ }
-    }
-
-    const iconFor = (level) => ({
-      danger:  'bi-exclamation-octagon-fill text-danger',
-      warning: 'bi-exclamation-triangle-fill text-warning',
-      info:    'bi-info-circle-fill text-primary',
-    }[level] || 'bi-info-circle-fill text-primary')
-
-    const formatTime = (iso) => {
-      if (!iso) return ''
-      const d = new Date(iso)
-      return d.toLocaleString('es-ES', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })
-    }
-
-    // Poll del contador cada 60s; arranca/para según autenticación
-    watch(isAuthenticated, (val) => {
-      if (val) {
-        loadUnread()
-        if (!pollTimer) pollTimer = setInterval(loadUnread, 60000)
-      } else {
-        if (pollTimer) { clearInterval(pollTimer); pollTimer = null }
-        unreadCount.value = 0
-        notifs.value = []
-      }
-    }, { immediate: true })
-
-    onMounted(loadUnread)
-    onUnmounted(() => { if (pollTimer) clearInterval(pollTimer) })
-
     return {
-      route,
-      notification,
-      isAuthenticated,
-      currentUser,
-      handleLogout,
-      logout,
-      dropdownOpen,
-      notifOpen, notifs, unreadCount,
-      openNotifs, markRead, markAllRead, iconFor, formatTime,
+      store, route, notification, isAuthenticated, currentUser, theme,
+      sidebarCollapsed, dropdownOpen, visibleGroups, isActive, breadcrumbs,
+      userInitials, toastIcon, logout,
     }
-  }
+  },
 }
 </script>
 
 <style scoped>
-.h-100 {
+/* ===================== Shell ===================== */
+.app-shell {
+  display: flex;
   height: 100vh;
-}
-
-.navbar-user {
-  display: flex;
-  align-items: center;
-}
-
-.btn-outline-light:hover {
-  background-color: rgba(255, 255, 255, 0.1);
-  border-color: white;
-}
-
-/* Dropdown usuario */
-.user-dropdown {
-  position: relative;
-}
-
-.user-dropdown-trigger {
-  display: flex;
-  align-items: center;
-}
-
-.user-dropdown-menu {
-  position: absolute;
-  right: 0;
-  top: calc(100% + 4px);
-  background: #fff;
-  border: 1px solid #dee2e6;
-  border-radius: 8px;
-  box-shadow: 0 4px 16px rgba(0,0,0,.15);
-  min-width: 190px;
-  z-index: 9999;
-  padding: 4px 0;
-}
-
-.user-dropdown-menu .dropdown-item {
-  display: flex;
-  align-items: center;
-  padding: 8px 16px;
-  color: #333;
-  text-decoration: none;
-  font-size: .9rem;
-  cursor: pointer;
-  background: none;
-  border: none;
-  width: 100%;
-  text-align: left;
-  transition: background .15s;
-}
-
-.user-dropdown-menu .dropdown-item:hover {
-  background: #f0f4ff;
-  color: #4a6cf7;
-}
-
-.user-dropdown-menu .dropdown-item.text-danger:hover {
-  background: #fff0f0;
-  color: #dc3545;
-}
-
-.user-dropdown-menu .dropdown-divider {
-  margin: 4px 0;
-  border-top: 1px solid #dee2e6;
-}
-
-/* Campana de notificaciones */
-.notif-dropdown {
-  position: relative;
-  display: inline-block;
-}
-
-.notif-menu {
-  position: absolute;
-  right: 0;
-  top: calc(100% + 4px);
-  background: #fff;
-  border: 1px solid #dee2e6;
-  border-radius: 8px;
-  box-shadow: 0 4px 16px rgba(0,0,0,.15);
-  width: 340px;
-  max-height: 420px;
   overflow: hidden;
-  z-index: 9999;
+  background: var(--bg);
+}
+.app-main {
+  flex: 1;
   display: flex;
   flex-direction: column;
+  min-width: 0;
 }
-
-.notif-header {
-  padding: 10px 14px;
-  border-bottom: 1px solid #eee;
-  color: #333;
-  font-size: .9rem;
-}
-
-.notif-empty {
-  padding: 24px 14px;
-  text-align: center;
-  font-size: .85rem;
-}
-
-.notif-list {
+.app-content {
+  flex: 1;
   overflow-y: auto;
+  padding: var(--sp-6);
 }
 
-.notif-item {
-  padding: 10px 14px;
-  border-bottom: 1px solid #f2f2f2;
+/* ===================== Sidebar ===================== */
+.sidebar {
+  width: var(--sidebar-w);
+  flex-shrink: 0;
+  background: var(--surface);
+  border-right: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  transition: width var(--t-base) var(--ease);
+}
+.sidebar.is-collapsed { width: var(--sidebar-w-collapsed); }
+
+.sidebar__brand {
+  height: var(--topbar-h);
+  display: flex;
+  align-items: center;
+  gap: var(--sp-3);
+  padding: 0 var(--sp-4);
+  border-bottom: 1px solid var(--border);
+  position: relative;
+}
+.brand-mark {
+  width: 32px; height: 32px;
+  display: grid; place-items: center;
+  border-radius: var(--r-md);
+  background: linear-gradient(135deg, var(--brand-500), var(--brand-700));
+  color: #fff;
+  font-size: 16px;
+  flex-shrink: 0;
+}
+.brand-name {
+  font-weight: var(--fw-bold);
+  font-size: var(--fs-md);
+  letter-spacing: -.01em;
+  color: var(--text);
+}
+.sidebar__toggle {
+  margin-left: auto;
+  width: 26px; height: 26px;
+  border: none; background: transparent;
+  color: var(--text-muted);
+  border-radius: var(--r-sm);
   cursor: pointer;
-  transition: background .15s;
+  display: grid; place-items: center;
+  transition: background var(--t-fast), color var(--t-fast);
+}
+.sidebar__toggle:hover { background: var(--surface-inset); color: var(--text); }
+.sidebar.is-collapsed .sidebar__toggle {
+  position: absolute; right: -13px; top: 50%; transform: translateY(-50%);
+  background: var(--surface); border: 1px solid var(--border);
+  box-shadow: var(--shadow-sm); z-index: 5;
 }
 
-.notif-item:hover {
-  background: #f7f9ff;
+.sidebar__nav {
+  flex: 1;
+  overflow-y: auto;
+  padding: var(--sp-3) var(--sp-3);
+}
+.nav-group__label {
+  font-size: var(--fs-xs);
+  font-weight: var(--fw-semibold);
+  text-transform: uppercase;
+  letter-spacing: .06em;
+  color: var(--text-muted);
+  margin: var(--sp-4) var(--sp-3) var(--sp-2);
+}
+.nav-group__sep { height: 1px; background: var(--border); margin: var(--sp-3) var(--sp-2); }
+
+.nav-item {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-3);
+  padding: 9px var(--sp-3);
+  margin: 2px 0;
+  border-radius: var(--r-md);
+  color: var(--text-secondary);
+  text-decoration: none;
+  font-size: var(--fs-base);
+  font-weight: var(--fw-medium);
+  position: relative;
+  transition: background var(--t-fast), color var(--t-fast);
+  white-space: nowrap;
+}
+.nav-item .bi { font-size: 17px; width: 20px; text-align: center; flex-shrink: 0; }
+.nav-item:hover { background: var(--surface-inset); color: var(--text); }
+.nav-item.active { background: var(--brand-50); color: var(--color-primary); font-weight: var(--fw-semibold); }
+[data-theme="dark"] .nav-item.active { background: var(--surface-2); color: var(--brand-400); }
+.nav-item.active::before {
+  content: ''; position: absolute; left: -1px; top: 8px; bottom: 8px;
+  width: 3px; border-radius: var(--r-pill); background: var(--color-primary);
+}
+.sidebar.is-collapsed .nav-item { justify-content: center; padding: 9px 0; }
+.sidebar.is-collapsed .nav-item.active::before { left: 0; top: 6px; bottom: 6px; }
+
+.sidebar__footer { padding: var(--sp-3); border-top: 1px solid var(--border); }
+.nav-item--btn { width: 100%; border: none; background: transparent; cursor: pointer; text-align: left; }
+
+/* ===================== Topbar ===================== */
+.topbar {
+  height: var(--topbar-h);
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 var(--sp-6);
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
+}
+.topbar__left, .topbar__right { display: flex; align-items: center; gap: var(--sp-3); }
+.topbar__menu { display: none; }
+
+.icon-btn {
+  width: 36px; height: 36px;
+  border: none; background: transparent;
+  color: var(--text-secondary);
+  border-radius: var(--r-md);
+  cursor: pointer; display: grid; place-items: center;
+  font-size: 18px;
+  transition: background var(--t-fast);
+}
+.icon-btn:hover { background: var(--surface-inset); color: var(--text); }
+
+.breadcrumb { display: flex; align-items: center; gap: var(--sp-2); font-size: var(--fs-base); }
+.breadcrumb__crumb { display: flex; align-items: center; gap: var(--sp-2); }
+.breadcrumb__home { color: var(--text-muted); }
+.breadcrumb__sep { color: var(--text-muted); }
+.breadcrumb__item { color: var(--text-secondary); }
+.breadcrumb__item.is-current { color: var(--text); font-weight: var(--fw-semibold); }
+
+.search-trigger {
+  display: flex; align-items: center; gap: var(--sp-2);
+  padding: 7px var(--sp-3);
+  background: var(--surface-inset);
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
+  color: var(--text-muted);
+  font-size: var(--fs-sm);
+  cursor: not-allowed;
+}
+.search-trigger__hint { min-width: 90px; text-align: left; }
+.search-trigger kbd {
+  font-family: var(--font-sans); font-size: 11px;
+  background: var(--surface); border: 1px solid var(--border);
+  border-radius: 6px; padding: 1px 6px; color: var(--text-secondary);
 }
 
-.notif-item.unread {
-  background: #eef3ff;
+/* ===== User menu ===== */
+.user-menu { position: relative; }
+.user-menu__trigger {
+  display: flex; align-items: center; gap: var(--sp-2);
+  padding: 5px var(--sp-2) 5px 5px;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  border-radius: var(--r-pill);
+  cursor: pointer;
+  color: var(--text);
+  font-size: var(--fs-sm);
+  font-weight: var(--fw-medium);
+  transition: background var(--t-fast), border-color var(--t-fast);
 }
-
-.notif-item.unread:hover {
-  background: #e3ebff;
+.user-menu__trigger:hover { background: var(--surface-inset); border-color: var(--border-strong); }
+.user-menu__trigger .bi { font-size: 11px; color: var(--text-muted); }
+.avatar {
+  width: 28px; height: 28px; border-radius: 50%;
+  display: grid; place-items: center;
+  background: linear-gradient(135deg, var(--brand-400), var(--brand-600));
+  color: #fff; font-size: 11px; font-weight: var(--fw-bold);
+  flex-shrink: 0;
 }
+.avatar--lg { width: 40px; height: 40px; font-size: 14px; }
 
-.notif-title {
-  font-weight: 600;
-  font-size: .85rem;
-  color: #222;
+.user-menu__panel {
+  position: absolute; right: 0; top: calc(100% + 8px);
+  min-width: 240px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--r-lg);
+  box-shadow: var(--shadow-lg);
+  padding: var(--sp-2);
+  z-index: 1000;
 }
-
-.notif-msg {
-  font-size: .8rem;
-  color: #555;
-  margin-top: 2px;
+.user-menu__head { display: flex; align-items: center; gap: var(--sp-3); padding: var(--sp-3); }
+.user-menu__head-name { margin: 0; font-weight: var(--fw-semibold); color: var(--text); }
+.user-menu__head-role { margin: 0; font-size: var(--fs-sm); color: var(--text-muted); text-transform: capitalize; }
+.dropdown-item {
+  display: flex; align-items: center; gap: var(--sp-3);
+  width: 100%; padding: 9px var(--sp-3);
+  border: none; background: transparent; cursor: pointer;
+  color: var(--text-secondary); text-decoration: none;
+  font-size: var(--fs-base); border-radius: var(--r-md);
+  text-align: left; transition: background var(--t-fast), color var(--t-fast);
 }
+.dropdown-item .bi { width: 18px; }
+.dropdown-item:hover { background: var(--surface-inset); color: var(--text); }
+.dropdown-item--danger { color: var(--danger); }
+.dropdown-item--danger:hover { background: var(--danger-bg); color: var(--danger); }
+.dropdown-sep { height: 1px; background: var(--border); margin: var(--sp-2) 0; }
 
-.notif-time {
-  font-size: .72rem;
-  color: #999;
-  margin-top: 4px;
+.dropdown-enter-active, .dropdown-leave-active { transition: opacity var(--t-fast) var(--ease), transform var(--t-fast) var(--ease); }
+.dropdown-enter-from, .dropdown-leave-to { opacity: 0; transform: translateY(-6px); }
+
+/* ===================== Toast ===================== */
+.toast-stack { position: fixed; bottom: var(--sp-6); right: var(--sp-6); z-index: 9999; }
+.toast {
+  display: flex; align-items: center; gap: var(--sp-3);
+  min-width: 280px; max-width: 400px;
+  padding: var(--sp-3) var(--sp-4);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--text-muted);
+  border-radius: var(--r-md);
+  box-shadow: var(--shadow-lg);
+  color: var(--text);
+  font-size: var(--fs-base);
+}
+.toast .bi { font-size: 18px; }
+.toast--success { border-left-color: var(--success); } .toast--success .bi { color: var(--success); }
+.toast--danger, .toast--error { border-left-color: var(--danger); } .toast--danger .bi, .toast--error .bi { color: var(--danger); }
+.toast--warning { border-left-color: var(--warning); } .toast--warning .bi { color: var(--warning); }
+.toast--info { border-left-color: var(--info); } .toast--info .bi { color: var(--info); }
+.toast-enter-active, .toast-leave-active { transition: opacity var(--t-base) var(--ease), transform var(--t-base) var(--ease-out); }
+.toast-enter-from, .toast-leave-to { opacity: 0; transform: translateX(20px); }
+
+/* ===================== Backdrop (móvil) ===================== */
+.app-backdrop { display: none; }
+
+/* ===================== Responsive ===================== */
+@media (max-width: 768px) {
+  .sidebar {
+    position: fixed; top: 0; bottom: 0; left: 0; z-index: 1100;
+    transform: translateX(-100%);
+    box-shadow: var(--shadow-lg);
+    width: var(--sidebar-w) !important;
+  }
+  .sidebar:not(.is-collapsed) { transform: translateX(0); }
+  .sidebar.is-collapsed { transform: translateX(-100%); }
+  .sidebar__toggle { display: none; }
+  .topbar__menu { display: grid; }
+  .search-trigger__hint, .search-trigger kbd { display: none; }
+  .user-menu__name { display: none; }
+  .app-content { padding: var(--sp-4); }
+  .app-backdrop {
+    display: block; position: fixed; inset: 0; z-index: 1050;
+    background: rgba(0,0,0,.4); opacity: 0; pointer-events: none;
+    transition: opacity var(--t-base);
+  }
+  .sidebar:not(.is-collapsed) ~ .app-main .app-backdrop { opacity: 1; pointer-events: auto; }
 }
 </style>
