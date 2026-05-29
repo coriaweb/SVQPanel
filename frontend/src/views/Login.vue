@@ -2,8 +2,9 @@
   <div class="login-container">
     <div class="login-card">
       <div class="login-header">
+        <div class="login-mark"><i class="bi bi-hexagon-fill"></i></div>
         <h1>SVQPanel</h1>
-        <p class="version">v0.1.0</p>
+        <p class="version">Panel de control · v0.1.0</p>
       </div>
 
       <!-- ── Paso 1: usuario + contraseña ── -->
@@ -209,115 +210,79 @@ export default {
   justify-content: center;
   align-items: center;
   min-height: 100vh;
-  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', sans-serif;
+  padding: var(--sp-4);
+  font-family: var(--font-sans);
+  position: relative;
+  overflow: hidden;
+  background:
+    radial-gradient(900px circle at 15% 20%, rgba(99,102,241,.18), transparent 45%),
+    radial-gradient(800px circle at 85% 80%, rgba(67,56,202,.20), transparent 45%),
+    var(--bg);
+}
+/* malla sutil de fondo */
+.login-container::before {
+  content: '';
+  position: absolute; inset: 0;
+  background-image:
+    linear-gradient(var(--border) 1px, transparent 1px),
+    linear-gradient(90deg, var(--border) 1px, transparent 1px);
+  background-size: 48px 48px;
+  opacity: .35;
+  mask-image: radial-gradient(ellipse at center, black, transparent 75%);
 }
 
 .login-card {
-  background: white;
-  border-radius: 10px;
-  box-shadow: 0 10px 40px rgba(0, 0, 0, 0.2);
+  position: relative;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--r-xl);
+  box-shadow: var(--shadow-lg);
   width: 100%;
-  max-width: 400px;
-  padding: 40px;
+  max-width: 410px;
+  padding: var(--sp-10) var(--sp-8);
 }
 
-.login-header {
-  text-align: center;
-  margin-bottom: 30px;
+.login-header { text-align: center; margin-bottom: var(--sp-8); }
+.login-mark {
+  width: 54px; height: 54px; margin: 0 auto var(--sp-4);
+  display: grid; place-items: center;
+  border-radius: var(--r-lg);
+  background: linear-gradient(135deg, var(--brand-500), var(--brand-700));
+  color: #fff; font-size: 26px;
+  box-shadow: 0 8px 24px rgba(79,70,229,.35);
 }
-
 .login-header h1 {
-  margin: 0;
-  font-size: 2em;
-  font-weight: 700;
-  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-  -webkit-background-clip: text;
-  -webkit-text-fill-color: transparent;
-  background-clip: text;
+  margin: 0; font-size: var(--fs-2xl); font-weight: var(--fw-bold);
+  letter-spacing: -.02em; color: var(--text);
 }
+.login-header .version { margin: var(--sp-1) 0 0; color: var(--text-muted); font-size: var(--fs-sm); }
 
-.login-header .version {
-  margin: 5px 0 0 0;
-  color: #999;
-  font-size: 0.9em;
-}
-
-.login-form {
-  margin-bottom: 20px;
-}
-
-.form-group {
-  margin-bottom: 20px;
-}
-
-.form-group label {
-  display: block;
-  margin-bottom: 5px;
-  font-weight: 500;
-  color: #333;
-}
+.login-form { margin-bottom: var(--sp-4); }
+.form-group { margin-bottom: var(--sp-4); }
+.form-group label { display: block; margin-bottom: 6px; font-weight: var(--fw-medium); color: var(--text-secondary); font-size: var(--fs-sm); }
 
 .form-control {
-  width: 100%;
-  padding: 10px;
-  border: 1px solid #ddd;
-  border-radius: 5px;
-  font-size: 1em;
-  transition: border-color 0.3s;
+  width: 100%; padding: 11px var(--sp-3);
+  border: 1px solid var(--border-strong); border-radius: var(--r-md);
+  font-size: var(--fs-base); background: var(--surface); color: var(--text);
+  transition: border-color var(--t-fast), box-shadow var(--t-fast);
 }
-
-.form-control:focus {
-  outline: none;
-  border-color: #667eea;
-  box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.1);
-}
+.form-control::placeholder { color: var(--text-muted); }
+.form-control:focus { outline: none; border-color: var(--color-primary); box-shadow: var(--shadow-focus); }
 
 .btn-login {
-  width: 100%;
-  padding: 12px;
-  font-size: 1em;
-  font-weight: 600;
-  border: none;
-  border-radius: 5px;
-  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-  color: white;
-  cursor: pointer;
-  transition: transform 0.2s, box-shadow 0.2s;
+  width: 100%; padding: 12px; font-size: var(--fs-md); font-weight: var(--fw-semibold);
+  border: none; border-radius: var(--r-md);
+  background: var(--color-primary); color: #fff; cursor: pointer;
+  transition: transform var(--t-fast), background var(--t-fast), box-shadow var(--t-fast);
 }
+.btn-login:hover:not(:disabled) { background: var(--color-primary-hover); transform: translateY(-1px); box-shadow: var(--shadow-md); }
+.btn-login:disabled { opacity: .6; cursor: not-allowed; }
 
-.btn-login:hover:not(:disabled) {
-  transform: translateY(-2px);
-  box-shadow: 0 5px 20px rgba(102, 126, 234, 0.4);
-}
+.alert { margin-bottom: var(--sp-4); padding: var(--sp-3); border-radius: var(--r-md); font-size: var(--fs-sm); }
+.alert-danger { background: var(--danger-bg); color: var(--danger); border: 1px solid var(--danger-border); }
 
-.btn-login:disabled {
-  opacity: 0.7;
-  cursor: not-allowed;
-}
-
-.alert {
-  margin-bottom: 15px;
-  padding: 12px;
-  border-radius: 5px;
-}
-
-.alert-danger {
-  background-color: #f8d7da;
-  color: #721c24;
-  border: 1px solid #f5c6cb;
-}
-
-.login-footer {
-  text-align: center;
-  border-top: 1px solid #eee;
-  padding-top: 20px;
-  margin-top: 20px;
-}
-
-.login-footer .text-muted {
-  margin: 0;
-  font-size: 0.85em;
-  color: #999;
-}
+.login-footer { text-align: center; border-top: 1px solid var(--border); padding-top: var(--sp-5); margin-top: var(--sp-5); }
+.login-footer .text-muted { margin: 0; font-size: var(--fs-sm); color: var(--text-muted); }
+.twofa-icon .bi { color: var(--color-primary); }
 </style>

@@ -52,6 +52,18 @@
 .text-info { color: var(--info) !important; }
 h1,h2,h3,h4,h5,h6 { color: var(--text); }
 
+/* Títulos de página (las vistas usan <h2><i> Título</h2> como cabecera) */
+.main-content > h2:first-child,
+.main-content > div > h2:first-child,
+.app-content h2 {
+  font-size: var(--fs-2xl);
+  font-weight: var(--fw-bold);
+  letter-spacing: -.02em;
+}
+.app-content h2 .bi, .main-content h2 .bi { color: var(--color-primary); }
+/* iconos de cabecera dentro de títulos un poco más sutiles */
+.container-fluid { padding-left: 0; padding-right: 0; }
+
 /* ---- Botones ---- */
 .btn {
   border-radius: var(--r-md) !important;
