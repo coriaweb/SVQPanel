@@ -7,15 +7,29 @@
         <h2 class="mb-1"><i class="bi bi-shield-lock me-2"></i>Seguridad</h2>
         <p class="text-muted mb-0">Firewall (nftables), fail2ban, listas IP, conexiones y auditoría</p>
       </div>
-      <div class="d-flex gap-2">
-        <span v-if="fwStatus" class="badge"
-              :class="fwStatus.table_present ? 'bg-success' : 'bg-danger'">
-          nftables {{ fwStatus.table_present ? 'activo' : 'inactivo' }}
-        </span>
-        <span v-if="f2bStatus" class="badge"
-              :class="f2bStatus.running ? 'bg-success' : 'bg-warning text-dark'">
-          fail2ban {{ f2bStatus.running ? 'ok' : 'parado' }}
-        </span>
+      <div class="sec-head-right">
+        <div class="sec-score" v-if="fwStatus || f2bStatus">
+          <svg viewBox="0 0 60 60" class="sec-score__ring">
+            <circle cx="30" cy="30" r="26" class="sec-score__track" />
+            <circle cx="30" cy="30" r="26" class="sec-score__fill"
+                    :stroke="scoreColor" :stroke-dasharray="scoreDash" />
+            <text x="30" y="34" class="sec-score__num">{{ securityScore }}</text>
+          </svg>
+          <div class="sec-score__meta">
+            <span class="sec-score__label" :style="{ color: scoreColor }">Postura {{ scoreLabel }}</span>
+            <span class="sec-score__sub">de 100 puntos</span>
+          </div>
+        </div>
+        <div class="d-flex gap-2">
+          <span v-if="fwStatus" class="badge"
+                :class="fwStatus.table_present ? 'bg-success' : 'bg-danger'">
+            nftables {{ fwStatus.table_present ? 'activo' : 'inactivo' }}
+          </span>
+          <span v-if="f2bStatus" class="badge"
+                :class="f2bStatus.running ? 'bg-success' : 'bg-warning text-dark'">
+            fail2ban {{ f2bStatus.running ? 'ok' : 'parado' }}
+          </span>
+        </div>
       </div>
     </div>
 
@@ -790,7 +804,7 @@
 </template>
 
 <script setup>
-import { ref, onMounted } from 'vue'
+import { ref, computed, onMounted } from 'vue'
 import api from '../services/api'
 import Modal from '../components/Modal.vue'
 
@@ -799,6 +813,28 @@ const tab = ref('firewall')
 
 const fwStatus  = ref(null)
 const f2bStatus = ref(null)
+
+// ─── Score de seguridad (derivado de datos ya cargados) ──────────────────────
+const securityScore = computed(() => {
+  let score = 0
+  const fw = fwStatus.value, f2b = f2bStatus.value
+  if (fw?.table_present) score += 35                         // firewall activo
+  if (fw?.policy === 'drop' || fw?.default_policy === 'drop') score += 15
+  if ((fw?.whitelist_count || 0) > 0) score += 10            // whitelist configurada
+  if ((fw?.rule_count || 0) > 0) score += 10                 // reglas definidas
+  if (f2b?.running) score += 25                              // fail2ban activo
+  if ((f2b?.jails?.length || 0) > 0) score += 5              // jails activos
+  return Math.min(100, score)
+})
+const scoreTone = computed(() =>
+  securityScore.value >= 80 ? 'success' : securityScore.value >= 50 ? 'warning' : 'danger')
+const scoreLabel = computed(() =>
+  securityScore.value >= 80 ? 'Buena' : securityScore.value >= 50 ? 'Mejorable' : 'Débil')
+const scoreColor = computed(() => `var(--${scoreTone.value})`)
+const scoreDash = computed(() => {
+  const c = 2 * Math.PI * 26
+  return `${c * securityScore.value / 100} ${c}`
+})
 
 const rules     = ref([])
 const loadingFw = ref(false)
@@ -1087,4 +1123,14 @@ onMounted(async () => {
 
 <style scoped>
 .nav-tabs .nav-link { cursor: pointer; }
+
+.sec-head-right { display: flex; align-items: center; gap: var(--sp-5); flex-wrap: wrap; }
+.sec-score { display: flex; align-items: center; gap: var(--sp-3); }
+.sec-score__ring { width: 56px; height: 56px; transform: rotate(-90deg); }
+.sec-score__track { fill: none; stroke: var(--surface-inset); stroke-width: 6; }
+.sec-score__fill { fill: none; stroke-width: 6; stroke-linecap: round; transition: stroke-dasharray var(--t-slow) var(--ease-out), stroke var(--t-base); }
+.sec-score__num { transform: rotate(90deg); transform-origin: 30px 30px; text-anchor: middle; fill: var(--text); font-weight: var(--fw-bold); font-size: 18px; font-family: var(--font-sans); }
+.sec-score__meta { display: flex; flex-direction: column; line-height: 1.25; }
+.sec-score__label { font-weight: var(--fw-semibold); font-size: var(--fs-base); }
+.sec-score__sub { font-size: var(--fs-sm); color: var(--text-muted); }
 </style>
