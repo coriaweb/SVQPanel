@@ -4,6 +4,32 @@
 **Repositorio**: https://github.com/coriaweb/SVQPanel  
 **Desarrollador**: coriaweb
 
+## 🎨 Sistema de Diseño (UI 2026)
+
+Rediseño premium del frontend (Vue 3 + Vite). Estética tipo Linear/Vercel/Stripe,
+modo claro/oscuro. **No usa Bootstrap para componentes nuevos**: CSS con tokens.
+
+- `frontend/src/assets/tokens.css` — design tokens (color índigo, light/dark,
+  radios, sombras, tipografía Inter/JetBrains Mono, espaciado, motion). Cargado
+  en `main.js`; el tema se aplica vía `document.documentElement.dataset.theme`.
+- `frontend/src/assets/bootstrap-bridge.css` — capa de transición que reestiliza
+  las clases de Bootstrap (.card, .btn, .table, .form-control, .badge, .alert…)
+  con los tokens. Permite que las vistas aún no reescritas adopten el look
+  premium + dark mode sin tocar su markup. Se retira cuando ya no se use Bootstrap.
+- `frontend/src/components/ui/` — componentes propios: BaseCard, BaseButton,
+  BaseTabs, StatusBadge, MetricCard, ResourceGauge, EmptyState.
+- Tema y sidebar colapsable en el store Pinia (`useMainStore`: `theme`,
+  `toggleTheme`, `sidebarCollapsed`, `toggleSidebar`).
+- `App.vue` — shell con sidebar agrupado por categorías (Hosting/Archivos/
+  Administración/Sistema), topbar con breadcrumb + toggle tema + menú usuario.
+- Vistas reescritas a fondo: Dashboard, Domains (tarjetas+tabla), DomainDetail
+  (`/domains/:id` con tabs), Login. Resto: look vía bridge + cabeceras.
+- Router con **code-splitting** (lazy `import()`); solo Dashboard+Login en el
+  bundle inicial.
+
+Convención al migrar una vista: cabecera con patrón `page-head` (título 2xl +
+subtítulo), usar componentes de `components/ui/`, estilos con variables de tokens.
+
 ## 📋 Estado del Proyecto
 
 ### Fase 1 ✅ COMPLETA
