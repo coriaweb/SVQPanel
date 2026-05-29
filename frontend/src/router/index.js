@@ -3,6 +3,7 @@ import Dashboard from '../views/Dashboard.vue'
 import Users from '../views/Users.vue'
 import UserAccount from '../views/UserAccount.vue'
 import Domains from '../views/Domains.vue'
+import DomainDetail from '../views/DomainDetail.vue'
 import Databases from '../views/Databases.vue'
 import DNS from '../views/DNS.vue'
 import Mail from '../views/Mail.vue'
@@ -57,6 +58,12 @@ const routes = [
     path: '/domains',
     name: 'Domains',
     component: Domains,
+    meta: { requiresAuth: true }
+  },
+  {
+    path: '/domains/:id',
+    name: 'DomainDetail',
+    component: DomainDetail,
     meta: { requiresAuth: true }
   },
   {

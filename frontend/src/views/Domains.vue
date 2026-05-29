@@ -75,8 +75,8 @@
         </div>
 
         <div class="dcard__actions">
-          <BaseButton variant="subtle" size="sm" icon="lock" @click="openSSLManager(domain)">SSL</BaseButton>
-          <BaseButton variant="ghost" size="sm" icon="folder2-open" @click="openFileManager(domain)">Archivos</BaseButton>
+          <BaseButton variant="subtle" size="sm" icon="box-arrow-in-right" tag="router-link" v-bind="{ to: `/domains/${domain.id}` }">Abrir</BaseButton>
+          <BaseButton variant="ghost" size="sm" icon="lock" @click="openSSLManager(domain)">SSL</BaseButton>
           <div class="dcard__more">
             <button class="more-btn" @click="toggleMenu(domain.id)" title="Más acciones"><i class="bi bi-three-dots"></i></button>
             <div class="more-menu" v-if="openMenuId === domain.id" v-click-away="() => openMenuId = null">
@@ -116,7 +116,7 @@
           <tbody>
             <tr v-for="domain in domains" :key="domain.id">
               <td>
-                <a :href="'http://' + domain.domain_name" target="_blank" class="t-domain"><i class="bi bi-globe2"></i>{{ domain.domain_name }}</a>
+                <router-link :to="`/domains/${domain.id}`" class="t-domain"><i class="bi bi-globe2"></i>{{ domain.domain_name }}</router-link>
               </td>
               <td v-if="isAdminOrReseller" class="t-muted">{{ getUserName(domain.user_id) }}</td>
               <td class="mono">{{ domain.php_version || '—' }}</td>
@@ -129,6 +129,7 @@
               </td>
               <td class="ta-end">
                 <div class="t-actions">
+                  <router-link class="icon-act" :to="`/domains/${domain.id}`" title="Ver detalle"><i class="bi bi-box-arrow-in-right"></i></router-link>
                   <button class="icon-act" @click="openSSLManager(domain)" title="SSL"><i class="bi bi-lock"></i></button>
                   <button class="icon-act" @click="openFileManager(domain)" title="Archivos"><i class="bi bi-folder2-open"></i></button>
                   <button class="icon-act" @click="openEditForm(domain)" title="Editar"><i class="bi bi-pencil"></i></button>
