@@ -1,23 +1,26 @@
 import { createRouter, createWebHistory } from 'vue-router'
+// Dashboard y Login van en el bundle inicial (primera pantalla tras login/auth).
+// El resto se cargan bajo demanda (code-splitting) para acelerar el arranque.
 import Dashboard from '../views/Dashboard.vue'
-import Users from '../views/Users.vue'
-import UserAccount from '../views/UserAccount.vue'
-import Domains from '../views/Domains.vue'
-import DomainDetail from '../views/DomainDetail.vue'
-import Databases from '../views/Databases.vue'
-import DNS from '../views/DNS.vue'
-import Mail from '../views/Mail.vue'
-import Settings from '../views/Settings.vue'
-import SystemServices from '../views/SystemServices.vue'
-import Security from '../views/Security.vue'
-import FileManager from '../views/FileManager.vue'
-import Plans from '../views/Plans.vue'
-import MySftp from '../views/MySftp.vue'
-import Crons from '../views/Crons.vue'
-import Backups from '../views/Backups.vue'
-import ServerIPs from '../views/ServerIPs.vue'
 import Login from '../views/Login.vue'
-import SystemUpdates from '../views/SystemUpdates.vue'
+
+const Users          = () => import('../views/Users.vue')
+const UserAccount    = () => import('../views/UserAccount.vue')
+const Domains        = () => import('../views/Domains.vue')
+const DomainDetail   = () => import('../views/DomainDetail.vue')
+const Databases      = () => import('../views/Databases.vue')
+const DNS            = () => import('../views/DNS.vue')
+const Mail           = () => import('../views/Mail.vue')
+const Settings       = () => import('../views/Settings.vue')
+const SystemServices = () => import('../views/SystemServices.vue')
+const Security       = () => import('../views/Security.vue')
+const FileManager    = () => import('../views/FileManager.vue')
+const Plans          = () => import('../views/Plans.vue')
+const MySftp         = () => import('../views/MySftp.vue')
+const Crons          = () => import('../views/Crons.vue')
+const Backups        = () => import('../views/Backups.vue')
+const ServerIPs      = () => import('../views/ServerIPs.vue')
+const SystemUpdates  = () => import('../views/SystemUpdates.vue')
 
 const isAuthenticated = () => {
   return !!localStorage.getItem('token')
