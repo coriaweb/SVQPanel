@@ -40,6 +40,14 @@
 .bg-dark { background: var(--surface-2) !important; color: var(--text) !important; }
 .bg-dark.text-white, .bg-dark .text-white { color: var(--text) !important; }
 .bg-dark .text-white-50 { color: var(--text-muted) !important; }
+/* Bloques de código/logs (pre.bg-dark text-light): legibles en ambos temas */
+pre.bg-dark, pre.bg-dark.text-light, .bg-dark.text-light {
+  background: var(--surface-inset) !important;
+  color: var(--text-secondary) !important;
+  border: 1px solid var(--border);
+  font-family: var(--font-mono);
+}
+.text-light { color: var(--text-secondary) !important; }
 
 /* ---- Texto utilitario ---- */
 .text-muted { color: var(--text-muted) !important; }
