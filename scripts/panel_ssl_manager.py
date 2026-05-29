@@ -218,6 +218,10 @@ class PanelSSLManager(SystemManager):
         new_config = f"# SVQPanel — vhost SSL (generado automáticamente)\n\n{http_block}\n{https_block}"
         self._write_conf(new_config)
 
+        # Red de seguridad: reinyectar /pma y /webmail si se perdieron al
+        # reconstruir el bloque (se sirven en este mismo vhost).
+        self._ensure_service_locations()
+
         # Verificar sintaxis
         rc, _, err = self.execute_command(["nginx", "-t"], check=False)
         if rc != 0:
@@ -308,6 +312,83 @@ class PanelSSLManager(SystemManager):
                     return config[brace_start + 1:i]
         return None
 
+    @staticmethod
+    def _php_fpm_socket() -> str | None:
+        """Devuelve un socket PHP-FPM disponible (el compartido de mayor versión)."""
+        import glob
+        socks = sorted(glob.glob("/run/php/php*-fpm.sock"), reverse=True)
+        return socks[0] if socks else None
+
+    def _ensure_service_locations(self) -> None:
+        """
+        Reinyecta los bloques location de phpMyAdmin (/pma/) y Roundcube
+        (/webmail/) en el vhost del panel si los servicios están instalados y
+        el bloque no está presente. Idempotente: no duplica.
+
+        Esto evita que una regeneración del vhost (p.ej. al activar SSL) deje
+        sin acceso a phpMyAdmin/webmail, que se sirven en el mismo vhost.
+        """
+        sock = self._php_fpm_socket()
+        if not sock:
+            return
+        try:
+            config = self._read_conf()
+        except Exception:
+            return
+
+        changed = False
+
+        # phpMyAdmin
+        if os.path.isdir("/var/www/pma") and "location /pma/" not in config:
+            pma_block = (
+                "\n    # phpMyAdmin — acceso autenticado via panel SVQPanel\n"
+                "    location /pma/ {\n"
+                "        root /var/www;\n"
+                "        index index.php index.html;\n"
+                "        location ~ \\.php$ {\n"
+                "            include snippets/fastcgi-php.conf;\n"
+                f"            fastcgi_pass unix:{sock};\n"
+                "            fastcgi_param SCRIPT_FILENAME $document_root$fastcgi_script_name;\n"
+                "            include fastcgi_params;\n"
+                "        }\n"
+                "    }\n"
+            )
+            config = self._inject_into_https(config, pma_block)
+            changed = True
+
+        # Roundcube webmail
+        if os.path.islink("/var/www/webmail") and "location /webmail" not in config:
+            wm_block = (
+                "\n    # Roundcube Webmail — autologin desde SVQPanel\n"
+                "    location /webmail {\n"
+                "        root /var/www;\n"
+                "        index index.php;\n"
+                "        location ~ ^/webmail/.*\\.php$ {\n"
+                "            include snippets/fastcgi-php.conf;\n"
+                f"            fastcgi_pass unix:{sock};\n"
+                "            fastcgi_param SCRIPT_FILENAME $document_root$fastcgi_script_name;\n"
+                "            include fastcgi_params;\n"
+                "        }\n"
+                "    }\n"
+            )
+            config = self._inject_into_https(config, wm_block)
+            changed = True
+
+        if changed:
+            self._write_conf(config)
+
+    @staticmethod
+    def _inject_into_https(config: str, block: str) -> str:
+        """
+        Inserta `block` justo antes del 'location / {' del bloque HTTPS
+        (el último server{} del fichero, que es el de 443).
+        """
+        # Buscar el último 'location / {' (pertenece al server HTTPS)
+        idx = config.rfind("    location / {")
+        if idx == -1:
+            return config
+        return config[:idx] + block + "\n" + config[idx:]
+
     # ──────────────────────────────────────────────────────────────────────────
     # nginx y certbot
     # ──────────────────────────────────────────────────────────────────────────
@@ -362,6 +443,54 @@ RSPAMD_LOCATION = """    # Rspamd web UI
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
     }
 """
+
+
+def _php_fpm_socket() -> str | None:
+    """Devuelve un socket PHP-FPM compartido disponible (mayor versión)."""
+    import glob
+    socks = sorted(glob.glob("/run/php/php*-fpm.sock"), reverse=True)
+    return socks[0] if socks else None
+
+
+def _service_locations() -> str:
+    """
+    Genera los bloques location de phpMyAdmin (/pma/) y Roundcube (/webmail/)
+    si los servicios están instalados. Se incluyen en TODAS las plantillas de
+    vhost del panel para que no se pierdan al regenerar (igual que rspamd).
+    """
+    sock = _php_fpm_socket()
+    if not sock:
+        return ""
+    blocks = []
+    if os.path.isdir("/var/www/pma"):
+        blocks.append(
+            "    # phpMyAdmin — acceso autenticado via panel SVQPanel\n"
+            "    location /pma/ {\n"
+            "        root /var/www;\n"
+            "        index index.php index.html;\n"
+            "        location ~ \\.php$ {\n"
+            "            include snippets/fastcgi-php.conf;\n"
+            f"            fastcgi_pass unix:{sock};\n"
+            "            fastcgi_param SCRIPT_FILENAME $document_root$fastcgi_script_name;\n"
+            "            include fastcgi_params;\n"
+            "        }\n"
+            "    }\n"
+        )
+    if os.path.islink("/var/www/webmail") or os.path.isdir("/var/www/webmail"):
+        blocks.append(
+            "    # Roundcube Webmail — autologin desde SVQPanel\n"
+            "    location /webmail {\n"
+            "        root /var/www;\n"
+            "        index index.php;\n"
+            "        location ~ ^/webmail/.*\\.php$ {\n"
+            "            include snippets/fastcgi-php.conf;\n"
+            f"            fastcgi_pass unix:{sock};\n"
+            "            fastcgi_param SCRIPT_FILENAME $document_root$fastcgi_script_name;\n"
+            "            include fastcgi_params;\n"
+            "        }\n"
+            "    }\n"
+        )
+    return ("\n" + "\n".join(blocks)) if blocks else ""
 
 
 def _validate_hostname(hostname: str) -> bool:
@@ -534,7 +663,7 @@ server {{
         try_files $uri $uri/ /index.html;
     }}
 
-{RSPAMD_LOCATION}
+{RSPAMD_LOCATION}{_service_locations()}
     location /api/ {{
         proxy_pass http://127.0.0.1:{PANEL_BACKEND_PORT};
         proxy_set_header Host $host;
@@ -569,7 +698,7 @@ server {{
         try_files $uri $uri/ /index.html;
     }}
 
-{RSPAMD_LOCATION}
+{RSPAMD_LOCATION}{_service_locations()}
     location /api/ {{
         proxy_pass http://127.0.0.1:{PANEL_BACKEND_PORT};
         proxy_set_header Host $host;
