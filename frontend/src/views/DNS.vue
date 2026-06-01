@@ -14,6 +14,95 @@
       </button>
     </div>
 
+    <!-- Cluster DNS (solo admin) -->
+    <div v-if="isAdmin" class="card shadow-sm mb-4">
+      <div class="card-header d-flex justify-content-between align-items-center">
+        <h5 class="mb-0"><i class="bi bi-hdd-network me-2"></i>Cluster DNS</h5>
+        <span v-if="cluster.enabled" class="badge bg-success">Activo</span>
+        <span v-else class="badge bg-light text-muted border">Sin cluster · el panel sirve DNS</span>
+      </div>
+      <div class="card-body">
+        <p class="text-muted small mb-3">
+          Sin cluster, este servidor sirve el DNS. Con cluster, las zonas se empujan a
+          <strong>ns1 (master)</strong> y este replica a <strong>ns2 (slave)</strong> vía AXFR + TSIG.
+          Da de alta los dos nodos (Debian 12, acceso SSH) y pulsa <em>Configurar cluster</em>.
+        </p>
+
+        <!-- Tabla de nodos -->
+        <table class="table table-sm mb-3">
+          <thead class="table-light">
+            <tr><th>Rol</th><th>Hostname</th><th>IP</th><th>SSH</th><th>Estado</th><th class="text-end">Acciones</th></tr>
+          </thead>
+          <tbody>
+            <tr v-for="n in clusterNodes" :key="n.id">
+              <td><span class="badge" :class="n.role === 'master' ? 'bg-primary' : 'bg-info'">{{ n.role === 'master' ? 'ns1 master' : 'ns2 slave' }}</span></td>
+              <td class="font-monospace small">{{ n.hostname }}</td>
+              <td class="font-monospace small">{{ n.ip }}</td>
+              <td class="small text-muted">{{ n.ssh_user }}:{{ n.ssh_port }}</td>
+              <td>
+                <span v-if="n.status === 'ok'" class="badge bg-success">OK</span>
+                <span v-else-if="n.status === 'error'" class="badge bg-danger" :title="n.last_error">Error</span>
+                <span v-else class="badge bg-secondary">Pendiente</span>
+              </td>
+              <td class="text-end">
+                <button class="btn btn-sm btn-outline-secondary me-1" @click="testNode(n)" :disabled="testingNodeId === n.id" title="Probar conexión SSH">
+                  <i class="bi bi-plug"></i> {{ testingNodeId === n.id ? '...' : 'Probar' }}
+                </button>
+                <button class="btn btn-sm btn-outline-danger" @click="deleteNode(n)" title="Quitar nodo"><i class="bi bi-trash"></i></button>
+              </td>
+            </tr>
+            <tr v-if="!clusterNodes.length"><td colspan="6" class="text-center text-muted py-3">Sin nodos. Añade ns1 (master) y ns2 (slave).</td></tr>
+          </tbody>
+        </table>
+
+        <!-- Alta de nodo -->
+        <div class="row g-2 align-items-end mb-3">
+          <div class="col-md-2">
+            <label class="form-label small mb-1">Rol</label>
+            <select v-model="nodeForm.role" class="form-select form-select-sm">
+              <option value="master">ns1 (master)</option>
+              <option value="slave">ns2 (slave)</option>
+            </select>
+          </div>
+          <div class="col-md-3">
+            <label class="form-label small mb-1">Hostname</label>
+            <input v-model="nodeForm.hostname" class="form-control form-control-sm font-monospace" placeholder="ns1.tudominio.com" />
+          </div>
+          <div class="col-md-2">
+            <label class="form-label small mb-1">IP</label>
+            <input v-model="nodeForm.ip" class="form-control form-control-sm font-monospace" placeholder="185.x.x.x" />
+          </div>
+          <div class="col-md-2">
+            <label class="form-label small mb-1">Usuario SSH</label>
+            <input v-model="nodeForm.ssh_user" class="form-control form-control-sm" placeholder="root" />
+          </div>
+          <div class="col-md-2">
+            <label class="form-label small mb-1">Contraseña SSH</label>
+            <input v-model="nodeForm.ssh_password" type="password" class="form-control form-control-sm" placeholder="(o usa clave)" />
+          </div>
+          <div class="col-md-1">
+            <button class="btn btn-sm btn-success w-100" @click="addNode" :disabled="savingNode"><i class="bi bi-plus-lg"></i></button>
+          </div>
+        </div>
+
+        <div class="d-flex gap-2 align-items-center">
+          <button class="btn btn-primary btn-sm" @click="provisionCluster" :disabled="provisioning || !clusterNodes.some(n => n.role === 'master')">
+            <i class="bi bi-gear-wide-connected me-1"></i> {{ provisioning ? 'Configurando…' : 'Configurar cluster' }}
+          </button>
+          <button v-if="cluster.enabled" class="btn btn-outline-primary btn-sm" @click="resyncCluster" :disabled="provisioning">
+            <i class="bi bi-arrow-repeat me-1"></i> Resincronizar zonas
+          </button>
+          <button class="btn btn-outline-secondary btn-sm" @click="loadCluster" :disabled="loadingCluster">
+            <i class="bi bi-arrow-clockwise"></i>
+          </button>
+          <span v-if="cluster.replication" class="small ms-2" :class="cluster.replication.ok ? 'text-success' : 'text-warning'">
+            <i class="bi" :class="cluster.replication.ok ? 'bi-check-circle' : 'bi-exclamation-triangle'"></i>
+            Replicación {{ cluster.replication.ok ? 'OK' : 'pendiente' }} ({{ cluster.replication.sample_domain }})
+          </span>
+        </div>
+      </div>
+    </div>
+
     <!-- Lista de zonas -->
     <div class="card shadow-sm mb-4">
       <div class="card-header"><h5 class="mb-0">Zonas DNS</h5></div>
@@ -776,10 +865,107 @@ export default {
       }
     }
 
-    onMounted(loadZones)
+    // ── Cluster DNS ──
+    const cluster        = ref({ enabled: false, replication: null })
+    const clusterNodes   = ref([])
+    const loadingCluster = ref(false)
+    const savingNode     = ref(false)
+    const provisioning   = ref(false)
+    const testingNodeId  = ref(null)
+    const nodeForm       = ref({ role: 'master', hostname: '', ip: '', ssh_user: 'root', ssh_password: '' })
+
+    const loadCluster = async () => {
+      if (!isAdmin.value) return
+      loadingCluster.value = true
+      try {
+        const [status, nodes] = await Promise.all([
+          api.getDnsClusterStatus(),
+          api.getDnsClusterNodes(),
+        ])
+        cluster.value = status
+        clusterNodes.value = nodes
+      } catch (e) {
+        // silencioso: el cluster es opcional
+      } finally {
+        loadingCluster.value = false
+      }
+    }
+
+    const addNode = async () => {
+      if (!nodeForm.value.hostname || !nodeForm.value.ip) {
+        store.showNotification('Indica hostname e IP del nodo', 'danger'); return
+      }
+      savingNode.value = true
+      try {
+        await api.addDnsClusterNode({ ...nodeForm.value })
+        store.showNotification('Nodo añadido', 'success')
+        nodeForm.value = { role: nodeForm.value.role === 'master' ? 'slave' : 'master', hostname: '', ip: '', ssh_user: 'root', ssh_password: '' }
+        await loadCluster()
+      } catch (e) {
+        store.showNotification('Error añadiendo nodo: ' + e.message, 'danger')
+      } finally {
+        savingNode.value = false
+      }
+    }
+
+    const testNode = async (n) => {
+      testingNodeId.value = n.id
+      try {
+        const r = await api.testDnsClusterNode(n.id)
+        if (r.ok) store.showNotification('Conexión SSH OK con ' + n.hostname, 'success')
+        else store.showNotification('Falló: ' + (r.error || 'sin detalle'), 'danger')
+        await loadCluster()
+      } catch (e) {
+        store.showNotification('Error probando nodo: ' + e.message, 'danger')
+      } finally {
+        testingNodeId.value = null
+      }
+    }
+
+    const deleteNode = async (n) => {
+      if (!confirm(`¿Quitar el nodo ${n.role} ${n.hostname}?`)) return
+      try {
+        await api.deleteDnsClusterNode(n.id)
+        store.showNotification('Nodo eliminado', 'success')
+        await loadCluster()
+      } catch (e) {
+        store.showNotification('Error eliminando nodo: ' + e.message, 'danger')
+      }
+    }
+
+    const provisionCluster = async () => {
+      if (!confirm('Esto instalará y configurará BIND en los nodos y subirá las zonas. ¿Continuar?')) return
+      provisioning.value = true
+      try {
+        const r = await api.provisionDnsCluster()
+        store.showNotification(r.message || 'Cluster configurado', 'success')
+        await loadCluster()
+      } catch (e) {
+        store.showNotification('Error configurando cluster: ' + e.message, 'danger')
+      } finally {
+        provisioning.value = false
+      }
+    }
+
+    const resyncCluster = async () => {
+      provisioning.value = true
+      try {
+        const r = await api.resyncDnsCluster()
+        store.showNotification(r.message || 'Zonas resincronizadas', 'success')
+        await loadCluster()
+      } catch (e) {
+        store.showNotification('Error resincronizando: ' + e.message, 'danger')
+      } finally {
+        provisioning.value = false
+      }
+    }
+
+    onMounted(async () => { await loadZones(); await loadCluster() })
 
     return {
       isAdmin,
+      cluster, clusterNodes, loadingCluster, savingNode, provisioning, testingNodeId, nodeForm,
+      loadCluster, addNode, testNode, deleteNode, provisionCluster, resyncCluster,
       zones, loadingZones,
       selectedZone, records, loadingRecords,
       showZoneModal, editingZone, zoneForm, savingZone,

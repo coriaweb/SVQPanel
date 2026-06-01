@@ -51,21 +51,42 @@ def _get_server_ipv4(db: Session) -> str:
 
 
 def _sync_zone_to_bind(zone: DnsZone, db: Session):
-    """Regenera zone file + recarga BIND9 con los registros actuales de la zona"""
+    """
+    Sincroniza la zona. Si hay cluster DNS configurado, empuja la zona al master
+    (ns1) por SSH y este replica al slave (ns2). Si NO hay cluster, escribe el
+    BIND local del panel (comportamiento por defecto: el panel sirve DNS).
+    """
     records = db.query(DnsRecord).filter(DnsRecord.zone_id == zone.id).all()
     record_dicts = [
         {"record_type": r.record_type, "name": r.name,
          "content": r.content, "ttl": r.ttl, "priority": r.priority}
         for r in records
     ]
+    soa_ns = zone.soa_ns or "ns1.svqpanel.local"
+    ttl = zone.ttl or 14400
+
+    # 1) Intentar cluster (no requiere root local; va por SSH al master)
+    try:
+        from scripts.dns_cluster import push_zone_to_cluster
+        zone_text = DNSManager.render_zone(
+            zone.domain_name, zone.serial, record_dicts, soa_ns=soa_ns, ttl=ttl,
+        )
+        all_zones = _get_all_active_zones(db)
+        if push_zone_to_cluster(db, zone.domain_name, zone_text, all_zones):
+            return  # empujada al cluster; el panel no sirve DNS en este modo
+    except Exception as e:
+        # Si el cluster falla, lo registramos pero NO caemos al BIND local
+        # (sería incoherente). La ruta puede exponer el error si lo desea.
+        import logging
+        logging.getLogger(__name__).error(f"push al cluster DNS falló: {e}")
+        raise
+
+    # 2) Sin cluster → BIND local del panel
     try:
         manager = DNSManager()
         manager.write_zone_from_records(
-            zone.domain_name,
-            zone.serial,
-            record_dicts,
-            soa_ns=zone.soa_ns or "ns1.svqpanel.local",
-            ttl=zone.ttl or 14400,
+            zone.domain_name, zone.serial, record_dicts,
+            soa_ns=soa_ns, ttl=ttl,
         )
         all_zones = _get_all_active_zones(db)
         manager.reload_zone(zone.domain_name, all_zones)
@@ -323,6 +344,21 @@ async def delete_zone(
     db.commit()
 
     remaining = _get_all_active_zones(db)
+
+    # Si hay cluster, borrar la zona del master y del slave
+    try:
+        from scripts.dns_cluster import load_cluster, DNSCluster
+        cluster = load_cluster(db)
+        if cluster:
+            slave = cluster["slave"] or cluster["master"]
+            DNSCluster().remove_zone(cluster["master"], slave, cluster["tsig"],
+                                     domain_name, remaining)
+            return None
+    except Exception as e:
+        import logging
+        logging.getLogger(__name__).error(f"borrado de zona en cluster falló: {e}")
+        # seguimos para limpiar el BIND local si lo hubiera
+
     try:
         DNSManager().delete_zone(domain_name, remaining)
     except PermissionError:

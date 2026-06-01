@@ -369,6 +369,35 @@ class APIClient {
     return this.delete(`/api/dns/${zoneId}/records/${recordId}`)
   }
 
+  // DNS Cluster (master/slave)
+  getDnsClusterStatus() {
+    return this.get('/api/dns/cluster/status')
+  }
+
+  getDnsClusterNodes() {
+    return this.get('/api/dns/cluster/nodes')
+  }
+
+  addDnsClusterNode(data) {
+    return this.post('/api/dns/cluster/nodes', data)
+  }
+
+  testDnsClusterNode(nodeId) {
+    return this.post(`/api/dns/cluster/nodes/${nodeId}/test`, {})
+  }
+
+  deleteDnsClusterNode(nodeId) {
+    return this.delete(`/api/dns/cluster/nodes/${nodeId}`)
+  }
+
+  provisionDnsCluster() {
+    return this.post('/api/dns/cluster/provision', {})
+  }
+
+  resyncDnsCluster() {
+    return this.post('/api/dns/cluster/resync', {})
+  }
+
   // Settings
   getSettings() {
     return this.get('/api/settings')

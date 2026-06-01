@@ -43,6 +43,11 @@ class Settings(Base):
     # Sistema
     timezone = Column(String(64), default="UTC")             # Zona horaria del servidor
 
+    # Cluster DNS — clave TSIG compartida master↔slave (ver models_dns_node.py)
+    dns_tsig_name   = Column(String(64), nullable=True)       # nombre de la clave, ej: svq-xfer
+    dns_tsig_secret = Column(String(128), nullable=True)      # secreto base64
+    dns_tsig_algo   = Column(String(32), default="hmac-sha256")
+
     # Timestamps
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 

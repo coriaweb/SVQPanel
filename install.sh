@@ -215,6 +215,9 @@ apt-get install -y -qq \
     unzip \
     zip \
     acl \
+    openssh-client \
+    sshpass \
+    dnsutils \
     openssl \
     libssl-dev \
     python3 \
@@ -274,6 +277,14 @@ fi
 ###############################################################################
 # 6b. INSTALAR BIND9 (DNS)
 ###############################################################################
+# Sin cluster DNS configurado, ESTE servidor sirve el DNS (BIND local).
+#
+# Cluster DNS (opcional, master/slave): se configura DESDE el panel (vista DNS →
+# Cluster). El panel se conecta por SSH (openssh-client/sshpass, instalados
+# arriba) a los nodos ns1/ns2 (Debian 12), instala bind9 en ellos, genera una
+# clave TSIG compartida (tsig-keygen, de bind9-utils que se instala aquí) y
+# configura master→slave (AXFR autenticado por TSIG). Ver scripts/dns_cluster.py.
+# A partir de entonces el panel empuja las zonas a ns1 y este replica a ns2.
 echo -e "${YELLOW}Instalando BIND9 (servidor DNS)...${NC}"
 
 apt-get install -y -qq bind9 bind9-utils bind9-doc dnsutils

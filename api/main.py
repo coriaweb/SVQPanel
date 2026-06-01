@@ -13,7 +13,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from api.models.database import create_tables, get_db
 from config.config import PANEL_NAME, PANEL_VERSION
 
-from api.routes import users, domains, php, ssl, ipv6, auth, settings, dns, system, mail, databases, firewall, fail2ban, security_monitor, ip_lists, file_manager, crowdsec, plans, sftp, crons, server_ips, backups, templates, notifications
+from api.routes import users, domains, php, ssl, ipv6, auth, settings, dns, system, mail, databases, firewall, fail2ban, security_monitor, ip_lists, file_manager, crowdsec, plans, sftp, crons, server_ips, backups, templates, notifications, dns_cluster
 
 # Crear app FastAPI
 app = FastAPI(
@@ -470,6 +470,29 @@ def _run_migrations():
         "CREATE INDEX IF NOT EXISTS ix_notifications_dedup     ON notifications(user_id, dedup_key, is_read)",
         # Autoinstalador: subcarpeta docroot por plantilla (ej. 'public' Laravel)
         "ALTER TABLE web_templates ADD COLUMN IF NOT EXISTS docroot_subdir VARCHAR(64)",
+        # ─────────────────────────────────────────────────────────────────
+        # Fase 21: Cluster DNS (master/slave). Sin nodos => panel sirve DNS.
+        # ─────────────────────────────────────────────────────────────────
+        """CREATE TABLE IF NOT EXISTS dns_nodes (
+            id              SERIAL PRIMARY KEY,
+            role            VARCHAR(10)  NOT NULL,
+            hostname        VARCHAR(255) NOT NULL,
+            ip              VARCHAR(45)  NOT NULL,
+            ssh_user        VARCHAR(64)  DEFAULT 'root',
+            ssh_port        INTEGER      DEFAULT 22,
+            ssh_key_path    VARCHAR(255),
+            status          VARCHAR(16)  NOT NULL DEFAULT 'pending',
+            tsig_configured BOOLEAN      NOT NULL DEFAULT FALSE,
+            last_sync_at    TIMESTAMP,
+            last_error      TEXT,
+            created_at      TIMESTAMP    NOT NULL DEFAULT NOW(),
+            updated_at      TIMESTAMP    DEFAULT NOW()
+        )""",
+        "CREATE INDEX IF NOT EXISTS ix_dns_nodes_role ON dns_nodes(role)",
+        # Clave TSIG compartida del cluster (se guarda en settings, singleton)
+        "ALTER TABLE settings ADD COLUMN IF NOT EXISTS dns_tsig_name VARCHAR(64)",
+        "ALTER TABLE settings ADD COLUMN IF NOT EXISTS dns_tsig_secret VARCHAR(128)",
+        "ALTER TABLE settings ADD COLUMN IF NOT EXISTS dns_tsig_algo VARCHAR(32) DEFAULT 'hmac-sha256'",
     ]
     with engine.connect() as conn:
         for sql in migrations:
@@ -557,6 +580,7 @@ app.include_router(ssl.router, prefix="/api", tags=["SSL"])
 app.include_router(ipv6.router, prefix="/api", tags=["IPv6"])
 app.include_router(settings.router, prefix="/api", tags=["Settings"])
 app.include_router(dns.router, prefix="/api", tags=["DNS"])
+app.include_router(dns_cluster.router, prefix="/api", tags=["DNS Cluster"])
 app.include_router(system.router, prefix="/api", tags=["System"])
 app.include_router(mail.router,      prefix="/api", tags=["Mail"])
 app.include_router(databases.router, prefix="/api", tags=["Databases"])

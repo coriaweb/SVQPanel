@@ -134,22 +134,20 @@ class DNSManager(SystemManager):
         logger.info(f"Zone file creado: {self.zone_file_path(domain)}")
         return serial
 
-    def write_zone_from_records(
-        self,
+    @staticmethod
+    def render_zone(
         domain: str,
         serial: int,
         records: List[Dict],
-        ns1: Optional[str] = None,
         soa_ns: Optional[str] = None,
         ttl: int = 14400,
-    ) -> bool:
+    ) -> str:
         """
-        Regenera zone file completo desde la lista de registros de BD.
-        Cada dict: {record_type, name, content, ttl, priority}
+        Genera el TEXTO del zone file (sin escribirlo). Reutilizable tanto para
+        el BIND local del panel como para empujar la zona al master del cluster.
+        Es @staticmethod: no necesita root ni instancia (lo usa la capa de rutas).
         """
-        os.makedirs(ZONES_DIR, exist_ok=True)
-        hostname = soa_ns or ns1 or "ns1.svqpanel.local"
-        hostname = hostname.rstrip(".")
+        hostname = (soa_ns or "ns1.svqpanel.local").rstrip(".")
 
         lines = [
             f"$TTL {ttl}\n",
@@ -166,23 +164,38 @@ class DNSManager(SystemManager):
             name    = r["name"]
             rtype   = r["record_type"]
             content = r["content"]
-            ttl     = r.get("ttl", 14400)
+            rttl    = r.get("ttl", 14400)
             prio    = r.get("priority", 0)
 
-            if rtype == "MX":
-                lines.append(f"{name}\t{ttl}\tIN\t{rtype}\t{prio}\t{content}\n")
-            elif rtype == "SRV":
-                lines.append(f"{name}\t{ttl}\tIN\t{rtype}\t{prio}\t{content}\n")
+            if rtype in ("MX", "SRV"):
+                lines.append(f"{name}\t{rttl}\tIN\t{rtype}\t{prio}\t{content}\n")
             elif rtype == "TXT":
-                # TXT content debe ir entre comillas si no las tiene ya
                 if not content.startswith('"'):
                     content = f'"{content}"'
-                lines.append(f"{name}\t{ttl}\tIN\t{rtype}\t{content}\n")
+                lines.append(f"{name}\t{rttl}\tIN\t{rtype}\t{content}\n")
             else:
-                lines.append(f"{name}\t{ttl}\tIN\t{rtype}\t{content}\n")
+                lines.append(f"{name}\t{rttl}\tIN\t{rtype}\t{content}\n")
 
+        return "".join(lines)
+
+    def write_zone_from_records(
+        self,
+        domain: str,
+        serial: int,
+        records: List[Dict],
+        ns1: Optional[str] = None,
+        soa_ns: Optional[str] = None,
+        ttl: int = 14400,
+    ) -> bool:
+        """
+        Regenera zone file completo desde la lista de registros de BD.
+        Cada dict: {record_type, name, content, ttl, priority}
+        """
+        os.makedirs(ZONES_DIR, exist_ok=True)
+        zone_text = self.render_zone(domain, serial, records,
+                                     soa_ns=soa_ns or ns1, ttl=ttl)
         with open(self.zone_file_path(domain), "w") as f:
-            f.writelines(lines)
+            f.write(zone_text)
 
         logger.info(f"Zone file regenerado: {domain} ({len(records)} registros)")
         return True
