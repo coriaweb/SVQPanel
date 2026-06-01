@@ -170,13 +170,30 @@ class DNSManager(SystemManager):
             if rtype in ("MX", "SRV"):
                 lines.append(f"{name}\t{rttl}\tIN\t{rtype}\t{prio}\t{content}\n")
             elif rtype == "TXT":
-                if not content.startswith('"'):
-                    content = f'"{content}"'
-                lines.append(f"{name}\t{rttl}\tIN\t{rtype}\t{content}\n")
+                lines.append(f"{name}\t{rttl}\tIN\t{rtype}\t{DNSManager._txt_rdata(content)}\n")
             else:
                 lines.append(f"{name}\t{rttl}\tIN\t{rtype}\t{content}\n")
 
         return "".join(lines)
+
+    @staticmethod
+    def _txt_rdata(content: str) -> str:
+        """
+        Formatea el contenido de un TXT para el zone file. Una cadena entre
+        comillas no puede exceder 255 bytes (límite del protocolo DNS): los TXT
+        largos (p. ej. claves DKIM RSA, ~390 chars) deben partirse en varias
+        cadenas contiguas "trozo1" "trozo2", que el resolver vuelve a concatenar.
+        """
+        # Si el usuario ya pasó comillas, tomamos el texto interior literal.
+        raw = content
+        if raw.startswith('"') and raw.endswith('"') and len(raw) >= 2:
+            raw = raw[1:-1]
+        # Escapar comillas internas para no romper el zone file
+        raw = raw.replace('\\', '\\\\').replace('"', '\\"')
+        if len(raw) <= 255:
+            return f'"{raw}"'
+        chunks = [raw[i:i + 255] for i in range(0, len(raw), 255)]
+        return " ".join(f'"{c}"' for c in chunks)
 
     def write_zone_from_records(
         self,
