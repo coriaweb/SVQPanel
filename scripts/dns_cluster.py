@@ -451,16 +451,31 @@ class DNSCluster:
         TODAS las zonas activas. El master notifica al slave automáticamente.
         all_zones: [{domain, dnssec}] (incluye la que se empuja).
         """
+        sudo = "" if master.get("ssh_user", "root") == "root" else "sudo "
+        # Detectar si el estado DNSSEC cambió: si ya existe el fichero de la ruta
+        # contraria, es que veníamos del otro modo (on↔off).
+        other_file = self.master_zone_file(domain, not dnssec)
+        _, out_chk, _ = self._run_remote(master, f"test -e {other_file} && echo CHG || echo SAME")
+        dnssec_changed = "CHG" in out_chk
+
         rc, _, err = self._upload(master, zone_text,
                                   self.master_zone_file(domain, dnssec))
         if rc != 0:
             raise DNSClusterError(f"push zone {domain}: {err}")
 
-        # Si la zona cambió de estado DNSSEC, puede quedar un fichero viejo en la
-        # otra ruta: lo limpiamos para no servir dos copias.
-        sudo = "" if master.get("ssh_user", "root") == "root" else "sudo "
-        other = self.master_zone_file(domain, not dnssec)
-        self._run_remote(master, f"{sudo}rm -f {other} {other}.jnl {other}.signed 2>/dev/null; true")
+        # Limpiar TODOS los artefactos de la ruta contraria: fichero, journals
+        # (.jnl/.jbk/.signed.jnl), zona firmada y CLAVES DNSSEC del dominio.
+        # Si no, named arrastra firmas/seriales viejos al cambiar de modo.
+        self._run_remote(
+            master,
+            f"{sudo}rm -f {other_file} {other_file}.jnl {other_file}.jbk "
+            f"{other_file}.signed {other_file}.signed.jnl 2>/dev/null; "
+            # claves del dominio (solo al volver a NO firmado; si firmamos las
+            # genera named). Las dejamos si dnssec=True.
+            + (f"{sudo}rm -f {REMOTE_KEYS_DIR}/K{domain}.+*.key "
+               f"{REMOTE_KEYS_DIR}/K{domain}.+*.private "
+               f"{REMOTE_KEYS_DIR}/K{domain}.+*.state 2>/dev/null; " if not dnssec else "")
+            + "true")
 
         zones_conf = self._master_zones_conf(all_zones, slave["ip"], tsig["name"])
         rc, _, err = self._upload(master, zones_conf, REMOTE_ZONES_CONF)
@@ -472,6 +487,16 @@ class DNSCluster:
             master, f"{sudo}named-checkconf && {sudo}rndc reload", timeout=45)
         if rc != 0:
             raise DNSClusterError(f"rndc reload master: {err or out}")
+
+        # Si cambió el estado DNSSEC, el serial del master pudo bajar respecto al
+        # que el slave ya tenía (inline-signing lo había subido). El slave rechaza
+        # AXFR con serial menor (anti-rollback) y se queda pegado. Forzamos una
+        # retransferencia completa en el slave para que adopte la nueva zona.
+        if dnssec_changed and slave and slave.get("ip") != master.get("ip"):
+            sudo_s = "" if slave.get("ssh_user", "root") == "root" else "sudo "
+            self._run_remote(slave, f"{sudo_s}rm -f {REMOTE_SLAVE_ZONES_DIR}/db.{domain} 2>/dev/null; "
+                                    f"{sudo_s}rndc retransfer {shlex.quote(domain)} 2>/dev/null; true",
+                             timeout=45)
         return {"ok": True}
 
     def remove_zone(self, master: Dict, slave: Dict, tsig: Dict[str, str],
