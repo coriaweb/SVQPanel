@@ -447,6 +447,57 @@ class DNSCluster:
             return {"ok": True, "soa": out.strip()}
         return {"ok": False, "error": "el slave no responde SOA (zona no transferida aún)"}
 
+    def query_serial(self, node: Dict, domain: str) -> Optional[int]:
+        """
+        Devuelve el serial SOA que el nodo sirve para `domain` (consultando su
+        propio 127.0.0.1 vía SSH), o None si no responde / no es autoritativo.
+        El serial es el 3er campo del SOA en 'dig +short'.
+        """
+        rc, out, _ = self._run_remote(
+            node, f"dig +short +time=3 +tries=1 @127.0.0.1 {shlex.quote(domain)} SOA",
+            timeout=20)
+        if rc != 0 or not out.strip():
+            return None
+        parts = out.strip().split()
+        # formato: "ns1.host. hostmaster.dom. SERIAL refresh retry expire min"
+        if len(parts) >= 3 and parts[2].isdigit():
+            return int(parts[2])
+        return None
+
+    def cluster_health(self, master: Dict, slave: Optional[Dict],
+                       zones: List[Dict]) -> List[Dict]:
+        """
+        Para cada zona {domain, db_serial}, consulta el serial en ns1 y ns2 y
+        compara con el de la BD del panel. Devuelve una fila por zona:
+          {domain, db_serial, master_serial, slave_serial, status}
+        status: 'ok' (todos coinciden) | 'desync' (algún serial difiere) |
+                'master_down' | 'slave_down'.
+        """
+        rows = []
+        for z in zones:
+            domain = z["domain"]
+            db_serial = z["db_serial"]
+            ms = self.query_serial(master, domain) if master else None
+            ss = self.query_serial(slave, domain) if slave else None
+
+            if ms is None:
+                status = "master_down"
+            elif slave and ss is None:
+                status = "slave_down"
+            elif ms != db_serial or (slave and ss != ms):
+                status = "desync"
+            else:
+                status = "ok"
+
+            rows.append({
+                "domain": domain,
+                "db_serial": db_serial,
+                "master_serial": ms,
+                "slave_serial": ss,
+                "status": status,
+            })
+        return rows
+
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Helpers de integración con la BD (usados por las rutas)
@@ -488,6 +539,40 @@ def load_cluster(db) -> Optional[Dict]:
         "master": _node_dict(master_row),
         "slave":  _node_dict(slave_row) if slave_row else None,
         "tsig":   tsig,
+    }
+
+
+def compute_cluster_health(db) -> Optional[Dict]:
+    """
+    Calcula la salud del cluster comparando el serial de cada zona en la BD del
+    panel con el que sirven ns1 y ns2. Devuelve None si no hay cluster.
+
+    {
+      "rows":    [ {domain, db_serial, master_serial, slave_serial, status}, … ],
+      "summary": {total, ok, desync, master_down, slave_down},
+      "all_ok":  bool,
+    }
+    """
+    from api.models.models_dns import DnsZone
+    cluster = load_cluster(db)
+    if not cluster:
+        return None
+
+    zones = [
+        {"domain": z.domain_name, "db_serial": z.serial}
+        for z in db.query(DnsZone).filter(DnsZone.is_active == True).all()  # noqa: E712
+    ]
+    cl = DNSCluster()
+    rows = cl.cluster_health(cluster["master"], cluster["slave"], zones)
+
+    summary = {"total": len(rows), "ok": 0, "desync": 0,
+               "master_down": 0, "slave_down": 0}
+    for r in rows:
+        summary[r["status"]] = summary.get(r["status"], 0) + 1
+    return {
+        "rows": rows,
+        "summary": summary,
+        "all_ok": summary["total"] > 0 and summary["ok"] == summary["total"],
     }
 
 

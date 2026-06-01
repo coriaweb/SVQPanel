@@ -47,6 +47,9 @@ class Settings(Base):
     dns_tsig_name   = Column(String(64), nullable=True)       # nombre de la clave, ej: svq-xfer
     dns_tsig_secret = Column(String(128), nullable=True)      # secreto base64
     dns_tsig_algo   = Column(String(32), default="hmac-sha256")
+    # Último health-check del cluster (lo escribe el timer; lo lee la UI)
+    dns_cluster_health_json = Column(Text, nullable=True)     # JSON con rows+summary
+    dns_cluster_health_at   = Column(DateTime, nullable=True) # cuándo se calculó
 
     # Timestamps
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)

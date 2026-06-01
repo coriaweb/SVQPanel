@@ -303,3 +303,40 @@ async def resync_cluster(_=Depends(require_admin), db: Session = Depends(get_db)
     if not _get_master(db):
         raise HTTPException(400, detail="No hay cluster configurado")
     return _do_provision(db)
+
+
+@router.get("/dns/cluster/health")
+async def cluster_health(live: bool = False, _=Depends(require_admin),
+                         db: Session = Depends(get_db)):
+    """
+    Salud de sincronización del cluster: por cada zona compara el serial de la
+    BD del panel con el que sirven ns1 y ns2.
+
+    - Por defecto devuelve el ÚLTIMO health-check calculado por el timer
+      (rápido, sin SSH). Incluye 'checked_at'.
+    - Con ?live=1 lo recalcula en el momento (hace SSH a los nodos).
+    """
+    import json
+    from scripts.dns_cluster import compute_cluster_health
+
+    if not _get_master(db):
+        return {"enabled": False, "rows": [], "summary": None, "checked_at": None}
+
+    if live:
+        health = compute_cluster_health(db)
+        return {"enabled": True, "live": True, "checked_at": None, **(health or {})}
+
+    s = db.query(Settings).filter(Settings.id == 1).first()
+    if s and s.dns_cluster_health_json:
+        try:
+            cached = json.loads(s.dns_cluster_health_json)
+        except (ValueError, TypeError):
+            cached = {"rows": [], "summary": None}
+        return {
+            "enabled": True, "live": False,
+            "checked_at": s.dns_cluster_health_at.isoformat() if s.dns_cluster_health_at else None,
+            **cached,
+        }
+    # Nunca se ha calculado: hacerlo en vivo esta vez
+    health = compute_cluster_health(db)
+    return {"enabled": True, "live": True, "checked_at": None, **(health or {})}

@@ -493,6 +493,9 @@ def _run_migrations():
         "ALTER TABLE settings ADD COLUMN IF NOT EXISTS dns_tsig_name VARCHAR(64)",
         "ALTER TABLE settings ADD COLUMN IF NOT EXISTS dns_tsig_secret VARCHAR(128)",
         "ALTER TABLE settings ADD COLUMN IF NOT EXISTS dns_tsig_algo VARCHAR(32) DEFAULT 'hmac-sha256'",
+        # Salud del cluster DNS (la escribe el timer dns-cluster-health)
+        "ALTER TABLE settings ADD COLUMN IF NOT EXISTS dns_cluster_health_json TEXT",
+        "ALTER TABLE settings ADD COLUMN IF NOT EXISTS dns_cluster_health_at TIMESTAMP",
     ]
     with engine.connect() as conn:
         for sql in migrations:

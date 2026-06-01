@@ -100,6 +100,54 @@
             Replicación {{ cluster.replication.ok ? 'OK' : 'pendiente' }} ({{ cluster.replication.sample_domain }})
           </span>
         </div>
+
+        <!-- Salud de sincronización por zona -->
+        <div v-if="cluster.enabled" class="mt-3">
+          <div class="d-flex justify-content-between align-items-center mb-2">
+            <h6 class="mb-0">
+              <i class="bi bi-clipboard-pulse me-1"></i> Sincronización por zona
+              <span v-if="health.summary" class="badge ms-1"
+                    :class="health.allOk ? 'bg-success' : 'bg-warning text-dark'">
+                {{ health.summary.ok }}/{{ health.summary.total }} OK
+              </span>
+            </h6>
+            <div class="d-flex align-items-center gap-2">
+              <small v-if="health.checkedAt" class="text-muted">
+                comprobado {{ formatHealthTime(health.checkedAt) }}
+              </small>
+              <button class="btn btn-sm btn-outline-secondary" @click="loadHealth(true)" :disabled="loadingHealth">
+                <i class="bi" :class="loadingHealth ? 'bi-hourglass-split' : 'bi-arrow-clockwise'"></i>
+                {{ loadingHealth ? 'Comprobando…' : 'Comprobar ahora' }}
+              </button>
+            </div>
+          </div>
+          <table v-if="health.rows.length" class="table table-sm table-hover mb-0">
+            <thead class="table-light">
+              <tr>
+                <th>Dominio</th>
+                <th class="text-end">Panel (BD)</th>
+                <th class="text-end">ns1 master</th>
+                <th class="text-end">ns2 slave</th>
+                <th class="text-center">Estado</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr v-for="r in health.rows" :key="r.domain">
+                <td class="font-monospace small">{{ r.domain }}</td>
+                <td class="text-end font-monospace small text-muted">{{ r.db_serial }}</td>
+                <td class="text-end font-monospace small" :class="serialClass(r, r.master_serial)">{{ r.master_serial ?? '—' }}</td>
+                <td class="text-end font-monospace small" :class="serialClass(r, r.slave_serial)">{{ r.slave_serial ?? '—' }}</td>
+                <td class="text-center">
+                  <span v-if="r.status === 'ok'" class="badge bg-success"><i class="bi bi-check-lg"></i> Sincronizado</span>
+                  <span v-else-if="r.status === 'desync'" class="badge bg-warning text-dark" title="Algún serial difiere"><i class="bi bi-exclamation-triangle"></i> Desfasado</span>
+                  <span v-else-if="r.status === 'master_down'" class="badge bg-danger">ns1 caído</span>
+                  <span v-else-if="r.status === 'slave_down'" class="badge bg-danger">ns2 caído</span>
+                </td>
+              </tr>
+            </tbody>
+          </table>
+          <p v-else class="text-muted small mb-0">Aún no hay datos de sincronización. Pulsa «Comprobar ahora».</p>
+        </div>
       </div>
     </div>
 
@@ -891,6 +939,40 @@ export default {
       }
     }
 
+    // ── Salud de sincronización ──
+    const health        = ref({ rows: [], summary: null, allOk: false, checkedAt: null })
+    const loadingHealth = ref(false)
+
+    const loadHealth = async (live = false) => {
+      if (!isAdmin.value) return
+      loadingHealth.value = true
+      try {
+        const r = await api.getDnsClusterHealth(live)
+        health.value = {
+          rows: r.rows || [],
+          summary: r.summary || null,
+          allOk: r.all_ok || false,
+          checkedAt: r.checked_at || null,
+        }
+      } catch (e) {
+        // silencioso
+      } finally {
+        loadingHealth.value = false
+      }
+    }
+
+    const serialClass = (row, serial) => {
+      if (serial == null) return 'text-danger'
+      if (serial !== row.db_serial) return 'text-warning fw-semibold'
+      return 'text-success'
+    }
+
+    const formatHealthTime = (iso) => {
+      if (!iso) return ''
+      const d = new Date(iso)
+      return d.toLocaleString()
+    }
+
     const addNode = async () => {
       if (!nodeForm.value.hostname || !nodeForm.value.ip) {
         store.showNotification('Indica hostname e IP del nodo', 'danger'); return
@@ -940,6 +1022,7 @@ export default {
         const r = await api.provisionDnsCluster()
         store.showNotification(r.message || 'Cluster configurado', 'success')
         await loadCluster()
+        await loadHealth(true)
       } catch (e) {
         store.showNotification('Error configurando cluster: ' + e.message, 'danger')
       } finally {
@@ -960,12 +1043,13 @@ export default {
       }
     }
 
-    onMounted(async () => { await loadZones(); await loadCluster() })
+    onMounted(async () => { await loadZones(); await loadCluster(); await loadHealth(false) })
 
     return {
       isAdmin,
       cluster, clusterNodes, loadingCluster, savingNode, provisioning, testingNodeId, nodeForm,
       loadCluster, addNode, testNode, deleteNode, provisionCluster, resyncCluster,
+      health, loadingHealth, loadHealth, serialClass, formatHealthTime,
       zones, loadingZones,
       selectedZone, records, loadingRecords,
       showZoneModal, editingZone, zoneForm, savingZone,

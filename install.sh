@@ -2034,12 +2034,43 @@ Unit=svqpanel-ssl-check.service
 WantedBy=timers.target
 SSLCTEOF
 
+# ─── Timer cada 10 min: salud de sincronización del cluster DNS ──────────────
+# Solo hace trabajo real si hay cluster configurado (si no, sale enseguida).
+cat > /etc/systemd/system/svqpanel-dns-cluster-health.service << 'DCHEOF'
+[Unit]
+Description=SVQPanel — comprueba sincronización del cluster DNS (serial BD/ns1/ns2)
+After=network.target svqpanel.service
+
+[Service]
+Type=oneshot
+User=root
+WorkingDirectory=/opt/svqpanel
+ExecStart=/opt/svqpanel/venv/bin/python -m api.cli dns_cluster_health
+TimeoutStartSec=180
+DCHEOF
+
+cat > /etc/systemd/system/svqpanel-dns-cluster-health.timer << 'DCHTEOF'
+[Unit]
+Description=SVQPanel — timer cada 10 min para salud del cluster DNS
+
+[Timer]
+OnBootSec=8min
+OnUnitActiveSec=10min
+Persistent=true
+Unit=svqpanel-dns-cluster-health.service
+
+[Install]
+WantedBy=timers.target
+DCHTEOF
+
 systemctl daemon-reload
-systemctl enable --now svqpanel-domain-stats.timer >/dev/null 2>&1 || true
-systemctl enable --now svqpanel-ssl-check.timer    >/dev/null 2>&1 || true
+systemctl enable --now svqpanel-domain-stats.timer       >/dev/null 2>&1 || true
+systemctl enable --now svqpanel-ssl-check.timer          >/dev/null 2>&1 || true
+systemctl enable --now svqpanel-dns-cluster-health.timer >/dev/null 2>&1 || true
 
 echo -e "${GREEN}✓ systemd timer: svqpanel-domain-stats.timer (cada 4h)${NC}"
 echo -e "${GREEN}✓ systemd timer: svqpanel-ssl-check.timer (diario 05:15)${NC}"
+echo -e "${GREEN}✓ systemd timer: svqpanel-dns-cluster-health.timer (cada 10 min)${NC}"
 echo ""
 
 ###############################################################################

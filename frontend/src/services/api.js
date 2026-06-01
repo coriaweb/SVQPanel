@@ -398,6 +398,10 @@ class APIClient {
     return this.post('/api/dns/cluster/resync', {})
   }
 
+  getDnsClusterHealth(live = false) {
+    return this.get(`/api/dns/cluster/health${live ? '?live=1' : ''}`)
+  }
+
   // Settings
   getSettings() {
     return this.get('/api/settings')

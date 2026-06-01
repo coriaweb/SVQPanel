@@ -17,7 +17,7 @@ from api.models.database import SessionLocal
 from api.models import (  # noqa: F401
     models_user, models_domain, models_settings, models_dns,
     models_mail, models_client_db, models_security, models_plan,
-    models_cron, models_notification,
+    models_cron, models_notification, models_dns_node,
 )
 from api.models.models_security import IpList, SecurityAuditLog
 from api.models.models_domain import Domain
@@ -458,6 +458,87 @@ def cmd_migrate_php_pools(dry_run: bool = False, only_domain: str = None,
         db.close()
 
 
+def _notify_all_admins(db, level, title, message, dedup_key):
+    """Crea una notificación para cada usuario admin (con dedup por usuario)."""
+    from scripts.notify import create_notification, clear_notification
+    admins = db.query(User).filter(User.role == "admin", User.is_active == True).all()  # noqa: E712
+    for a in admins:
+        if level is None:  # limpiar
+            clear_notification(db, a.id, dedup_key)
+        else:
+            create_notification(db, a.id, level, title, message, dedup_key=dedup_key)
+
+
+def cmd_dns_cluster_health() -> int:
+    """
+    Calcula la salud de sincronización del cluster DNS (serial BD↔ns1↔ns2 por
+    zona), la persiste en settings y notifica a los admins si algo está mal.
+    Se ejecuta desde el timer svqpanel-dns-cluster-health.timer (cada 10 min).
+    """
+    import json
+    from scripts.dns_cluster import compute_cluster_health
+    from api.models.models_settings import Settings
+
+    db = SessionLocal()
+    try:
+        health = compute_cluster_health(db)
+        if health is None:
+            logger.info("Sin cluster DNS configurado; nada que comprobar.")
+            return 0
+
+        # Persistir el resultado para que la UI lo lea sin esperar
+        s = db.query(Settings).filter(Settings.id == 1).first()
+        if not s:
+            s = Settings(id=1)
+            db.add(s)
+        s.dns_cluster_health_json = json.dumps(health)
+        s.dns_cluster_health_at = datetime.utcnow()
+
+        summary = health["summary"]
+        logger.info(f"cluster health: {summary}")
+
+        # Avisos al admin (con dedup para no inundar)
+        problems = summary["desync"] + summary["master_down"] + summary["slave_down"]
+        if summary["master_down"]:
+            _notify_all_admins(
+                db, "danger", "Cluster DNS: master no responde",
+                "El nameserver master (ns1) no responde a las consultas SOA. "
+                "Las zonas podrían no estar sirviéndose. Revisa ns1 y named.",
+                dedup_key="dns_cluster_master_down")
+        else:
+            _notify_all_admins(db, None, "", "", "dns_cluster_master_down")
+
+        if summary["slave_down"]:
+            _notify_all_admins(
+                db, "warning", "Cluster DNS: slave no responde",
+                "El nameserver slave (ns2) no responde. El master sigue sirviendo, "
+                "pero no hay redundancia hasta que ns2 vuelva.",
+                dedup_key="dns_cluster_slave_down")
+        else:
+            _notify_all_admins(db, None, "", "", "dns_cluster_slave_down")
+
+        if summary["desync"]:
+            desynced = [r["domain"] for r in health["rows"] if r["status"] == "desync"]
+            sample = ", ".join(desynced[:5]) + ("…" if len(desynced) > 5 else "")
+            _notify_all_admins(
+                db, "warning", f"Cluster DNS: {summary['desync']} zona(s) desincronizada(s)",
+                f"Algunas zonas no tienen el mismo serial en ns1/ns2 que en el panel: "
+                f"{sample}. Pulsa 'Resincronizar' en DNS → Cluster si persiste.",
+                dedup_key="dns_cluster_desync")
+        else:
+            _notify_all_admins(db, None, "", "", "dns_cluster_desync")
+
+        db.commit()
+        logger.info(f"health-check OK ({problems} problemas detectados)")
+        return 0
+    except Exception as e:
+        logger.exception(f"dns_cluster_health falló: {e}")
+        db.rollback()
+        return 2
+    finally:
+        db.close()
+
+
 def main():
     parser = argparse.ArgumentParser(prog="api.cli", description="SVQPanel CLI")
     sub = parser.add_subparsers(dest="cmd", required=True)
@@ -469,6 +550,7 @@ def main():
     sub.add_parser("refresh_domain_stats", help="Recalcula disk_usage por dominio")
     sub.add_parser("refresh_ssl_expires",  help="Sincroniza fechas de expiración SSL desde certbot")
     sub.add_parser("register_server_ips",  help="Registra las IPs del sistema en la BD (post-instalación)")
+    sub.add_parser("dns_cluster_health",   help="Comprueba sincronización del cluster DNS y avisa a admins")
 
     p_pools = sub.add_parser("migrate_php_pools", help="Crea pool PHP-FPM dedicado (seguridad) para dominios sin él")
     p_pools.add_argument("--dry-run", action="store_true", help="Solo muestra lo que haría")
@@ -486,6 +568,8 @@ def main():
         sys.exit(cmd_refresh_ssl_expires())
     if args.cmd == "register_server_ips":
         sys.exit(cmd_register_server_ips())
+    if args.cmd == "dns_cluster_health":
+        sys.exit(cmd_dns_cluster_health())
     if args.cmd == "migrate_php_pools":
         sys.exit(cmd_migrate_php_pools(dry_run=args.dry_run, only_domain=args.domain, force=args.force))
 
