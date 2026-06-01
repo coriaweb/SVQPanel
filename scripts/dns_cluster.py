@@ -38,6 +38,12 @@ REMOTE_SLAVE_ZONES_DIR = "/var/lib/bind"
 
 DEFAULT_TSIG_ALGO = "hmac-sha256"
 
+# Clave SSH dedicada del panel para hablar con los nodos DNS. Se genera una vez
+# y se instala en cada nodo durante la provisión (usando la contraseña una sola
+# vez). A partir de ahí TODO el SSH (provisión y push diario de zonas) usa la
+# clave: no dependemos de contraseñas en memoria, que se pierden al reiniciar.
+PANEL_SSH_KEY = "/opt/svqpanel/.ssh/dns_cluster_ed25519"
+
 
 class DNSClusterError(RuntimeError):
     """Fallo de aprovisionamiento o sincronización del cluster."""
@@ -127,6 +133,50 @@ class DNSCluster:
                 os.unlink(tmp.name)
             except OSError:
                 pass
+
+    # ── Clave SSH del panel ────────────────────────────────────────────────────
+    def ensure_panel_key(self) -> str:
+        """Genera (si no existe) la clave SSH dedicada del panel. Devuelve la ruta."""
+        if not os.path.exists(PANEL_SSH_KEY):
+            os.makedirs(os.path.dirname(PANEL_SSH_KEY), mode=0o700, exist_ok=True)
+            subprocess.run(
+                ["ssh-keygen", "-t", "ed25519", "-N", "", "-f", PANEL_SSH_KEY,
+                 "-C", "svqpanel-dns-cluster"],
+                capture_output=True, text=True, timeout=30,
+            )
+        return PANEL_SSH_KEY
+
+    def install_panel_key(self, node: Dict) -> Tuple[bool, str]:
+        """
+        Instala la clave pública del panel en authorized_keys del nodo, usando la
+        contraseña del nodo UNA vez. Tras esto, el nodo es accesible por clave.
+        Idempotente (no duplica la clave).
+        """
+        self.ensure_panel_key()
+        try:
+            with open(PANEL_SSH_KEY + ".pub") as f:
+                pubkey = f.read().strip()
+        except OSError as e:
+            return False, f"no se pudo leer la clave pública: {e}"
+
+        # Append idempotente a authorized_keys (vía contraseña)
+        remote = (
+            "umask 077; mkdir -p ~/.ssh && touch ~/.ssh/authorized_keys && "
+            f"grep -qxF {shlex.quote(pubkey)} ~/.ssh/authorized_keys || "
+            f"echo {shlex.quote(pubkey)} >> ~/.ssh/authorized_keys"
+        )
+        # Forzamos uso de contraseña (sin clave) para esta instalación inicial
+        node_pw = dict(node)
+        node_pw["ssh_key_path"] = None
+        cmd = self._ssh_base(node_pw) + ["bash", "-c", shlex.quote(remote)]
+        try:
+            r = subprocess.run(cmd, capture_output=True, text=True,
+                               timeout=30, env=self._env_for(node_pw))
+            if r.returncode != 0:
+                return False, r.stderr.strip() or "fallo instalando la clave"
+            return True, ""
+        except Exception as e:
+            return False, str(e)
 
     # ── Conexión / diagnóstico ─────────────────────────────────────────────────
     def test_connection(self, node: Dict) -> Dict:

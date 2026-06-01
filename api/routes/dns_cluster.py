@@ -212,6 +212,28 @@ def _do_provision(db: Session) -> dict:
                 soa_ns=z.soa_ns or master.hostname, ttl=z.ttl or 14400),
         })
 
+    # ── Asegurar acceso por CLAVE SSH (no por contraseña) ──────────────────────
+    # El push diario de zonas usa load_cluster() (desde BD, sin la contraseña en
+    # memoria). Para que funcione siempre, instalamos la clave del panel en cada
+    # nodo (usando la contraseña una vez) y guardamos ssh_key_path en BD.
+    from scripts.dns_cluster import PANEL_SSH_KEY
+    cl.ensure_panel_key()
+    for node_row in (master, slave):
+        if not node_row:
+            continue
+        if not node_row.ssh_key_path:
+            nd = _node_with_secret(node_row)
+            if nd.get("ssh_password"):
+                ok, err = cl.install_panel_key(nd)
+                if not ok:
+                    node_row.status = "error"
+                    node_row.last_error = f"instalando clave SSH: {err}"
+                    db.commit()
+                    raise HTTPException(502, detail=f"No se pudo instalar la clave SSH en {node_row.hostname}: {err}")
+            # A partir de ahora este nodo se usa por clave
+            node_row.ssh_key_path = PANEL_SSH_KEY
+            db.commit()
+
     md = _node_with_secret(master)
     sd = _node_with_secret(slave) if slave else md
     result = {"master": None, "slave": None}
