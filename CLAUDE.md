@@ -4,6 +4,14 @@
 **Repositorio**: https://github.com/coriaweb/SVQPanel  
 **Desarrollador**: coriaweb
 
+## 🧪 Servidor de pruebas
+
+Hay un **servidor de test real** para probar cambios. Sus credenciales (SSH, BD,
+admin del panel, rutas, comandos de despliegue) están en **`SERVER_CREDENTIALS.md`**
+(en la raíz del repo, en `.gitignore`, nunca se sube). Si necesitas probar algo en
+un servidor real, usa ese archivo. Flujo: subir archivos por scp/sshpass →
+`systemctl restart svqpanel` (backend) y/o `npm run build` en `frontend/` (UI).
+
 ## ⚠️ REGLA IMPORTANTE: install.sh es la fuente de verdad del sistema
 
 Todo cambio que afecte a la configuración del servidor (pools PHP-FPM, nginx,

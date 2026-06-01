@@ -905,7 +905,9 @@ const securityScore = computed(() => {
   let score = 0
   const fw = fwStatus.value, f2b = f2bStatus.value
   if (fw?.table_present) score += 35                         // firewall activo
-  if (fw?.policy === 'drop' || fw?.default_policy === 'drop') score += 15
+  // La política por defecto la reporta /firewall/system-ports (sysPorts.policy),
+  // no /firewall/status. 'drop' = cierra todo lo no permitido (más seguro).
+  if (sysPorts.value?.policy === 'drop') score += 15
   if ((fw?.whitelist_count || 0) > 0) score += 10            // whitelist configurada
   if ((fw?.rule_count || 0) > 0) score += 10                 // reglas definidas
   if (f2b?.running) score += 25                              // fail2ban activo

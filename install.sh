@@ -1281,12 +1281,13 @@ server {
 
     client_max_body_size 100M;
 
-    # Cabeceras de seguridad
+    # Cabeceras de seguridad (a nivel server: válidas para todo el panel).
+    # El CSP NO va aquí porque /webmail, /pma, /rspamd son apps aparte que
+    # rompen con un CSP estricto; el CSP se aplica solo en "location /" (la SPA).
     add_header X-Frame-Options "SAMEORIGIN" always;
     add_header X-Content-Type-Options "nosniff" always;
     add_header Referrer-Policy "strict-origin-when-cross-origin" always;
     add_header Permissions-Policy "geolocation=(), microphone=(), camera=(), payment=()" always;
-    add_header Content-Security-Policy "default-src 'self'; img-src 'self' data: blob:; style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net https://fonts.googleapis.com; font-src 'self' https://cdn.jsdelivr.net https://fonts.gstatic.com; script-src 'self' https://cdn.jsdelivr.net; connect-src 'self'; frame-ancestors 'self'; base-uri 'self'; form-action 'self'" always;
 
     # Servir frontend estático (Vue3 dist)
     root /opt/svqpanel/frontend/dist;
@@ -1342,6 +1343,13 @@ server {
     # Frontend → servir archivos estáticos, fallback a index.html (SPA)
     location / {
         try_files $uri $uri/ /index.html;
+        # CSP solo para la SPA del panel (un location con add_header no hereda
+        # los del server, así que reafirmamos también los de seguridad básicos).
+        add_header X-Frame-Options "SAMEORIGIN" always;
+        add_header X-Content-Type-Options "nosniff" always;
+        add_header Referrer-Policy "strict-origin-when-cross-origin" always;
+        add_header Permissions-Policy "geolocation=(), microphone=(), camera=(), payment=()" always;
+        add_header Content-Security-Policy "default-src 'self'; img-src 'self' data: blob:; style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net https://fonts.googleapis.com; font-src 'self' https://cdn.jsdelivr.net https://fonts.gstatic.com; script-src 'self' https://cdn.jsdelivr.net; connect-src 'self'; frame-ancestors 'self'; base-uri 'self'; form-action 'self'" always;
     }
 }
 NGINXEOF
