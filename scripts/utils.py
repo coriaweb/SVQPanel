@@ -271,12 +271,17 @@ def generate_nginx_config(
     ipv4: Optional[str] = None,
     force_https: bool = False,
     hsts: bool = False,
+    rate_limit_enabled: bool = False,
+    rate_limit_burst: int = 20,
 ) -> str:
     """Generate Nginx vhost configuration (Hestia-style paths)"""
 
     # Si hay redirección activa, generar vhost mínimo de 301
     if redirect_to:
         return _generate_redirect_config(domain, redirect_to, ssl_enabled, ipv6, ipv4)
+
+    # Directiva de rate limit a inyectar en location / (vacío si desactivado)
+    rl_directive = _ratelimit_directive(domain, rate_limit_burst) if rate_limit_enabled else ""
 
     # Docroot: personalizado o el estándar
     public_html = custom_docroot or get_public_html(user, domain)
@@ -337,7 +342,7 @@ def generate_nginx_config(
     # de la plantilla puedan usar $phpfpm_backend en lugar del nombre hardcodeado
     set $phpfpm_backend php_{backend_name};
 {tpl_extra}
-    location / {{
+    location / {{{rl_directive}
         try_files $uri $uri/ /index.php?$query_string;
     }}
 
@@ -396,7 +401,7 @@ server {{
 
     index index.php index.html index.htm;
 {skip_block}    set $phpfpm_backend php_{backend_name};
-{tpl_extra}    location / {{
+{tpl_extra}    location / {{{rl_directive}
         try_files $uri $uri/ /index.php?$query_string;
     }}
 
