@@ -62,7 +62,9 @@ def _sync_zone_to_bind(zone: DnsZone, db: Session):
          "content": r.content, "ttl": r.ttl, "priority": r.priority}
         for r in records
     ]
-    soa_ns = zone.soa_ns or "ns1.svqpanel.local"
+    from scripts.dns_manager import get_panel_nameservers
+    panel_ns1, _ = get_panel_nameservers(db)
+    soa_ns = zone.soa_ns or panel_ns1
     ttl = zone.ttl or 14400
 
     # 1) Intentar cluster (no requiere root local; va por SSH al master)
@@ -180,8 +182,11 @@ async def create_zone(
                     ),
                 )
 
+    from scripts.dns_manager import get_panel_nameservers
+    ns1, ns2 = get_panel_nameservers(db)
     ipv4 = data.ip_address or _get_server_ipv4(db)
-    soa_ns = data.soa_ns or "ns1.svqpanel.local"
+    # Por defecto el SOA usa el ns1 del panel; el usuario puede overridear soa_ns.
+    soa_ns = data.soa_ns or ns1
     ttl    = data.ttl or 14400
 
     domain_obj = db.query(Domain).filter(Domain.domain_name == data.domain_name).first()
@@ -204,7 +209,7 @@ async def create_zone(
     db.commit()
     db.refresh(zone)
 
-    default_records = _build_template_records(data.domain_name, ipv4, ipv6, soa_ns)
+    default_records = _build_template_records(data.domain_name, ipv4, ipv6, ns1, ns2)
     for r in default_records:
         db.add(DnsRecord(zone_id=zone.id, **r))
     db.commit()
@@ -259,7 +264,9 @@ async def update_zone(
         changed = True
 
     if data.soa_ns is not None:
-        old_ns_dot = (zone.soa_ns or "ns1.svqpanel.local").rstrip(".") + "."
+        from scripts.dns_manager import get_panel_nameservers
+        _pns1, _ = get_panel_nameservers(db)
+        old_ns_dot = (zone.soa_ns or _pns1).rstrip(".") + "."
         old_ns_rec = db.query(DnsRecord).filter(
             DnsRecord.zone_id == zone_id, DnsRecord.record_type == "NS",
             DnsRecord.name == "@", DnsRecord.content == old_ns_dot
@@ -308,12 +315,16 @@ async def regenerate_zone(
 
     _require_zone_access(zone, current_user, db)
 
+    from scripts.dns_manager import get_panel_nameservers
+    ns1, ns2 = get_panel_nameservers(db)
     ipv4 = zone.ip_address or _get_server_ipv4(db)
     domain_obj = db.query(Domain).filter(Domain.domain_name == zone.domain_name).first()
     ipv6 = domain_obj.ipv6 if domain_obj else None
 
+    # Regenerar adopta los nameservers actuales del panel (SOA + registros NS)
+    zone.soa_ns = ns1
     db.query(DnsRecord).filter(DnsRecord.zone_id == zone_id).delete()
-    for r in _build_template_records(zone.domain_name, ipv4, ipv6, zone.soa_ns):
+    for r in _build_template_records(zone.domain_name, ipv4, ipv6, ns1, ns2):
         db.add(DnsRecord(zone_id=zone.id, **r))
 
     zone.serial = _bump_serial(zone.serial)
@@ -467,6 +478,69 @@ async def delete_record(
     return None
 
 
+# ──────────────────────── Nameservers del panel (Fase A) ─────────────────────
+
+@router.get("/dns/nameservers")
+async def get_nameservers(current_user=Depends(require_auth), db: Session = Depends(get_db)):
+    """
+    Nameservers efectivos del panel (settings → cluster → placeholder) + glue
+    records sugeridos para registrar en el registrador del dominio padre.
+    """
+    from scripts.dns_manager import get_panel_nameservers, DEFAULT_NS1
+    ns1, ns2 = get_panel_nameservers(db)
+    server_ipv4 = _get_server_ipv4(db)
+
+    # IPs de los nodos del cluster si existen (para los glue records)
+    ns1_ip = ns2_ip = None
+    try:
+        from api.models.models_dns_node import DnsNode
+        m = db.query(DnsNode).filter(DnsNode.role == "master").first()
+        s = db.query(DnsNode).filter(DnsNode.role == "slave").first()
+        ns1_ip = m.ip if m else (server_ipv4 or None)
+        ns2_ip = s.ip if s else None
+    except Exception:
+        ns1_ip = server_ipv4 or None
+
+    return {
+        "ns1": ns1,
+        "ns2": ns2,
+        "ns1_ip": ns1_ip,
+        "ns2_ip": ns2_ip,
+        "is_placeholder": ns1 == DEFAULT_NS1,
+    }
+
+
+@router.post("/dns/regenerate-all")
+async def regenerate_all_zones(current_user=Depends(require_admin), db: Session = Depends(get_db)):
+    """
+    Regenera TODAS las zonas con los nameservers actuales del panel (actualiza
+    SOA + registros NS) y las sincroniza. Útil tras configurar/cambiar los NS.
+    """
+    from scripts.dns_manager import get_panel_nameservers
+    ns1, ns2 = get_panel_nameservers(db)
+    zones = db.query(DnsZone).all()
+    updated, failed = 0, []
+    for zone in zones:
+        try:
+            ipv4 = zone.ip_address or _get_server_ipv4(db)
+            domain_obj = db.query(Domain).filter(Domain.domain_name == zone.domain_name).first()
+            ipv6 = domain_obj.ipv6 if domain_obj else None
+            zone.soa_ns = ns1
+            db.query(DnsRecord).filter(DnsRecord.zone_id == zone.id).delete()
+            for r in _build_template_records(zone.domain_name, ipv4, ipv6, ns1, ns2):
+                db.add(DnsRecord(zone_id=zone.id, **r))
+            zone.serial = _bump_serial(zone.serial)
+            db.commit()
+            db.refresh(zone)
+            _sync_zone_to_bind(zone, db)
+            updated += 1
+        except Exception as e:
+            db.rollback()
+            failed.append({"domain": zone.domain_name, "error": str(e)})
+    return {"status": "success", "updated": updated, "failed": failed,
+            "ns1": ns1, "ns2": ns2}
+
+
 # ──────────────────────── DNSSEC (por zona, requiere cluster) ─────────────────
 
 @router.get("/dns/{zone_id}/dnssec")
@@ -562,13 +636,16 @@ def _bump_serial(current: int) -> int:
     return max(current + 1, today + 1)
 
 
-def _build_template_records(domain: str, ipv4: str, ipv6: str = None, soa_ns: str = None) -> list:
+def _build_template_records(domain: str, ipv4: str, ipv6: str = None,
+                            ns1: str = None, ns2: str = None) -> list:
     """
     Registros por defecto — plantilla Hestia default.
     NS×2, A(@+mail), CNAME(www+ftp+webmail), MX, TXT(SPF+DMARC), SRV(mail)
+    ns1/ns2: nameservers del panel (de get_panel_nameservers).
     """
-    ns1 = (soa_ns or "ns1.svqpanel.local").rstrip(".")
-    ns2 = ns1.replace("ns1.", "ns2.", 1) if "ns1." in ns1 else "ns2.svqpanel.local"
+    from scripts.dns_manager import DEFAULT_NS1, DEFAULT_NS2
+    ns1 = (ns1 or DEFAULT_NS1).rstrip(".")
+    ns2 = (ns2 or DEFAULT_NS2).rstrip(".")
     records = []
 
     # NS

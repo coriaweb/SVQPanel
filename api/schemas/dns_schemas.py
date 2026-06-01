@@ -47,7 +47,8 @@ class DnsRecordResponse(BaseModel):
 class DnsZoneCreate(BaseModel):
     domain_name:    str = Field(..., min_length=4, max_length=255)
     ip_address:     Optional[str]  = None
-    soa_ns:         Optional[str]  = "ns1.svqpanel.local"
+    # None = usar el ns1 del panel (get_panel_nameservers). Override opcional.
+    soa_ns:         Optional[str]  = None
     ttl:            Optional[int]  = Field(14400, ge=60, le=86400)
     template:       Optional[str]  = "default"
     dnssec_enabled: Optional[bool] = False

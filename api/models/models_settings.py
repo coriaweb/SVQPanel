@@ -43,6 +43,11 @@ class Settings(Base):
     # Sistema
     timezone = Column(String(64), default="UTC")             # Zona horaria del servidor
 
+    # Nameservers propios del panel (Fase A). Si están vacíos y hay cluster, se
+    # derivan de los hostnames de los nodos; si no, del placeholder histórico.
+    dns_ns1 = Column(String(255), nullable=True)              # ns1.tudominio.com
+    dns_ns2 = Column(String(255), nullable=True)              # ns2.tudominio.com
+
     # Cluster DNS — clave TSIG compartida master↔slave (ver models_dns_node.py)
     dns_tsig_name   = Column(String(64), nullable=True)       # nombre de la clave, ej: svq-xfer
     dns_tsig_secret = Column(String(128), nullable=True)      # secreto base64

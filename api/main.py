@@ -496,6 +496,9 @@ def _run_migrations():
         # Salud del cluster DNS (la escribe el timer dns-cluster-health)
         "ALTER TABLE settings ADD COLUMN IF NOT EXISTS dns_cluster_health_json TEXT",
         "ALTER TABLE settings ADD COLUMN IF NOT EXISTS dns_cluster_health_at TIMESTAMP",
+        # Fase A: nameservers propios del panel
+        "ALTER TABLE settings ADD COLUMN IF NOT EXISTS dns_ns1 VARCHAR(255)",
+        "ALTER TABLE settings ADD COLUMN IF NOT EXISTS dns_ns2 VARCHAR(255)",
     ]
     with engine.connect() as conn:
         for sql in migrations:

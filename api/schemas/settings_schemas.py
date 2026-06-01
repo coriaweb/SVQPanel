@@ -28,6 +28,19 @@ class SettingsUpdate(BaseModel):
     panel_hostname: Optional[str] = Field(None, max_length=255)
     force_https: Optional[bool] = None
     timezone: Optional[str] = Field(None, max_length=64)
+    dns_ns1: Optional[str] = Field(None, max_length=255)
+    dns_ns2: Optional[str] = Field(None, max_length=255)
+
+    @field_validator("dns_ns1", "dns_ns2")
+    @classmethod
+    def validate_ns(cls, v):
+        if v is None or v.strip() == "":
+            return None
+        import re
+        v = v.strip().lower().rstrip(".")
+        if not re.match(r"^(?=.{1,253}$)([a-z0-9](-?[a-z0-9])*\.)+[a-z]{2,}$", v):
+            raise ValueError("Nameserver no válido (usa un FQDN, ej. ns1.tudominio.com)")
+        return v
 
     @field_validator("ipv6_range")
     @classmethod
@@ -74,6 +87,8 @@ class SettingsResponse(BaseModel):
     updated_at: Optional[datetime] = None
 
     timezone: str = "UTC"
+    dns_ns1: Optional[str] = None
+    dns_ns2: Optional[str] = None
 
     # Información calculada
     ipv6_total_ips: Optional[int] = None      # IPs disponibles en el rango

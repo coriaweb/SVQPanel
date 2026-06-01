@@ -15,6 +15,48 @@ logger = logging.getLogger(__name__)
 ZONES_DIR       = "/etc/bind/zones"
 NAMED_CONF_ZONES = "/etc/bind/named.conf.zones"   # incluido desde named.conf.local
 
+# Placeholder histórico, último recurso si no hay NS configurados ni cluster.
+DEFAULT_NS1 = "ns1.svqpanel.local"
+DEFAULT_NS2 = "ns2.svqpanel.local"
+
+
+def get_panel_nameservers(db) -> tuple:
+    """
+    Devuelve (ns1, ns2): los nameservers del panel, fuente única de verdad para
+    el SOA y los registros NS de las zonas. Orden de resolución:
+      1) Settings.dns_ns1/dns_ns2 si están configurados (override manual).
+      2) Hostnames de los nodos del cluster (master=ns1, slave=ns2).
+      3) Placeholder histórico (ns1/ns2.svqpanel.local).
+    Sin punto final; el caller añade el '.' donde lo necesite.
+    """
+    ns1 = ns2 = None
+    try:
+        from api.models.models_settings import Settings
+        s = db.query(Settings).filter(Settings.id == 1).first()
+        if s:
+            ns1 = (s.dns_ns1 or "").strip() or None
+            ns2 = (s.dns_ns2 or "").strip() or None
+    except Exception:
+        pass
+
+    if not ns1 or not ns2:
+        try:
+            from api.models.models_dns_node import DnsNode
+            if not ns1:
+                m = db.query(DnsNode).filter(DnsNode.role == "master").first()
+                if m and m.hostname:
+                    ns1 = m.hostname.strip()
+            if not ns2:
+                sl = db.query(DnsNode).filter(DnsNode.role == "slave").first()
+                if sl and sl.hostname:
+                    ns2 = sl.hostname.strip()
+        except Exception:
+            pass
+
+    ns1 = (ns1 or DEFAULT_NS1).rstrip(".")
+    ns2 = (ns2 or DEFAULT_NS2).rstrip(".")
+    return ns1, ns2
+
 
 class DNSManager(SystemManager):
     """Gestión de zonas BIND9"""

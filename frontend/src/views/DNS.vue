@@ -14,6 +14,53 @@
       </button>
     </div>
 
+    <!-- Nameservers del panel (solo admin) -->
+    <div v-if="isAdmin" class="card shadow-sm mb-4">
+      <div class="card-header">
+        <h5 class="mb-0"><i class="bi bi-pin-map me-2"></i>Nameservers del panel</h5>
+      </div>
+      <div class="card-body">
+        <p class="text-muted small mb-3">
+          Los nameservers que se publican en el <strong>SOA</strong> y los registros <strong>NS</strong> de tus zonas.
+          Si dejas los campos vacíos y hay cluster, se usan los hostnames de los nodos automáticamente.
+          <span v-if="ns.is_placeholder" class="text-warning">
+            <i class="bi bi-exclamation-triangle"></i> Ahora mismo se usa un valor por defecto (<code>{{ ns.ns1 }}</code>); configúralos.
+          </span>
+        </p>
+        <div class="row g-2 align-items-end mb-3">
+          <div class="col-md-4">
+            <label class="form-label small mb-1">ns1 (primario)</label>
+            <input v-model="nsForm.ns1" class="form-control form-control-sm font-monospace" :placeholder="ns.ns1 || 'ns1.tudominio.com'">
+          </div>
+          <div class="col-md-4">
+            <label class="form-label small mb-1">ns2 (secundario)</label>
+            <input v-model="nsForm.ns2" class="form-control form-control-sm font-monospace" :placeholder="ns.ns2 || 'ns2.tudominio.com'">
+          </div>
+          <div class="col-md-4">
+            <button class="btn btn-primary btn-sm" @click="saveNameservers" :disabled="nsSaving">
+              <i class="bi bi-save me-1"></i> {{ nsSaving ? 'Guardando…' : 'Guardar' }}
+            </button>
+            <button class="btn btn-outline-warning btn-sm ms-2" @click="regenerateAll" :disabled="regenAll"
+                    title="Reescribe SOA/NS de todas las zonas con estos nameservers">
+              <i class="bi bi-arrow-repeat me-1"></i> {{ regenAll ? 'Regenerando…' : 'Aplicar a todas las zonas' }}
+            </button>
+          </div>
+        </div>
+
+        <!-- Glue records -->
+        <div class="alert alert-info py-2 mb-0">
+          <strong class="small"><i class="bi bi-link-45deg me-1"></i>Glue records</strong> — regístralos en el registrador
+          del <em>dominio de tus nameservers</em> (donde compraste el dominio de <code>{{ ns.ns1 }}</code>):
+          <table class="table table-sm mb-0 mt-2 font-monospace small">
+            <tbody>
+              <tr><td>{{ ns.ns1 }}</td><td>A</td><td>{{ ns.ns1_ip || '— (IP de ns1)' }}</td></tr>
+              <tr v-if="ns.ns2"><td>{{ ns.ns2 }}</td><td>A</td><td>{{ ns.ns2_ip || '— (IP de ns2)' }}</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+
     <!-- Cluster DNS (solo admin) -->
     <div v-if="isAdmin" class="card shadow-sm mb-4">
       <div class="card-header d-flex justify-content-between align-items-center">
@@ -656,7 +703,7 @@ const TYPE_CLASSES = {
 const emptyZoneForm = () => ({
   domain_name:    '',
   ip_address:     '',
-  soa_ns:         'ns1.svqpanel.local',
+  soa_ns:         '',            // vacío = usar el ns1 del panel (backend lo rellena)
   ttl:            14400,
   template:       'default',
   dnssec_enabled: false,
@@ -764,6 +811,8 @@ export default {
     const openCreateZone = () => {
       editingZone.value = null
       zoneForm.value = emptyZoneForm()
+      // Prefill el SOA con el ns1 efectivo del panel (no el placeholder)
+      if (ns.value.ns1 && !ns.value.is_placeholder) zoneForm.value.soa_ns = ns.value.ns1
       showZoneModal.value = true
     }
 
@@ -774,7 +823,7 @@ export default {
       zoneForm.value = {
         domain_name:    zone.domain_name,
         ip_address:     zone.ip_address   || '',
-        soa_ns:         zone.soa_ns       || 'ns1.svqpanel.local',
+        soa_ns:         zone.soa_ns       || ns.value.ns1 || '',
         ttl:            zone.ttl          || 14400,
         template:       zone.template     || 'default',
         dnssec_enabled: zone.dnssec_enabled || false,
@@ -980,6 +1029,51 @@ export default {
       }
     }
 
+    // ── Nameservers del panel (Fase A) ──
+    const ns       = ref({ ns1: '', ns2: '', ns1_ip: null, ns2_ip: null, is_placeholder: true })
+    const nsForm   = ref({ ns1: '', ns2: '' })
+    const nsSaving = ref(false)
+    const regenAll = ref(false)
+
+    const loadNameservers = async () => {
+      if (!isAdmin.value) return
+      try {
+        ns.value = await api.getDnsNameservers()
+        // Prefill el formulario con los valores configurados (no el placeholder)
+        if (!ns.value.is_placeholder) {
+          nsForm.value = { ns1: ns.value.ns1, ns2: ns.value.ns2 }
+        }
+      } catch (e) { /* silencioso */ }
+    }
+
+    const saveNameservers = async () => {
+      nsSaving.value = true
+      try {
+        await api.updateSettings({ dns_ns1: nsForm.value.ns1 || null, dns_ns2: nsForm.value.ns2 || null })
+        store.showNotification('Nameservers guardados', 'success')
+        await loadNameservers()
+      } catch (e) {
+        store.showNotification('Error: ' + e.message, 'danger')
+      } finally {
+        nsSaving.value = false
+      }
+    }
+
+    const regenerateAll = async () => {
+      if (!confirm('Reescribirá el SOA y los registros NS de TODAS las zonas con estos nameservers. ¿Continuar?')) return
+      regenAll.value = true
+      try {
+        const r = await api.regenerateAllZones()
+        store.showNotification(`${r.updated} zona(s) regenerada(s)` + (r.failed?.length ? `, ${r.failed.length} con error` : ''), r.failed?.length ? 'warning' : 'success')
+        await loadZones()
+        await loadHealth(true)
+      } catch (e) {
+        store.showNotification('Error regenerando: ' + e.message, 'danger')
+      } finally {
+        regenAll.value = false
+      }
+    }
+
     // ── Cluster DNS ──
     const cluster        = ref({ enabled: false, replication: null })
     const clusterNodes   = ref([])
@@ -1162,10 +1256,11 @@ export default {
       }
     }
 
-    onMounted(async () => { await loadZones(); await loadCluster(); await loadHealth(false) })
+    onMounted(async () => { await loadZones(); await loadNameservers(); await loadCluster(); await loadHealth(false) })
 
     return {
       isAdmin,
+      ns, nsForm, nsSaving, regenAll, loadNameservers, saveNameservers, regenerateAll,
       cluster, clusterNodes, loadingCluster, savingNode, provisioning, testingNodeId, nodeForm,
       loadCluster, addNode, testNode, deleteNode, provisionCluster, resyncCluster,
       health, loadingHealth, loadHealth, serialClass, formatHealthTime,

@@ -402,6 +402,14 @@ class APIClient {
     return this.get(`/api/dns/cluster/health${live ? '?live=1' : ''}`)
   }
 
+  getDnsNameservers() {
+    return this.get('/api/dns/nameservers')
+  }
+
+  regenerateAllZones() {
+    return this.post('/api/dns/regenerate-all', {})
+  }
+
   getDnssec(zoneId) {
     return this.get(`/api/dns/${zoneId}/dnssec`)
   }
