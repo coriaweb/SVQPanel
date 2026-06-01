@@ -22,14 +22,50 @@ app = FastAPI(
     version=PANEL_VERSION,
 )
 
-# CORS - Permitir requests desde frontend
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],  # Desarrollo: permitir todas las origins
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
+# ── Cabeceras de seguridad HTTP en todas las respuestas del panel ──
+class SecurityHeadersMiddleware(BaseHTTPMiddleware):
+    async def dispatch(self, request: Request, call_next):
+        response = await call_next(request)
+        # Clickjacking: el panel no debe poder embeberse en iframes de terceros
+        response.headers.setdefault("X-Frame-Options", "SAMEORIGIN")
+        # MIME sniffing
+        response.headers.setdefault("X-Content-Type-Options", "nosniff")
+        # No filtrar la URL del panel a sitios externos
+        response.headers.setdefault("Referrer-Policy", "strict-origin-when-cross-origin")
+        # Desactivar APIs del navegador que el panel no usa
+        response.headers.setdefault(
+            "Permissions-Policy", "geolocation=(), microphone=(), camera=(), payment=()"
+        )
+        # CSP: bloquea embedding y limita orígenes. Permisivo con los CDN que
+        # usa la SPA (Bootstrap Icons, fuentes) e inline styles de Vue.
+        response.headers.setdefault(
+            "Content-Security-Policy",
+            "default-src 'self'; "
+            "img-src 'self' data: blob:; "
+            "style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net https://fonts.googleapis.com; "
+            "font-src 'self' https://cdn.jsdelivr.net https://fonts.gstatic.com; "
+            "script-src 'self' https://cdn.jsdelivr.net; "
+            "connect-src 'self'; "
+            "frame-ancestors 'self'; "
+            "base-uri 'self'; "
+            "form-action 'self'"
+        )
+        return response
+
+app.add_middleware(SecurityHeadersMiddleware)
+
+# CORS — el panel se sirve desde su propio dominio (frontend y API en el mismo
+# host vía nginx), así que no se necesitan orígenes cruzados. Restringido a los
+# definidos en PANEL_CORS_ORIGINS (coma-separados); por defecto, ninguno externo.
+_cors_origins = [o.strip() for o in os.getenv("PANEL_CORS_ORIGINS", "").split(",") if o.strip()]
+if _cors_origins:
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=_cors_origins,
+        allow_credentials=True,
+        allow_methods=["*"],
+        allow_headers=["*"],
+    )
 
 # Crear tablas al iniciar
 @app.on_event("startup")

@@ -226,6 +226,14 @@ if [[ "$WEBSERVER" == "nginx" || "$WEBSERVER" == "apache+nginx" ]]; then
     echo -e "${YELLOW}Instalando Nginx...${NC}"
     apt-get install -y -qq nginx
     systemctl enable nginx
+
+    # Endurecimiento global: ocultar la versión de nginx (server_tokens off)
+    # para no revelar la versión en cabeceras y páginas de error.
+    cat > /etc/nginx/conf.d/svqpanel-hardening.conf << 'NGINXHARDEOF'
+# SVQPanel — endurecimiento global de nginx
+server_tokens off;
+NGINXHARDEOF
+
     systemctl start nginx
     echo -e "${GREEN}✓ Nginx instalado${NC}\n"
 fi
@@ -1277,6 +1285,8 @@ server {
     add_header X-Frame-Options "SAMEORIGIN" always;
     add_header X-Content-Type-Options "nosniff" always;
     add_header Referrer-Policy "strict-origin-when-cross-origin" always;
+    add_header Permissions-Policy "geolocation=(), microphone=(), camera=(), payment=()" always;
+    add_header Content-Security-Policy "default-src 'self'; img-src 'self' data: blob:; style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net https://fonts.googleapis.com; font-src 'self' https://cdn.jsdelivr.net https://fonts.gstatic.com; script-src 'self' https://cdn.jsdelivr.net; connect-src 'self'; frame-ancestors 'self'; base-uri 'self'; form-action 'self'" always;
 
     # Servir frontend estático (Vue3 dist)
     root /opt/svqpanel/frontend/dist;

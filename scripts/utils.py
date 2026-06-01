@@ -83,65 +83,6 @@ FASTCGI_CACHE_GLOBAL_CONTENT = '''# SVQPanel — directivas FastCGI cache compar
 fastcgi_cache_key "$scheme$request_method$host$request_uri";
 '''
 
-# Rate limiting (anti-abuso). Una zona por dominio (igual que la caché), con
-# su propio 'rate' (peticiones/seg por IP) y 'burst' (ráfaga tolerada). nginx
-# fija el rate en la zona (nivel http) y lo aplica con limit_req en el location.
-RATELIMIT_GLOBAL_CONF = "/etc/nginx/conf.d/svqpanel-ratelimit-global.conf"
-RATELIMIT_GLOBAL_CONTENT = '''# SVQPanel — rate limiting (nivel http)
-# Las zonas (limit_req_zone) las define cada dominio en su propio fichero
-# svqpanel-ratelimit-{domain}.conf. Aquí solo el código de respuesta.
-limit_req_status 429;
-'''
-
-
-def get_ratelimit_conf_path(domain: str) -> str:
-    """Ruta del fichero conf con la zona de rate limit del dominio."""
-    return f"/etc/nginx/conf.d/svqpanel-ratelimit-{domain}.conf"
-
-
-def _ratelimit_zone_name(domain: str) -> str:
-    """Nombre de zona único por dominio (alfanumérico)."""
-    return "svqrl_" + domain.replace('.', '_').replace('-', '_')
-
-
-def ensure_ratelimit_global() -> None:
-    """Crea el conf global (limit_req_status). Idempotente."""
-    import os
-    if not os.path.isfile(RATELIMIT_GLOBAL_CONF):
-        with open(RATELIMIT_GLOBAL_CONF, "w") as f:
-            f.write(RATELIMIT_GLOBAL_CONTENT)
-
-
-def write_ratelimit_zone(domain: str, rps: int) -> str:
-    """
-    Escribe /etc/nginx/conf.d/svqpanel-ratelimit-{domain}.conf con la zona
-    limit_req_zone del dominio (rate = rps peticiones/seg por IP).
-    """
-    ensure_ratelimit_global()
-    zone = _ratelimit_zone_name(domain)
-    path = get_ratelimit_conf_path(domain)
-    content = (
-        f"# SVQPanel — rate limit de {domain}\n"
-        f"limit_req_zone $binary_remote_addr zone={zone}:10m rate={rps}r/s;\n"
-    )
-    with open(path, "w") as f:
-        f.write(content)
-    return path
-
-
-def remove_ratelimit_zone(domain: str) -> None:
-    """Borra el fichero de zona de rate limit de un dominio."""
-    import os
-    path = get_ratelimit_conf_path(domain)
-    if os.path.isfile(path):
-        os.remove(path)
-
-
-def _ratelimit_directive(domain: str, burst: int) -> str:
-    """Línea limit_req para inyectar en el location del dominio."""
-    zone = _ratelimit_zone_name(domain)
-    return f"\n        limit_req zone={zone} burst={burst} nodelay;"
-
 
 def get_fastcgi_cache_conf_path(domain: str) -> str:
     """Ruta del fichero conf en /etc/nginx/conf.d/ con la zona de cache del dominio."""
@@ -271,17 +212,12 @@ def generate_nginx_config(
     ipv4: Optional[str] = None,
     force_https: bool = False,
     hsts: bool = False,
-    rate_limit_enabled: bool = False,
-    rate_limit_burst: int = 20,
 ) -> str:
     """Generate Nginx vhost configuration (Hestia-style paths)"""
 
     # Si hay redirección activa, generar vhost mínimo de 301
     if redirect_to:
         return _generate_redirect_config(domain, redirect_to, ssl_enabled, ipv6, ipv4)
-
-    # Directiva de rate limit a inyectar en location / (vacío si desactivado)
-    rl_directive = _ratelimit_directive(domain, rate_limit_burst) if rate_limit_enabled else ""
 
     # Docroot: personalizado o el estándar
     public_html = custom_docroot or get_public_html(user, domain)
@@ -342,7 +278,7 @@ def generate_nginx_config(
     # de la plantilla puedan usar $phpfpm_backend en lugar del nombre hardcodeado
     set $phpfpm_backend php_{backend_name};
 {tpl_extra}
-    location / {{{rl_directive}
+    location / {{
         try_files $uri $uri/ /index.php?$query_string;
     }}
 
@@ -358,9 +294,27 @@ def generate_nginx_config(
         deny all;
     }}
 
+    # .well-known SIEMPRE permitido (certbot/ACME, autodiscover) — va antes de
+    # los deny de ficheros ocultos para no bloquear la validación de SSL.
     location ~ /\\.well-known {{
         allow all;
     }}
+
+    # Bloquear ficheros sensibles (credenciales, VCS, dumps y backups).
+    location ~ /\\.(?:env|git|svn|hg|bzr)(?:/|$) {{
+        deny all;
+    }}
+    location ~* \\.(?:sql|bak|old|orig|save|swp|swo|log|sh)$ {{
+        deny all;
+    }}
+    location ~ ~$ {{
+        deny all;
+    }}
+    location = /composer.json {{ deny all; }}
+    location = /composer.lock {{ deny all; }}
+    location = /package.json {{ deny all; }}
+    location = /.user.ini {{ deny all; }}
+    location = /wp-config.php.bak {{ deny all; }}
 
     error_log {logs_dir}/nginx.error.log;
     access_log {logs_dir}/nginx.access.log;
@@ -383,7 +337,7 @@ server {{
 
     index index.php index.html index.htm;
 {skip_block}    set $phpfpm_backend php_{backend_name};
-{tpl_extra}    location / {{{rl_directive}
+{tpl_extra}    location / {{
         try_files $uri $uri/ /index.php?$query_string;
     }}
 
@@ -398,6 +352,23 @@ server {{
     location ~ /\\.ht {{
         deny all;
     }}
+
+    # Bloquear acceso a ficheros sensibles que algunos frameworks dejan en la
+    # raíz web (credenciales, control de versiones, dumps y backups).
+    location ~ /\\.(?:env|git|svn|hg|bzr)(?:/|$) {{
+        deny all;
+    }}
+    location ~* \\.(?:sql|bak|old|orig|save|swp|swo|log|sh)$ {{
+        deny all;
+    }}
+    location ~ ~$ {{
+        deny all;
+    }}
+    location = /composer.json {{ deny all; }}
+    location = /composer.lock {{ deny all; }}
+    location = /package.json {{ deny all; }}
+    location = /.user.ini {{ deny all; }}
+    location = /wp-config.php.bak {{ deny all; }}
 
     error_log {logs_dir}/nginx.error.log;
     access_log {logs_dir}/nginx.access.log;
