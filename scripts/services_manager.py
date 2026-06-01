@@ -205,6 +205,33 @@ def control_service(service_name: str, action: str) -> dict:
     }
 
 
+def _cpu_times():
+    """Lee los tiempos agregados de CPU desde /proc/stat → (idle, total)."""
+    with open("/proc/stat") as f:
+        for line in f:
+            if line.startswith("cpu "):
+                parts = [float(x) for x in line.split()[1:]]
+                idle = parts[3] + (parts[4] if len(parts) > 4 else 0)  # idle + iowait
+                return idle, sum(parts)
+    return 0.0, 0.0
+
+
+def _cpu_percent(interval: float = 0.15) -> float:
+    """Uso de CPU en % muestreando /proc/stat dos veces."""
+    try:
+        import time
+        idle1, total1 = _cpu_times()
+        time.sleep(interval)
+        idle2, total2 = _cpu_times()
+        dt = total2 - total1
+        di = idle2 - idle1
+        if dt <= 0:
+            return 0.0
+        return round((1 - di / dt) * 100, 1)
+    except Exception:
+        return 0.0
+
+
 def get_system_stats() -> dict:
     """Estadísticas generales del sistema"""
     stats = {
@@ -215,6 +242,13 @@ def get_system_stats() -> dict:
         "uptime_str":  "—",
         "cpu_count": 1,
         "os_name": "",
+        "cpu_percent": 0.0,
+        "mem_total_mb": 0,
+        "mem_used_mb": 0,
+        "mem_percent": 0.0,
+        "disk_total_gb": 0,
+        "disk_used_gb": 0,
+        "disk_percent": 0.0,
     }
 
     # Load average
@@ -252,6 +286,39 @@ def get_system_stats() -> dict:
                 if line.startswith("PRETTY_NAME="):
                     stats["os_name"] = line.split("=", 1)[1].strip().strip('"')
                     break
+    except Exception:
+        pass
+
+    # CPU %
+    stats["cpu_percent"] = _cpu_percent()
+
+    # Memoria (RAM) desde /proc/meminfo
+    try:
+        mem = {}
+        with open("/proc/meminfo") as f:
+            for line in f:
+                k, v = line.split(":", 1)
+                mem[k.strip()] = int(v.strip().split()[0])  # en kB
+        total_kb = mem.get("MemTotal", 0)
+        # MemAvailable es la métrica fiable de RAM libre real (Linux 3.14+)
+        avail_kb = mem.get("MemAvailable", mem.get("MemFree", 0))
+        used_kb = max(0, total_kb - avail_kb)
+        stats["mem_total_mb"] = round(total_kb / 1024)
+        stats["mem_used_mb"] = round(used_kb / 1024)
+        stats["mem_percent"] = round(used_kb / total_kb * 100, 1) if total_kb else 0.0
+    except Exception:
+        pass
+
+    # Disco (raíz /)
+    try:
+        import os
+        st = os.statvfs("/")
+        total = st.f_blocks * st.f_frsize
+        free = st.f_bavail * st.f_frsize
+        used = total - free
+        stats["disk_total_gb"] = round(total / (1024 ** 3), 1)
+        stats["disk_used_gb"] = round(used / (1024 ** 3), 1)
+        stats["disk_percent"] = round(used / total * 100, 1) if total else 0.0
     except Exception:
         pass
 

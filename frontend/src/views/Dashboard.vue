@@ -47,28 +47,27 @@
         <template #actions>
           <StatusBadge :status="loadTone" :label="loadLabel" />
         </template>
-        <div class="server-grid">
-          <div class="server-gauge">
-            <ResourceGauge ring :value="loadPct" caption="carga" />
+        <div class="server-gauges">
+          <div class="server-gauge-item">
+            <ResourceGauge ring :value="stats?.cpu_percent ?? 0" caption="CPU" />
+            <span class="server-gauge-sub">{{ stats?.cpu_count ?? '—' }} núcleos</span>
           </div>
-          <div class="server-info">
-            <div class="info-row">
-              <span class="info-row__k">Tiempo activo</span>
-              <span class="info-row__v">{{ stats?.uptime_str || '—' }}</span>
-            </div>
-            <div class="info-row">
-              <span class="info-row__k">Carga (1 / 5 / 15 min)</span>
-              <span class="info-row__v mono">{{ stats ? `${stats.load_1} / ${stats.load_5} / ${stats.load_15}` : '—' }}</span>
-            </div>
-            <div class="info-row">
-              <span class="info-row__k">Núcleos CPU</span>
-              <span class="info-row__v">{{ stats?.cpu_count ?? '—' }}</span>
-            </div>
-            <div class="info-row">
-              <span class="info-row__k">Sistema operativo</span>
-              <span class="info-row__v">{{ stats?.os_name || '—' }}</span>
-            </div>
+          <div class="server-gauge-item">
+            <ResourceGauge ring :value="stats?.mem_percent ?? 0" caption="RAM" />
+            <span class="server-gauge-sub mono">{{ stats ? `${fmtGB(stats.mem_used_mb)} / ${fmtGB(stats.mem_total_mb)}` : '—' }}</span>
           </div>
+          <div class="server-gauge-item">
+            <ResourceGauge ring :value="stats?.disk_percent ?? 0" caption="Disco" />
+            <span class="server-gauge-sub mono">{{ stats ? `${stats.disk_used_gb} / ${stats.disk_total_gb} GB` : '—' }}</span>
+          </div>
+          <div class="server-gauge-item">
+            <ResourceGauge ring :value="loadPct" caption="Carga" />
+            <span class="server-gauge-sub mono">{{ stats ? `${stats.load_1} / ${stats.load_5} / ${stats.load_15}` : '—' }}</span>
+          </div>
+        </div>
+        <div class="server-foot">
+          <span><i class="bi bi-hdd-rack"></i> {{ stats?.os_name || '—' }}</span>
+          <span><i class="bi bi-clock"></i> {{ stats?.uptime_str || '—' }}</span>
         </div>
       </BaseCard>
 
@@ -190,6 +189,12 @@ export default {
     const sslPct = computed(() =>
       totalDomains.value ? Math.round((totalSSL.value / totalDomains.value) * 100) : 0)
 
+    // MB → "x.x GB" / "x MB" para la RAM
+    const fmtGB = (mb) => {
+      if (!mb) return '0'
+      return mb >= 1024 ? (mb / 1024).toFixed(1) + ' GB' : mb + ' MB'
+    }
+
     // Carga del sistema = load_1 / cpu_count (métrica estándar, dato real del backend)
     const loadPct = computed(() => {
       if (!stats.value || !stats.value.cpu_count) return 0
@@ -241,7 +246,7 @@ export default {
       currentUser, isAdmin, isReseller, isAdminOrReseller, roleShort,
       totalUsers, totalDomains, activeDomains, totalSSL, recentDomains,
       stats, topServices, loadingDomains, loadingStats, loadingServices,
-      sslPct, loadPct, loadTone, loadLabel, reload,
+      sslPct, loadPct, loadTone, loadLabel, reload, fmtGB,
     }
   },
 }
@@ -259,14 +264,14 @@ export default {
 .dash-row { display: grid; grid-template-columns: 1.4fr 1fr 1fr; gap: var(--sp-4); align-items: start; }
 
 /* Servidor */
-.server-grid { display: flex; align-items: center; gap: var(--sp-6); }
-.server-gauge { flex-shrink: 0; }
-.server-info { flex: 1; display: flex; flex-direction: column; gap: var(--sp-2); }
-.info-row { display: flex; justify-content: space-between; gap: var(--sp-3); padding: 6px 0; border-bottom: 1px solid var(--border); }
-.info-row:last-child { border-bottom: none; }
-.info-row__k { color: var(--text-muted); font-size: var(--fs-sm); }
-.info-row__v { color: var(--text); font-weight: var(--fw-medium); font-size: var(--fs-sm); text-align: right; }
+.server-gauges { display: grid; grid-template-columns: repeat(4, 1fr); gap: var(--sp-4); }
+.server-gauge-item { display: flex; flex-direction: column; align-items: center; gap: var(--sp-2); }
+.server-gauge-sub { font-size: var(--fs-sm); color: var(--text-muted); text-align: center; }
+.server-foot { display: flex; gap: var(--sp-5); flex-wrap: wrap; margin-top: var(--sp-4); padding-top: var(--sp-4); border-top: 1px solid var(--border); }
+.server-foot span { display: inline-flex; align-items: center; gap: 6px; font-size: var(--fs-sm); color: var(--text-secondary); }
+.server-foot .bi { color: var(--text-muted); }
 .mono { font-family: var(--font-mono); }
+@media (max-width: 560px) { .server-gauges { grid-template-columns: repeat(2, 1fr); } }
 
 /* Servicios */
 .svc-list { display: flex; flex-direction: column; }

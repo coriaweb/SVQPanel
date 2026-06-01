@@ -49,6 +49,13 @@ async def get_system_stats(
         "load_5":      sys["load_5"],
         "load_15":     sys["load_15"],
         "cpu_count":   sys["cpu_count"],
+        "cpu_percent":   sys.get("cpu_percent", 0.0),
+        "mem_total_mb":  sys.get("mem_total_mb", 0),
+        "mem_used_mb":   sys.get("mem_used_mb", 0),
+        "mem_percent":   sys.get("mem_percent", 0.0),
+        "disk_total_gb": sys.get("disk_total_gb", 0),
+        "disk_used_gb":  sys.get("disk_used_gb", 0),
+        "disk_percent":  sys.get("disk_percent", 0.0),
         # Panel
         "total_users":     total_users,
         "active_users":    active_users,
