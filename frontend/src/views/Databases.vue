@@ -252,8 +252,8 @@ export default {
     const loadUsers = async () => {
       if (!isAdminOrReseller.value) return
       try {
-        const response = await api.get('/users?limit=1000')
-        users.value = response.data.data || []
+        const data = await api.getUsers(0, 1000)
+        users.value = Array.isArray(data) ? data : []
       } catch (error) {
         console.error('Error cargando usuarios:', error)
       }
