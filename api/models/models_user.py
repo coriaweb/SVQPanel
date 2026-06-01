@@ -96,7 +96,8 @@ class User(Base):
 
     def generate_token(self, expires_hours: int = 24) -> str:
         """Genera JWT token válido por 24 horas"""
-        secret = os.getenv("SECRET_KEY", "dev-secret-key-cambiar-en-produccion")
+        from api.utils.secret import get_secret_key
+        secret = get_secret_key()
         payload = {
             "sub": str(self.id),
             "username": self.username,
@@ -110,7 +111,8 @@ class User(Base):
     @staticmethod
     def verify_token(token: str) -> dict:
         """Verifica JWT token y devuelve payload"""
-        secret = os.getenv("SECRET_KEY", "dev-secret-key-cambiar-en-produccion")
+        from api.utils.secret import get_secret_key
+        secret = get_secret_key()
         try:
             payload = jwt.decode(token, secret, algorithms=["HS256"])
             return payload

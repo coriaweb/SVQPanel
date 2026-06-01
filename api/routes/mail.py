@@ -38,7 +38,8 @@ logger = logging.getLogger(__name__)
 def _get_fernet():
     """Devuelve un cifrador Fernet derivado de la SECRET_KEY del panel."""
     from cryptography.fernet import Fernet
-    secret = os.getenv("SECRET_KEY", "svqpanel-insecure-default")
+    from api.utils.secret import get_secret_key
+    secret = get_secret_key()
     key = base64.urlsafe_b64encode(hashlib.sha256(secret.encode()).digest())
     return Fernet(key)
 

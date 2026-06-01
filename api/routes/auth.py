@@ -28,6 +28,7 @@ from api.schemas.auth_schemas import (
 )
 from api.dependencies import get_current_user, require_auth
 from api.utils.auth_log import log_auth_failed
+from api.utils.secret import get_secret_key
 
 router = APIRouter()
 
@@ -65,7 +66,7 @@ def _decrypt_secret(enc: str) -> str:
 
 def _issue_temp_token(user_id: int, username: str) -> str:
     """Emite un JWT de 5 minutos con flag pending_2fa para el segundo paso del login."""
-    secret_key = os.getenv("SECRET_KEY", "change-this-in-production")
+    secret_key = get_secret_key()
     payload = {
         "sub": str(user_id),
         "username": username,
@@ -77,7 +78,7 @@ def _issue_temp_token(user_id: int, username: str) -> str:
 
 def _verify_temp_token(token: str) -> dict:
     """Verifica el token temporal. Lanza HTTPException si no es válido."""
-    secret_key = os.getenv("SECRET_KEY", "change-this-in-production")
+    secret_key = get_secret_key()
     try:
         payload = jwt.decode(token, secret_key, algorithms=["HS256"])
     except jwt.ExpiredSignatureError:
@@ -322,6 +323,7 @@ async def disable_2fa(
 @router.post("/auth/2fa/verify", tags=["2FA"])
 async def verify_2fa(
     payload: TwoFAVerifyRequest,
+    request: Request,
     db:      Session = Depends(get_db),
 ):
     """
@@ -347,6 +349,9 @@ async def verify_2fa(
     totp   = pyotp.TOTP(secret)
 
     if not totp.verify(payload.code, valid_window=1):
+        # Registrar el fallo para que fail2ban (jail svqpanel-auth) banee la IP:
+        # cierra la fuerza bruta del segundo factor (6 dígitos TOTP).
+        log_auth_failed(request, user.username, "bad_2fa_code")
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Código incorrecto o caducado"
