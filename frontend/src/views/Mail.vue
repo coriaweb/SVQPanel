@@ -233,62 +233,37 @@
               <p class="mt-2 mb-0">No hay buzones. Crea el primero.</p>
             </div>
 
-            <table v-else class="table align-middle mb-0">
-              <thead class="table-light">
-                <tr>
-                  <th>Email</th>
-                  <th class="text-end">Cuota</th>
-                  <th class="text-center">Estado</th>
-                  <th class="text-end">Acciones</th>
-                </tr>
-              </thead>
-              <tbody>
-                <tr v-for="mb in mailboxes" :key="mb.id">
-                  <td>
-                    <i class="bi bi-envelope me-2 text-muted"></i>
-                    <strong>{{ mb.full_email }}</strong>
-                  </td>
-                  <td class="text-end small text-muted">
-                    {{ mb.quota_mb === 0 ? 'Sin límite' : mb.quota_mb + ' MB' }}
-                  </td>
-                  <td class="text-center">
-                    <span :class="mb.is_active ? 'badge bg-success' : 'badge bg-secondary'">
-                      {{ mb.is_active ? 'Activo' : 'Suspendido' }}
+            <div v-else class="mbx-grid">
+              <article v-for="mb in mailboxes" :key="mb.id" class="mbx" :class="{ 'mbx--off': !mb.is_active }">
+                <div class="mbx__top">
+                  <span class="mbx__avatar">{{ (mb.full_email || '?').slice(0,1).toUpperCase() }}</span>
+                  <div class="mbx__id">
+                    <span class="mbx__email" :title="mb.full_email">{{ mb.full_email }}</span>
+                    <span class="mbx__quota">
+                      <i class="bi bi-hdd"></i>
+                      {{ mb.quota_mb === 0 ? 'Sin límite de cuota' : 'Cuota ' + mb.quota_mb + ' MB' }}
                     </span>
-                  </td>
-                  <td class="text-end">
-                    <div class="d-flex gap-1 justify-content-end">
-                      <!-- Botón Webmail (Roundcube autologin) -->
-                      <button v-if="roundcubeEnabled"
-                              class="btn btn-sm btn-outline-primary"
-                              @click="openWebmail(mb)"
-                              :disabled="openingWebmail === mb.id"
-                              title="Abrir Webmail (autologin)">
-                        <span v-if="openingWebmail === mb.id"
-                              class="spinner-border spinner-border-sm"></span>
-                        <i v-else class="bi bi-envelope-open"></i>
-                      </button>
-                      <button class="btn btn-sm btn-outline-secondary"
-                              @click="openChangePassword(mb)" title="Cambiar contraseña">
-                        <i class="bi bi-key"></i>
-                      </button>
-                      <button class="btn btn-sm"
-                              :class="mb.is_active ? 'btn-outline-warning' : 'btn-outline-success'"
-                              @click="toggleMailbox(mb)"
-                              :title="mb.is_active ? 'Suspender' : 'Activar'">
-                        <i :class="mb.is_active ? 'bi bi-pause-fill' : 'bi bi-play-fill'"></i>
-                      </button>
-                      <button class="btn btn-sm btn-outline-danger"
-                              @click="confirmDelete('mailbox', mb,
-                                `¿Eliminar el buzón '${mb.full_email}'? Se borrarán todos los correos.`)"
-                              title="Eliminar">
-                        <i class="bi bi-trash"></i>
-                      </button>
-                    </div>
-                  </td>
-                </tr>
-              </tbody>
-            </table>
+                  </div>
+                  <span class="mbx__status" :class="mb.is_active ? 'is-on' : 'is-off'">
+                    <span class="dot"></span>{{ mb.is_active ? 'Activo' : 'Suspendido' }}
+                  </span>
+                </div>
+                <div class="mbx__actions">
+                  <button v-if="roundcubeEnabled" class="mbx__btn mbx__btn--primary"
+                          @click="openWebmail(mb)" :disabled="openingWebmail === mb.id" title="Abrir Webmail">
+                    <span v-if="openingWebmail === mb.id" class="spinner-border spinner-border-sm"></span>
+                    <template v-else><i class="bi bi-envelope-open"></i> Webmail</template>
+                  </button>
+                  <button class="mbx__btn" @click="openChangePassword(mb)" title="Cambiar contraseña"><i class="bi bi-key"></i></button>
+                  <button class="mbx__btn" @click="toggleMailbox(mb)" :title="mb.is_active ? 'Suspender' : 'Activar'">
+                    <i :class="mb.is_active ? 'bi bi-pause-fill' : 'bi bi-play-fill'"></i>
+                  </button>
+                  <button class="mbx__btn mbx__btn--danger"
+                          @click="confirmDelete('mailbox', mb, `¿Eliminar el buzón '${mb.full_email}'? Se borrarán todos los correos.`)"
+                          title="Eliminar"><i class="bi bi-trash"></i></button>
+                </div>
+              </article>
+            </div>
           </div>
 
           <!-- ── TAB: Alias ── -->
@@ -1349,3 +1324,42 @@ export default {
   }
 }
 </script>
+
+<style scoped>
+.mbx-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: var(--sp-3); }
+.mbx {
+  background: var(--surface); border: 1px solid var(--border);
+  border-radius: var(--r-md); padding: var(--sp-4);
+  display: flex; flex-direction: column; gap: var(--sp-3);
+  transition: box-shadow var(--t-base) var(--ease), border-color var(--t-base);
+}
+.mbx:hover { box-shadow: var(--shadow-sm); border-color: var(--border-strong); }
+.mbx--off { opacity: .72; }
+.mbx__top { display: flex; align-items: center; gap: var(--sp-3); }
+.mbx__avatar {
+  width: 40px; height: 40px; flex-shrink: 0; border-radius: var(--r-md);
+  display: grid; place-items: center; font-weight: var(--fw-bold); color: #fff;
+  background: linear-gradient(135deg, var(--brand-400), var(--brand-600)); font-size: var(--fs-md);
+}
+.mbx__id { display: flex; flex-direction: column; min-width: 0; flex: 1; }
+.mbx__email { font-weight: var(--fw-semibold); color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.mbx__quota { font-size: var(--fs-sm); color: var(--text-muted); display: flex; align-items: center; gap: 5px; }
+.mbx__status { display: inline-flex; align-items: center; gap: 5px; font-size: var(--fs-sm); font-weight: var(--fw-medium); flex-shrink: 0; }
+.mbx__status .dot { width: 7px; height: 7px; border-radius: 50%; }
+.mbx__status.is-on { color: var(--success); } .mbx__status.is-on .dot { background: var(--success); }
+.mbx__status.is-off { color: var(--text-muted); } .mbx__status.is-off .dot { background: var(--text-muted); }
+.mbx__actions { display: flex; gap: var(--sp-2); padding-top: var(--sp-3); border-top: 1px solid var(--border); }
+.mbx__btn {
+  height: 34px; min-width: 34px; padding: 0 10px;
+  display: inline-flex; align-items: center; justify-content: center; gap: 6px;
+  border: 1px solid var(--border); background: var(--surface); color: var(--text-secondary);
+  border-radius: var(--r-sm); cursor: pointer; font-size: var(--fs-sm); font-weight: var(--fw-medium);
+  transition: all var(--t-fast) var(--ease);
+}
+.mbx__btn:hover { background: var(--surface-inset); color: var(--text); }
+.mbx__btn--primary { color: var(--color-primary); border-color: var(--brand-200); margin-right: auto; }
+.mbx__btn--primary:hover { background: var(--brand-50); }
+[data-theme="dark"] .mbx__btn--primary { border-color: var(--border-strong); }
+[data-theme="dark"] .mbx__btn--primary:hover { background: var(--surface-2); }
+.mbx__btn--danger:hover { background: var(--danger-bg); color: var(--danger); border-color: var(--danger-border); }
+</style>
