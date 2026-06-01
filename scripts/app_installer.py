@@ -279,6 +279,16 @@ class AppInstaller:
         _run(["php", "artisan", "migrate", "--force"], cwd=docroot, as_user=owner)
 
         _chown_tree(docroot, owner)
+
+        # PHP-FPM corre como www-data: storage/ y bootstrap/cache deben ser
+        # escribibles por www-data. Damos el grupo www-data + permisos de grupo
+        # (g+w) + setgid para que los archivos nuevos hereden el grupo.
+        for sub in ("storage", "bootstrap/cache"):
+            p = os.path.join(docroot, sub)
+            if os.path.isdir(p):
+                _run(["chgrp", "-R", "www-data", p])
+                _run(["chmod", "-R", "g+rwX", p])
+                _run(["find", p, "-type", "d", "-exec", "chmod", "g+s", "{}", "+"])
         return {
             "app": "laravel",
             "url": url,
