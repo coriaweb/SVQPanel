@@ -647,6 +647,10 @@ PYEOF
     fi
 
     # ── 4. Crear symlink /var/www/webmail ──────────────────────────────────
+    # Este Roundcube es COMPARTIDO. Se sirve en /webmail (autologin del panel) y
+    # también bajo webmail.{dominio} por cada dominio con correo: el panel genera
+    # un vhost svqpanel-webmail-{dominio} apuntando aquí (scripts/webmail_manager.py)
+    # al activar el correo del dominio. Un solo Roundcube para todos los dominios.
     ln -sfn "$RC_APP_DIR" /var/www/webmail
     echo -e "  ${GREEN}✓ Symlink /var/www/webmail → $RC_APP_DIR${NC}"
 

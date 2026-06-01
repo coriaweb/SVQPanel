@@ -62,22 +62,39 @@ class SSLManager(SystemManager):
             logger.error(f"Failed to create SSL: {str(e)}")
             raise
 
-    def create_ssl_with_email(self, domain_name: str, email: str) -> dict:
-        """Igual que create_ssl pero con email configurable."""
+    def create_ssl_with_email(self, domain_name: str, email: str,
+                              extra_domains: list = None) -> dict:
+        """
+        Igual que create_ssl pero con email configurable y SANs extra opcionales
+        (p. ej. webmail.{dominio} para el webmail por dominio).
+        """
         if not validate_domain(domain_name):
             raise ValueError(f"Invalid domain: {domain_name}")
+        cmd = [
+            "certbot", "certonly", "--nginx",
+            "-d", domain_name, "-d", f"www.{domain_name}",
+        ]
+        for d in (extra_domains or []):
+            if validate_domain(d):
+                cmd += ["-d", d]
+        cmd += ["--non-interactive", "--agree-tos", "-m", email, "--expand"]
         try:
-            self.execute_command([
-                "certbot", "certonly", "--nginx",
-                "-d", domain_name, "-d", f"www.{domain_name}",
-                "--non-interactive", "--agree-tos", "-m", email,
-            ])
+            self.execute_command(cmd)
             self.execute_command(["systemctl", "enable", "certbot.timer"])
-            logger.info(f"SSL cert (with email) created: {domain_name}")
+            logger.info(f"SSL cert (with email) created: {domain_name} +{extra_domains or []}")
             return {"success": True, "domain": domain_name}
         except Exception as e:
             logger.error(f"Failed to create SSL: {str(e)}")
             raise
+
+    def expand_for_webmail(self, domain_name: str, email: str) -> dict:
+        """
+        Reemite (expand) el certificado del dominio añadiendo webmail.{dominio}
+        como SAN. Útil para activar HTTPS en el webmail de un dominio que ya
+        tenía cert. Tras esto hay que regenerar el vhost webmail con ssl=True.
+        """
+        return self.create_ssl_with_email(
+            domain_name, email, extra_domains=[f"webmail.{domain_name}"])
 
     def revoke_ssl(self, domain_name: str) -> dict:
         """

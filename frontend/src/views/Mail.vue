@@ -206,6 +206,12 @@
               </button>
             </li>
             <li class="nav-item">
+              <button class="nav-link" :class="{ active: activeTab === 'webmail' }"
+                      @click="switchTab('webmail')">
+                <i class="bi bi-envelope-at me-1"></i>Webmail
+              </button>
+            </li>
+            <li class="nav-item">
               <button class="nav-link" :class="{ active: activeTab === 'settings' }"
                       @click="switchTab('settings')">
                 <i class="bi bi-sliders me-1"></i>Ajustes
@@ -435,6 +441,72 @@
                 </div>
 
               </div>
+            </template>
+          </div>
+
+          <!-- ── TAB: Webmail ── -->
+          <div v-if="activeTab === 'webmail'">
+            <div v-if="loadingWebmail" class="text-center py-4">
+              <div class="spinner-border spinner-border-sm text-primary"></div>
+            </div>
+            <template v-else-if="webmail">
+              <div v-if="!webmail.roundcube_installed" class="alert alert-warning">
+                <i class="bi bi-exclamation-triangle me-1"></i>
+                Roundcube no está instalado en el servidor. Instálalo para ofrecer webmail por dominio.
+              </div>
+              <template v-else>
+                <div class="d-flex justify-content-between align-items-center mb-3">
+                  <div>
+                    <h6 class="mb-1"><i class="bi bi-envelope-at me-1"></i>Webmail propio del dominio</h6>
+                    <p class="text-muted small mb-0">
+                      Tus usuarios acceden a su correo desde
+                      <a :href="webmail.url" target="_blank"><code>{{ webmail.host }}</code></a>
+                      (Roundcube compartido).
+                    </p>
+                  </div>
+                  <div class="form-check form-switch">
+                    <input class="form-check-input" type="checkbox" role="switch"
+                           :checked="webmail.enabled" :disabled="webmailSaving"
+                           @change="toggleWebmail($event.target.checked)" style="width:3em;height:1.5em">
+                  </div>
+                </div>
+
+                <div v-if="webmail.enabled" class="border rounded p-3">
+                  <div class="row g-3">
+                    <div class="col-md-6">
+                      <div class="text-muted small">URL del webmail</div>
+                      <a :href="webmail.url" target="_blank" class="fw-semibold">{{ webmail.url }}</a>
+                    </div>
+                    <div class="col-md-3">
+                      <div class="text-muted small">HTTPS</div>
+                      <span v-if="webmail.ssl" class="badge bg-success"><i class="bi bi-lock-fill me-1"></i>Activo</span>
+                      <span v-else class="badge bg-warning text-dark">Sin SSL</span>
+                    </div>
+                    <div class="col-md-3">
+                      <div class="text-muted small">DNS</div>
+                      <span v-if="webmail.dns_managed" class="badge bg-success">Gestionado</span>
+                      <span v-else class="badge bg-secondary" title="Añade webmail.dominio en tu DNS externo">Externo</span>
+                    </div>
+                  </div>
+
+                  <div v-if="!webmail.ssl" class="mt-3">
+                    <button class="btn btn-sm btn-outline-primary" @click="issueWebmailSsl" :disabled="webmailSslIssuing">
+                      <span v-if="webmailSslIssuing" class="spinner-border spinner-border-sm me-1"></span>
+                      <i v-else class="bi bi-lock me-1"></i>
+                      Activar HTTPS (Let's Encrypt)
+                    </button>
+                    <p class="text-muted small mt-2 mb-0">
+                      Requiere que <code>{{ webmail.host }}</code> ya resuelva hacia este servidor.
+                      <span v-if="!webmail.dns_managed">Como tu DNS es externo, crea primero el registro
+                      <code>webmail</code> apuntando a la IP del servidor.</span>
+                    </p>
+                  </div>
+                </div>
+                <p v-else class="text-muted small">
+                  Actívalo para crear <code>{{ webmail.host }}</code> automáticamente
+                  (registro DNS + servidor web). El correo se gestiona en Roundcube.
+                </p>
+              </template>
             </template>
           </div>
 
@@ -1005,6 +1077,8 @@ export default {
     const openDetail = async (md) => {
       selectedDomain.value = md
       activeTab.value = 'mailboxes'
+      dkimInfo.value = null
+      webmail.value = null
       settingsForm.value = {
         catch_all:     md.catch_all || '',
         max_mailboxes: md.max_mailboxes,
@@ -1024,6 +1098,53 @@ export default {
       }
       if (tab === 'settings' && !spamSettings.value.spam_tag_threshold) {
         await loadSpamSettings(selectedDomain.value.id)
+      }
+      if (tab === 'webmail') {
+        await loadWebmail(selectedDomain.value.id)
+      }
+    }
+
+    // ── Webmail por dominio ──
+    const webmail          = ref(null)
+    const loadingWebmail   = ref(false)
+    const webmailSaving    = ref(false)
+    const webmailSslIssuing = ref(false)
+
+    const loadWebmail = async (domainId) => {
+      loadingWebmail.value = true
+      try {
+        webmail.value = await api.getWebmailStatus(domainId)
+      } catch (e) {
+        webmail.value = null
+      } finally {
+        loadingWebmail.value = false
+      }
+    }
+
+    const toggleWebmail = async (enabled) => {
+      webmailSaving.value = true
+      try {
+        await api.setWebmail(selectedDomain.value.id, enabled)
+        store.showNotification(enabled ? 'Webmail activado' : 'Webmail desactivado', 'success')
+        await loadWebmail(selectedDomain.value.id)
+      } catch (e) {
+        store.showNotification('Error: ' + (e.message || e), 'danger')
+        await loadWebmail(selectedDomain.value.id)
+      } finally {
+        webmailSaving.value = false
+      }
+    }
+
+    const issueWebmailSsl = async () => {
+      webmailSslIssuing.value = true
+      try {
+        const r = await api.issueWebmailSsl(selectedDomain.value.id)
+        store.showNotification(r.message || 'HTTPS activado en el webmail', 'success')
+        await loadWebmail(selectedDomain.value.id)
+      } catch (e) {
+        store.showNotification('No se pudo activar HTTPS: ' + (e.message || e), 'danger')
+      } finally {
+        webmailSslIssuing.value = false
       }
     }
 
@@ -1312,6 +1433,9 @@ export default {
       newDomainForm, newMailboxForm, newAliasForm, passwordTarget, newPassword,
       // Roundcube
       roundcubeEnabled, roundcubeUrl, openingWebmail,
+      // Webmail por dominio
+      webmail, loadingWebmail, webmailSaving, webmailSslIssuing,
+      loadWebmail, toggleWebmail, issueWebmailSsl,
       loadDomains, openDetail, switchTab,
       openNewDomain, createDomain, saveSettings,
       loadSpamSettings, saveSpamSettings,

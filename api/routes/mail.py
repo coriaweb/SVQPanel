@@ -226,6 +226,44 @@ def _dns_remove_dkim_record(domain_name: str, selector: str, db: Session):
     db.commit()
 
 
+def _dns_set_webmail_record(domain_name: str, db: Session, present: bool) -> bool:
+    """
+    Añade (present=True) o quita el registro 'webmail' (CNAME → dominio) en la
+    zona DNS del panel, y resincroniza (respeta cluster vía _sync_zone_to_bind).
+    Devuelve True si había zona en el panel; False si el DNS es externo.
+    """
+    zone = db.query(DnsZone).filter(DnsZone.domain_name == domain_name).first()
+    if not zone:
+        return False
+
+    from api.routes.dns import _sync_zone_to_bind, _bump_serial
+    existing = db.query(DnsRecord).filter(
+        DnsRecord.zone_id == zone.id,
+        DnsRecord.name == "webmail",
+        DnsRecord.record_type.in_(["CNAME", "A"]),
+    ).first()
+
+    if present and not existing:
+        db.add(DnsRecord(zone_id=zone.id, record_type="CNAME", name="webmail",
+                         content=f"{domain_name}.", ttl=14400, priority=0))
+    elif not present and existing:
+        db.query(DnsRecord).filter(
+            DnsRecord.zone_id == zone.id, DnsRecord.name == "webmail",
+            DnsRecord.record_type.in_(["CNAME", "A"]),
+        ).delete()
+    else:
+        return True  # nada que cambiar
+
+    zone.serial = _bump_serial(zone.serial)
+    db.commit()
+    db.refresh(zone)
+    try:
+        _sync_zone_to_bind(zone, db)
+    except Exception as e:
+        logger.warning(f"No se pudo sincronizar la zona tras webmail DNS: {e}")
+    return True
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # Dominios de correo
 # ─────────────────────────────────────────────────────────────────────────────
@@ -304,7 +342,46 @@ async def create_mail_domain(
         logger.error(f"Error registrando dominio de correo en Postfix: {e}")
         # No revertimos la BD — el admin puede corregir manualmente
 
+    # Webmail por dominio (webmail.{dominio}) — automático al activar correo:
+    # registro DNS + vhost nginx que sirve el Roundcube compartido.
+    _activate_webmail(data.domain_name, db)
+
     return _mail_domain_to_dict(md, current_user)
+
+
+def _activate_webmail(domain_name: str, db: Session) -> dict:
+    """Crea el registro DNS webmail + el vhost nginx. Tolerante a fallos."""
+    result = {"dns": False, "vhost": False, "message": ""}
+    try:
+        result["dns"] = _dns_set_webmail_record(domain_name, db, present=True)
+    except Exception as e:
+        logger.warning(f"webmail DNS para {domain_name}: {e}")
+    try:
+        from scripts.webmail_manager import WebmailManager
+        ok, msg = WebmailManager().enable(domain_name)
+        result["vhost"] = ok
+        result["message"] = msg
+    except PermissionError:
+        logger.warning("Sin root para crear el vhost webmail (¿entorno dev?)")
+    except Exception as e:
+        logger.error(f"Error creando vhost webmail para {domain_name}: {e}")
+        result["message"] = str(e)
+    return result
+
+
+def _deactivate_webmail(domain_name: str, db: Session) -> None:
+    """Quita el vhost webmail + el registro DNS. Tolerante a fallos."""
+    try:
+        from scripts.webmail_manager import WebmailManager
+        WebmailManager().remove(domain_name)
+    except PermissionError:
+        pass
+    except Exception as e:
+        logger.warning(f"Error quitando vhost webmail de {domain_name}: {e}")
+    try:
+        _dns_set_webmail_record(domain_name, db, present=False)
+    except Exception as e:
+        logger.warning(f"webmail DNS remove para {domain_name}: {e}")
 
 
 @router.get("/mail/domains/{domain_id}", response_model=MailDomainResponse)
@@ -381,6 +458,9 @@ async def delete_mail_domain(
     if md.dkim_enabled:
         _dns_remove_dkim_record(domain_name, dkim_selector, db)
 
+    # Quitar el webmail por dominio (vhost + DNS) antes de borrar la zona/datos
+    _deactivate_webmail(domain_name, db)
+
     # Eliminar de la BD (cascade elimina mailboxes y aliases)
     db.delete(md)
     db.commit()
@@ -402,6 +482,104 @@ async def delete_mail_domain(
         logger.warning(f"No se pudo eliminar clave DKIM: {e}")
 
     return None
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Webmail por dominio (webmail.{dominio})
+# ─────────────────────────────────────────────────────────────────────────────
+
+@router.get("/mail/domains/{domain_id}/webmail")
+async def get_webmail_status(
+    domain_id: int,
+    current_user=Depends(require_auth),
+    db: Session = Depends(get_db),
+):
+    """Estado del webmail por dominio: vhost activo, SSL, DNS, URL."""
+    md = _get_mail_domain_or_404(domain_id, db)
+    _require_edit(md, current_user)
+
+    from scripts.webmail_manager import (
+        WebmailManager, webmail_host, cert_includes_webmail,
+    )
+    host = webmail_host(md.domain_name)
+    enabled = ssl = roundcube_ok = False
+    try:
+        enabled = WebmailManager().is_enabled(md.domain_name)
+        ssl = cert_includes_webmail(md.domain_name)
+    except Exception:
+        pass
+    roundcube_ok = os.path.exists("/var/www/webmail")
+
+    # ¿La zona DNS está en el panel? (para saber si el registro webmail es nuestro)
+    zone = db.query(DnsZone).filter(DnsZone.domain_name == md.domain_name).first()
+    dns_managed = zone is not None
+
+    return {
+        "domain": md.domain_name,
+        "host": host,
+        "enabled": enabled,
+        "ssl": ssl,
+        "url": f"https://{host}" if ssl else f"http://{host}",
+        "roundcube_installed": roundcube_ok,
+        "dns_managed": dns_managed,
+    }
+
+
+@router.post("/mail/domains/{domain_id}/webmail")
+async def set_webmail(
+    domain_id: int,
+    enabled: bool = True,
+    current_user=Depends(require_auth),
+    db: Session = Depends(get_db),
+):
+    """Activa o desactiva el webmail.{dominio} (vhost nginx + registro DNS)."""
+    md = _get_mail_domain_or_404(domain_id, db)
+    _require_edit(md, current_user)
+
+    if enabled:
+        res = _activate_webmail(md.domain_name, db)
+        if not res["vhost"] and res.get("message"):
+            raise HTTPException(status_code=409, detail=res["message"])
+        return {"status": "success", "enabled": True, **res}
+    else:
+        _deactivate_webmail(md.domain_name, db)
+        return {"status": "success", "enabled": False}
+
+
+@router.post("/mail/domains/{domain_id}/webmail/ssl")
+async def issue_webmail_ssl(
+    domain_id: int,
+    current_user=Depends(require_auth),
+    db: Session = Depends(get_db),
+):
+    """
+    Emite/expande el certificado del dominio para incluir webmail.{dominio} y
+    regenera el vhost webmail con HTTPS. Requiere que webmail.{dominio} resuelva
+    (DNS) hacia este servidor para que pase la validación ACME.
+    """
+    md = _get_mail_domain_or_404(domain_id, db)
+    _require_edit(md, current_user)
+
+    # Email del admin para Let's Encrypt
+    email = getattr(current_user, "email", None) or "admin@" + md.domain_name
+
+    try:
+        from scripts.ssl_manager import SSLManager
+        SSLManager().expand_for_webmail(md.domain_name, email)
+    except PermissionError:
+        raise HTTPException(status_code=403, detail="Se necesitan privilegios root")
+    except Exception as e:
+        raise HTTPException(status_code=502,
+                            detail=f"No se pudo emitir el certificado de webmail.{md.domain_name}: {e}. "
+                                   f"Comprueba que webmail.{md.domain_name} apunta a este servidor.")
+
+    # Regenerar el vhost webmail ahora con SSL
+    try:
+        from scripts.webmail_manager import WebmailManager
+        ok, msg = WebmailManager().enable(md.domain_name, ssl=True)
+        return {"status": "success", "ssl": True, "message": msg}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 # ─────────────────────────────────────────────────────────────────────────────

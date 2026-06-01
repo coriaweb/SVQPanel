@@ -485,6 +485,19 @@ class APIClient {
     return this.delete(`/api/mail/domains/${domainId}`)
   }
 
+  // Mail — Webmail por dominio
+  getWebmailStatus(domainId) {
+    return this.get(`/api/mail/domains/${domainId}/webmail`)
+  }
+
+  setWebmail(domainId, enabled) {
+    return this.post(`/api/mail/domains/${domainId}/webmail?enabled=${enabled ? 'true' : 'false'}`, {})
+  }
+
+  issueWebmailSsl(domainId) {
+    return this.post(`/api/mail/domains/${domainId}/webmail/ssl`, {})
+  }
+
   // Mail — DKIM
   generateDkim(domainId, selector = 'mail') {
     return this.post(`/api/mail/domains/${domainId}/dkim`, { selector })
