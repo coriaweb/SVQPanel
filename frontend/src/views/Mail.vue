@@ -2,7 +2,7 @@
   <div class="container-fluid py-4">
 
     <!-- ── Cabecera ── -->
-    <div class="d-flex justify-content-between align-items-center mb-4">
+    <div class="page-head-row">
       <div>
         <div v-if="selectedDomain" class="d-flex align-items-center gap-2 mb-1">
           <button class="btn btn-sm btn-outline-secondary" @click="selectedDomain = null">

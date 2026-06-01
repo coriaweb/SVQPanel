@@ -2,10 +2,12 @@
   <div class="container-fluid py-4">
 
     <!-- Cabecera -->
-    <div class="d-flex justify-content-between align-items-center mb-4">
+    <div class="page-head-row">
       <div>
         <h2 class="mb-1"><i class="bi bi-diagram-3 me-2"></i>DNS</h2>
-        <p class="text-muted mb-0">Gestión de zonas y registros DNS (BIND9)</p>
+        <p class="text-muted mb-0">
+          {{ zones.length }} {{ zones.length === 1 ? 'zona' : 'zonas' }} · BIND9
+        </p>
       </div>
       <button class="btn btn-primary" @click="openCreateZone">
         <i class="bi bi-plus-lg me-1"></i> Nueva Zona
@@ -396,14 +398,14 @@ import api from '../services/api'
 const RECORD_TYPES = ['A', 'AAAA', 'CNAME', 'MX', 'TXT', 'NS', 'SRV', 'CAA']
 
 const TYPE_CLASSES = {
-  A:     'bg-primary',
-  AAAA:  'bg-info text-dark',
-  CNAME: 'bg-secondary',
-  MX:    'bg-warning text-dark',
-  TXT:   'bg-light text-dark border',
-  NS:    'bg-dark',
-  SRV:   'bg-success',
-  CAA:   'bg-danger',
+  A:     'dns-type dns-type--a',
+  AAAA:  'dns-type dns-type--aaaa',
+  CNAME: 'dns-type dns-type--cname',
+  MX:    'dns-type dns-type--mx',
+  TXT:   'dns-type dns-type--txt',
+  NS:    'dns-type dns-type--ns',
+  SRV:   'dns-type dns-type--srv',
+  CAA:   'dns-type dns-type--caa',
 }
 
 const emptyZoneForm = () => ({
@@ -681,3 +683,27 @@ export default {
   }
 }
 </script>
+
+<style scoped>
+/* Badges de tipo de registro DNS — colores semánticos legibles en light/dark */
+.dns-type {
+  display: inline-block;
+  min-width: 52px; text-align: center;
+  padding: 3px 8px;
+  border-radius: var(--r-sm);
+  font-size: var(--fs-xs);
+  font-weight: var(--fw-bold);
+  font-family: var(--font-mono);
+  letter-spacing: .02em;
+  border: 1px solid transparent;
+}
+.dns-type--a     { background: var(--brand-50);    color: var(--brand-700);  border-color: var(--brand-200); }
+.dns-type--aaaa  { background: var(--info-bg);     color: var(--info);       border-color: var(--info-border); }
+.dns-type--cname { background: var(--surface-inset); color: var(--text-secondary); border-color: var(--border); }
+.dns-type--mx    { background: var(--warning-bg);  color: var(--warning);    border-color: var(--warning-border); }
+.dns-type--txt   { background: var(--surface-inset); color: var(--text-muted); border-color: var(--border); }
+.dns-type--ns    { background: var(--success-bg);  color: var(--success);    border-color: var(--success-border); }
+.dns-type--srv   { background: var(--info-bg);     color: var(--info);       border-color: var(--info-border); }
+.dns-type--caa   { background: var(--danger-bg);   color: var(--danger);     border-color: var(--danger-border); }
+[data-theme="dark"] .dns-type--a { background: var(--surface-2); color: var(--brand-400); border-color: var(--border-strong); }
+</style>
