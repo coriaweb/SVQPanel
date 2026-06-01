@@ -1,7 +1,7 @@
 <template>
   <div>
-    <div class="d-flex justify-content-between align-items-center mb-4">
-      <h2><i class="bi bi-folder2-open"></i> Archivos</h2>
+    <div class="page-head-row" style="align-items:center">
+      <h2 style="margin:0"><i class="bi bi-folder2-open"></i> Archivos</h2>
       <div class="d-flex align-items-center gap-2">
         <div class="form-check form-switch mb-0" title="Si está desactivado, los archivos con el mismo nombre no se sobreescriben">
           <input class="form-check-input" type="checkbox" id="overwriteCheck" v-model="uploadOverwrite">

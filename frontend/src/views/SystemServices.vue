@@ -2,7 +2,7 @@
   <div class="container-fluid py-4">
 
     <!-- Cabecera -->
-    <div class="d-flex justify-content-between align-items-center mb-4">
+    <div class="page-head-row">
       <div>
         <h2 class="mb-1"><i class="bi bi-hdd-rack me-2"></i>Sistema</h2>
         <p class="text-muted mb-0">Monitorización de servicios y estadísticas del servidor</p>
