@@ -1078,7 +1078,7 @@ async def install_app(
         raise HTTPException(status_code=409, detail="El dominio no tiene propietario")
 
     app = (payload.app or "").lower().strip()
-    from scripts.app_installer import AppInstaller, SUPPORTED_APPS
+    from scripts.app_installer import AppInstaller, SUPPORTED_APPS, RequirementsError
     if app not in SUPPORTED_APPS:
         raise HTTPException(status_code=400, detail=f"App no soportada: {app}")
 
@@ -1131,6 +1131,7 @@ async def install_app(
                 docroot=docroot,
                 admin_user=payload.admin_user,
                 admin_pass=payload.admin_password,
+                php_version=domain.php_version,
             )
             # Nextcloud requiere reglas nginx específicas (bloquear /data, /config,
             # .well-known, front controller). Aplicar la plantilla 'nextcloud'.
@@ -1142,6 +1143,10 @@ async def install_app(
             raise HTTPException(status_code=400, detail=f"Instalador de '{app}' aún no disponible")
     except HTTPException:
         raise
+    except RequirementsError as e:
+        # Requisitos no cumplidos (versión/extensiones PHP, dominio no vacío…):
+        # error de usuario, mensaje legible sin prefijo de fallo interno.
+        raise HTTPException(status_code=422, detail=str(e))
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error instalando {app}: {e}")
 

@@ -30,6 +30,14 @@ from typing import Dict, Optional
 
 logger = logging.getLogger(__name__)
 
+
+class RequirementsError(RuntimeError):
+    """Requisitos previos no cumplidos (PHP, extensiones, dir no vacío…).
+
+    Es un error de usuario: el endpoint lo traduce a HTTP 422 con el mensaje
+    tal cual, sin envolverlo como fallo interno.
+    """
+
 _SYS_ENV = {
     **os.environ,
     "PATH": "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
@@ -126,6 +134,57 @@ def _chown_tree(path: str, user: str):
     _run(["chown", "-R", f"{user}:{user}", path])
 
 
+# Nextcloud: rango de PHP soportado y extensiones requeridas (series 30/31).
+NEXTCLOUD_PHP_MIN = (8, 1)
+NEXTCLOUD_PHP_MAX = (8, 4)
+NEXTCLOUD_PHP_EXTS = ["gd", "mbstring", "intl", "bcmath", "gmp", "curl",
+                      "zip", "xml", "pdo_mysql"]
+
+
+def _php_version_tuple(php_bin: str):
+    """Devuelve (major, minor) del binario PHP, o None si no se puede determinar."""
+    rc, out, _ = _run([php_bin, "-r", "echo PHP_MAJOR_VERSION.'.'.PHP_MINOR_VERSION;"])
+    if rc != 0 or "." not in out:
+        return None
+    try:
+        a, b = out.strip().split(".")[:2]
+        return (int(a), int(b))
+    except ValueError:
+        return None
+
+
+def _check_nextcloud_php(php_bin: str, php_version):
+    """
+    Comprueba que el PHP del dominio cumple los requisitos de Nextcloud.
+    Devuelve (ok: bool, motivo: str). El motivo es legible para el usuario.
+    """
+    ver = _php_version_tuple(php_bin)
+    if ver is None:
+        return False, f"No se pudo determinar la versión de PHP ({php_bin})."
+    if ver < NEXTCLOUD_PHP_MIN or ver > NEXTCLOUD_PHP_MAX:
+        vmin = ".".join(map(str, NEXTCLOUD_PHP_MIN))
+        vmax = ".".join(map(str, NEXTCLOUD_PHP_MAX))
+        cur = ".".join(map(str, ver))
+        return False, (
+            f"Nextcloud requiere PHP {vmin}–{vmax} y el dominio usa PHP {cur}. "
+            f"Cambia la versión PHP del dominio a una soportada (p. ej. {vmax}) "
+            f"e inténtalo de nuevo."
+        )
+    # Extensiones cargadas
+    rc, out, _ = _run([php_bin, "-m"])
+    loaded = {m.strip().lower() for m in out.splitlines()} if rc == 0 else set()
+    missing = [e for e in NEXTCLOUD_PHP_EXTS if e.lower() not in loaded]
+    if missing:
+        cur = ".".join(map(str, ver))
+        pkgs = ", ".join(f"php{cur}-{e.replace('pdo_mysql', 'mysql')}" for e in missing)
+        return False, (
+            f"A PHP {cur} le faltan extensiones requeridas por Nextcloud: "
+            f"{', '.join(missing)}. Instálalas (p. ej. apt-get install {pkgs}) "
+            f"y reinténtalo."
+        )
+    return True, ""
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # Orquestador
 # ─────────────────────────────────────────────────────────────────────────────
@@ -167,7 +226,7 @@ class AppInstaller:
         if not ensure_wp_cli():
             raise RuntimeError("No se pudo instalar wp-cli en el servidor")
         if not _empty_or_safe(docroot):
-            raise RuntimeError("El directorio del dominio no está vacío; instala en un dominio limpio")
+            raise RequirementsError("El directorio del dominio no está vacío; instala en un dominio limpio")
 
         db = self._create_db(owner, "wp")
 
@@ -224,7 +283,7 @@ class AppInstaller:
         if not ensure_composer():
             raise RuntimeError("No se pudo instalar composer en el servidor")
         if not _empty_or_safe(docroot):
-            raise RuntimeError("El directorio del dominio no está vacío; instala en un dominio limpio")
+            raise RequirementsError("El directorio del dominio no está vacío; instala en un dominio limpio")
 
         db = self._create_db(owner, "lar")
 
@@ -299,13 +358,32 @@ class AppInstaller:
 
     # ── Nextcloud ──────────────────────────────────────────────────────────────
     def install_nextcloud(self, domain: str, owner: str, docroot: str,
-                          admin_user: str, admin_pass: str) -> Dict:
+                          admin_user: str, admin_pass: str,
+                          php_version: Optional[str] = None) -> Dict:
         """
         Descarga la última versión estable de Nextcloud y la instala de forma
         desatendida con `occ maintenance:install` (sin pasar por el wizard web).
+
+        php_version: versión PHP del dominio (p. ej. "8.3"). occ se ejecuta con
+        ese binario (php8.3) porque Nextcloud es sensible a la versión PHP y no
+        soporta las más nuevas (p. ej. 8.5) hasta tener release compatible.
         """
         if not _empty_or_safe(docroot):
-            raise RuntimeError("El directorio del dominio no está vacío; instala en un dominio limpio")
+            raise RequirementsError("El directorio del dominio no está vacío; instala en un dominio limpio")
+
+        # Binario PHP a usar para occ: php{ver} si existe, si no el genérico.
+        php_bin = "php"
+        if php_version:
+            cand = f"php{php_version}"
+            if shutil.which(cand) or os.path.exists(f"/usr/bin/{cand}"):
+                php_bin = cand
+
+        # ── Precheck de requisitos PHP ────────────────────────────────────────
+        # Nextcloud es estricto con la versión y extensiones. Validamos ANTES de
+        # tocar nada para fallar con un mensaje claro (no dejar un sitio roto).
+        ok, why = _check_nextcloud_php(php_bin, php_version)
+        if not ok:
+            raise RequirementsError(why)
 
         db = self._create_db(owner, "nc")
 
@@ -353,7 +431,7 @@ class AppInstaller:
         url = f"https://{domain}"
         occ = os.path.join(docroot, "occ")
         rc, out, err = _run([
-            "php", occ, "maintenance:install",
+            php_bin, occ, "maintenance:install",
             "--database", "mysql",
             "--database-name", db["db_name"],
             "--database-user", db["db_user"],
@@ -366,12 +444,12 @@ class AppInstaller:
             raise RuntimeError(f"occ maintenance:install falló: {(err or out)[:400]}")
 
         # Registrar el dominio como trusted_domain (occ usa índice 0 = localhost)
-        _run(["php", occ, "config:system:set", "trusted_domains", "1",
+        _run([php_bin, occ, "config:system:set", "trusted_domains", "1",
               "--value", domain], cwd=docroot, as_user=owner)
         # overwrite.cli.url y protocolo https detrás del proxy/nginx
-        _run(["php", occ, "config:system:set", "overwrite.cli.url",
+        _run([php_bin, occ, "config:system:set", "overwrite.cli.url",
               "--value", url], cwd=docroot, as_user=owner)
-        _run(["php", occ, "config:system:set", "overwriteprotocol",
+        _run([php_bin, occ, "config:system:set", "overwriteprotocol",
               "--value", "https"], cwd=docroot, as_user=owner)
 
         _chown_tree(docroot, owner)
