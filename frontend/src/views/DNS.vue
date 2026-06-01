@@ -82,6 +82,19 @@
           <button v-if="selectedZone.can_edit" class="btn btn-sm btn-success" @click="openAddRecord">
             <i class="bi bi-plus-lg me-1"></i> Añadir Registro
           </button>
+          <div v-if="selectedZone.can_edit" class="dropdown">
+            <button class="btn btn-sm btn-outline-primary dropdown-toggle" @click="showTemplates = !showTemplates">
+              <i class="bi bi-magic me-1"></i> Plantillas
+            </button>
+            <div v-if="showTemplates" class="dns-templates" v-click-away="() => showTemplates = false">
+              <p class="dns-templates__title">Añadir registros de correo</p>
+              <button @click="applyMailTemplate('spf')"><i class="bi bi-shield-check"></i> SPF (~all)</button>
+              <button @click="applyMailTemplate('dmarc')"><i class="bi bi-shield-check"></i> DMARC (p=none)</button>
+              <button @click="applyMailTemplate('mx')"><i class="bi bi-envelope"></i> MX (este servidor)</button>
+              <div class="dns-templates__sep"></div>
+              <button @click="applyMailTemplate('all')"><i class="bi bi-stars"></i> Pack email seguro (MX+SPF+DMARC)</button>
+            </div>
+          </div>
           <button v-if="selectedZone.can_edit" class="btn btn-sm btn-outline-warning" @click="confirmRegenerate" :title="'Regenerar registros con plantilla ' + (selectedZone.template || 'default')">
             <i class="bi bi-arrow-repeat me-1"></i> Regenerar plantilla
           </button>
@@ -106,20 +119,48 @@
             </tr>
           </thead>
           <tbody>
-            <tr v-for="rec in records" :key="rec.id">
+            <tr v-for="rec in records" :key="rec.id" :class="{ 'table-active': inlineEditId === rec.id }">
               <td>{{ rec.name }}</td>
               <td><span :class="typeClass(rec.record_type)" class="badge">{{ rec.record_type }}</span></td>
-              <td class="text-break" style="max-width:280px;">{{ rec.content }}</td>
-              <td class="text-muted">{{ rec.ttl }}</td>
-              <td class="text-muted">{{ rec.priority || '—' }}</td>
-              <td v-if="selectedZone.can_edit" class="text-end">
-                <button class="btn btn-sm btn-outline-secondary me-1" @click="openEditRecord(rec)">
-                  <i class="bi bi-pencil"></i>
-                </button>
-                <button class="btn btn-sm btn-outline-danger" @click="confirmDeleteRecord(rec)">
-                  <i class="bi bi-trash"></i>
-                </button>
-              </td>
+
+              <!-- Modo lectura -->
+              <template v-if="inlineEditId !== rec.id">
+                <td class="text-break" style="max-width:280px;">{{ rec.content }}</td>
+                <td class="text-muted">{{ rec.ttl }}</td>
+                <td class="text-muted">{{ rec.priority || '—' }}</td>
+                <td v-if="selectedZone.can_edit" class="text-end">
+                  <button class="btn btn-sm btn-outline-secondary me-1" @click="startInlineEdit(rec)" title="Editar aquí">
+                    <i class="bi bi-pencil"></i>
+                  </button>
+                  <button class="btn btn-sm btn-outline-danger" @click="confirmDeleteRecord(rec)" title="Eliminar">
+                    <i class="bi bi-trash"></i>
+                  </button>
+                </td>
+              </template>
+
+              <!-- Modo edición inline -->
+              <template v-else>
+                <td><input v-model="inlineForm.content" class="form-control form-control-sm font-monospace" @keydown.enter="saveInlineEdit" @keydown.esc="cancelInlineEdit" /></td>
+                <td>
+                  <select v-model.number="inlineForm.ttl" class="form-select form-select-sm" style="min-width:90px">
+                    <option :value="300">300</option><option :value="3600">3600</option>
+                    <option :value="14400">14400</option><option :value="86400">86400</option>
+                  </select>
+                </td>
+                <td>
+                  <input v-if="['MX','SRV'].includes(rec.record_type)" v-model.number="inlineForm.priority" type="number" class="form-control form-control-sm" min="0" style="width:70px" />
+                  <span v-else class="text-muted">—</span>
+                </td>
+                <td class="text-end" style="white-space:nowrap">
+                  <button class="btn btn-sm btn-success me-1" @click="saveInlineEdit" :disabled="savingRecord" title="Guardar">
+                    <span v-if="savingRecord" class="spinner-border spinner-border-sm"></span>
+                    <i v-else class="bi bi-check-lg"></i>
+                  </button>
+                  <button class="btn btn-sm btn-outline-secondary" @click="cancelInlineEdit" title="Cancelar">
+                    <i class="bi bi-x-lg"></i>
+                  </button>
+                </td>
+              </template>
             </tr>
             <tr v-if="!records.length">
               <td :colspan="selectedZone.can_edit ? 6 : 5" class="text-center text-muted py-3">Sin registros</td>
@@ -418,8 +459,17 @@ const emptyZoneForm = () => ({
   expires_at:     '',
 })
 
+const clickAway = {
+  mounted(el, binding) {
+    el._away = (e) => { if (!el.contains(e.target)) binding.value(e) }
+    setTimeout(() => document.addEventListener('click', el._away), 0)
+  },
+  unmounted(el) { document.removeEventListener('click', el._away) },
+}
+
 export default {
   name: 'DNS',
+  directives: { clickAway },
   setup() {
     const store   = useMainStore()
     // Doble check: por role (nuevo) o por is_admin (por si el localStorage es antiguo)
@@ -447,6 +497,13 @@ export default {
     const editingRecord   = ref(null)
     const savingRecord    = ref(false)
     const recordForm      = ref({ record_type: 'A', name: '@', content: '', ttl: 14400, priority: 0 })
+
+    // Edición inline de registros
+    const inlineEditId = ref(null)
+    const inlineForm   = ref({ content: '', ttl: 14400, priority: 0 })
+
+    // Plantillas de correo
+    const showTemplates = ref(false)
 
     // Regenerate zone
     const showRegenerateConfirm = ref(false)
@@ -625,6 +682,61 @@ export default {
       }
     }
 
+    // ─── Edición inline ─────────────────────────────────────────────────────
+    const startInlineEdit = (rec) => {
+      inlineEditId.value = rec.id
+      inlineForm.value = { content: rec.content, ttl: rec.ttl, priority: rec.priority || 0 }
+    }
+    const cancelInlineEdit = () => { inlineEditId.value = null }
+    const saveInlineEdit = async () => {
+      if (!selectedZone.value || inlineEditId.value == null) return
+      savingRecord.value = true
+      try {
+        await api.updateDnsRecord(selectedZone.value.id, inlineEditId.value, {
+          content:  inlineForm.value.content,
+          ttl:      inlineForm.value.ttl,
+          priority: inlineForm.value.priority,
+        })
+        store.showNotification('Registro actualizado', 'success')
+        inlineEditId.value = null
+        const updatedZone = await api.getDnsZone(selectedZone.value.id)
+        selectedZone.value = { ...selectedZone.value, serial: updatedZone.serial }
+        await loadRecords(selectedZone.value.id)
+      } catch (e) {
+        store.showNotification('Error: ' + e.message, 'danger')
+      } finally {
+        savingRecord.value = false
+      }
+    }
+
+    // ─── Plantillas de correo ───────────────────────────────────────────────
+    const applyMailTemplate = async (kind) => {
+      if (!selectedZone.value) return
+      showTemplates.value = false
+      const domain = selectedZone.value.domain_name
+      const ns = (selectedZone.value.soa_ns || `mail.${domain}`).replace(/\.$/, '')
+      const recs = []
+      if (kind === 'mx' || kind === 'all') {
+        recs.push({ record_type: 'MX', name: '@', content: `${ns}.`, ttl: 14400, priority: 10 })
+      }
+      if (kind === 'spf' || kind === 'all') {
+        recs.push({ record_type: 'TXT', name: '@', content: 'v=spf1 mx ~all', ttl: 14400, priority: 0 })
+      }
+      if (kind === 'dmarc' || kind === 'all') {
+        recs.push({ record_type: 'TXT', name: '_dmarc', content: `v=DMARC1; p=none; rua=mailto:postmaster@${domain}`, ttl: 14400, priority: 0 })
+      }
+      try {
+        for (const r of recs) await api.addDnsRecord(selectedZone.value.id, r)
+        store.showNotification(`${recs.length} registro(s) de correo añadidos`, 'success')
+        const updatedZone = await api.getDnsZone(selectedZone.value.id)
+        selectedZone.value = { ...selectedZone.value, serial: updatedZone.serial }
+        await loadRecords(selectedZone.value.id)
+        await loadZones()
+      } catch (e) {
+        store.showNotification('Error añadiendo plantilla: ' + e.message, 'danger')
+      }
+    }
+
     const confirmDeleteRecord = (rec) => { recordToDelete.value = rec }
 
     const deleteRecord = async () => {
@@ -679,6 +791,8 @@ export default {
       openZoneRecords, openCreateZone, openEditZone, saveZone, confirmDeleteZone, deleteZone,
       openAddRecord, openEditRecord, saveRecord, confirmDeleteRecord, deleteRecord,
       confirmRegenerate, regenerateZone,
+      inlineEditId, inlineForm, startInlineEdit, saveInlineEdit, cancelInlineEdit,
+      showTemplates, applyMailTemplate,
     }
   }
 }
@@ -706,4 +820,27 @@ export default {
 .dns-type--srv   { background: var(--info-bg);     color: var(--info);       border-color: var(--info-border); }
 .dns-type--caa   { background: var(--danger-bg);   color: var(--danger);     border-color: var(--danger-border); }
 [data-theme="dark"] .dns-type--a { background: var(--surface-2); color: var(--brand-400); border-color: var(--border-strong); }
+
+/* Dropdown de plantillas de correo */
+.dropdown { position: relative; }
+.dns-templates {
+  position: absolute; right: 0; top: calc(100% + 6px); z-index: 60;
+  min-width: 240px;
+  background: var(--surface); border: 1px solid var(--border);
+  border-radius: var(--r-md); box-shadow: var(--shadow-lg); padding: var(--sp-2);
+}
+.dns-templates__title {
+  margin: var(--sp-1) var(--sp-2) var(--sp-2);
+  font-size: var(--fs-xs); text-transform: uppercase; letter-spacing: .05em;
+  color: var(--text-muted); font-weight: var(--fw-semibold);
+}
+.dns-templates button {
+  display: flex; align-items: center; gap: var(--sp-2); width: 100%;
+  padding: 8px var(--sp-2); border: none; background: transparent;
+  color: var(--text-secondary); font-size: var(--fs-sm); border-radius: var(--r-sm);
+  cursor: pointer; text-align: left;
+}
+.dns-templates button .bi { width: 16px; color: var(--color-primary); }
+.dns-templates button:hover { background: var(--surface-inset); color: var(--text); }
+.dns-templates__sep { height: 1px; background: var(--border); margin: var(--sp-2) 0; }
 </style>
