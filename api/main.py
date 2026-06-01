@@ -505,9 +505,13 @@ def _seed_builtin_templates(engine):
                     is_active=True,
                 )
                 db.add(obj)
-            elif tpl.get("docroot_subdir") and not getattr(exists, "docroot_subdir", None):
-                # Actualizar plantillas builtin ya sembradas que ganaron docroot_subdir
-                exists.docroot_subdir = tpl["docroot_subdir"]
+            elif exists.is_builtin:
+                # Refrescar plantillas builtin ya sembradas (correcciones de
+                # nginx_extra, docroot_subdir, etc.). No tocamos las del usuario.
+                exists.nginx_extra = tpl.get("nginx_extra")
+                exists.php_ini_overrides = tpl.get("php_ini_overrides")
+                exists.fastcgi_cache_default = tpl.get("fastcgi_cache_default", False)
+                exists.docroot_subdir = tpl.get("docroot_subdir")
         db.commit()
         print(f"✓ Plantillas web: {len(BUILTIN_TEMPLATES)} builtin registradas")
     except Exception as e:

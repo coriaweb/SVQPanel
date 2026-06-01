@@ -127,11 +127,11 @@ BUILTIN_TEMPLATES = [
     add_header X-Frame-Options "SAMEORIGIN" always;
 
     # Bloquear acceso a directorios internos de Laravel
-    location ~* ^/storage/.*\\.php$  { deny all; }
-    location ~* ^/vendor/.*\\.php$   { deny all; }
-    location ~* ^/bootstrap/.*\\.php${ deny all; }
-    location = /artisan               { deny all; }
-    location ~* /\\.env               { deny all; }
+    location ~* ^/storage/.*\\.php$ { deny all; }
+    location ~* ^/vendor/.*\\.php$ { deny all; }
+    location ~* ^/bootstrap/.*\\.php$ { deny all; }
+    location = /artisan { deny all; }
+    location ~* /\\.env { deny all; }
 
     location ~* \\.(js|css|png|jpg|jpeg|gif|ico|svg|woff2)$ {
         expires 30d;
