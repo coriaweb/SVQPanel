@@ -214,3 +214,75 @@ class AppInstaller:
             "admin_password": admin_pass,
             "db": db,
         }
+
+    # ── Laravel ──────────────────────────────────────────────────────────────
+    def install_laravel(self, domain: str, owner: str, docroot: str) -> Dict:
+        """
+        Instala Laravel con composer. Devuelve docroot_public: la web del
+        dominio debe apuntar a {docroot}/public (lo ajusta el endpoint).
+        """
+        if not ensure_composer():
+            raise RuntimeError("No se pudo instalar composer en el servidor")
+        if not _empty_or_safe(docroot):
+            raise RuntimeError("El directorio del dominio no está vacío; instala en un dominio limpio")
+
+        db = self._create_db(owner, "lar")
+
+        # composer create-project en una carpeta temporal del usuario y mover.
+        # (create-project exige carpeta vacía/inexistente; el docroot puede
+        # tener un index trivial, así que usamos tmp y luego rsync.)
+        tmp = f"{os.path.dirname(docroot)}/.laravel_tmp"
+        _run(["rm", "-rf", tmp])
+        env = dict(_SYS_ENV, COMPOSER_NO_INTERACTION="1", COMPOSER_ALLOW_SUPERUSER="0")
+        rc, _, err = _run([
+            COMPOSER_PATH, "create-project", "laravel/laravel", tmp,
+            "--no-interaction", "--prefer-dist",
+        ], as_user=owner, timeout=900)
+        if rc != 0:
+            _run(["rm", "-rf", tmp])
+            raise RuntimeError(f"composer create-project falló: {err[:400]}")
+
+        # Limpiar docroot (index trivial) y mover el proyecto dentro
+        _run(["find", docroot, "-mindepth", "1", "-delete"])
+        # mover contenido (incluye ocultos) de tmp → docroot
+        _run(["bash", "-c", f"shopt -s dotglob && mv {tmp}/* {docroot}/ && rmdir {tmp}"], as_user=owner)
+
+        # Configurar .env: BD + APP_URL
+        url = f"https://{domain}"
+        envp = os.path.join(docroot, ".env")
+        try:
+            with open(envp) as f:
+                content = f.read()
+            repl = {
+                r"^APP_URL=.*":       f"APP_URL={url}",
+                r"^DB_CONNECTION=.*": "DB_CONNECTION=mysql",
+                r"^DB_HOST=.*":       "DB_HOST=127.0.0.1",
+                r"^DB_PORT=.*":       "DB_PORT=3306",
+                r"^DB_DATABASE=.*":   f"DB_DATABASE={db['db_name']}",
+                r"^DB_USERNAME=.*":   f"DB_USERNAME={db['db_user']}",
+                r"^DB_PASSWORD=.*":   f"DB_PASSWORD={db['db_pass']}",
+            }
+            for pat, val in repl.items():
+                if re.search(pat, content, flags=re.M):
+                    content = re.sub(pat, val, content, flags=re.M)
+                else:
+                    content += f"\n{val}"
+            with open(envp, "w") as f:
+                f.write(content)
+        except OSError as e:
+            raise RuntimeError(f"No se pudo configurar .env de Laravel: {e}")
+
+        # App key + migraciones (como el usuario)
+        _run([COMPOSER_PATH, "install", "--no-interaction", "--prefer-dist"],
+             cwd=docroot, as_user=owner, timeout=900)
+        _run(["php", "artisan", "key:generate", "--force"], cwd=docroot, as_user=owner)
+        _run(["php", "artisan", "migrate", "--force"], cwd=docroot, as_user=owner)
+
+        _chown_tree(docroot, owner)
+        return {
+            "app": "laravel",
+            "url": url,
+            # La web debe servirse desde /public (el endpoint ajusta el docroot)
+            "docroot_public": os.path.join(docroot, "public"),
+            "db": db,
+        }

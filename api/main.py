@@ -468,6 +468,8 @@ def _run_migrations():
         "CREATE INDEX IF NOT EXISTS ix_notifications_user_id   ON notifications(user_id)",
         "CREATE INDEX IF NOT EXISTS ix_notifications_is_read   ON notifications(is_read)",
         "CREATE INDEX IF NOT EXISTS ix_notifications_dedup     ON notifications(user_id, dedup_key, is_read)",
+        # Autoinstalador: subcarpeta docroot por plantilla (ej. 'public' Laravel)
+        "ALTER TABLE web_templates ADD COLUMN IF NOT EXISTS docroot_subdir VARCHAR(64)",
     ]
     with engine.connect() as conn:
         for sql in migrations:
@@ -498,10 +500,14 @@ def _seed_builtin_templates(engine):
                     nginx_extra=tpl.get("nginx_extra"),
                     php_ini_overrides=tpl.get("php_ini_overrides"),
                     fastcgi_cache_default=tpl.get("fastcgi_cache_default", False),
+                    docroot_subdir=tpl.get("docroot_subdir"),
                     is_builtin=True,
                     is_active=True,
                 )
                 db.add(obj)
+            elif tpl.get("docroot_subdir") and not getattr(exists, "docroot_subdir", None):
+                # Actualizar plantillas builtin ya sembradas que ganaron docroot_subdir
+                exists.docroot_subdir = tpl["docroot_subdir"]
         db.commit()
         print(f"✓ Plantillas web: {len(BUILTIN_TEMPLATES)} builtin registradas")
     except Exception as e:

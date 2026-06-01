@@ -88,14 +88,15 @@
                 <span>Aplicación</span>
                 <select class="svq-select" v-model="appForm.app">
                   <option value="wordpress">WordPress</option>
+                  <option value="laravel">Laravel</option>
                 </select>
               </label>
-              <label class="app-field">
+              <label class="app-field" v-if="appNeedsAdmin">
                 <span>Usuario admin</span>
                 <input class="svq-input" v-model="appForm.admin_user" placeholder="admin" />
               </label>
             </div>
-            <div class="app-install__row">
+            <div class="app-install__row" v-if="appNeedsAdmin">
               <label class="app-field">
                 <span>Contraseña admin</span>
                 <input class="svq-input" v-model="appForm.admin_password" type="text" placeholder="mín. 8 caracteres" />
@@ -105,6 +106,7 @@
                 <input class="svq-input" v-model="appForm.admin_email" type="email" :placeholder="`admin@${domain.domain_name}`" />
               </label>
             </div>
+            <p v-else class="dd-muted"><i class="bi bi-info-circle"></i> Laravel se instala sin usuario admin (lo defines en tu app). Servirá desde <code>/public</code> automáticamente.</p>
             <div class="app-install__foot">
               <small class="dd-muted"><i class="bi bi-exclamation-triangle"></i> El dominio debe estar vacío (sin web previa).</small>
               <BaseButton variant="primary" size="sm" icon="download" :loading="installing" @click="doInstallApp">Instalar</BaseButton>
@@ -112,8 +114,9 @@
             <div v-if="installResult" class="app-result">
               <p class="app-result__title"><i class="bi bi-check-circle-fill"></i> {{ installResult.message }}</p>
               <div class="app-result__row"><span>URL</span><a :href="installResult.data.url" target="_blank" class="mono">{{ installResult.data.url }}</a></div>
-              <div class="app-result__row"><span>Admin</span><a :href="installResult.data.admin_url" target="_blank" class="mono">{{ installResult.data.admin_url }}</a></div>
-              <div class="app-result__row"><span>Usuario</span><span class="mono">{{ installResult.data.admin_user }}</span></div>
+              <div class="app-result__row" v-if="installResult.data.admin_url"><span>Admin</span><a :href="installResult.data.admin_url" target="_blank" class="mono">{{ installResult.data.admin_url }}</a></div>
+              <div class="app-result__row" v-if="installResult.data.admin_user"><span>Usuario</span><span class="mono">{{ installResult.data.admin_user }}</span></div>
+              <div class="app-result__row" v-if="installResult.data.warning"><span>Aviso</span><span style="color:var(--warning)">{{ installResult.data.warning }}</span></div>
             </div>
           </div>
         </BaseCard>
@@ -375,12 +378,19 @@ export default {
     const appForm = ref({ app: 'wordpress', admin_user: 'admin', admin_password: '', admin_email: '' })
     const installing = ref(false)
     const installResult = ref(null)
+    const appNeedsAdmin = computed(() => appForm.value.app === 'wordpress')
     const doInstallApp = async () => {
-      if (!appForm.value.admin_password || appForm.value.admin_password.length < 8) {
-        store.showNotification('La contraseña admin debe tener al menos 8 caracteres', 'danger'); return
-      }
-      if (!appForm.value.admin_email) {
-        store.showNotification('Indica un email de administrador', 'danger'); return
+      if (appNeedsAdmin.value) {
+        if (!appForm.value.admin_password || appForm.value.admin_password.length < 8) {
+          store.showNotification('La contraseña admin debe tener al menos 8 caracteres', 'danger'); return
+        }
+        if (!appForm.value.admin_email) {
+          store.showNotification('Indica un email de administrador', 'danger'); return
+        }
+      } else {
+        // Laravel no necesita admin; mandamos placeholders válidos para el schema
+        appForm.value.admin_password = appForm.value.admin_password || 'laravel-no-admin'
+        appForm.value.admin_email = appForm.value.admin_email || `admin@${domain.value.domain_name}`
       }
       installing.value = true
       installResult.value = null
@@ -411,7 +421,7 @@ export default {
       phpLoading, phpSaving, phpDirectives, phpDefaults, phpForm, phpHasPool, savePhp, changePHP,
       logTab, logLines, logsLoading, logsData, loadLogs, switchLog,
       downloading, downloadSite, suspend, unsuspend, remove, goFiles,
-      appForm, installing, installResult, doInstallApp,
+      appForm, installing, installResult, doInstallApp, appNeedsAdmin,
     }
   },
 }

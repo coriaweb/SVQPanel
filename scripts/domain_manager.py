@@ -329,11 +329,12 @@ class DomainManager(SystemManager):
         rate_limit_enabled: bool = False,
         rate_limit_rps: int = 10,
         rate_limit_burst: int = 20,
+        docroot_subdir: str = None,
     ) -> dict:
         """
         Regenera la vhost completa del dominio con TODO el estado actual
-        (SSL, IPv6, cache, socket PHP dedicado, rate limit). Punto único de
-        verdad para no perder ajustes al tocar una de las features.
+        (SSL, IPv6, cache, socket PHP dedicado, rate limit, docroot_subdir).
+        Punto único de verdad para no perder ajustes al tocar una feature.
         """
         if not validate_domain(domain_name):
             raise ValueError(f"Invalid domain: {domain_name}")
@@ -368,6 +369,7 @@ class DomainManager(SystemManager):
             hsts=hsts,
             rate_limit_enabled=rate_limit_enabled,
             rate_limit_burst=rate_limit_burst,
+            docroot_subdir=docroot_subdir,
         )
         with open(nginx_config, "w") as f:
             f.write(config_content)

@@ -273,6 +273,7 @@ def generate_nginx_config(
     hsts: bool = False,
     rate_limit_enabled: bool = False,
     rate_limit_burst: int = 20,
+    docroot_subdir: Optional[str] = None,
 ) -> str:
     """Generate Nginx vhost configuration (Hestia-style paths)"""
 
@@ -285,6 +286,12 @@ def generate_nginx_config(
 
     # Docroot: personalizado o el estándar
     public_html = custom_docroot or get_public_html(user, domain)
+    # docroot_subdir (p.ej. 'public' en Laravel): la app sirve desde una
+    # subcarpeta del docroot. Lo aporta la plantilla; no toca el custom_docroot.
+    if docroot_subdir:
+        safe_sub = docroot_subdir.strip("/").replace("..", "")
+        if safe_sub:
+            public_html = f"{public_html.rstrip('/')}/{safe_sub}"
     logs_dir = get_domain_logs(user, domain)
     # Si el dominio tiene php.ini propio, usa su pool dedicado
     php_socket = php_socket_override or f"/run/php/php{php_version}-fpm.sock"

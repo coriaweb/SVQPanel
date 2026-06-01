@@ -50,6 +50,23 @@ def _get_owned_domain(domain_id: int, db: Session, current_user: User) -> Domain
     raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Dominio no encontrado")
 
 
+def _apply_builtin_template(domain, slug: str, owner, db: Session):
+    """Aplica una plantilla web builtin (por slug) a un dominio y commitea."""
+    from api.models.models_template import WebTemplate
+    from scripts.template_manager import TemplateManager
+
+    tpl = db.query(WebTemplate).filter(WebTemplate.slug == slug).first()
+    if not tpl:
+        raise RuntimeError(f"Plantilla '{slug}' no encontrada")
+    res = TemplateManager().apply_template(
+        domain_row=domain, template_row=tpl, username=owner.username,
+    )
+    if res.get("status") != "success":
+        raise RuntimeError(res.get("error") or "fallo aplicando plantilla")
+    db.commit()
+    return res
+
+
 def _get_reserved_domains():
     """Dominios reservados que no se pueden registrar como dominios web"""
     reserved = {"localhost", "localhost.localdomain"}
@@ -1082,6 +1099,19 @@ async def install_app(
                 admin_pass=payload.admin_password,
                 admin_email=payload.admin_email,
             )
+        elif app == "laravel":
+            result = installer.install_laravel(
+                domain=domain.domain_name,
+                owner=owner.username,
+                docroot=docroot,
+            )
+            # Laravel sirve desde /public. Lo resuelve la plantilla nginx
+            # 'laravel' (docroot_subdir='public'): aplicarla regenera el vhost
+            # con el root correcto, sin tocar el custom_docroot del dominio.
+            try:
+                _apply_builtin_template(domain, "laravel", owner, db)
+            except Exception as ve:
+                result["warning"] = f"Laravel instalado; aplica la plantilla 'laravel' para servir desde /public: {ve}"
         else:
             raise HTTPException(status_code=400, detail=f"Instalador de '{app}' aún no disponible")
     except HTTPException:

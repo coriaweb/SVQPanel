@@ -35,6 +35,10 @@ class WebTemplate(Base):
     # Sugerencia: ¿activar FastCGI cache al aplicar esta plantilla?
     fastcgi_cache_default = Column(Boolean, default=False, nullable=False)
 
+    # Subcarpeta del docroot desde la que sirve la app (ej. "public" para
+    # Laravel/Symfony). Vacío/NULL = sirve desde public_html directamente.
+    docroot_subdir = Column(String(64), nullable=True)
+
     # Las plantillas builtin no pueden eliminarse desde la API
     is_builtin  = Column(Boolean, default=False, nullable=False)
     is_active   = Column(Boolean, default=True,  nullable=False)

@@ -111,9 +111,10 @@ BUILTIN_TEMPLATES = [
     {
         "name": "Laravel",
         "slug": "laravel",
-        "description": "Laravel (y otros frameworks Symfony-style). Sin caché FastCGI (Laravel gestiona la suya propia).",
+        "description": "Laravel (y otros frameworks Symfony-style). Sirve desde /public. Sin caché FastCGI (Laravel gestiona la suya propia).",
         "category": "framework",
         "fastcgi_cache_default": False,
+        "docroot_subdir": "public",
         "php_ini_overrides": json.dumps({
             "memory_limit":        "256M",
             "upload_max_filesize": "32M",
@@ -384,6 +385,7 @@ class TemplateManager(SystemManager):
                 hsts=getattr(domain_row, 'hsts_enabled', False) or False,
                 rate_limit_enabled=getattr(domain_row, 'rate_limit_enabled', False) or False,
                 rate_limit_burst=getattr(domain_row, 'rate_limit_burst', 20) or 20,
+                docroot_subdir=getattr(template_row, 'docroot_subdir', None),
             )
             with open(nginx_config_path, "w") as f:
                 f.write(config)
