@@ -1205,9 +1205,11 @@ cat > /opt/svqpanel/.env << ENVEOF
 DATABASE_URL=postgresql://panel_user:panel_password_123@localhost/panel_db
 PANEL_NAME=SVQPanel
 PANEL_VERSION=0.1.0
-# La API solo escucha en localhost; se sirve al exterior vía nginx (443).
+# La API solo escucha en localhost; se sirve al exterior vía nginx.
 PANEL_HOST=127.0.0.1
 PANEL_PORT=8001
+# Puerto público dedicado donde nginx sirve el panel (ver vhost svqpanel).
+PANEL_WEB_PORT=${PANEL_WEB_PORT}
 DEBUG=False
 SECRET_KEY=${SECRET_KEY_VAL}
 

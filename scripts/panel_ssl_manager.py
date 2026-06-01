@@ -430,6 +430,24 @@ PANEL_NGINX_LINK = "/etc/nginx/sites-enabled/svqpanel"
 # Puerto en el que escucha uvicorn internamente
 PANEL_BACKEND_PORT = int(os.environ.get("PANEL_PORT", 8001))
 
+# Puerto PÚBLICO dedicado en el que nginx sirve el panel (no 80/443, para poder
+# cerrarlo en el firewall perimetral). Se detecta del vhost actual si existe,
+# con fallback a PANEL_WEB_PORT del entorno o 8083.
+def _detect_panel_web_port() -> int:
+    try:
+        with open(PANEL_NGINX_CONF) as fh:
+            txt = fh.read()
+        # Buscar el primer 'listen <puerto>' que NO sea 80/443
+        for m in re.finditer(r'listen\s+(?:\[::\]:)?(\d+)', txt):
+            p = int(m.group(1))
+            if p not in (80, 443):
+                return p
+    except (OSError, ValueError):
+        pass
+    return int(os.environ.get("PANEL_WEB_PORT", 8083))
+
+PANEL_WEB_PORT = _detect_panel_web_port()
+
 # Puerto público del frontend (Vite build servido por nginx)
 PANEL_FRONTEND_PATH = "/opt/svqpanel/frontend/dist"
 
@@ -526,14 +544,19 @@ class PanelSSLManager(SystemManager):
 
         logger.info(f"Emitiendo SSL para el panel en {hostname}")
 
-        # 1. Aseguramos un vhost HTTP básico para que certbot pueda validar
+        # 1. Aseguramos un vhost HTTP básico para que certbot pueda validar.
+        #    El bloque 'listen 80' sirve /.well-known/acme-challenge desde
+        #    /var/www/html (el panel real va en su puerto dedicado).
+        os.makedirs("/var/www/html/.well-known/acme-challenge", exist_ok=True)
         self._write_nginx_http_only(hostname)
         self._nginx_reload()
 
-        # 2. Emitir con certbot --nginx
+        # 2. Emitir con certbot --webroot (no toca nginx; valida por el puerto
+        #    80 que ya queda abierto para los sitios de clientes). Es robusto
+        #    aunque el panel se sirva en un puerto dedicado.
         rc, out, err = self.execute_command([
             "certbot", "certonly",
-            "--nginx",
+            "--webroot", "-w", "/var/www/html",
             "-d", hostname,
             "--non-interactive",
             "--agree-tos",
@@ -600,18 +623,27 @@ class PanelSSLManager(SystemManager):
     # ──────────────────────────────────────────────────────────────────────────
 
     def _write_nginx_http_only(self, hostname: str) -> None:
-        """Escribe un vhost nginx básico (solo HTTP) para el panel."""
+        """
+        Vhost básico (solo HTTP) para el panel en su puerto dedicado.
+        El puerto 80 queda reservado para la validación ACME de certbot;
+        el panel se sirve en PANEL_WEB_PORT.
+        """
         config = f"""# SVQPanel — vhost HTTP (pre-SSL o fallback)
+# Puerto 80: SOLO para la validación ACME de Let's Encrypt (no sirve el panel).
 server {{
     listen 80;
     server_name {hostname};
-
-    # Ruta de validación ACME
     location /.well-known/acme-challenge/ {{
         root /var/www/html;
     }}
+    location / {{ return 404; }}
+}}
 
-    # Frontend estático
+# El panel se sirve en su puerto dedicado.
+server {{
+    listen {PANEL_WEB_PORT};
+    server_name {hostname} _;
+
     root {PANEL_FRONTEND_PATH};
     index index.html;
 
@@ -619,7 +651,7 @@ server {{
         try_files $uri $uri/ /index.html;
     }}
 
-{RSPAMD_LOCATION}
+{RSPAMD_LOCATION}{_service_locations()}
     # API backend
     location /api/ {{
         proxy_pass http://127.0.0.1:{PANEL_BACKEND_PORT};
@@ -637,48 +669,29 @@ server {{
         cert_path = f"/etc/letsencrypt/live/{hostname}/fullchain.pem"
         key_path = f"/etc/letsencrypt/live/{hostname}/privkey.pem"
 
-        http_block = ""
-        if force_https:
-            http_block = f"""
+        # Puerto 80: SOLO valida ACME y (si force_https) redirige al panel HTTPS
+        # en su puerto dedicado. Nunca sirve el panel en 80.
+        redirect_block = (
+            f"    location / {{ return 301 https://$host:{PANEL_WEB_PORT}$request_uri; }}\n"
+            if force_https else
+            f"    location / {{ return 404; }}\n"
+        )
+        http_block = f"""
 server {{
     listen 80;
     server_name {hostname};
-    return 301 https://$host$request_uri;
-}}
-"""
-        else:
-            http_block = f"""
-server {{
-    listen 80;
-    server_name {hostname};
-
-    root {PANEL_FRONTEND_PATH};
-    index index.html;
-
     location /.well-known/acme-challenge/ {{
         root /var/www/html;
     }}
-
-    location / {{
-        try_files $uri $uri/ /index.html;
-    }}
-
-{RSPAMD_LOCATION}{_service_locations()}
-    location /api/ {{
-        proxy_pass http://127.0.0.1:{PANEL_BACKEND_PORT};
-        proxy_set_header Host $host;
-        proxy_set_header X-Real-IP $remote_addr;
-        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto $scheme;
-    }}
-}}
+{redirect_block}}}
 """
 
+        # El panel HTTPS se sirve en el puerto dedicado.
         https_block = f"""
 server {{
-    listen 443 ssl http2;
-    listen [::]:443 ssl http2;
-    server_name {hostname};
+    listen {PANEL_WEB_PORT} ssl http2;
+    listen [::]:{PANEL_WEB_PORT} ssl http2;
+    server_name {hostname} _;
 
     ssl_certificate     {cert_path};
     ssl_certificate_key {key_path};
@@ -686,13 +699,10 @@ server {{
     ssl_ciphers         HIGH:!aNULL:!MD5;
     ssl_session_cache   shared:SSL:10m;
     ssl_session_timeout 10m;
+    add_header Strict-Transport-Security "max-age=31536000; includeSubDomains" always;
 
     root {PANEL_FRONTEND_PATH};
     index index.html;
-
-    location /.well-known/acme-challenge/ {{
-        root /var/www/html;
-    }}
 
     location / {{
         try_files $uri $uri/ /index.html;
@@ -705,7 +715,7 @@ server {{
         proxy_set_header X-Real-IP $remote_addr;
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
         proxy_set_header X-Forwarded-Proto https;
-        proxy_set_header X-Forwarded-Port 443;
+        proxy_set_header X-Forwarded-Port {PANEL_WEB_PORT};
     }}
 }}
 """
