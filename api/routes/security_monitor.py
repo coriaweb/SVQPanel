@@ -11,11 +11,71 @@ from sqlalchemy.orm import Session
 
 from api.models.database import get_db
 from api.models.models_security import SecurityAuditLog
+from api.models.models_domain import Domain
+from api.models.models_user import User
 from api.schemas.security_schemas import AuditLogResponse, ActiveConnection
 from api.dependencies import require_admin
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Aislamiento PHP por dominio (open_basedir / pool FPM dedicado)
+# ─────────────────────────────────────────────────────────────────────────────
+def _domains_for_audit(db: Session) -> List[dict]:
+    """Lista de dominios con su owner y config PHP, para auditar/reparar."""
+    rows = (
+        db.query(Domain, User.username)
+        .join(User, Domain.user_id == User.id)
+        .all()
+    )
+    out = []
+    for dom, username in rows:
+        out.append({
+            "domain": dom.domain_name,
+            "owner": username,
+            "php_version": dom.php_version or "8.2",
+            "overrides": dom.php_ini_overrides,            # JSON string o None
+            "relaxed": bool(dom.php_hardening_relaxed),
+        })
+    return out
+
+
+@router.get("/security/php-isolation")
+async def audit_php_isolation(
+    db: Session = Depends(get_db),
+    _:  dict    = Depends(require_admin),
+):
+    """
+    Audita el aislamiento PHP de todos los dominios: verifica que cada uno
+    tiene pool FPM dedicado con open_basedir, disable_functions y tmp aislado.
+    Detecta dominios que caerían al pool global (sin open_basedir).
+    """
+    from scripts.security_audit import audit_domains
+    try:
+        return audit_domains(_domains_for_audit(db))
+    except Exception as e:
+        logger.error(f"Error auditando aislamiento PHP: {e}")
+        return {"total": 0, "secure": 0, "insecure": 0, "all_ok": True, "domains": [], "error": str(e)}
+
+
+@router.post("/security/php-isolation/repair")
+async def repair_php_isolation(
+    db: Session = Depends(get_db),
+    _:  dict    = Depends(require_admin),
+):
+    """
+    Repara los dominios sin aislamiento correcto reescribiendo su pool FPM
+    con el bloque de seguridad completo. Respeta overrides php.ini y el flag
+    de hardening relajado de cada dominio.
+    """
+    from scripts.security_audit import repair_domains
+    try:
+        return repair_domains(_domains_for_audit(db))
+    except Exception as e:
+        logger.error(f"Error reparando aislamiento PHP: {e}")
+        return {"attempted": 0, "repaired": 0, "failed": 0, "details": [], "error": str(e)}
 
 
 # ─────────────────────────────────────────────────────────────────────────────

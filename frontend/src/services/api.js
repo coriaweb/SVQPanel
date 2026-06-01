@@ -632,6 +632,14 @@ class APIClient {
     return this.get(`/api/security/connections${listening ? '?listening=true' : ''}`)
   }
 
+  // Aislamiento PHP (open_basedir / pool FPM por dominio)
+  auditPhpIsolation() {
+    return this.get('/api/security/php-isolation')
+  }
+  repairPhpIsolation() {
+    return this.post('/api/security/php-isolation/repair', {})
+  }
+
   // Health check
   health() {
     return this.get('/api/health')

@@ -53,6 +53,58 @@
       </div></div></div>
     </div>
 
+    <!-- ── Aislamiento PHP (open_basedir por dominio) ── -->
+    <div class="card shadow-sm mb-4 iso-card" :class="isoCardTone">
+      <div class="card-body">
+        <div class="d-flex justify-content-between align-items-start gap-3 flex-wrap">
+          <div class="d-flex gap-3">
+            <div class="iso-icon" :class="isoCardTone">
+              <i class="bi" :class="isoAllOk ? 'bi-shield-fill-check' : 'bi-shield-fill-exclamation'"></i>
+            </div>
+            <div>
+              <h5 class="mb-1">Aislamiento PHP por dominio</h5>
+              <p class="text-muted mb-2 small" style="max-width:560px">
+                Cada dominio debe tener un pool PHP-FPM dedicado con
+                <code>open_basedir</code>, de modo que su PHP no pueda leer los
+                archivos de otros clientes. Sin él, un sitio podría leer
+                <code>wp-config.php</code> y secretos de los demás.
+              </p>
+              <div v-if="isoLoading" class="text-muted small">
+                <span class="spinner-border spinner-border-sm me-1"></span> Auditando dominios…
+              </div>
+              <div v-else-if="isoAudit" class="d-flex gap-2 flex-wrap">
+                <span class="badge bg-success">{{ isoAudit.secure }} protegidos</span>
+                <span class="badge" :class="isoAudit.insecure ? 'bg-danger' : 'bg-secondary'">
+                  {{ isoAudit.insecure }} desprotegidos
+                </span>
+                <span class="badge bg-secondary">{{ isoAudit.total }} dominios</span>
+              </div>
+            </div>
+          </div>
+          <div class="d-flex gap-2 align-items-center">
+            <button class="btn btn-sm btn-outline-secondary" @click="loadIsolation" :disabled="isoLoading || isoRepairing">
+              <i class="bi bi-arrow-repeat me-1"></i> Reauditar
+            </button>
+            <button v-if="isoAudit && isoAudit.insecure > 0"
+                    class="btn btn-sm btn-danger" @click="repairIsolation" :disabled="isoRepairing">
+              <span v-if="isoRepairing" class="spinner-border spinner-border-sm me-1"></span>
+              <i v-else class="bi bi-wrench-adjustable me-1"></i>
+              Reparar {{ isoAudit.insecure }} dominio(s)
+            </button>
+          </div>
+        </div>
+
+        <!-- Detalle de dominios desprotegidos -->
+        <div v-if="isoAudit && isoAudit.insecure > 0" class="iso-issues mt-3">
+          <div v-for="d in isoInsecureList" :key="d.domain" class="iso-issue">
+            <span class="iso-issue__domain"><i class="bi bi-globe2 me-1"></i>{{ d.domain }}</span>
+            <span class="iso-issue__owner text-muted">{{ d.owner }}</span>
+            <span class="iso-issue__msg text-danger small">{{ d.issues[0] }}</span>
+          </div>
+        </div>
+      </div>
+    </div>
+
     <!-- Tabs -->
     <ul class="nav nav-tabs mb-3">
       <li class="nav-item">
@@ -814,6 +866,40 @@ const tab = ref('firewall')
 const fwStatus  = ref(null)
 const f2bStatus = ref(null)
 
+// ─── Aislamiento PHP (open_basedir por dominio) ──────────────────────────────
+const isoAudit     = ref(null)
+const isoLoading   = ref(false)
+const isoRepairing = ref(false)
+
+const isoAllOk = computed(() => !isoAudit.value || isoAudit.value.all_ok)
+const isoCardTone = computed(() => {
+  if (!isoAudit.value) return ''
+  return isoAudit.value.insecure > 0 ? 'is-danger' : 'is-ok'
+})
+const isoInsecureList = computed(() =>
+  (isoAudit.value?.domains || []).filter(d => !d.ok))
+
+async function loadIsolation() {
+  isoLoading.value = true
+  try { isoAudit.value = await api.auditPhpIsolation() }
+  catch (e) { console.error('Error auditando aislamiento:', e) }
+  finally { isoLoading.value = false }
+}
+
+async function repairIsolation() {
+  if (!confirm('Se reescribirán los pools PHP-FPM de los dominios desprotegidos para aplicar open_basedir y el hardening. ¿Continuar?')) return
+  isoRepairing.value = true
+  try {
+    const r = await api.repairPhpIsolation()
+    alert(`Reparados ${r.repaired} de ${r.attempted} dominio(s).` + (r.failed ? ` ${r.failed} fallaron.` : ''))
+    await loadIsolation()
+  } catch (e) {
+    alert('Error reparando: ' + e.message)
+  } finally {
+    isoRepairing.value = false
+  }
+}
+
 // ─── Score de seguridad (derivado de datos ya cargados) ──────────────────────
 const securityScore = computed(() => {
   let score = 0
@@ -1118,6 +1204,7 @@ async function deleteIpList(l) {
 onMounted(async () => {
   await loadStatus()
   await loadFirewall()
+  loadIsolation()
 })
 </script>
 
@@ -1133,4 +1220,21 @@ onMounted(async () => {
 .sec-score__meta { display: flex; flex-direction: column; line-height: 1.25; }
 .sec-score__label { font-weight: var(--fw-semibold); font-size: var(--fs-base); }
 .sec-score__sub { font-size: var(--fs-sm); color: var(--text-muted); }
+
+/* Aislamiento PHP */
+.iso-card { border-left: 4px solid var(--border-strong) !important; }
+.iso-card.is-ok { border-left-color: var(--success) !important; }
+.iso-card.is-danger { border-left-color: var(--danger) !important; }
+.iso-icon {
+  width: 48px; height: 48px; flex-shrink: 0;
+  display: grid; place-items: center; border-radius: var(--r-md);
+  font-size: 22px; background: var(--surface-inset); color: var(--text-muted);
+}
+.iso-icon.is-ok { background: var(--success-bg); color: var(--success); }
+.iso-icon.is-danger { background: var(--danger-bg); color: var(--danger); }
+.iso-issues { border-top: 1px solid var(--border); padding-top: var(--sp-3); display: flex; flex-direction: column; gap: 6px; }
+.iso-issue { display: flex; align-items: center; gap: var(--sp-3); flex-wrap: wrap; font-size: var(--fs-sm); }
+.iso-issue__domain { font-weight: var(--fw-semibold); color: var(--text); font-family: var(--font-mono); }
+.iso-issue__owner { min-width: 80px; }
+.iso-issue__msg { flex: 1; }
 </style>
