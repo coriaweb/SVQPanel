@@ -6,6 +6,7 @@ import os
 import socket
 import tarfile
 import tempfile
+from typing import Optional
 from datetime import datetime
 from fastapi import APIRouter, Depends, HTTPException, status, Query
 from fastapi.responses import FileResponse
@@ -1052,10 +1053,12 @@ from pydantic import BaseModel, Field as _Field
 
 
 class AppInstallRequest(BaseModel):
-    app: str = _Field(..., description="Slug de la app: wordpress")
+    app: str = _Field(..., description="Slug de la app: wordpress, laravel, nextcloud")
     admin_user: str = _Field("admin", min_length=2, max_length=60)
-    admin_password: str = _Field(..., min_length=8, max_length=128)
-    admin_email: str = _Field(..., max_length=160)
+    # admin_password/email solo son obligatorios para apps con setup de admin
+    # (wordpress, nextcloud). Laravel no los usa. Validamos en el endpoint.
+    admin_password: Optional[str] = _Field(None, max_length=128)
+    admin_email: Optional[str] = _Field(None, max_length=160)
 
 
 @router.post("/domains/{domain_id}/install-app")
@@ -1078,6 +1081,15 @@ async def install_app(
     from scripts.app_installer import AppInstaller, SUPPORTED_APPS
     if app not in SUPPORTED_APPS:
         raise HTTPException(status_code=400, detail=f"App no soportada: {app}")
+
+    # Apps con cuenta de administrador requieren contraseña (mín. 8)
+    if app in ("wordpress", "nextcloud"):
+        if not payload.admin_password or len(payload.admin_password) < 8:
+            raise HTTPException(status_code=400,
+                                detail="La contraseña de administrador es obligatoria (mínimo 8 caracteres)")
+        if app == "wordpress" and not payload.admin_email:
+            raise HTTPException(status_code=400,
+                                detail="El email de administrador es obligatorio para WordPress")
 
     # Docroot real del dominio
     docroot = domain.custom_docroot or get_domain_root(owner.username, domain.domain_name) + "/public_html"
@@ -1112,6 +1124,20 @@ async def install_app(
                 _apply_builtin_template(domain, "laravel", owner, db)
             except Exception as ve:
                 result["warning"] = f"Laravel instalado; aplica la plantilla 'laravel' para servir desde /public: {ve}"
+        elif app == "nextcloud":
+            result = installer.install_nextcloud(
+                domain=domain.domain_name,
+                owner=owner.username,
+                docroot=docroot,
+                admin_user=payload.admin_user,
+                admin_pass=payload.admin_password,
+            )
+            # Nextcloud requiere reglas nginx específicas (bloquear /data, /config,
+            # .well-known, front controller). Aplicar la plantilla 'nextcloud'.
+            try:
+                _apply_builtin_template(domain, "nextcloud", owner, db)
+            except Exception as ve:
+                result["warning"] = f"Nextcloud instalado; aplica la plantilla 'nextcloud' manualmente: {ve}"
         else:
             raise HTTPException(status_code=400, detail=f"Instalador de '{app}' aún no disponible")
     except HTTPException:

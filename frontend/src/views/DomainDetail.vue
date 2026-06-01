@@ -89,6 +89,7 @@
                 <select class="svq-select" v-model="appForm.app">
                   <option value="wordpress">WordPress</option>
                   <option value="laravel">Laravel</option>
+                  <option value="nextcloud">Nextcloud</option>
                 </select>
               </label>
               <label class="app-field" v-if="appNeedsAdmin">
@@ -101,12 +102,13 @@
                 <span>Contraseña admin</span>
                 <input class="svq-input" v-model="appForm.admin_password" type="text" placeholder="mín. 8 caracteres" />
               </label>
-              <label class="app-field">
+              <label class="app-field" v-if="appNeedsEmail">
                 <span>Email admin</span>
                 <input class="svq-input" v-model="appForm.admin_email" type="email" :placeholder="`admin@${domain.domain_name}`" />
               </label>
             </div>
-            <p v-else class="dd-muted"><i class="bi bi-info-circle"></i> Laravel se instala sin usuario admin (lo defines en tu app). Servirá desde <code>/public</code> automáticamente.</p>
+            <p v-if="appForm.app === 'laravel'" class="dd-muted"><i class="bi bi-info-circle"></i> Laravel se instala sin usuario admin (lo defines en tu app). Servirá desde <code>/public</code> automáticamente.</p>
+            <p v-else-if="appForm.app === 'nextcloud'" class="dd-muted"><i class="bi bi-info-circle"></i> Nextcloud se instala desatendido con esta cuenta admin. La primera carga puede tardar unos segundos.</p>
             <div class="app-install__foot">
               <small class="dd-muted"><i class="bi bi-exclamation-triangle"></i> El dominio debe estar vacío (sin web previa).</small>
               <BaseButton variant="primary" size="sm" icon="download" :loading="installing" @click="doInstallApp">Instalar</BaseButton>
@@ -378,24 +380,26 @@ export default {
     const appForm = ref({ app: 'wordpress', admin_user: 'admin', admin_password: '', admin_email: '' })
     const installing = ref(false)
     const installResult = ref(null)
-    const appNeedsAdmin = computed(() => appForm.value.app === 'wordpress')
+    // wordpress y nextcloud tienen cuenta admin; solo wordpress pide email
+    const appNeedsAdmin = computed(() => ['wordpress', 'nextcloud'].includes(appForm.value.app))
+    const appNeedsEmail = computed(() => appForm.value.app === 'wordpress')
     const doInstallApp = async () => {
       if (appNeedsAdmin.value) {
         if (!appForm.value.admin_password || appForm.value.admin_password.length < 8) {
           store.showNotification('La contraseña admin debe tener al menos 8 caracteres', 'danger'); return
         }
-        if (!appForm.value.admin_email) {
+        if (appNeedsEmail.value && !appForm.value.admin_email) {
           store.showNotification('Indica un email de administrador', 'danger'); return
         }
-      } else {
-        // Laravel no necesita admin; mandamos placeholders válidos para el schema
-        appForm.value.admin_password = appForm.value.admin_password || 'laravel-no-admin'
-        appForm.value.admin_email = appForm.value.admin_email || `admin@${domain.value.domain_name}`
       }
+      // Solo enviamos los campos relevantes para cada app
+      const payload = { app: appForm.value.app, admin_user: appForm.value.admin_user }
+      if (appNeedsAdmin.value) payload.admin_password = appForm.value.admin_password
+      if (appNeedsEmail.value) payload.admin_email = appForm.value.admin_email
       installing.value = true
       installResult.value = null
       try {
-        const r = await api.installApp(domainId.value, { ...appForm.value })
+        const r = await api.installApp(domainId.value, payload)
         installResult.value = r
         store.showNotification(r.message || 'Aplicación instalada', 'success')
         await reloadDomain()
@@ -421,7 +425,7 @@ export default {
       phpLoading, phpSaving, phpDirectives, phpDefaults, phpForm, phpHasPool, savePhp, changePHP,
       logTab, logLines, logsLoading, logsData, loadLogs, switchLog,
       downloading, downloadSite, suspend, unsuspend, remove, goFiles,
-      appForm, installing, installResult, doInstallApp, appNeedsAdmin,
+      appForm, installing, installResult, doInstallApp, appNeedsAdmin, appNeedsEmail,
     }
   },
 }

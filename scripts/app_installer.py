@@ -39,7 +39,7 @@ _SYS_ENV = {
 SUPPORTED_APPS = {
     "wordpress":  {"name": "WordPress",  "php_min": "7.4", "needs": ["wp"]},
     "laravel":    {"name": "Laravel",    "php_min": "8.2", "needs": ["composer"]},
-    "nextcloud":  {"name": "Nextcloud",  "php_min": "8.1", "needs": ["curl"]},
+    "nextcloud":  {"name": "Nextcloud",  "php_min": "8.1", "needs": ["curl", "unzip"]},
     "prestashop": {"name": "PrestaShop", "php_min": "8.1", "needs": ["curl"]},
 }
 
@@ -294,5 +294,92 @@ class AppInstaller:
             "url": url,
             # La web debe servirse desde /public (el endpoint ajusta el docroot)
             "docroot_public": os.path.join(docroot, "public"),
+            "db": db,
+        }
+
+    # ── Nextcloud ──────────────────────────────────────────────────────────────
+    def install_nextcloud(self, domain: str, owner: str, docroot: str,
+                          admin_user: str, admin_pass: str) -> Dict:
+        """
+        Descarga la última versión estable de Nextcloud y la instala de forma
+        desatendida con `occ maintenance:install` (sin pasar por el wizard web).
+        """
+        if not _empty_or_safe(docroot):
+            raise RuntimeError("El directorio del dominio no está vacío; instala en un dominio limpio")
+
+        db = self._create_db(owner, "nc")
+
+        parent = os.path.dirname(docroot)
+        zip_path = os.path.join(parent, ".nextcloud_latest.zip")
+        tmp = os.path.join(parent, ".nextcloud_tmp")
+        _run(["rm", "-rf", tmp, zip_path])
+
+        # Descargar el zip oficial (latest = última estable)
+        rc, _, err = _run([
+            "curl", "-fsSL", "-o", zip_path,
+            "https://download.nextcloud.com/server/releases/latest.zip",
+        ], timeout=900)
+        if rc != 0:
+            _run(["rm", "-rf", tmp, zip_path])
+            raise RuntimeError(f"Descarga de Nextcloud falló: {err}")
+
+        # Extraer (crea una carpeta 'nextcloud/' dentro de tmp)
+        _run(["mkdir", "-p", tmp])
+        rc, _, err = _run(["unzip", "-q", zip_path, "-d", tmp])
+        if rc != 0:
+            _run(["rm", "-rf", tmp, zip_path])
+            raise RuntimeError(f"Descompresión de Nextcloud falló: {err}")
+
+        src = os.path.join(tmp, "nextcloud")
+        if not os.path.isdir(src):
+            _run(["rm", "-rf", tmp, zip_path])
+            raise RuntimeError("El zip de Nextcloud no contiene la carpeta esperada")
+
+        # Limpiar docroot (index trivial) y mover el contenido de nextcloud/ → docroot
+        _run(["find", docroot, "-mindepth", "1", "-delete"])
+        rc, _, err = _run(["bash", "-c",
+                           f"shopt -s dotglob && mv {src}/* {docroot}/"], as_user=owner)
+        if rc != 0:
+            # fallback como root si el mv como usuario falló por permisos del tmp
+            _run(["bash", "-c", f"shopt -s dotglob && mv {src}/* {docroot}/"])
+        _run(["rm", "-rf", tmp, zip_path])
+        _chown_tree(docroot, owner)
+
+        # data/ debe quedar fuera del docroot servido por nginx; Nextcloud lo crea
+        # dentro por defecto pero lo protegemos por .htaccess/nginx. Lo dejamos en
+        # el lugar por defecto ({docroot}/data) y la plantilla nginx lo bloquea.
+
+        # Instalación desatendida con occ (como el usuario del dominio).
+        url = f"https://{domain}"
+        occ = os.path.join(docroot, "occ")
+        rc, out, err = _run([
+            "php", occ, "maintenance:install",
+            "--database", "mysql",
+            "--database-name", db["db_name"],
+            "--database-user", db["db_user"],
+            "--database-pass", db["db_pass"],
+            "--database-host", "localhost",
+            "--admin-user", admin_user,
+            "--admin-pass", admin_pass,
+        ], cwd=docroot, as_user=owner, timeout=900)
+        if rc != 0:
+            raise RuntimeError(f"occ maintenance:install falló: {(err or out)[:400]}")
+
+        # Registrar el dominio como trusted_domain (occ usa índice 0 = localhost)
+        _run(["php", occ, "config:system:set", "trusted_domains", "1",
+              "--value", domain], cwd=docroot, as_user=owner)
+        # overwrite.cli.url y protocolo https detrás del proxy/nginx
+        _run(["php", occ, "config:system:set", "overwrite.cli.url",
+              "--value", url], cwd=docroot, as_user=owner)
+        _run(["php", occ, "config:system:set", "overwriteprotocol",
+              "--value", "https"], cwd=docroot, as_user=owner)
+
+        _chown_tree(docroot, owner)
+        return {
+            "app": "nextcloud",
+            "url": url,
+            "admin_url": url,
+            "admin_user": admin_user,
+            "admin_password": admin_pass,
             "db": db,
         }

@@ -178,6 +178,58 @@ BUILTIN_TEMPLATES = [
 """,
     },
     {
+        "name": "Nextcloud",
+        "slug": "nextcloud",
+        "description": "Nextcloud. Bloquea /data y /config, soporta .well-known (CalDAV/CardDAV), subidas grandes y rewrite del front controller.",
+        "category": "other",
+        "fastcgi_cache_default": False,
+        "php_ini_overrides": json.dumps({
+            "memory_limit":        "512M",
+            "upload_max_filesize": "16G",
+            "post_max_size":       "16G",
+            "max_execution_time":  "3600",
+            "max_input_time":      "3600",
+            "output_buffering":    "0",
+        }),
+        "nginx_extra": """
+    # ── Nextcloud ───────────────────────────────────────────────────────
+    add_header Referrer-Policy "no-referrer" always;
+    add_header X-Content-Type-Options "nosniff" always;
+    add_header X-Frame-Options "SAMEORIGIN" always;
+    add_header X-Permitted-Cross-Domain-Policies "none" always;
+    add_header X-Robots-Tag "noindex, nofollow" always;
+    add_header X-XSS-Protection "1; mode=block" always;
+
+    client_max_body_size 16G;
+    fastcgi_buffers 64 4K;
+
+    # .well-known para descubrimiento de servicios (CalDAV/CardDAV/webfinger)
+    location = /.well-known/carddav  { return 301 /remote.php/dav; }
+    location = /.well-known/caldav   { return 301 /remote.php/dav; }
+    location ^~ /.well-known {
+        location = /.well-known/webfinger   { return 301 /index.php/.well-known/webfinger; }
+        location = /.well-known/nodeinfo    { return 301 /index.php/.well-known/nodeinfo; }
+        return 301 /index.php$request_uri;
+    }
+
+    # Rutas que nunca deben servirse / ejecutarse
+    location ~ ^/(?:build|tests|config|lib|3rdparty|templates|data)(?:$|/)  { return 404; }
+    location ~ ^/(?:\\.|autotest|occ|issue|indie|db_|console)              { return 404; }
+    location ~ ^/(?:\\.htaccess|data|config|db_structure\\.xml|README) { deny all; }
+
+    location ~ \\.(?:css|js|mjs|svg|gif|png|jpg|ico|wasm|tflite|map)$ {
+        try_files $uri /index.php$request_uri;
+        expires 6M;
+        access_log off;
+    }
+    location ~ \\.woff2?$ {
+        try_files $uri /index.php$request_uri;
+        expires 7d;
+        access_log off;
+    }
+""",
+    },
+    {
         "name": "PrestaShop",
         "slug": "prestashop",
         "description": "PrestaShop. Reglas de rewrite para el módulo de URLs amigables y protección de config.",

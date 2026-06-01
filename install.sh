@@ -786,7 +786,8 @@ for PHP_VER in "${PHP_ARRAY[@]}"; do
         echo -e "    ${GREEN}✓ PHP ${PHP_VER} paquetes base instalados${NC}"
 
         # Extensiones opcionales (fallos ignorados)
-        for EXT in opcache intl soap readline; do
+        # gmp/bcmath/intl/imagick/apcu: requeridas/recomendadas por Nextcloud.
+        for EXT in opcache intl soap readline gmp imagick apcu; do
             apt-get install -y -q "php${PHP_VER}-${EXT}" 2>/dev/null && \
                 echo "    ✓ php${PHP_VER}-${EXT}" || \
                 echo "    ⚠ php${PHP_VER}-${EXT} no disponible (ignorado)"
@@ -824,7 +825,8 @@ done
 
 echo -e "${GREEN}✓ PHP instalado: ${PHP_INSTALLED[*]:-ninguno}${NC}\n"
 
-# ── Herramientas para el autoinstalador de apps (WordPress/Laravel/…) ─────────
+# ── Herramientas para el autoinstalador de apps (WordPress/Laravel/Nextcloud/…) ─
+# Nextcloud usa 'unzip' + 'curl' (instalados arriba) y occ; no requiere binario extra.
 echo -e "${YELLOW}Instalando herramientas de autoinstalación (wp-cli, composer)...${NC}"
 # wp-cli
 if [[ ! -f /usr/local/bin/wp ]]; then
