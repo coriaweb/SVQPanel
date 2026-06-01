@@ -80,6 +80,44 @@
           <p v-else class="dd-muted">Pulsa «Recalcular» para medir el uso de disco.</p>
         </BaseCard>
 
+        <BaseCard title="Instalar aplicación" icon="box-seam" class="dd-span2">
+          <p class="dd-muted">Instala una aplicación lista para usar en este dominio (crea su base de datos y la configura).</p>
+          <div class="app-install">
+            <div class="app-install__row">
+              <label class="app-field">
+                <span>Aplicación</span>
+                <select class="svq-select" v-model="appForm.app">
+                  <option value="wordpress">WordPress</option>
+                </select>
+              </label>
+              <label class="app-field">
+                <span>Usuario admin</span>
+                <input class="svq-input" v-model="appForm.admin_user" placeholder="admin" />
+              </label>
+            </div>
+            <div class="app-install__row">
+              <label class="app-field">
+                <span>Contraseña admin</span>
+                <input class="svq-input" v-model="appForm.admin_password" type="text" placeholder="mín. 8 caracteres" />
+              </label>
+              <label class="app-field">
+                <span>Email admin</span>
+                <input class="svq-input" v-model="appForm.admin_email" type="email" :placeholder="`admin@${domain.domain_name}`" />
+              </label>
+            </div>
+            <div class="app-install__foot">
+              <small class="dd-muted"><i class="bi bi-exclamation-triangle"></i> El dominio debe estar vacío (sin web previa).</small>
+              <BaseButton variant="primary" size="sm" icon="download" :loading="installing" @click="doInstallApp">Instalar</BaseButton>
+            </div>
+            <div v-if="installResult" class="app-result">
+              <p class="app-result__title"><i class="bi bi-check-circle-fill"></i> {{ installResult.message }}</p>
+              <div class="app-result__row"><span>URL</span><a :href="installResult.data.url" target="_blank" class="mono">{{ installResult.data.url }}</a></div>
+              <div class="app-result__row"><span>Admin</span><a :href="installResult.data.admin_url" target="_blank" class="mono">{{ installResult.data.admin_url }}</a></div>
+              <div class="app-result__row"><span>Usuario</span><span class="mono">{{ installResult.data.admin_user }}</span></div>
+            </div>
+          </div>
+        </BaseCard>
+
         <BaseCard title="Acciones rápidas" icon="lightning-charge">
           <div class="quick-col">
             <BaseButton variant="ghost" size="sm" icon="diagram-3" block @click="tab = 'ipv6'">Gestionar IPv6</BaseButton>
@@ -333,6 +371,31 @@ export default {
     }
     const goFiles = () => router.push({ path: '/files', query: { domain: domainId.value } })
 
+    // ── Autoinstalador de apps ──
+    const appForm = ref({ app: 'wordpress', admin_user: 'admin', admin_password: '', admin_email: '' })
+    const installing = ref(false)
+    const installResult = ref(null)
+    const doInstallApp = async () => {
+      if (!appForm.value.admin_password || appForm.value.admin_password.length < 8) {
+        store.showNotification('La contraseña admin debe tener al menos 8 caracteres', 'danger'); return
+      }
+      if (!appForm.value.admin_email) {
+        store.showNotification('Indica un email de administrador', 'danger'); return
+      }
+      installing.value = true
+      installResult.value = null
+      try {
+        const r = await api.installApp(domainId.value, { ...appForm.value })
+        installResult.value = r
+        store.showNotification(r.message || 'Aplicación instalada', 'success')
+        await reloadDomain()
+      } catch (e) {
+        store.showNotification('Error instalando: ' + e.message, 'danger')
+      } finally {
+        installing.value = false
+      }
+    }
+
     onMounted(async () => {
       await loadDomain()
       try { const d = await api.getPHPVersions(); phpVersions.value = d?.versions?.length ? d.versions : ['8.2'] }
@@ -348,6 +411,7 @@ export default {
       phpLoading, phpSaving, phpDirectives, phpDefaults, phpForm, phpHasPool, savePhp, changePHP,
       logTab, logLines, logsLoading, logsData, loadLogs, switchLog,
       downloading, downloadSite, suspend, unsuspend, remove, goFiles,
+      appForm, installing, installResult, doInstallApp,
     }
   },
 }
@@ -380,6 +444,18 @@ export default {
 
 .dd-actions-row { display: flex; gap: var(--sp-2); }
 .quick-col { display: flex; flex-direction: column; gap: var(--sp-2); }
+
+/* Autoinstalador */
+.app-install { display: flex; flex-direction: column; gap: var(--sp-3); }
+.app-install__row { display: grid; grid-template-columns: 1fr 1fr; gap: var(--sp-3); }
+.app-field { display: flex; flex-direction: column; gap: 4px; }
+.app-field > span { font-size: var(--fs-sm); color: var(--text-secondary); font-weight: var(--fw-medium); }
+.app-install__foot { display: flex; align-items: center; justify-content: space-between; gap: var(--sp-3); flex-wrap: wrap; }
+.app-result { border-top: 1px solid var(--border); padding-top: var(--sp-3); display: flex; flex-direction: column; gap: 6px; }
+.app-result__title { margin: 0 0 var(--sp-2); color: var(--success); font-weight: var(--fw-semibold); display: flex; align-items: center; gap: 6px; }
+.app-result__row { display: flex; gap: var(--sp-3); font-size: var(--fs-sm); }
+.app-result__row > span:first-child { min-width: 70px; color: var(--text-muted); }
+@media (max-width: 680px) { .app-install__row { grid-template-columns: 1fr; } }
 
 .disk-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: var(--sp-3); }
 .disk-item { background: var(--surface-inset); border-radius: var(--r-md); padding: var(--sp-3) var(--sp-4); }

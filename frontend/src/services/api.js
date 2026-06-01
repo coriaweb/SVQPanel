@@ -564,6 +564,11 @@ class APIClient {
     return this.get(`/api/domains/${domainId}/disk`)
   }
 
+  // Autoinstalador de apps (WordPress, …)
+  installApp(domainId, data) {
+    return this.post(`/api/domains/${domainId}/install-app`, data)
+  }
+
   // SFTP
   getSftpStatus(userId)           { return this.get(`/api/users/${userId}/sftp`) }
   setSftpEnabled(userId, enabled) {

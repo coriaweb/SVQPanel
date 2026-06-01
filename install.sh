@@ -824,6 +824,29 @@ done
 
 echo -e "${GREEN}✓ PHP instalado: ${PHP_INSTALLED[*]:-ninguno}${NC}\n"
 
+# ── Herramientas para el autoinstalador de apps (WordPress/Laravel/…) ─────────
+echo -e "${YELLOW}Instalando herramientas de autoinstalación (wp-cli, composer)...${NC}"
+# wp-cli
+if [[ ! -f /usr/local/bin/wp ]]; then
+    if curl -fsSL -o /usr/local/bin/wp \
+        https://raw.githubusercontent.com/wp-cli/builds/gh-pages/phar/wp-cli.phar; then
+        chmod +x /usr/local/bin/wp
+        echo -e "  ${GREEN}✓ wp-cli instalado${NC}"
+    else
+        echo -e "  ${YELLOW}⚠ no se pudo instalar wp-cli (se reintenta al instalar WordPress)${NC}"
+    fi
+fi
+# composer (para Laravel y otras apps PHP)
+if [[ ! -f /usr/local/bin/composer ]]; then
+    if curl -fsSL -o /tmp/composer-setup.php https://getcomposer.org/installer; then
+        php /tmp/composer-setup.php --install-dir=/usr/local/bin --filename=composer >/dev/null 2>&1 \
+            && echo -e "  ${GREEN}✓ composer instalado${NC}" \
+            || echo -e "  ${YELLOW}⚠ no se pudo instalar composer${NC}"
+        rm -f /tmp/composer-setup.php
+    fi
+fi
+echo ""
+
 # Zona global de rate limiting para nginx (status 429). Las zonas por dominio
 # las crea el panel on-demand. Se deja aquí para que exista desde el inicio.
 mkdir -p /etc/nginx/conf.d

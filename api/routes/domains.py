@@ -1026,3 +1026,67 @@ async def unsuspend_domain(
     except Exception as e:
         db.rollback()
         raise HTTPException(status_code=500, detail=str(e))
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Autoinstalador de aplicaciones (WordPress, …)
+# ─────────────────────────────────────────────────────────────────────────────
+from pydantic import BaseModel, Field as _Field
+
+
+class AppInstallRequest(BaseModel):
+    app: str = _Field(..., description="Slug de la app: wordpress")
+    admin_user: str = _Field("admin", min_length=2, max_length=60)
+    admin_password: str = _Field(..., min_length=8, max_length=128)
+    admin_email: str = _Field(..., max_length=160)
+
+
+@router.post("/domains/{domain_id}/install-app")
+async def install_app(
+    domain_id:    int,
+    payload:      AppInstallRequest,
+    current_user: User = Depends(require_auth),
+    db:           Session = Depends(get_db),
+):
+    """
+    Instala una aplicación web (1 clic) en el docroot del dominio.
+    De momento: WordPress. Crea BD MariaDB + descarga + configura + instala.
+    """
+    domain = _get_owned_domain(domain_id, db, current_user)
+    owner = db.query(User).filter(User.id == domain.user_id).first()
+    if not owner:
+        raise HTTPException(status_code=409, detail="El dominio no tiene propietario")
+
+    app = (payload.app or "").lower().strip()
+    from scripts.app_installer import AppInstaller, SUPPORTED_APPS
+    if app not in SUPPORTED_APPS:
+        raise HTTPException(status_code=400, detail=f"App no soportada: {app}")
+
+    # Docroot real del dominio
+    docroot = domain.custom_docroot or get_domain_root(owner.username, domain.domain_name) + "/public_html"
+
+    # Reutilizar el ejecutor MariaDB del módulo de bases de datos
+    from api.routes.databases import _run_mariadb, MARIADB_ENABLED
+    if not MARIADB_ENABLED:
+        raise HTTPException(status_code=503, detail="MariaDB no está habilitado; es necesario para instalar apps")
+
+    installer = AppInstaller(run_sql=_run_mariadb)
+
+    try:
+        if app == "wordpress":
+            result = installer.install_wordpress(
+                domain=domain.domain_name,
+                owner=owner.username,
+                docroot=docroot,
+                admin_user=payload.admin_user,
+                admin_pass=payload.admin_password,
+                admin_email=payload.admin_email,
+            )
+        else:
+            raise HTTPException(status_code=400, detail=f"Instalador de '{app}' aún no disponible")
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error instalando {app}: {e}")
+
+    return {"status": "success", "message": f"{SUPPORTED_APPS[app]['name']} instalado", "data": result}
