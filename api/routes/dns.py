@@ -225,6 +225,65 @@ async def create_zone(
     return _zone_to_response(zone, records, can_edit=True)
 
 
+# ── Nameservers del panel (Fase A) — rutas ESTÁTICAS antes que /dns/{zone_id} ──
+
+@router.get("/dns/nameservers")
+async def get_nameservers(current_user=Depends(require_auth), db: Session = Depends(get_db)):
+    """
+    Nameservers efectivos del panel (settings → cluster → placeholder) + glue
+    records sugeridos para registrar en el registrador del dominio padre.
+    """
+    from scripts.dns_manager import get_panel_nameservers, DEFAULT_NS1
+    ns1, ns2 = get_panel_nameservers(db)
+    server_ipv4 = _get_server_ipv4(db)
+
+    ns1_ip = ns2_ip = None
+    try:
+        from api.models.models_dns_node import DnsNode
+        m = db.query(DnsNode).filter(DnsNode.role == "master").first()
+        s = db.query(DnsNode).filter(DnsNode.role == "slave").first()
+        ns1_ip = m.ip if m else (server_ipv4 or None)
+        ns2_ip = s.ip if s else None
+    except Exception:
+        ns1_ip = server_ipv4 or None
+
+    return {
+        "ns1": ns1, "ns2": ns2, "ns1_ip": ns1_ip, "ns2_ip": ns2_ip,
+        "is_placeholder": ns1 == DEFAULT_NS1,
+    }
+
+
+@router.post("/dns/regenerate-all")
+async def regenerate_all_zones(current_user=Depends(require_admin), db: Session = Depends(get_db)):
+    """
+    Regenera TODAS las zonas con los nameservers actuales del panel (actualiza
+    SOA + registros NS) y las sincroniza. Útil tras configurar/cambiar los NS.
+    """
+    from scripts.dns_manager import get_panel_nameservers
+    ns1, ns2 = get_panel_nameservers(db)
+    zones = db.query(DnsZone).all()
+    updated, failed = 0, []
+    for zone in zones:
+        try:
+            ipv4 = zone.ip_address or _get_server_ipv4(db)
+            domain_obj = db.query(Domain).filter(Domain.domain_name == zone.domain_name).first()
+            ipv6 = domain_obj.ipv6 if domain_obj else None
+            zone.soa_ns = ns1
+            db.query(DnsRecord).filter(DnsRecord.zone_id == zone.id).delete()
+            for r in _build_template_records(zone.domain_name, ipv4, ipv6, ns1, ns2):
+                db.add(DnsRecord(zone_id=zone.id, **r))
+            zone.serial = _bump_serial(zone.serial)
+            db.commit()
+            db.refresh(zone)
+            _sync_zone_to_bind(zone, db)
+            updated += 1
+        except Exception as e:
+            db.rollback()
+            failed.append({"domain": zone.domain_name, "error": str(e)})
+    return {"status": "success", "updated": updated, "failed": failed,
+            "ns1": ns1, "ns2": ns2}
+
+
 @router.get("/dns/{zone_id}", response_model=DnsZoneResponse)
 async def get_zone(
     zone_id: int,
@@ -476,69 +535,6 @@ async def delete_record(
     db.commit()
     _sync_zone_to_bind(zone, db)
     return None
-
-
-# ──────────────────────── Nameservers del panel (Fase A) ─────────────────────
-
-@router.get("/dns/nameservers")
-async def get_nameservers(current_user=Depends(require_auth), db: Session = Depends(get_db)):
-    """
-    Nameservers efectivos del panel (settings → cluster → placeholder) + glue
-    records sugeridos para registrar en el registrador del dominio padre.
-    """
-    from scripts.dns_manager import get_panel_nameservers, DEFAULT_NS1
-    ns1, ns2 = get_panel_nameservers(db)
-    server_ipv4 = _get_server_ipv4(db)
-
-    # IPs de los nodos del cluster si existen (para los glue records)
-    ns1_ip = ns2_ip = None
-    try:
-        from api.models.models_dns_node import DnsNode
-        m = db.query(DnsNode).filter(DnsNode.role == "master").first()
-        s = db.query(DnsNode).filter(DnsNode.role == "slave").first()
-        ns1_ip = m.ip if m else (server_ipv4 or None)
-        ns2_ip = s.ip if s else None
-    except Exception:
-        ns1_ip = server_ipv4 or None
-
-    return {
-        "ns1": ns1,
-        "ns2": ns2,
-        "ns1_ip": ns1_ip,
-        "ns2_ip": ns2_ip,
-        "is_placeholder": ns1 == DEFAULT_NS1,
-    }
-
-
-@router.post("/dns/regenerate-all")
-async def regenerate_all_zones(current_user=Depends(require_admin), db: Session = Depends(get_db)):
-    """
-    Regenera TODAS las zonas con los nameservers actuales del panel (actualiza
-    SOA + registros NS) y las sincroniza. Útil tras configurar/cambiar los NS.
-    """
-    from scripts.dns_manager import get_panel_nameservers
-    ns1, ns2 = get_panel_nameservers(db)
-    zones = db.query(DnsZone).all()
-    updated, failed = 0, []
-    for zone in zones:
-        try:
-            ipv4 = zone.ip_address or _get_server_ipv4(db)
-            domain_obj = db.query(Domain).filter(Domain.domain_name == zone.domain_name).first()
-            ipv6 = domain_obj.ipv6 if domain_obj else None
-            zone.soa_ns = ns1
-            db.query(DnsRecord).filter(DnsRecord.zone_id == zone.id).delete()
-            for r in _build_template_records(zone.domain_name, ipv4, ipv6, ns1, ns2):
-                db.add(DnsRecord(zone_id=zone.id, **r))
-            zone.serial = _bump_serial(zone.serial)
-            db.commit()
-            db.refresh(zone)
-            _sync_zone_to_bind(zone, db)
-            updated += 1
-        except Exception as e:
-            db.rollback()
-            failed.append({"domain": zone.domain_name, "error": str(e)})
-    return {"status": "success", "updated": updated, "failed": failed,
-            "ns1": ns1, "ns2": ns2}
 
 
 # ──────────────────────── DNSSEC (por zona, requiere cluster) ─────────────────
