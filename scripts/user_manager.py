@@ -58,11 +58,10 @@ class UserManager(SystemManager):
             # www-data sí puede atravesar para servir la web (web/ es 750 user:www-data).
             self.execute_command(["chmod", "711", home_dir])
 
-            # Set password if provided (usando chpasswd via stdin)
+            # Set password if provided — chpasswd por stdin (sin shell, sin
+            # exponer el password en la línea de comandos ni en los logs).
             if password:
-                self.execute_command(
-                    f"echo '{username}:{password}' | chpasswd"
-                )
+                self.execute_with_input(["chpasswd"], f"{username}:{password}\n")
 
             # Estructura de directorios estilo Hestia:
             # /home/username/         755 user:user   (adduser lo crea)
@@ -157,10 +156,8 @@ class UserManager(SystemManager):
 
         try:
             logger.info(f"Changing password for: {username}")
-            # Use echo + chpasswd for non-interactive password change
-            self.execute_command(
-                f"echo '{username}:{new_password}' | chpasswd"
-            )
+            # chpasswd por stdin (sin shell, sin exponer el password en ps/logs)
+            self.execute_with_input(["chpasswd"], f"{username}:{new_password}\n")
             logger.info(f"Password changed: {username}")
             return {
                 "success": True,

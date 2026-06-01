@@ -24,6 +24,32 @@ from scripts.utils import get_domain_root
 router = APIRouter()
 
 
+def _get_owned_domain(domain_id: int, db: Session, current_user: User) -> Domain:
+    """
+    Carga un dominio verificando que el usuario actual tiene acceso a él.
+    Evita IDOR: admin ve todos; reseller ve los de sus clientes (parent_id);
+    usuario normal solo los suyos. Devuelve 404 si no existe o no es accesible
+    (404, no 403, para no revelar la existencia de dominios ajenos).
+    """
+    _dom = db.query(Domain).filter(Domain.id == domain_id).first()
+    if not _dom:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Dominio no encontrado")
+
+    role = getattr(current_user, "role", None)
+    if role == "admin":
+        return _dom
+    if role == "reseller":
+        client_ids = [u.id for u in db.query(User.id).filter(User.parent_id == current_user.id).all()]
+        client_ids.append(current_user.id)
+        if _dom.user_id in client_ids:
+            return _dom
+    elif _dom.user_id == current_user.id:
+        return _dom
+
+    # No accesible → 404 (no filtramos existencia de dominios de otros)
+    raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Dominio no encontrado")
+
+
 def _get_reserved_domains():
     """Dominios reservados que no se pueden registrar como dominios web"""
     reserved = {"localhost", "localhost.localdomain"}
@@ -223,7 +249,7 @@ async def get_domain(
 ):
     """Obtener un dominio por ID"""
     try:
-        domain = db.query(Domain).filter(Domain.id == domain_id).first()
+        domain = _get_owned_domain(domain_id, db, current_user)
         if not domain:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
@@ -250,7 +276,7 @@ async def update_domain(
     domain_manager = DomainManager()
 
     try:
-        db_domain = db.query(Domain).filter(Domain.id == domain_id).first()
+        db_domain = _get_owned_domain(domain_id, db, current_user)
         if not db_domain:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
@@ -380,7 +406,7 @@ async def delete_domain(
     domain_manager = DomainManager()
 
     try:
-        db_domain = db.query(Domain).filter(Domain.id == domain_id).first()
+        db_domain = _get_owned_domain(domain_id, db, current_user)
         if not db_domain:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
@@ -466,7 +492,7 @@ async def get_domain_logs(
     import os
     from collections import deque
 
-    domain = db.query(Domain).filter(Domain.id == domain_id).first()
+    domain = _get_owned_domain(domain_id, db, current_user)
     if not domain:
         raise HTTPException(status_code=404, detail="Dominio no encontrado")
     _check_access(current_user, domain, db)
@@ -515,7 +541,7 @@ async def set_domain_cache(
     if ttl_minutes < 1 or ttl_minutes > 1440:
         raise HTTPException(status_code=400, detail="ttl_minutes fuera de rango (1-1440)")
 
-    domain = db.query(Domain).filter(Domain.id == domain_id).first()
+    domain = _get_owned_domain(domain_id, db, current_user)
     if not domain:
         raise HTTPException(status_code=404, detail="Dominio no encontrado")
     _check_access(current_user, domain, db)
@@ -580,7 +606,7 @@ async def set_domain_rate_limit(
     if burst < 0 or burst > 1000:
         raise HTTPException(status_code=400, detail="burst fuera de rango (0-1000)")
 
-    domain = db.query(Domain).filter(Domain.id == domain_id).first()
+    domain = _get_owned_domain(domain_id, db, current_user)
     if not domain:
         raise HTTPException(status_code=404, detail="Dominio no encontrado")
     _check_access(current_user, domain, db)
@@ -638,7 +664,7 @@ async def purge_domain_cache(
     """Vacía el directorio de cache FastCGI del dominio."""
     from scripts.utils import purge_fastcgi_cache
 
-    domain = db.query(Domain).filter(Domain.id == domain_id).first()
+    domain = _get_owned_domain(domain_id, db, current_user)
     if not domain:
         raise HTTPException(status_code=404, detail="Dominio no encontrado")
     _check_access(current_user, domain, db)
@@ -665,7 +691,7 @@ async def get_domain_php_config(
     import json
     from scripts import php_ini_manager as phpini
 
-    domain = db.query(Domain).filter(Domain.id == domain_id).first()
+    domain = _get_owned_domain(domain_id, db, current_user)
     if not domain:
         raise HTTPException(status_code=404, detail="Dominio no encontrado")
     _check_access(current_user, domain, db)
@@ -706,7 +732,7 @@ async def set_domain_php_config(
     if not isinstance(overrides, dict):
         raise HTTPException(status_code=400, detail="overrides debe ser un objeto")
 
-    domain = db.query(Domain).filter(Domain.id == domain_id).first()
+    domain = _get_owned_domain(domain_id, db, current_user)
     if not domain:
         raise HTTPException(status_code=404, detail="Dominio no encontrado")
     _check_access(current_user, domain, db)
@@ -787,7 +813,7 @@ async def set_domain_php_hardening(
 
     relaxed = bool(payload.get("relaxed", False))
 
-    domain = db.query(Domain).filter(Domain.id == domain_id).first()
+    domain = _get_owned_domain(domain_id, db, current_user)
     if not domain:
         raise HTTPException(status_code=404, detail="Dominio no encontrado")
     _check_access(current_user, domain, db)
@@ -857,7 +883,7 @@ async def get_domain_disk(
     import os
     import subprocess
 
-    domain = db.query(Domain).filter(Domain.id == domain_id).first()
+    domain = _get_owned_domain(domain_id, db, current_user)
     if not domain:
         raise HTTPException(status_code=404, detail="Dominio no encontrado")
     _check_access(current_user, domain, db)
@@ -908,7 +934,7 @@ async def download_domain_site(
     descarga (web: public_html, private, logs). Usa tarfile (Python) para no
     depender del PATH del servicio. El temporal se borra tras el envío.
     """
-    domain = db.query(Domain).filter(Domain.id == domain_id).first()
+    domain = _get_owned_domain(domain_id, db, current_user)
     if not domain:
         raise HTTPException(status_code=404, detail="Dominio no encontrado")
     _check_access(current_user, domain, db)
@@ -950,7 +976,7 @@ async def suspend_domain(
     db:           Session = Depends(get_db),
 ):
     """Suspende un dominio individualmente (admin o propietario)"""
-    domain = db.query(Domain).filter(Domain.id == domain_id).first()
+    domain = _get_owned_domain(domain_id, db, current_user)
     if not domain:
         raise HTTPException(status_code=404, detail="Dominio no encontrado")
     _check_access(current_user, domain, db)
@@ -978,7 +1004,7 @@ async def unsuspend_domain(
     db:           Session = Depends(get_db),
 ):
     """Reactiva un dominio suspendido (admin o propietario)"""
-    domain = db.query(Domain).filter(Domain.id == domain_id).first()
+    domain = _get_owned_domain(domain_id, db, current_user)
     if not domain:
         raise HTTPException(status_code=404, detail="Dominio no encontrado")
     _check_access(current_user, domain, db)

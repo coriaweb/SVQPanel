@@ -36,6 +36,12 @@ class SystemManager:
             (return_code, stdout, stderr)
         """
         use_shell = isinstance(cmd, str)
+        if use_shell:
+            # shell=True con un string es peligroso (inyección de comandos si
+            # el string lleva input de usuario). Se mantiene por compatibilidad
+            # pero se avisa: preferir SIEMPRE listas. Para credenciales por
+            # stdin usar execute_with_input().
+            logger.warning("execute_command con string usa shell=True; preferir lista de args")
         env = os.environ.copy()
         env["PATH"] = self._SYSTEM_PATH
 
@@ -68,6 +74,29 @@ class SystemManager:
         except Exception as e:
             logger.error(f"Unexpected error: {str(e)}")
             raise
+
+    def execute_with_input(self, cmd: list, input_text: str,
+                           check: bool = True) -> Tuple[int, str, str]:
+        """
+        Ejecuta un comando (SIEMPRE lista, nunca shell) pasándole datos por
+        stdin. Pensado para credenciales: el input NUNCA se loguea ni aparece
+        en la línea de comandos (no visible en `ps`). Ej.: chpasswd.
+        """
+        if isinstance(cmd, str):
+            raise ValueError("execute_with_input requiere una lista de args, no un string")
+        env = os.environ.copy()
+        env["PATH"] = self._SYSTEM_PATH
+        logger.info(f"Executing (stdin oculto): {' '.join(cmd)}")
+        result = subprocess.run(
+            cmd, input=input_text, capture_output=True, text=True,
+            check=False, shell=False, env=env,
+        )
+        if check and result.returncode != 0:
+            logger.error(f"Command failed (rc={result.returncode}): {result.stderr}")
+            raise subprocess.CalledProcessError(
+                result.returncode, cmd, output=result.stdout, stderr=result.stderr
+            )
+        return result.returncode, result.stdout, result.stderr
 
     def file_exists(self, path: str) -> bool:
         """Check if file/directory exists"""
