@@ -12,10 +12,13 @@ modo claro/oscuro. **No usa Bootstrap para componentes nuevos**: CSS con tokens.
 - `frontend/src/assets/tokens.css` — design tokens (color índigo, light/dark,
   radios, sombras, tipografía Inter/JetBrains Mono, espaciado, motion). Cargado
   en `main.js`; el tema se aplica vía `document.documentElement.dataset.theme`.
-- `frontend/src/assets/bootstrap-bridge.css` — capa de transición que reestiliza
-  las clases de Bootstrap (.card, .btn, .table, .form-control, .badge, .alert…)
-  con los tokens. Permite que las vistas aún no reescritas adopten el look
-  premium + dark mode sin tocar su markup. Se retira cuando ya no se use Bootstrap.
+- `frontend/src/assets/bootstrap-bridge.css` — reestiliza las clases tipo Bootstrap
+  (.card, .btn, .table, .form-control, .badge, .alert…) con los tokens, para las
+  vistas que aún usan ese markup.
+- `frontend/src/assets/bootstrap-compat.css` — replica las utilidades de Bootstrap
+  (grid row/col, flex, spacing, display, text, sizing, spinner, form-check/switch).
+  **Bootstrap ya NO se carga** (ni CSS ni JS): el estilo lo dan tokens + compat +
+  bridge. Solo se mantiene Bootstrap Icons (clases bi-*) por CDN.
 - `frontend/src/components/ui/` — componentes propios: BaseCard, BaseButton,
   BaseTabs, StatusBadge, MetricCard, ResourceGauge, EmptyState.
 - Tema y sidebar colapsable en el store Pinia (`useMainStore`: `theme`,
