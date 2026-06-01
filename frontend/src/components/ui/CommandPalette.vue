@@ -20,7 +20,7 @@
 
         <div class="cmdk__results" ref="resultsEl">
           <template v-if="filtered.length">
-            <div v-for="(group, gi) in grouped" :key="group.label" class="cmdk__group">
+            <div v-for="group in grouped" :key="group.label" class="cmdk__group">
               <p class="cmdk__group-label">{{ group.label }}</p>
               <button
                 v-for="item in group.items"
@@ -57,6 +57,7 @@
 import { ref, computed, watch, onMounted, onUnmounted, nextTick } from 'vue'
 import { useRouter } from 'vue-router'
 import { useMainStore } from '../../stores/useMainStore'
+import api from '../../services/api'
 
 export default {
   name: 'CommandPalette',
@@ -68,6 +69,8 @@ export default {
     const activeIndex = ref(0)
     const inputEl = ref(null)
     const resultsEl = ref(null)
+    const domains = ref([])
+    const domainsLoaded = ref(false)
 
     const user = computed(() => store.currentUser || {})
     const can = (roles) => {
@@ -104,6 +107,12 @@ export default {
       { group: 'Acciones', label: 'Nueva zona DNS', icon: 'plus-lg', to: '/dns', keywords: 'crear zona dns', hint: 'DNS' },
       { group: 'Acciones', label: 'Cambiar tema claro/oscuro', icon: 'circle-half', action: () => store.toggleTheme(), keywords: 'modo oscuro dark light tema' },
       { group: 'Acciones', label: 'Cerrar sesión', icon: 'box-arrow-right', action: () => doLogout(), keywords: 'salir logout' },
+      // Dominios cargados dinámicamente (saltan al detalle)
+      ...domains.value.map((d) => ({
+        group: 'Dominios', label: d.domain_name, icon: 'globe2',
+        to: `/domains/${d.id}`, keywords: 'dominio sitio web ' + d.domain_name,
+        hint: d.ssl_enabled ? 'SSL' : '',
+      })),
     ].filter((c) => can(c.roles)))
 
     const filtered = computed(() => {
@@ -131,10 +140,20 @@ export default {
       router.push('/login')
     }
 
+    const loadDomains = async () => {
+      if (domainsLoaded.value) return
+      domainsLoaded.value = true
+      try {
+        const data = await api.getDomains(null, 0, 200)
+        domains.value = Array.isArray(data) ? data : []
+      } catch { /* silencioso: el palette funciona sin dominios */ }
+    }
+
     const openPalette = async () => {
       open.value = true
       query.value = ''
       activeIndex.value = 0
+      loadDomains()
       await nextTick()
       inputEl.value?.focus()
     }
