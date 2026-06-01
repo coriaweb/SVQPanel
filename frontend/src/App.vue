@@ -53,7 +53,7 @@
         </div>
 
         <div class="topbar__right">
-          <button class="search-trigger" disabled title="Búsqueda global (próximamente)">
+          <button class="search-trigger" @click="openPalette" title="Búsqueda global (Ctrl/⌘ + K)">
             <i class="bi bi-search"></i>
             <span class="search-trigger__hint">Buscar</span>
             <kbd>⌘K</kbd>
@@ -102,6 +102,9 @@
       </main>
     </div>
 
+    <!-- Command Palette ⌘K -->
+    <CommandPalette />
+
     <!-- Toast -->
     <div class="toast-stack">
       <transition name="toast">
@@ -122,9 +125,11 @@ import { useRoute, useRouter } from 'vue-router'
 import { useMainStore } from './stores/useMainStore'
 import { computed, ref } from 'vue'
 import api from './services/api'
+import CommandPalette from './components/ui/CommandPalette.vue'
 
 export default {
   name: 'App',
+  components: { CommandPalette },
   setup() {
     const route = useRoute()
     const router = useRouter()
@@ -227,10 +232,12 @@ export default {
       await router.push('/login')
     }
 
+    const openPalette = () => window.dispatchEvent(new CustomEvent('svq:open-command-palette'))
+
     return {
       store, route, notification, isAuthenticated, currentUser, theme,
       sidebarCollapsed, dropdownOpen, visibleGroups, isActive, breadcrumbs,
-      userInitials, toastIcon, logout,
+      userInitials, toastIcon, logout, openPalette,
     }
   },
 }
@@ -393,8 +400,10 @@ export default {
   border-radius: var(--r-md);
   color: var(--text-muted);
   font-size: var(--fs-sm);
-  cursor: not-allowed;
+  cursor: pointer;
+  transition: background var(--t-fast), border-color var(--t-fast);
 }
+.search-trigger:hover { background: var(--surface); border-color: var(--border-strong); }
 .search-trigger__hint { min-width: 90px; text-align: left; }
 .search-trigger kbd {
   font-family: var(--font-sans); font-size: 11px;
