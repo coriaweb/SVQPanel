@@ -27,10 +27,14 @@ from typing import Dict, List, Optional, Tuple
 logger = logging.getLogger(__name__)
 
 # Rutas estándar en los nodos Debian 12 (idénticas al VPS de test)
-REMOTE_ZONES_DIR   = "/etc/bind/zones"
+REMOTE_ZONES_DIR   = "/etc/bind/zones"           # master: ficheros estáticos (subidos por scp)
 REMOTE_ZONES_CONF  = "/etc/bind/named.conf.zones"
 REMOTE_NAMED_LOCAL = "/etc/bind/named.conf.local"
 REMOTE_TSIG_CONF   = "/etc/bind/svqpanel-tsig.conf"
+# El slave ESCRIBE las zonas recibidas por AXFR: deben ir a una ruta escribible
+# por named y permitida por el perfil AppArmor de Debian (/var/lib/bind), no a
+# /etc/bind (de solo lectura para named bajo AppArmor).
+REMOTE_SLAVE_ZONES_DIR = "/var/lib/bind"
 
 DEFAULT_TSIG_ALGO = "hmac-sha256"
 
@@ -200,7 +204,7 @@ class DNSCluster:
         return (
             f'zone "{domain}" IN {{\n'
             f'    type slave;\n'
-            f'    file "{REMOTE_ZONES_DIR}/db.{domain}";\n'
+            f'    file "{REMOTE_SLAVE_ZONES_DIR}/db.{domain}";\n'
             f'    masters {{ {master_ip} key {tsig_name}; }};\n'
             f'    allow-notify {{ {master_ip}; }};\n'
             f'}};\n\n'
@@ -319,11 +323,12 @@ class DNSCluster:
 
         self._fix_bind_perms(slave)
         sudo = "" if slave.get("ssh_user", "root") == "root" else "sudo "
-        # El slave necesita poder ESCRIBIR los zone files que recibe por AXFR:
-        # el directorio debe ser propiedad de bind (con setgid para los nuevos).
+        # El slave ESCRIBE las zonas recibidas por AXFR en /var/lib/bind (ruta
+        # escribible por named y permitida por AppArmor). Aseguramos que existe
+        # y es de bind.
         rc, out, err = self._run_remote(
-            slave, f"{sudo}chown bind:bind {REMOTE_ZONES_DIR} && "
-                   f"{sudo}chmod 2775 {REMOTE_ZONES_DIR} && "
+            slave, f"{sudo}mkdir -p {REMOTE_SLAVE_ZONES_DIR} && "
+                   f"{sudo}chown bind:bind {REMOTE_SLAVE_ZONES_DIR} && "
                    f"{sudo}named-checkconf && {sudo}systemctl restart named && "
                    f"{sudo}systemctl is-active named", timeout=60)
         if rc != 0 or "active" not in out:
@@ -370,7 +375,7 @@ class DNSCluster:
 
         # Slave
         sudo_s = "" if slave.get("ssh_user", "root") == "root" else "sudo "
-        self._run_remote(slave, f"{sudo_s}rm -f {REMOTE_ZONES_DIR}/db.{domain}")
+        self._run_remote(slave, f"{sudo_s}rm -f {REMOTE_SLAVE_ZONES_DIR}/db.{domain}")
         slave_conf = "// SVQPanel zones (slave) — no editar a mano\n\n"
         for d in all_domains:
             slave_conf += self._slave_zone_block(d, master["ip"], tsig["name"])
