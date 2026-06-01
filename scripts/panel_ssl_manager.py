@@ -494,17 +494,33 @@ def _service_locations() -> str:
             "        }\n"
             "    }\n"
         )
-    if os.path.islink("/var/www/webmail") or os.path.isdir("/var/www/webmail"):
+    if os.path.isdir("/var/www/roundcube/public_html"):
+        # IMPORTANTE: debe coincidir con el bloque que escribe install.sh:
+        # root al public_html real + manejo de static.php (Roundcube 1.7+) +
+        # redirect de /webmail a /webmail/ conservando NADA (el panel genera la
+        # URL ya con barra: /webmail/?svqtoken=...).
         blocks.append(
             "    # Roundcube Webmail — autologin desde SVQPanel\n"
-            "    location /webmail {\n"
-            "        root /var/www;\n"
+            "    location = /webmail { return 301 /webmail/; }\n"
+            "    location /webmail/ {\n"
+            "        root /var/www/roundcube/public_html;\n"
             "        index index.php;\n"
-            "        location ~ ^/webmail/.*\\.php$ {\n"
+            "        location ~ ^/webmail/static\\.php {\n"
+            "            fastcgi_split_path_info ^(/webmail/static\\.php)(/.+)$;\n"
+            f"            fastcgi_pass unix:{sock};\n"
+            "            include fastcgi_params;\n"
+            "            fastcgi_param SCRIPT_FILENAME /var/www/roundcube/public_html/static.php;\n"
+            "            fastcgi_param PATH_INFO $fastcgi_path_info;\n"
+            "            fastcgi_param SCRIPT_NAME /webmail/static.php;\n"
+            "        }\n"
+            "        location ~ \\.php$ {\n"
             "            include snippets/fastcgi-php.conf;\n"
             f"            fastcgi_pass unix:{sock};\n"
             "            fastcgi_param SCRIPT_FILENAME $document_root$fastcgi_script_name;\n"
             "            include fastcgi_params;\n"
+            "        }\n"
+            "        location ~ ^/webmail/(config|logs|temp|vendor/bin)/ {\n"
+            "            deny all;\n"
             "        }\n"
             "    }\n"
         )

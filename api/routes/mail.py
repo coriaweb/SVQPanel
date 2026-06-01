@@ -1010,7 +1010,13 @@ async def create_webmail_token(
     db.add(wt)
     db.commit()
 
-    roundcube_url = os.getenv("ROUNDCUBE_URL", "/webmail")
+    # Usar SIEMPRE la barra final: /webmail/?svqtoken=... entra directo en el
+    # location /webmail/ de nginx. Sin la barra, nginx hace 301 a /webmail/ y
+    # PIERDE el query string (?svqtoken), por lo que Roundcube no recibe el
+    # token y se queda en blanco / vuelve al panel.
+    roundcube_url = os.getenv("ROUNDCUBE_URL", "/webmail/")
+    if "?" not in roundcube_url and not roundcube_url.endswith("/"):
+        roundcube_url += "/"
     sep = "&" if "?" in roundcube_url else "?"
     full_url = f"{roundcube_url}{sep}svqtoken={token}"
 
