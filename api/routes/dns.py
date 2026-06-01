@@ -71,8 +71,8 @@ def _sync_zone_to_bind(zone: DnsZone, db: Session):
         zone_text = DNSManager.render_zone(
             zone.domain_name, zone.serial, record_dicts, soa_ns=soa_ns, ttl=ttl,
         )
-        all_zones = _get_all_active_zones(db)
-        if push_zone_to_cluster(db, zone.domain_name, zone_text, all_zones):
+        if push_zone_to_cluster(db, zone.domain_name, zone_text,
+                                dnssec=bool(zone.dnssec_enabled)):
             return  # empujada al cluster; el panel no sirve DNS en este modo
     except Exception as e:
         # Si el cluster falla, lo registramos pero NO caemos al BIND local
@@ -347,12 +347,12 @@ async def delete_zone(
 
     # Si hay cluster, borrar la zona del master y del slave
     try:
-        from scripts.dns_cluster import load_cluster, DNSCluster
+        from scripts.dns_cluster import load_cluster, DNSCluster, all_zones_meta
         cluster = load_cluster(db)
         if cluster:
             slave = cluster["slave"] or cluster["master"]
             DNSCluster().remove_zone(cluster["master"], slave, cluster["tsig"],
-                                     domain_name, remaining)
+                                     domain_name, all_zones_meta(db))
             return None
     except Exception as e:
         import logging
@@ -465,6 +465,93 @@ async def delete_record(
     db.commit()
     _sync_zone_to_bind(zone, db)
     return None
+
+
+# ──────────────────────── DNSSEC (por zona, requiere cluster) ─────────────────
+
+@router.get("/dns/{zone_id}/dnssec")
+async def get_dnssec(
+    zone_id: int,
+    current_user=Depends(require_auth),
+    db: Session = Depends(get_db),
+):
+    """
+    Estado DNSSEC de la zona + registros DS para el registrador.
+    DNSSEC se firma en el master del cluster; sin cluster no está disponible.
+    """
+    zone = db.query(DnsZone).filter(DnsZone.id == zone_id).first()
+    if not zone:
+        raise HTTPException(status_code=404, detail="Zona no encontrada")
+    _require_zone_access(zone, current_user, db)
+
+    out = {
+        "enabled": bool(zone.dnssec_enabled),
+        "cluster": False,
+        "signed": False,
+        "dnskeys": 0,
+        "ds_records": [],
+    }
+    try:
+        from scripts.dns_cluster import load_cluster, DNSCluster
+        cluster = load_cluster(db)
+        if cluster:
+            out["cluster"] = True
+            if zone.dnssec_enabled:
+                cl = DNSCluster()
+                st = cl.dnssec_status(cluster["master"], zone.domain_name)
+                out["signed"] = st["signed"]
+                out["dnskeys"] = st["dnskeys"]
+                if st["signed"]:
+                    out["ds_records"] = cl.get_ds_records(cluster["master"], zone.domain_name)
+    except Exception as e:
+        import logging
+        logging.getLogger(__name__).error(f"get_dnssec: {e}")
+        out["error"] = str(e)
+    return out
+
+
+@router.post("/dns/{zone_id}/dnssec")
+async def set_dnssec(
+    zone_id: int,
+    enabled: bool = True,
+    current_user=Depends(require_auth),
+    db: Session = Depends(get_db),
+):
+    """
+    Activa/desactiva DNSSEC en la zona. Requiere cluster (el master firma con
+    dnssec-policy). Tras activar, el DS tarda unos segundos en estar disponible;
+    consúltalo con GET /dns/{id}/dnssec.
+    """
+    zone = db.query(DnsZone).filter(DnsZone.id == zone_id).first()
+    if not zone:
+        raise HTTPException(status_code=404, detail="Zona no encontrada")
+    _require_zone_access(zone, current_user, db)
+
+    from scripts.dns_cluster import load_cluster
+    if not load_cluster(db):
+        raise HTTPException(
+            status_code=409,
+            detail="DNSSEC requiere un cluster DNS configurado (el master firma las zonas).")
+
+    zone.dnssec_enabled = bool(enabled)
+    zone.serial = _bump_serial(zone.serial)
+    db.commit()
+    db.refresh(zone)
+
+    # Reempujar la zona al cluster con el nuevo estado DNSSEC (cambia el bloque
+    # zone en ns1: añade/quita dnssec-policy y reubica el fichero).
+    try:
+        _sync_zone_to_bind(zone, db)
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"Zona actualizada pero falló el push al cluster: {e}")
+
+    return {
+        "status": "success",
+        "enabled": zone.dnssec_enabled,
+        "message": ("DNSSEC activado: la zona se está firmando. Espera unos segundos "
+                    "y consulta el registro DS para subirlo a tu registrador."
+                    if zone.dnssec_enabled else "DNSSEC desactivado."),
+    }
 
 
 # ──────────────────────── helpers privados ───────────────────────────────────

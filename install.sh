@@ -285,6 +285,13 @@ fi
 # clave TSIG compartida (tsig-keygen, de bind9-utils que se instala aquí) y
 # configura master→slave (AXFR autenticado por TSIG). Ver scripts/dns_cluster.py.
 # A partir de entonces el panel empuja las zonas a ns1 y este replica a ns2.
+#
+# DNSSEC (por zona, requiere cluster): al activarlo en una zona, el master la
+# firma con dnssec-policy (BIND 9.16+, inline-signing) y publica DNSKEY/RRSIG; el
+# slave recibe la zona ya firmada por AXFR. Las zonas firmadas y las claves viven
+# en /var/lib/bind (escribible por named bajo AppArmor; el aprovisionamiento crea
+# el dir como bind:bind). El panel lee el registro DS y lo muestra para subirlo
+# al registrador del dominio (paso manual; ningún panel puede automatizarlo).
 echo -e "${YELLOW}Instalando BIND9 (servidor DNS)...${NC}"
 
 apt-get install -y -qq bind9 bind9-utils bind9-doc dnsutils

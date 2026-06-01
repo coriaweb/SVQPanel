@@ -35,6 +35,15 @@ REMOTE_TSIG_CONF   = "/etc/bind/svqpanel-tsig.conf"
 # por named y permitida por el perfil AppArmor de Debian (/var/lib/bind), no a
 # /etc/bind (de solo lectura para named bajo AppArmor).
 REMOTE_SLAVE_ZONES_DIR = "/var/lib/bind"
+# Con DNSSEC (dnssec-policy + inline-signing) BIND reescribe la zona firmada y
+# su journal, y guarda las claves: todo eso necesita un directorio escribible
+# por named. Usamos /var/lib/bind también en el MASTER para las zonas firmadas
+# y como key-directory. Las zonas SIN firmar siguen estáticas en /etc/bind/zones.
+REMOTE_SIGNED_ZONES_DIR = "/var/lib/bind"
+REMOTE_KEYS_DIR         = "/var/lib/bind"
+# Política DNSSEC de BIND 9.16+: 'default' = ECDSAP256SHA256, CSK, rotación e
+# inline-signing automáticos. No requiere gestionar claves a mano.
+DNSSEC_POLICY = "default"
 
 DEFAULT_TSIG_ALGO = "hmac-sha256"
 
@@ -238,17 +247,36 @@ class DNSCluster:
             f'include "{REMOTE_ZONES_CONF}";\n'
         )
 
-    def _master_zone_block(self, domain: str, slave_ip: str, tsig_name: str) -> str:
-        """Bloque zone master con transferencia/notify al slave autenticada por TSIG."""
-        return (
+    @staticmethod
+    def master_zone_file(domain: str, dnssec: bool = False) -> str:
+        """Ruta del zone file en el master según esté firmada o no."""
+        base = REMOTE_SIGNED_ZONES_DIR if dnssec else REMOTE_ZONES_DIR
+        return f"{base}/db.{domain}"
+
+    def _master_zone_block(self, domain: str, slave_ip: str, tsig_name: str,
+                           dnssec: bool = False) -> str:
+        """
+        Bloque zone master con transferencia/notify al slave (TSIG). Si dnssec,
+        añade dnssec-policy + inline-signing + key-directory: BIND 9.16+ genera
+        claves, firma la zona y la mantiene firmada automáticamente. El fichero
+        debe estar en un dir escribible por named (/var/lib/bind).
+        """
+        block = (
             f'zone "{domain}" IN {{\n'
             f'    type master;\n'
-            f'    file "{REMOTE_ZONES_DIR}/db.{domain}";\n'
+            f'    file "{self.master_zone_file(domain, dnssec)}";\n'
             f'    allow-transfer {{ key {tsig_name}; }};\n'
             f'    also-notify {{ {slave_ip} key {tsig_name}; }};\n'
             f'    notify yes;\n'
-            f'}};\n\n'
         )
+        if dnssec:
+            block += (
+                f'    dnssec-policy {DNSSEC_POLICY};\n'
+                f'    inline-signing yes;\n'
+                f'    key-directory "{REMOTE_KEYS_DIR}";\n'
+            )
+        block += '};\n\n'
+        return block
 
     def _slave_zone_block(self, domain: str, master_ip: str, tsig_name: str) -> str:
         return (
@@ -301,7 +329,11 @@ class DNSCluster:
             f"{sudo}chown root:bind {REMOTE_TSIG_CONF} {REMOTE_ZONES_CONF} && "
             f"{sudo}chmod 640 {REMOTE_TSIG_CONF} {REMOTE_ZONES_CONF} && "
             f"{sudo}chown root:bind {REMOTE_ZONES_DIR}/db.* 2>/dev/null; "
-            f"{sudo}chmod 644 {REMOTE_ZONES_DIR}/db.* 2>/dev/null; true",
+            f"{sudo}chmod 644 {REMOTE_ZONES_DIR}/db.* 2>/dev/null; "
+            # Zonas firmadas en /var/lib/bind: bind debe poder reescribirlas
+            # (inline-signing) y crear .jnl/.signed/claves → owner bind:bind.
+            f"{sudo}chown bind:bind {REMOTE_SIGNED_ZONES_DIR}/db.* 2>/dev/null; "
+            f"{sudo}chmod 644 {REMOTE_SIGNED_ZONES_DIR}/db.* 2>/dev/null; true",
             timeout=45,
         )
 
@@ -326,12 +358,21 @@ class DNSCluster:
         if rc != 0:
             raise DNSClusterError(f"master named.conf.local: {err}")
 
-        # Construir named.conf.zones (bloques master) y subir cada zone file
+        # key-directory escribible por named (para DNSSEC) — idempotente
+        sudo0 = "" if master.get("ssh_user", "root") == "root" else "sudo "
+        self._run_remote(master, f"{sudo0}mkdir -p {REMOTE_KEYS_DIR} && "
+                                 f"{sudo0}chown bind:bind {REMOTE_KEYS_DIR}", timeout=30)
+
+        # Construir named.conf.zones (bloques master) y subir cada zone file.
+        # Las zonas firmadas van a /var/lib/bind (escribible para inline-signing);
+        # las no firmadas a /etc/bind/zones (estáticas).
         zones_conf = "// SVQPanel zones (master) — no editar a mano\n\n"
         for z in zones:
-            zones_conf += self._master_zone_block(z["domain"], slave["ip"], tsig["name"])
+            dnssec = bool(z.get("dnssec"))
+            zones_conf += self._master_zone_block(z["domain"], slave["ip"],
+                                                  tsig["name"], dnssec)
             rc, _, err = self._upload(master, z["zone_text"],
-                                      f"{REMOTE_ZONES_DIR}/db.{z['domain']}")
+                                      self.master_zone_file(z["domain"], dnssec))
             if rc != 0:
                 raise DNSClusterError(f"master zone {z['domain']}: {err}")
         rc, _, err = self._upload(master, zones_conf, REMOTE_ZONES_CONF)
@@ -385,27 +426,48 @@ class DNSCluster:
             raise DNSClusterError(f"slave reload named: {err or out}")
         return {"ok": True, "zones": len(domains)}
 
+    def _master_zones_conf(self, all_zones: List[Dict], slave_ip: str,
+                           tsig_name: str) -> str:
+        """Regenera named.conf.zones del master. all_zones: [{domain, dnssec}]."""
+        out = "// SVQPanel zones (master) — no editar a mano\n\n"
+        for z in all_zones:
+            out += self._master_zone_block(z["domain"], slave_ip, tsig_name,
+                                           bool(z.get("dnssec")))
+        return out
+
+    def _slave_zones_conf(self, all_zones: List[Dict], master_ip: str,
+                          tsig_name: str) -> str:
+        out = "// SVQPanel zones (slave) — no editar a mano\n\n"
+        for z in all_zones:
+            out += self._slave_zone_block(z["domain"], master_ip, tsig_name)
+        return out
+
     # ── Empuje de una zona concreta (alta/edición desde el panel) ──────────────
     def push_zone(self, master: Dict, slave: Dict, tsig: Dict[str, str],
-                  domain: str, zone_text: str, all_domains: List[str]) -> Dict:
+                  domain: str, zone_text: str, all_zones: List[Dict],
+                  dnssec: bool = False) -> Dict:
         """
         Empuja/actualiza una zona en el master y regenera named.conf.zones con
         TODAS las zonas activas. El master notifica al slave automáticamente.
+        all_zones: [{domain, dnssec}] (incluye la que se empuja).
         """
         rc, _, err = self._upload(master, zone_text,
-                                  f"{REMOTE_ZONES_DIR}/db.{domain}")
+                                  self.master_zone_file(domain, dnssec))
         if rc != 0:
             raise DNSClusterError(f"push zone {domain}: {err}")
 
-        zones_conf = "// SVQPanel zones (master) — no editar a mano\n\n"
-        for d in all_domains:
-            zones_conf += self._master_zone_block(d, slave["ip"], tsig["name"])
+        # Si la zona cambió de estado DNSSEC, puede quedar un fichero viejo en la
+        # otra ruta: lo limpiamos para no servir dos copias.
+        sudo = "" if master.get("ssh_user", "root") == "root" else "sudo "
+        other = self.master_zone_file(domain, not dnssec)
+        self._run_remote(master, f"{sudo}rm -f {other} {other}.jnl {other}.signed 2>/dev/null; true")
+
+        zones_conf = self._master_zones_conf(all_zones, slave["ip"], tsig["name"])
         rc, _, err = self._upload(master, zones_conf, REMOTE_ZONES_CONF)
         if rc != 0:
             raise DNSClusterError(f"push named.conf.zones: {err}")
 
         self._fix_bind_perms(master)
-        sudo = "" if master.get("ssh_user", "root") == "root" else "sudo "
         rc, out, err = self._run_remote(
             master, f"{sudo}named-checkconf && {sudo}rndc reload", timeout=45)
         if rc != 0:
@@ -413,22 +475,21 @@ class DNSCluster:
         return {"ok": True}
 
     def remove_zone(self, master: Dict, slave: Dict, tsig: Dict[str, str],
-                    domain: str, all_domains: List[str]) -> Dict:
+                    domain: str, all_zones: List[Dict]) -> Dict:
         """Elimina una zona del master y del slave; regenera named.conf.zones."""
         sudo_m = "" if master.get("ssh_user", "root") == "root" else "sudo "
-        self._run_remote(master, f"{sudo_m}rm -f {REMOTE_ZONES_DIR}/db.{domain}")
-        zones_conf = "// SVQPanel zones (master) — no editar a mano\n\n"
-        for d in all_domains:
-            zones_conf += self._master_zone_block(d, slave["ip"], tsig["name"])
+        # Borrar el fichero esté firmado o no (+ artefactos de firma)
+        for path in (self.master_zone_file(domain, False),
+                     self.master_zone_file(domain, True)):
+            self._run_remote(master, f"{sudo_m}rm -f {path} {path}.jnl {path}.signed 2>/dev/null; true")
+        zones_conf = self._master_zones_conf(all_zones, slave["ip"], tsig["name"])
         self._upload(master, zones_conf, REMOTE_ZONES_CONF)
         self._run_remote(master, f"{sudo_m}named-checkconf && {sudo_m}rndc reload")
 
         # Slave
         sudo_s = "" if slave.get("ssh_user", "root") == "root" else "sudo "
-        self._run_remote(slave, f"{sudo_s}rm -f {REMOTE_SLAVE_ZONES_DIR}/db.{domain}")
-        slave_conf = "// SVQPanel zones (slave) — no editar a mano\n\n"
-        for d in all_domains:
-            slave_conf += self._slave_zone_block(d, master["ip"], tsig["name"])
+        self._run_remote(slave, f"{sudo_s}rm -f {REMOTE_SLAVE_ZONES_DIR}/db.{domain} 2>/dev/null; true")
+        slave_conf = self._slave_zones_conf(all_zones, master["ip"], tsig["name"])
         self._upload(slave, slave_conf, REMOTE_ZONES_CONF)
         self._run_remote(slave, f"{sudo_s}named-checkconf && {sudo_s}rndc reload")
         return {"ok": True}
@@ -463,6 +524,37 @@ class DNSCluster:
         if len(parts) >= 3 and parts[2].isdigit():
             return int(parts[2])
         return None
+
+    # ── DNSSEC ──────────────────────────────────────────────────────────────────
+    def dnssec_status(self, master: Dict, domain: str) -> Dict:
+        """
+        ¿Está la zona firmada en el master? Comprueba que sirve DNSKEY y RRSIG.
+        Devuelve {signed: bool, dnskeys: int}.
+        """
+        rc, out, _ = self._run_remote(
+            master, f"dig +short +time=3 +tries=1 @127.0.0.1 {shlex.quote(domain)} DNSKEY",
+            timeout=25)
+        keys = [l for l in out.splitlines() if l.strip()] if rc == 0 else []
+        return {"signed": len(keys) > 0, "dnskeys": len(keys)}
+
+    def get_ds_records(self, master: Dict, domain: str) -> List[str]:
+        """
+        Devuelve los registros DS (Delegation Signer) que el usuario debe subir
+        a su REGISTRADOR. Se derivan de la DNSKEY KSK firmada.
+        Usa `dnssec-dsfromkey -2` (SHA-256) sobre la DNSKEY que sirve named.
+        """
+        # Obtenemos la DNSKEY de la zona y derivamos el DS con dnssec-dsfromkey.
+        # -f - lee del stdin un RRset en formato presentación.
+        d = shlex.quote(domain)
+        rc, out, err = self._run_remote(
+            master,
+            f"dig +noall +answer +time=3 +tries=1 @127.0.0.1 {d} DNSKEY "
+            f"| dnssec-dsfromkey -2 -A -f - {d} 2>/dev/null",
+            timeout=30)
+        if rc != 0:
+            return []
+        # Cada línea: "domain. IN DS 12345 13 2 ABCDEF..."
+        return [l.strip() for l in out.splitlines() if " DS " in l]
 
     def cluster_health(self, master: Dict, slave: Optional[Dict],
                        zones: List[Dict]) -> List[Dict]:
@@ -576,8 +668,17 @@ def compute_cluster_health(db) -> Optional[Dict]:
     }
 
 
+def all_zones_meta(db) -> List[Dict]:
+    """Lista de zonas activas con su flag DNSSEC: [{domain, dnssec}]."""
+    from api.models.models_dns import DnsZone
+    return [
+        {"domain": z.domain_name, "dnssec": bool(z.dnssec_enabled)}
+        for z in db.query(DnsZone).filter(DnsZone.is_active == True).all()  # noqa: E712
+    ]
+
+
 def push_zone_to_cluster(db, domain: str, zone_text: str,
-                         all_domains: List[str]) -> bool:
+                         dnssec: bool = False) -> bool:
     """
     Si hay cluster configurado, empuja la zona al master. Devuelve True si lo
     hizo, False si no hay cluster (el caller usa entonces el BIND local).
@@ -592,5 +693,5 @@ def push_zone_to_cluster(db, domain: str, zone_text: str,
     # rompe; simplemente no notifica a nadie externo).
     slave = cluster["slave"] or cluster["master"]
     cl.push_zone(cluster["master"], slave, cluster["tsig"],
-                 domain, zone_text, all_domains)
+                 domain, zone_text, all_zones_meta(db), dnssec=dnssec)
     return True

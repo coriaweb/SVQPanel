@@ -402,6 +402,14 @@ class APIClient {
     return this.get(`/api/dns/cluster/health${live ? '?live=1' : ''}`)
   }
 
+  getDnssec(zoneId) {
+    return this.get(`/api/dns/${zoneId}/dnssec`)
+  }
+
+  setDnssec(zoneId, enabled) {
+    return this.post(`/api/dns/${zoneId}/dnssec?enabled=${enabled ? 'true' : 'false'}`, {})
+  }
+
   // Settings
   getSettings() {
     return this.get('/api/settings')

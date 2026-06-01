@@ -207,6 +207,7 @@ def _do_provision(db: Session) -> dict:
                      for r in recs]
         zones.append({
             "domain": z.domain_name,
+            "dnssec": bool(z.dnssec_enabled),
             "zone_text": DNSManager.render_zone(
                 z.domain_name, z.serial, rec_dicts,
                 soa_ns=z.soa_ns or master.hostname, ttl=z.ttl or 14400),

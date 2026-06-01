@@ -185,8 +185,15 @@
               <td class="small text-muted">{{ zone.soa_ns || '—' }}</td>
               <td><span class="badge bg-secondary">{{ zone.template || 'default' }}</span></td>
               <td>
-                <span v-if="zone.dnssec_enabled" class="badge bg-success"><i class="bi bi-shield-lock me-1"></i>Activo</span>
-                <span v-else class="badge bg-light text-muted border">No</span>
+                <button v-if="zone.can_edit" class="btn btn-sm p-0 border-0 bg-transparent"
+                        @click="openDnssec(zone)" :title="cluster.enabled ? 'Gestionar DNSSEC' : 'DNSSEC requiere cluster'">
+                  <span v-if="zone.dnssec_enabled" class="badge bg-success"><i class="bi bi-shield-lock me-1"></i>Activo</span>
+                  <span v-else class="badge bg-light text-muted border"><i class="bi bi-shield me-1"></i>No</span>
+                </button>
+                <span v-else>
+                  <span v-if="zone.dnssec_enabled" class="badge bg-success"><i class="bi bi-shield-lock me-1"></i>Activo</span>
+                  <span v-else class="badge bg-light text-muted border">No</span>
+                </span>
               </td>
               <td><span class="badge bg-secondary">{{ zone.record_count }}</span></td>
               <td><code class="text-muted small">{{ zone.serial }}</code></td>
@@ -488,6 +495,66 @@
               <span v-if="savingRecord" class="spinner-border spinner-border-sm me-2"></span>
               {{ editingRecord ? 'Guardar' : 'Añadir' }}
             </button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+
+    <!-- ═══════════════ Modal: DNSSEC ═══════════════ -->
+    <div v-if="showDnssecModal" class="modal d-block" tabindex="-1" style="background:rgba(0,0,0,.5)">
+      <div class="modal-dialog modal-lg">
+        <div class="modal-content">
+          <div class="modal-header">
+            <h5 class="modal-title"><i class="bi bi-shield-lock me-2"></i>DNSSEC — {{ dnssecZone?.domain_name }}</h5>
+            <button class="btn-close" @click="showDnssecModal = false"></button>
+          </div>
+          <div class="modal-body">
+            <div v-if="!dnssecData.cluster" class="alert alert-warning">
+              <i class="bi bi-exclamation-triangle me-1"></i>
+              DNSSEC requiere un <strong>cluster DNS</strong> configurado (el master firma las zonas).
+              Configúralo arriba en «Cluster DNS».
+            </div>
+            <template v-else>
+              <div class="d-flex justify-content-between align-items-center mb-3">
+                <div>
+                  <strong>Firmar esta zona con DNSSEC</strong>
+                  <p class="text-muted small mb-0">El master (ns1) firma la zona; ns2 recibe la copia firmada.</p>
+                </div>
+                <div class="form-check form-switch">
+                  <input class="form-check-input" type="checkbox" role="switch"
+                         :checked="dnssecData.enabled" :disabled="dnssecSaving"
+                         @change="toggleDnssec($event.target.checked)" style="width:3em;height:1.5em">
+                </div>
+              </div>
+
+              <div v-if="dnssecData.enabled">
+                <div v-if="!dnssecData.signed" class="alert alert-info">
+                  <span class="spinner-border spinner-border-sm me-2"></span>
+                  Firmando la zona… puede tardar unos segundos. Pulsa «Actualizar» para ver el DS.
+                </div>
+                <template v-else>
+                  <label class="form-label fw-semibold">
+                    <i class="bi bi-key me-1"></i>Registro DS — pégalo en tu registrador de dominios
+                  </label>
+                  <p class="text-muted small">
+                    Copia esto en el panel de tu <strong>registrador</strong> (donde compraste el dominio),
+                    en la sección DNSSEC/DS. Sin este paso, DNSSEC no se valida de cara a Internet.
+                  </p>
+                  <div v-for="(ds, i) in dnssecData.ds_records" :key="i" class="input-group mb-2">
+                    <input class="form-control font-monospace small" :value="ds" readonly>
+                    <button class="btn btn-outline-secondary" @click="copyDs(ds)" title="Copiar"><i class="bi bi-clipboard"></i></button>
+                  </div>
+                  <p class="small text-success mb-0"><i class="bi bi-check-circle me-1"></i>Zona firmada ({{ dnssecData.dnskeys }} clave(s) DNSKEY activa(s)).</p>
+                </template>
+              </div>
+            </template>
+          </div>
+          <div class="modal-footer">
+            <button v-if="dnssecData.cluster && dnssecData.enabled" class="btn btn-outline-primary" @click="refreshDnssec" :disabled="dnssecLoading">
+              <i class="bi" :class="dnssecLoading ? 'bi-hourglass-split' : 'bi-arrow-clockwise'"></i> Actualizar
+            </button>
+            <button class="btn btn-secondary" @click="showDnssecModal = false">Cerrar</button>
           </div>
         </div>
       </div>
@@ -973,6 +1040,58 @@ export default {
       return d.toLocaleString()
     }
 
+    // ── DNSSEC ──
+    const showDnssecModal = ref(false)
+    const dnssecZone      = ref(null)
+    const dnssecData      = ref({ cluster: false, enabled: false, signed: false, dnskeys: 0, ds_records: [] })
+    const dnssecLoading   = ref(false)
+    const dnssecSaving    = ref(false)
+
+    const refreshDnssec = async () => {
+      if (!dnssecZone.value) return
+      dnssecLoading.value = true
+      try {
+        dnssecData.value = await api.getDnssec(dnssecZone.value.id)
+      } catch (e) {
+        store.showNotification('Error leyendo DNSSEC: ' + e.message, 'danger')
+      } finally {
+        dnssecLoading.value = false
+      }
+    }
+
+    const openDnssec = async (zone) => {
+      dnssecZone.value = zone
+      dnssecData.value = { cluster: cluster.value.enabled, enabled: zone.dnssec_enabled, signed: false, dnskeys: 0, ds_records: [] }
+      showDnssecModal.value = true
+      await refreshDnssec()
+    }
+
+    const toggleDnssec = async (enabled) => {
+      dnssecSaving.value = true
+      try {
+        const r = await api.setDnssec(dnssecZone.value.id, enabled)
+        store.showNotification(r.message || 'DNSSEC actualizado', 'success')
+        // reflejar en la tabla
+        const z = zones.value.find(z => z.id === dnssecZone.value.id)
+        if (z) z.dnssec_enabled = enabled
+        dnssecZone.value.dnssec_enabled = enabled
+        // dar unos segundos a que firme y releer
+        await new Promise(res => setTimeout(res, enabled ? 4000 : 500))
+        await refreshDnssec()
+        await loadHealth(true)
+      } catch (e) {
+        store.showNotification('Error: ' + e.message, 'danger')
+        await refreshDnssec()
+      } finally {
+        dnssecSaving.value = false
+      }
+    }
+
+    const copyDs = (text) => {
+      navigator.clipboard?.writeText(text)
+      store.showNotification('DS copiado al portapapeles', 'success')
+    }
+
     const addNode = async () => {
       if (!nodeForm.value.hostname || !nodeForm.value.ip) {
         store.showNotification('Indica hostname e IP del nodo', 'danger'); return
@@ -1050,6 +1169,8 @@ export default {
       cluster, clusterNodes, loadingCluster, savingNode, provisioning, testingNodeId, nodeForm,
       loadCluster, addNode, testNode, deleteNode, provisionCluster, resyncCluster,
       health, loadingHealth, loadHealth, serialClass, formatHealthTime,
+      showDnssecModal, dnssecZone, dnssecData, dnssecLoading, dnssecSaving,
+      openDnssec, toggleDnssec, refreshDnssec, copyDs,
       zones, loadingZones,
       selectedZone, records, loadingRecords,
       showZoneModal, editingZone, zoneForm, savingZone,
