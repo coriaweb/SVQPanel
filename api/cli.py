@@ -369,11 +369,16 @@ def cmd_register_server_ips() -> int:
         db.close()
 
 
-def cmd_migrate_php_pools(dry_run: bool = False, only_domain: str = None) -> int:
+def cmd_migrate_php_pools(dry_run: bool = False, only_domain: str = None,
+                          force: bool = False) -> int:
     """
     Crea el pool PHP-FPM dedicado (con bloque de seguridad: open_basedir +
     disable_functions + tmp aislado) para los dominios que aún no lo tengan,
     y repunta su vhost al socket dedicado. Idempotente.
+
+    Con force=True reescribe TAMBIÉN los pools existentes, para aplicar
+    cambios de política de seguridad (p. ej. quitar /tmp del open_basedir,
+    añadir sys_temp_dir) a dominios que ya tenían pool.
     """
     import json as _json
     from scripts import php_ini_manager as phpini
@@ -393,7 +398,7 @@ def cmd_migrate_php_pools(dry_run: bool = False, only_domain: str = None) -> int
             if not owner:
                 logger.warning(f"  {d.domain_name}: sin propietario, omitido")
                 continue
-            if phpini.has_pool(d.domain_name):
+            if phpini.has_pool(d.domain_name) and not force:
                 skipped += 1
                 logger.info(f"  {d.domain_name}: ya tiene pool, omitido")
                 continue
@@ -468,6 +473,7 @@ def main():
     p_pools = sub.add_parser("migrate_php_pools", help="Crea pool PHP-FPM dedicado (seguridad) para dominios sin él")
     p_pools.add_argument("--dry-run", action="store_true", help="Solo muestra lo que haría")
     p_pools.add_argument("--domain", default=None, help="Migrar solo este dominio")
+    p_pools.add_argument("--force", action="store_true", help="Reescribe también los pools existentes (aplica nuevas políticas de seguridad)")
 
     args = parser.parse_args()
     if args.cmd == "refresh_ip_lists":
@@ -481,7 +487,7 @@ def main():
     if args.cmd == "register_server_ips":
         sys.exit(cmd_register_server_ips())
     if args.cmd == "migrate_php_pools":
-        sys.exit(cmd_migrate_php_pools(dry_run=args.dry_run, only_domain=args.domain))
+        sys.exit(cmd_migrate_php_pools(dry_run=args.dry_run, only_domain=args.domain, force=args.force))
 
 
 if __name__ == "__main__":

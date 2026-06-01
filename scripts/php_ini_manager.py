@@ -79,13 +79,19 @@ def _security_block(owner: str, domain: str, relax_hardening: bool = False) -> L
     public_html = get_public_html(owner, domain)
     private     = get_domain_private(owner, domain)
     tmp         = domain_tmp_dir(owner, domain)
-    open_basedir = f"{public_html}:{private}:{tmp}:/tmp"
+    # open_basedir SIN /tmp global: cada dominio confinado a su raíz + su tmp
+    # propio (/home/{owner}/web/{domain}/tmp). Así un sitio no puede leer los
+    # temporales de otro a través de /tmp compartido.
+    open_basedir = f"{public_html}:{private}:{tmp}"
     disable_fns = DISABLE_FUNCTIONS_RELAXED if relax_hardening else DISABLE_FUNCTIONS_FULL
     return [
         f"php_admin_value[open_basedir] = {open_basedir}",
         f"php_admin_value[disable_functions] = {disable_fns}",
         f"php_admin_value[upload_tmp_dir] = {tmp}",
         f"php_admin_value[session.save_path] = {tmp}",
+        # sys_temp_dir: temporales de PHP (tempnam, tmpfile, ImageMagick…)
+        # caen en el tmp aislado del dominio, no en /tmp compartido.
+        f"php_admin_value[sys_temp_dir] = {tmp}",
     ]
 
 

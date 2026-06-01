@@ -59,16 +59,24 @@ def check_domain(domain: str, owner: str, php_version: str) -> Dict:
     tmp         = phpini.domain_tmp_dir(owner, domain)
 
     # open_basedir presente y conteniendo las rutas del dominio
-    if "php_admin_value[open_basedir]" not in content:
+    ob_line = ""
+    for line in content.splitlines():
+        if "php_admin_value[open_basedir]" in line:
+            ob_line = line
+            break
+
+    if not ob_line:
         issues.append("Falta open_basedir (el cliente podría salir de su raíz)")
     else:
-        for needed in (public_html,):
-            if needed not in content:
-                issues.append(f"open_basedir no incluye {needed}")
-        # No debe contener el home de OTRO usuario
-        # (heurística: solo debe aparecer /home/{owner}/...)
-        if f"/home/{owner}/" not in content:
+        if public_html not in ob_line:
+            issues.append(f"open_basedir no incluye {public_html}")
+        if f"/home/{owner}/" not in ob_line:
             issues.append("open_basedir no apunta al home del propietario")
+        # /tmp global compartido en open_basedir → un sitio puede leer
+        # temporales de otros. Política nueva: tmp propio del dominio.
+        for part in ob_line.split("=", 1)[-1].split(":"):
+            if part.strip() == "/tmp":
+                issues.append("open_basedir incluye /tmp global compartido (debe usar el tmp propio del dominio)")
 
     if "php_admin_value[disable_functions]" not in content:
         issues.append("Falta disable_functions")
@@ -77,6 +85,10 @@ def check_domain(domain: str, owner: str, php_version: str) -> Dict:
         issues.append("session.save_path no aislado (riesgo de robo de sesión entre sitios)")
     elif tmp not in content:
         issues.append("session.save_path no apunta al tmp del dominio")
+
+    # sys_temp_dir aislado (tempnam/tmpfile/ImageMagick no caen en /tmp global)
+    if "php_admin_value[sys_temp_dir]" not in content:
+        issues.append("Falta sys_temp_dir aislado (temporales de PHP irían a /tmp global)")
 
     # tmp del dominio debe existir y ser de www-data
     if not os.path.isdir(tmp):

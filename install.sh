@@ -2058,10 +2058,12 @@ cd /opt/svqpanel
     echo -e "${YELLOW}⚠ No se pudieron registrar las IPs (se pueden añadir manualmente en el panel)${NC}"
 echo ""
 
-# Crear pools PHP-FPM dedicados (open_basedir + disable_functions + tmp) para
-# cualquier dominio preexistente (reinstalación sobre datos previos).
-echo -e "${YELLOW}Aplicando aislamiento PHP por dominio...${NC}"
-/opt/svqpanel/venv/bin/python -m api.cli migrate_php_pools && \
+# Crear/actualizar pools PHP-FPM dedicados (open_basedir SIN /tmp global +
+# sys_temp_dir + disable_functions + tmp propio del dominio) para cualquier
+# dominio preexistente. --force reescribe también los pools que ya existían,
+# para aplicar la política de aislamiento vigente en reinstalaciones.
+echo -e "${YELLOW}Aplicando aislamiento PHP por dominio (open_basedir + tmp propio)...${NC}"
+/opt/svqpanel/venv/bin/python -m api.cli migrate_php_pools --force && \
     echo -e "${GREEN}✓ Pools PHP-FPM con seguridad aplicados${NC}" || \
     echo -e "${YELLOW}⚠ migrate_php_pools tuvo incidencias (revisar logs)${NC}"
 echo ""

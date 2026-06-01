@@ -4,6 +4,37 @@
 **Repositorio**: https://github.com/coriaweb/SVQPanel  
 **Desarrollador**: coriaweb
 
+## ⚠️ REGLA IMPORTANTE: install.sh es la fuente de verdad del sistema
+
+Todo cambio que afecte a la configuración del servidor (pools PHP-FPM, nginx,
+permisos, hardening, paquetes, servicios, políticas de seguridad) **DEBE quedar
+reflejado en `install.sh`**, para que una instalación o reinstalación limpia
+nazca ya con ese estado. No basta con cambiar el código del panel: si el install
+no lo aplica, un servidor nuevo quedaría con la configuración antigua.
+
+Patrón recomendado: el install **no hardcodea** la lógica, sino que invoca el
+mismo código del panel (p. ej. `python -m api.cli migrate_php_pools --force`),
+de modo que un único cambio en el código se propaga a runtime y a install.
+
+## 🔒 Seguridad — Aislamiento PHP por dominio
+
+Cada dominio tiene un **pool PHP-FPM dedicado** (`/etc/php/{ver}/fpm/pool.d/
+svqpanel-{dominio}.conf`, socket propio) con bloque de seguridad inyectado
+SIEMPRE como `php_admin_value` (el cliente no puede sobreescribirlo):
+
+- `open_basedir = public_html : private : tmp_del_dominio` (**sin `/tmp` global**:
+  un sitio no puede leer los archivos ni temporales de otro).
+- `disable_functions` (exec/system/… salvo dominios con hardening relajado).
+- `upload_tmp_dir`, `session.save_path` y `sys_temp_dir` → todos al tmp propio
+  del dominio: `/home/{usuario}/web/{dominio}/tmp` (aislado, owner www-data 0700).
+
+Definido en `scripts/php_ini_manager.py` (`_security_block` / `write_pool`).
+
+- Auditoría/reparación: `scripts/security_audit.py` + endpoints
+  `GET/POST /api/security/php-isolation` + tarjeta en la vista Seguridad.
+- Reparar en bloque por CLI: `python -m api.cli migrate_php_pools --force`
+  (lo usa `install.sh`; `--force` reescribe pools existentes con la política nueva).
+
 ## 🎨 Sistema de Diseño (UI 2026)
 
 Rediseño premium del frontend (Vue 3 + Vite). Estética tipo Linear/Vercel/Stripe,
