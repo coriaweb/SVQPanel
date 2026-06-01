@@ -63,6 +63,28 @@ case $WEBSERVER_CHOICE in
 esac
 
 ###############################################################################
+# 1b. PUERTO DEL PANEL
+###############################################################################
+# El panel se sirve en un puerto dedicado (no 80/443) para poder cerrarlo
+# selectivamente en el firewall perimetral (Proxmox, etc.) y dejar 80/443
+# libres para los sitios web de los clientes.
+echo -e "${YELLOW}¿En qué puerto quieres servir el panel de control?${NC}"
+echo "  Recomendado: 8083 (cierra solo este puerto en tu firewall para máxima seguridad)"
+read -p "Puerto del panel [8083]: " _PANEL_PORT_INPUT
+PANEL_WEB_PORT="${_PANEL_PORT_INPUT:-8083}"
+# Validar: número 1-65535 y no chocar con puertos comunes de servicios
+if ! [[ "$PANEL_WEB_PORT" =~ ^[0-9]+$ ]] || (( PANEL_WEB_PORT < 1 || PANEL_WEB_PORT > 65535 )); then
+    echo -e "${RED}Puerto inválido: $PANEL_WEB_PORT${NC}"; exit 1
+fi
+for _busy in 80 443 22 25 143 993 110 995 587 465 3306 5432 8001; do
+    if (( PANEL_WEB_PORT == _busy )); then
+        echo -e "${RED}El puerto $PANEL_WEB_PORT está reservado para otro servicio. Elige otro (p.ej. 8083).${NC}"
+        exit 1
+    fi
+done
+echo -e "${GREEN}✓ El panel se servirá en el puerto $PANEL_WEB_PORT${NC}\n"
+
+###############################################################################
 # 2b. SERVIDOR DE CORREO (OPCIONAL)
 ###############################################################################
 echo -e "${YELLOW}¿Instalar servidor de correo electrónico?${NC}"
@@ -1271,12 +1293,10 @@ upstream svqpanel_backend {
 }
 
 server {
-    # default_server: garantiza que el panel atienda peticiones por IP o
-    # hostnames no configurados. Sin esto, cuando se anaden dominios de
-    # clientes (que alfabeticamente vengan antes que 'svqpanel' en
-    # sites-enabled), uno de ellos roba el rol de default y el panel
-    # deja de responder a la IP del servidor.
-    listen 80 default_server;
+    # El panel se sirve en su PUERTO DEDICADO (no 80/443), para poder cerrarlo
+    # selectivamente en el firewall perimetral sin afectar a los sitios de
+    # clientes. Al estar solo en su puerto no necesita default_server.
+    listen __PANEL_WEB_PORT__;
     server_name _;
 
     client_max_body_size 100M;
@@ -1353,6 +1373,9 @@ server {
     }
 }
 NGINXEOF
+
+    # Sustituir el placeholder del puerto del panel por el elegido en el wizard.
+    sed -i "s|__PANEL_WEB_PORT__|${PANEL_WEB_PORT}|g" /etc/nginx/sites-available/svqpanel
 
     # ── phpMyAdmin: inyectar bloque /pma si se instaló ───────────────────────
     if [[ "$INSTALL_MARIADB" == true && -d /var/www/pma ]]; then
@@ -1520,6 +1543,10 @@ table inet svqpanel {
         tcp dport 22 accept
         # Web (nginx)
         tcp dport { 80, 443 } accept
+        # Panel de control SVQPanel (puerto dedicado). Para máxima seguridad
+        # puedes cerrar este puerto en tu firewall perimetral y dejarlo abierto
+        # solo a tus IPs de administración.
+        tcp dport __PANEL_WEB_PORT__ accept
         # Correo: SMTP, submission, IMAP(S), POP3(S)
         tcp dport { 25, 587, 465, 143, 993, 110, 995 } accept
         # DNS (BIND) — consultas entrantes a las zonas alojadas
@@ -1527,8 +1554,8 @@ table inet svqpanel {
         udp dport 53 accept
 
         # NOTA: la API del panel (8001) NO se abre: solo escucha en 127.0.0.1
-        # y se sirve por nginx (443). MariaDB/PostgreSQL/Redis/rspamd/crowdsec
-        # son localhost-only por diseño.
+        # y se sirve por nginx en el puerto del panel. MariaDB/PostgreSQL/Redis/
+        # rspamd/crowdsec son localhost-only por diseño.
     }
 }
 
@@ -1536,6 +1563,9 @@ table inet svqpanel {
 include "/etc/nftables/svqpanel-iplists.nft"
 include "/etc/nftables/svqpanel-rules.nft"
 NFTEOF
+
+# Sustituir el placeholder del puerto del panel en las reglas del firewall.
+sed -i "s|__PANEL_WEB_PORT__|${PANEL_WEB_PORT}|g" /etc/nftables.conf
 
 # Crear los includes vacíos
 mkdir -p /etc/nftables
@@ -2117,10 +2147,11 @@ echo -e "Proximos pasos:"
 echo "  1. Verifica el estado: systemctl status svqpanel"
 echo "  2. Ver logs: journalctl -u svqpanel -f"
 echo -e "\n${GREEN}SVQPanel estará disponible en:${NC}"
-echo "  • Panel Web:    http://IP_DEL_SERVIDOR"
-echo "  • Seguridad:    http://IP_DEL_SERVIDOR/security  (firewall, fail2ban, listas IP)"
-echo "  • API:          http://IP_DEL_SERVIDOR:8001"
-echo "  • API Docs:     http://IP_DEL_SERVIDOR:8001/docs"
+echo "  • Panel Web:    http://IP_DEL_SERVIDOR:${PANEL_WEB_PORT}"
+echo "  • Seguridad:    http://IP_DEL_SERVIDOR:${PANEL_WEB_PORT}/security  (firewall, fail2ban, listas IP)"
+echo "  • API Docs:     http://IP_DEL_SERVIDOR:${PANEL_WEB_PORT}/docs"
+echo -e "  ${YELLOW}Sugerencia de seguridad:${NC} cierra el puerto ${PANEL_WEB_PORT} en tu firewall"
+echo "  perimetral (Proxmox, etc.) y ábrelo solo a tus IPs de administración."
 echo -e "\n${YELLOW}Base de datos:${NC}"
 echo "  • Host: localhost"
 echo "  • User: panel_user"
