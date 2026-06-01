@@ -217,22 +217,39 @@ class DNSCluster:
 
     # ── Aprovisionamiento ────────────────────────────────────────────────────
     def _ensure_bind_installed(self, node: Dict) -> Tuple[bool, str]:
-        """Instala bind9 en el nodo si no está. Idempotente."""
+        """Instala bind9+dnsutils en el nodo si no está. Idempotente."""
         sudo = "" if node.get("ssh_user", "root") == "root" else "sudo "
+        # Instalamos siempre dnsutils (dig) además de bind9/bind9-utils.
         rc, out, err = self._run_remote(
             node,
-            f"{sudo}bash -c 'command -v named >/dev/null 2>&1 || "
+            f"{sudo}bash -c '(command -v named >/dev/null 2>&1 && command -v dig >/dev/null 2>&1) || "
             f"(export DEBIAN_FRONTEND=noninteractive; apt-get update -qq && "
             f"apt-get install -y -qq bind9 bind9-utils dnsutils)' && "
             f"{sudo}mkdir -p {REMOTE_ZONES_DIR} && "
             f"{sudo}chown root:bind {REMOTE_ZONES_DIR} && "
-            f"{sudo}chmod 775 {REMOTE_ZONES_DIR} && "
+            f"{sudo}chmod 2775 {REMOTE_ZONES_DIR} && "
             f"{sudo}touch {REMOTE_ZONES_CONF}",
             timeout=300,
         )
         if rc != 0:
             return False, err or "fallo instalando bind9"
         return True, ""
+
+    def _fix_bind_perms(self, node: Dict) -> None:
+        """
+        named corre como usuario 'bind': debe poder LEER el TSIG, named.conf.zones
+        y los zone files. Tras subirlos por scp (root:root 0600) hay que ajustar
+        propietario/permisos o named falla con 'permission denied'.
+        """
+        sudo = "" if node.get("ssh_user", "root") == "root" else "sudo "
+        self._run_remote(
+            node,
+            f"{sudo}chown root:bind {REMOTE_TSIG_CONF} {REMOTE_ZONES_CONF} && "
+            f"{sudo}chmod 640 {REMOTE_TSIG_CONF} {REMOTE_ZONES_CONF} && "
+            f"{sudo}chown root:bind {REMOTE_ZONES_DIR}/db.* 2>/dev/null; "
+            f"{sudo}chmod 644 {REMOTE_ZONES_DIR}/db.* 2>/dev/null; true",
+            timeout=45,
+        )
 
     def provision_master(self, master: Dict, slave: Dict, tsig: Dict[str, str],
                          zones: List[Dict]) -> Dict:
@@ -267,6 +284,7 @@ class DNSCluster:
         if rc != 0:
             raise DNSClusterError(f"master named.conf.zones: {err}")
 
+        self._fix_bind_perms(master)
         sudo = "" if master.get("ssh_user", "root") == "root" else "sudo "
         rc, out, err = self._run_remote(
             master, f"{sudo}named-checkconf && {sudo}systemctl restart named && "
@@ -299,10 +317,13 @@ class DNSCluster:
         if rc != 0:
             raise DNSClusterError(f"slave named.conf.zones: {err}")
 
+        self._fix_bind_perms(slave)
         sudo = "" if slave.get("ssh_user", "root") == "root" else "sudo "
-        # El slave necesita poder escribir los zone files transferidos
+        # El slave necesita poder ESCRIBIR los zone files que recibe por AXFR:
+        # el directorio debe ser propiedad de bind (con setgid para los nuevos).
         rc, out, err = self._run_remote(
             slave, f"{sudo}chown bind:bind {REMOTE_ZONES_DIR} && "
+                   f"{sudo}chmod 2775 {REMOTE_ZONES_DIR} && "
                    f"{sudo}named-checkconf && {sudo}systemctl restart named && "
                    f"{sudo}systemctl is-active named", timeout=60)
         if rc != 0 or "active" not in out:
@@ -328,6 +349,7 @@ class DNSCluster:
         if rc != 0:
             raise DNSClusterError(f"push named.conf.zones: {err}")
 
+        self._fix_bind_perms(master)
         sudo = "" if master.get("ssh_user", "root") == "root" else "sudo "
         rc, out, err = self._run_remote(
             master, f"{sudo}named-checkconf && {sudo}rndc reload", timeout=45)
