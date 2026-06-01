@@ -1,7 +1,10 @@
 <template>
   <div>
-    <div class="d-flex justify-content-between align-items-center mb-4">
-      <h2><i class="bi bi-hdd-stack"></i> Copias de seguridad</h2>
+    <div class="page-head-row">
+      <div>
+        <h2><i class="bi bi-hdd-stack"></i> Copias de seguridad</h2>
+        <p class="text-muted mb-0">{{ jobs.length }} {{ jobs.length === 1 ? 'trabajo de backup' : 'trabajos de backup' }}</p>
+      </div>
       <button class="btn btn-primary" @click="openCreate">
         <i class="bi bi-plus-circle"></i> Nuevo backup
       </button>

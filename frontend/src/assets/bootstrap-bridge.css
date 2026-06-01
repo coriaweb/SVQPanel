@@ -72,6 +72,13 @@ h1,h2,h3,h4,h5,h6 { color: var(--text); }
 /* iconos de cabecera dentro de títulos un poco más sutiles */
 .container-fluid { padding-left: 0; padding-right: 0; }
 
+/* Patrón de cabecera de página reutilizable (título + acción a la derecha) */
+.page-head-row {
+  display: flex; align-items: flex-start; justify-content: space-between;
+  gap: var(--sp-4); margin-bottom: var(--sp-5); flex-wrap: wrap;
+}
+.page-head-row > div h2 { margin: 0 0 2px; }
+
 /* ---- Botones ---- */
 .btn {
   border-radius: var(--r-md) !important;

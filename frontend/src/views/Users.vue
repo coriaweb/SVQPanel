@@ -1,7 +1,10 @@
 <template>
   <div>
-    <div class="d-flex justify-content-between align-items-center mb-4">
-      <h2><i class="bi bi-people"></i> Usuarios</h2>
+    <div class="page-head-row">
+      <div>
+        <h2><i class="bi bi-people"></i> Usuarios</h2>
+        <p class="text-muted mb-0">{{ users.length }} {{ users.length === 1 ? 'usuario' : 'usuarios' }} en el panel</p>
+      </div>
       <button class="btn btn-primary" @click="openCreateForm">
         <i class="bi bi-person-plus"></i> Crear Usuario
       </button>

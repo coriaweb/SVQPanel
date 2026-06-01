@@ -1,7 +1,10 @@
 <template>
   <div>
-    <div class="d-flex justify-content-between align-items-center mb-4">
-      <h2><i class="bi bi-clock-history"></i> Tareas Cron</h2>
+    <div class="page-head-row">
+      <div>
+        <h2><i class="bi bi-clock-history"></i> Tareas Cron</h2>
+        <p class="text-muted mb-0">{{ crons.length }} {{ crons.length === 1 ? 'tarea programada' : 'tareas programadas' }}</p>
+      </div>
       <button class="btn btn-primary" @click="openCreate">
         <i class="bi bi-plus-circle"></i> Nueva tarea
       </button>
