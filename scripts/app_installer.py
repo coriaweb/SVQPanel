@@ -140,6 +140,12 @@ NEXTCLOUD_PHP_MAX = (8, 4)
 NEXTCLOUD_PHP_EXTS = ["gd", "mbstring", "intl", "bcmath", "gmp", "curl",
                       "zip", "xml", "pdo_mysql"]
 
+# PrestaShop 8.x: PHP 7.2–8.1 (8.1.x soporta hasta PHP 8.1).
+PRESTASHOP_PHP_MIN = (7, 2)
+PRESTASHOP_PHP_MAX = (8, 1)
+PRESTASHOP_PHP_EXTS = ["gd", "mbstring", "intl", "curl", "zip", "xml",
+                       "pdo_mysql"]
+
 
 def _php_version_tuple(php_bin: str):
     """Devuelve (major, minor) del binario PHP, o None si no se puede determinar."""
@@ -153,36 +159,47 @@ def _php_version_tuple(php_bin: str):
         return None
 
 
-def _check_nextcloud_php(php_bin: str, php_version):
+def _check_php_requirements(php_bin: str, app_name: str, vmin, vmax, exts):
     """
-    Comprueba que el PHP del dominio cumple los requisitos de Nextcloud.
-    Devuelve (ok: bool, motivo: str). El motivo es legible para el usuario.
+    Valida versión y extensiones PHP para una app concreta.
+    Devuelve (ok: bool, motivo: str legible para el usuario).
     """
     ver = _php_version_tuple(php_bin)
     if ver is None:
         return False, f"No se pudo determinar la versión de PHP ({php_bin})."
-    if ver < NEXTCLOUD_PHP_MIN or ver > NEXTCLOUD_PHP_MAX:
-        vmin = ".".join(map(str, NEXTCLOUD_PHP_MIN))
-        vmax = ".".join(map(str, NEXTCLOUD_PHP_MAX))
+    if ver < vmin or ver > vmax:
+        smin = ".".join(map(str, vmin))
+        smax = ".".join(map(str, vmax))
         cur = ".".join(map(str, ver))
         return False, (
-            f"Nextcloud requiere PHP {vmin}–{vmax} y el dominio usa PHP {cur}. "
-            f"Cambia la versión PHP del dominio a una soportada (p. ej. {vmax}) "
+            f"{app_name} requiere PHP {smin}–{smax} y el dominio usa PHP {cur}. "
+            f"Cambia la versión PHP del dominio a una soportada (p. ej. {smax}) "
             f"e inténtalo de nuevo."
         )
-    # Extensiones cargadas
     rc, out, _ = _run([php_bin, "-m"])
     loaded = {m.strip().lower() for m in out.splitlines()} if rc == 0 else set()
-    missing = [e for e in NEXTCLOUD_PHP_EXTS if e.lower() not in loaded]
+    missing = [e for e in exts if e.lower() not in loaded]
     if missing:
         cur = ".".join(map(str, ver))
         pkgs = ", ".join(f"php{cur}-{e.replace('pdo_mysql', 'mysql')}" for e in missing)
         return False, (
-            f"A PHP {cur} le faltan extensiones requeridas por Nextcloud: "
+            f"A PHP {cur} le faltan extensiones requeridas por {app_name}: "
             f"{', '.join(missing)}. Instálalas (p. ej. apt-get install {pkgs}) "
             f"y reinténtalo."
         )
     return True, ""
+
+
+def _check_nextcloud_php(php_bin: str, php_version=None):
+    return _check_php_requirements(php_bin, "Nextcloud",
+                                   NEXTCLOUD_PHP_MIN, NEXTCLOUD_PHP_MAX,
+                                   NEXTCLOUD_PHP_EXTS)
+
+
+def _check_prestashop_php(php_bin: str, php_version=None):
+    return _check_php_requirements(php_bin, "PrestaShop",
+                                   PRESTASHOP_PHP_MIN, PRESTASHOP_PHP_MAX,
+                                   PRESTASHOP_PHP_EXTS)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -458,6 +475,127 @@ class AppInstaller:
             "url": url,
             "admin_url": url,
             "admin_user": admin_user,
+            "admin_password": admin_pass,
+            "db": db,
+        }
+
+    # ── PrestaShop ─────────────────────────────────────────────────────────────
+    def install_prestashop(self, domain: str, owner: str, docroot: str,
+                           admin_user: str, admin_pass: str, admin_email: str,
+                           php_version: Optional[str] = None) -> Dict:
+        """
+        Descarga la última release de PrestaShop e instala de forma desatendida
+        con su CLI (install/index_cli.php). Tras instalar borra install/ y
+        renombra el directorio admin/ por seguridad.
+        """
+        if not _empty_or_safe(docroot):
+            raise RequirementsError("El directorio del dominio no está vacío; instala en un dominio limpio")
+
+        php_bin = "php"
+        if php_version:
+            cand = f"php{php_version}"
+            if shutil.which(cand) or os.path.exists(f"/usr/bin/{cand}"):
+                php_bin = cand
+
+        ok, why = _check_prestashop_php(php_bin, php_version)
+        if not ok:
+            raise RequirementsError(why)
+
+        db = self._create_db(owner, "ps")
+
+        parent = os.path.dirname(docroot)
+        rel_zip = os.path.join(parent, ".prestashop_release.zip")
+        tmp = os.path.join(parent, ".prestashop_tmp")
+        _run(["rm", "-rf", tmp, rel_zip])
+        _run(["mkdir", "-p", tmp])
+
+        # URL de la última release estable (zip que contiene prestashop.zip + index)
+        rc, out, err = _run([
+            "curl", "-fsSL",
+            "https://api.github.com/repos/PrestaShop/PrestaShop/releases/latest",
+        ])
+        download_url = ""
+        if rc == 0 and out:
+            try:
+                data = json.loads(out)
+                for asset in data.get("assets", []):
+                    n = asset.get("name", "")
+                    if n.startswith("prestashop_") and n.endswith(".zip"):
+                        download_url = asset.get("browser_download_url", "")
+                        break
+            except (ValueError, KeyError):
+                pass
+        if not download_url:
+            _run(["rm", "-rf", tmp, rel_zip])
+            raise RuntimeError("No se pudo determinar la última release de PrestaShop")
+
+        rc, _, err = _run(["curl", "-fsSL", "-o", rel_zip, download_url], timeout=1200)
+        if rc != 0:
+            _run(["rm", "-rf", tmp, rel_zip])
+            raise RuntimeError(f"Descarga de PrestaShop falló: {err}")
+
+        # El zip de release contiene prestashop.zip (el código real) + index.php
+        rc, _, err = _run(["unzip", "-q", rel_zip, "-d", tmp])
+        if rc != 0:
+            _run(["rm", "-rf", tmp, rel_zip])
+            raise RuntimeError(f"Descompresión de PrestaShop falló: {err}")
+
+        inner = os.path.join(tmp, "prestashop.zip")
+        if not os.path.isfile(inner):
+            _run(["rm", "-rf", tmp, rel_zip])
+            raise RuntimeError("La release de PrestaShop no contiene prestashop.zip")
+
+        # Limpiar docroot y extraer el código real directamente dentro
+        _run(["find", docroot, "-mindepth", "1", "-delete"])
+        rc, _, err = _run(["unzip", "-q", inner, "-d", docroot])
+        _run(["rm", "-rf", tmp, rel_zip])
+        if rc != 0:
+            raise RuntimeError(f"Extracción del core de PrestaShop falló: {err}")
+        _chown_tree(docroot, owner)
+
+        # Instalación desatendida por CLI
+        url = f"https://{domain}"
+        cli = os.path.join(docroot, "install", "index_cli.php")
+        if not os.path.isfile(cli):
+            raise RuntimeError("No se encontró el instalador CLI de PrestaShop (install/index_cli.php)")
+
+        rc, out, err = _run([
+            php_bin, cli,
+            "--domain=" + domain,
+            "--db_server=127.0.0.1",
+            "--db_name=" + db["db_name"],
+            "--db_user=" + db["db_user"],
+            "--db_password=" + db["db_pass"],
+            "--prefix=ps_",
+            "--name=" + domain,
+            "--email=" + admin_email,
+            "--password=" + admin_pass,
+            "--firstname=Admin",
+            "--lastname=" + domain,
+            "--language=es",
+            "--country=es",
+            "--newsletter=0",
+            "--send_email=0",
+            "--ssl=1",
+        ], cwd=os.path.join(docroot, "install"), as_user=owner, timeout=1200)
+        if rc != 0:
+            raise RuntimeError(f"Instalador CLI de PrestaShop falló: {(err or out)[:500]}")
+
+        # Post-instalación obligatoria: borrar install/ y renombrar admin/ a un
+        # nombre no adivinable (PrestaShop lo exige por seguridad).
+        admin_token = "admin" + _gen_suffix(8)
+        _run(["rm", "-rf", os.path.join(docroot, "install")])
+        old_admin = os.path.join(docroot, "admin")
+        new_admin = os.path.join(docroot, admin_token)
+        if os.path.isdir(old_admin):
+            _run(["mv", old_admin, new_admin])
+
+        _chown_tree(docroot, owner)
+        return {
+            "app": "prestashop",
+            "url": url,
+            "admin_url": f"{url}/{admin_token}",
+            "admin_user": admin_email,   # PrestaShop entra con el email
             "admin_password": admin_pass,
             "db": db,
         }

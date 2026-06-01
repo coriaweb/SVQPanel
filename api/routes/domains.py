@@ -1083,13 +1083,14 @@ async def install_app(
         raise HTTPException(status_code=400, detail=f"App no soportada: {app}")
 
     # Apps con cuenta de administrador requieren contraseña (mín. 8)
-    if app in ("wordpress", "nextcloud"):
+    if app in ("wordpress", "nextcloud", "prestashop"):
         if not payload.admin_password or len(payload.admin_password) < 8:
             raise HTTPException(status_code=400,
                                 detail="La contraseña de administrador es obligatoria (mínimo 8 caracteres)")
-        if app == "wordpress" and not payload.admin_email:
+        # WordPress y PrestaShop necesitan email (PrestaShop entra con el email)
+        if app in ("wordpress", "prestashop") and not payload.admin_email:
             raise HTTPException(status_code=400,
-                                detail="El email de administrador es obligatorio para WordPress")
+                                detail=f"El email de administrador es obligatorio para {SUPPORTED_APPS[app]['name']}")
 
     # Docroot real del dominio
     docroot = domain.custom_docroot or get_domain_root(owner.username, domain.domain_name) + "/public_html"
@@ -1139,6 +1140,20 @@ async def install_app(
                 _apply_builtin_template(domain, "nextcloud", owner, db)
             except Exception as ve:
                 result["warning"] = f"Nextcloud instalado; aplica la plantilla 'nextcloud' manualmente: {ve}"
+        elif app == "prestashop":
+            result = installer.install_prestashop(
+                domain=domain.domain_name,
+                owner=owner.username,
+                docroot=docroot,
+                admin_user=payload.admin_user,
+                admin_pass=payload.admin_password,
+                admin_email=payload.admin_email,
+                php_version=domain.php_version,
+            )
+            try:
+                _apply_builtin_template(domain, "prestashop", owner, db)
+            except Exception as ve:
+                result["warning"] = f"PrestaShop instalado; aplica la plantilla 'prestashop' manualmente: {ve}"
         else:
             raise HTTPException(status_code=400, detail=f"Instalador de '{app}' aún no disponible")
     except HTTPException:

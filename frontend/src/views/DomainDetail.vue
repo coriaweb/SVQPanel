@@ -90,6 +90,7 @@
                   <option value="wordpress">WordPress</option>
                   <option value="laravel">Laravel</option>
                   <option value="nextcloud">Nextcloud</option>
+                  <option value="prestashop">PrestaShop</option>
                 </select>
               </label>
               <label class="app-field" v-if="appNeedsAdmin">
@@ -109,6 +110,7 @@
             </div>
             <p v-if="appForm.app === 'laravel'" class="dd-muted"><i class="bi bi-info-circle"></i> Laravel se instala sin usuario admin (lo defines en tu app). Servirá desde <code>/public</code> automáticamente.</p>
             <p v-else-if="appForm.app === 'nextcloud'" class="dd-muted"><i class="bi bi-info-circle"></i> Nextcloud se instala desatendido con esta cuenta admin. La primera carga puede tardar unos segundos.</p>
+            <p v-else-if="appForm.app === 'prestashop'" class="dd-muted"><i class="bi bi-info-circle"></i> PrestaShop se instala desatendido. Entrarás al back office con tu <strong>email</strong> y contraseña; la URL de admin se mostrará al terminar.</p>
             <div class="app-install__foot">
               <small class="dd-muted"><i class="bi bi-exclamation-triangle"></i> El dominio debe estar vacío (sin web previa).</small>
               <BaseButton variant="primary" size="sm" icon="download" :loading="installing" @click="doInstallApp">Instalar</BaseButton>
@@ -380,9 +382,9 @@ export default {
     const appForm = ref({ app: 'wordpress', admin_user: 'admin', admin_password: '', admin_email: '' })
     const installing = ref(false)
     const installResult = ref(null)
-    // wordpress y nextcloud tienen cuenta admin; solo wordpress pide email
-    const appNeedsAdmin = computed(() => ['wordpress', 'nextcloud'].includes(appForm.value.app))
-    const appNeedsEmail = computed(() => appForm.value.app === 'wordpress')
+    // wordpress/nextcloud/prestashop tienen cuenta admin; wordpress y prestashop piden email
+    const appNeedsAdmin = computed(() => ['wordpress', 'nextcloud', 'prestashop'].includes(appForm.value.app))
+    const appNeedsEmail = computed(() => ['wordpress', 'prestashop'].includes(appForm.value.app))
     const doInstallApp = async () => {
       if (appNeedsAdmin.value) {
         if (!appForm.value.admin_password || appForm.value.admin_password.length < 8) {

@@ -232,7 +232,7 @@ BUILTIN_TEMPLATES = [
     {
         "name": "PrestaShop",
         "slug": "prestashop",
-        "description": "PrestaShop. Reglas de rewrite para el módulo de URLs amigables y protección de config.",
+        "description": "PrestaShop 8. Front controller, URLs amigables, protección de config/install y assets cacheados.",
         "category": "ecommerce",
         "fastcgi_cache_default": False,
         "php_ini_overrides": json.dumps({
@@ -242,17 +242,25 @@ BUILTIN_TEMPLATES = [
             "max_execution_time":  "180",
         }),
         "nginx_extra": """
-    # ── PrestaShop ──────────────────────────────────────────────────────
+    # ── PrestaShop 8 ────────────────────────────────────────────────────
     add_header X-Content-Type-Options "nosniff" always;
+    add_header X-Frame-Options "SAMEORIGIN" always;
 
-    location ~* /config/.*\\.inc\\.php$  { deny all; }
-    location ~* /app/config/.*\\.yml$    { deny all; }
-    location ~* /app/config/.*\\.yaml$   { deny all; }
-    location = /install                  { return 403; }
-    location ~* ^/install/               { return 403; }
-    location ~* ^/admin\\d+/             { }  # admin dir personalizada: permitir
+    # Rutas sensibles / instalador (el instalador se borra tras instalar)
+    location ~* /config/.*\\.inc\\.php$   { deny all; }
+    location ~* /app/config/.*\\.ya?ml$   { deny all; }
+    location ~* ^/(?:install|install-dev)(?:$|/) { deny all; }
+    location ~* ^/(?:\\.|app/logs|var/logs|translations|mails) { deny all; }
 
-    location ~* \\.(jpg|jpeg|png|gif|ico|css|js|woff2|svg)$ {
+    # Front controller: PrettyURLs → index.php (el back office se sirve por su
+    # propio index.php dentro del directorio admin renombrado, no necesita regla).
+    location / {
+        try_files $uri $uri/ /index.php$is_args$args;
+    }
+
+    # Assets estáticos cacheados
+    location ~* \\.(jpg|jpeg|png|gif|ico|css|js|mjs|woff2?|svg|webp)$ {
+        try_files $uri =404;
         expires 30d;
         add_header Cache-Control "public, immutable";
         access_log off;
