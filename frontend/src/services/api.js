@@ -39,9 +39,14 @@ class APIClient {
         if (contentType.includes('application/json')) {
           data = await response.json()
         } else {
-          // El servidor devolvió HTML (nginx error, 502, etc.) en lugar de JSON
-          const text = await response.text()
-          throw new Error(`Error ${response.status}: el servidor no está disponible`)
+          // El endpoint /api devolvió algo que no es JSON (normalmente el
+          // index.html del SPA o una página de error de nginx). Suele significar
+          // que el backend FastAPI no está respondiendo o el proxy /api no llega.
+          await response.text()  // drenar el body
+          throw new Error(
+            'La API no respondió correctamente (no es JSON). ' +
+            'Comprueba que el backend de SVQPanel está en ejecución.'
+          )
         }
       }
 
