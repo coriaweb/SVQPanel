@@ -1013,35 +1013,37 @@ if [[ "$INSTALL_MARIADB" == true ]]; then
     fi
     echo -e "  ${GREEN}✓ MariaDB 11.4 instalado${NC}"
 
-    # ── Generar contraseñas aleatorias ────────────────────────────────────────
-    MARIADB_ROOT_PASS=$(python3 -c \
-        "import secrets,string; \
-         chars=string.ascii_letters+string.digits; \
-         print(''.join(secrets.choice(chars) for _ in range(24)))")
-
+    # ── Generar contraseña del usuario admin del panel ────────────────────────
+    # root NO usa contraseña: conecta vía unix_socket (default Debian/MariaDB),
+    # más seguro e idempotente entre reinstalaciones.
     MARIADB_PANEL_PASS=$(python3 -c \
         "import secrets,string; \
          chars=string.ascii_letters+string.digits; \
          print(''.join(secrets.choice(chars) for _ in range(24)))")
 
     # ── Asegurar instalación (equivale a mysql_secure_installation) ────────────
-    # En instalación limpia MariaDB en Debian usa unix_socket para root,
-    # lo que permite conectar sin contraseña desde el SO root.
-    # En reinstalación puede que ya exista contraseña: usamos --defaults-file
-    # de Debian (contiene credenciales de mantenimiento) como fallback.
+    # Mantenemos la autenticación de root vía unix_socket (default en Debian):
+    # el root del SO conecta sin contraseña, y NO se puede conectar por red.
+    # Esto es más seguro y, sobre todo, idempotente: una reinstalación vuelve
+    # a poder administrar MariaDB sin depender de una contraseña anterior.
+    # _mariadb_root sirve para todas las operaciones administrativas del install.
     _mariadb_root() {
-        # Intenta sin contraseña (instalación limpia / unix_socket)
+        # 1) unix_socket como root del SO (instalación limpia y la habitual)
         if mariadb --user=root --connect-timeout=5 -e "SELECT 1" &>/dev/null; then
             mariadb --user=root "$@"
+        # 2) reinstalación donde root quedó con contraseña: usar la guardada
+        elif [[ -f /opt/svqpanel/.credentials/mariadb.txt ]] && \
+             _PREV_ROOT_PASS=$(grep -oP 'MariaDB root:\s+root\s+/\s+\K\S+' /opt/svqpanel/.credentials/mariadb.txt 2>/dev/null) && \
+             [[ -n "$_PREV_ROOT_PASS" ]] && \
+             mariadb --user=root --password="$_PREV_ROOT_PASS" --connect-timeout=5 -e "SELECT 1" &>/dev/null; then
+            mariadb --user=root --password="$_PREV_ROOT_PASS" "$@"
+        # 3) último recurso: credenciales de mantenimiento de Debian
         else
-            # Fallback: fichero de mantenimiento de Debian
             mariadb --defaults-file=/etc/mysql/debian.cnf "$@"
         fi
     }
 
     _mariadb_root << MARIADBEOF
--- Contraseña root
-ALTER USER 'root'@'localhost' IDENTIFIED VIA mysql_native_password USING PASSWORD('${MARIADB_ROOT_PASS}');
 -- Eliminar usuarios anónimos y BD test
 DELETE FROM mysql.user WHERE User='';
 DROP DATABASE IF EXISTS test;
@@ -1064,7 +1066,7 @@ MARIADBEOF
     mkdir -p /opt/svqpanel/.credentials
     cat > /opt/svqpanel/.credentials/mariadb.txt << MDBCREDEOF
 # Credenciales MariaDB — NO compartir
-MariaDB root:          root / ${MARIADB_ROOT_PASS}
+MariaDB root:          unix_socket (sin contraseña; usar 'mariadb -u root' como root del SO)
 Panel admin (svqpanel_admin): ${MARIADB_PANEL_PASS}
 MDBCREDEOF
     chmod 600 /opt/svqpanel/.credentials/mariadb.txt
