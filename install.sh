@@ -1631,9 +1631,42 @@ RCPYEOF
 
     ln -sf /etc/nginx/sites-available/svqpanel /etc/nginx/sites-enabled/svqpanel
     rm -f /etc/nginx/sites-enabled/default
+
+    # ── Página de bienvenida para accesos por IP (puerto 80) ──────────────────
+    # Quien entre por http://IP (sin un dominio configurado) ve una página
+    # neutra "el servidor funciona" en vez del panel. El panel solo se sirve por
+    # su hostname:puerto dedicado. Este vhost es default_server: captura todo lo
+    # que no haga match con otro server_name en el puerto 80.
+    mkdir -p /var/www/html
+    if [[ -f /opt/svqpanel/scripts/assets/welcome.html ]]; then
+        cp /opt/svqpanel/scripts/assets/welcome.html /var/www/html/index.html
+    fi
+    chown -R www-data:www-data /var/www/html
+
+    cat > /etc/nginx/sites-available/svqpanel-welcome << 'WELCOMEEOF'
+# Página de bienvenida por IP / dominio no configurado (puerto 80, default).
+server {
+    listen 80 default_server;
+    listen [::]:80 default_server;
+    server_name _;
+
+    # Permitir validación ACME de Let's Encrypt para cualquier dominio.
+    location /.well-known/acme-challenge/ {
+        root /var/www/html;
+    }
+
+    root /var/www/html;
+    index index.html;
+    location / {
+        try_files $uri $uri/ =200;
+    }
+}
+WELCOMEEOF
+    ln -sf /etc/nginx/sites-available/svqpanel-welcome /etc/nginx/sites-enabled/svqpanel-welcome
+
     nginx -t && systemctl restart nginx
 
-    echo -e "${GREEN}✓ Nginx configurado${NC}\n"
+    echo -e "${GREEN}✓ Nginx configurado (panel + bienvenida por IP)${NC}\n"
 fi
 
 ###############################################################################

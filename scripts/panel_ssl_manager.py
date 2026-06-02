@@ -687,22 +687,11 @@ server {{
         cert_path = f"/etc/letsencrypt/live/{hostname}/fullchain.pem"
         key_path = f"/etc/letsencrypt/live/{hostname}/privkey.pem"
 
-        # Puerto 80: SOLO valida ACME y (si force_https) redirige al panel HTTPS
-        # en su puerto dedicado. Nunca sirve el panel en 80.
-        redirect_block = (
-            f"    location / {{ return 301 https://$host:{PANEL_WEB_PORT}$request_uri; }}\n"
-            if force_https else
-            f"    location / {{ return 404; }}\n"
-        )
-        http_block = f"""
-server {{
-    listen 80;
-    server_name {hostname};
-    location /.well-known/acme-challenge/ {{
-        root /var/www/html;
-    }}
-{redirect_block}}}
-"""
+        # Puerto 80: NO lo gestiona el vhost del panel. El tráfico HTTP (por IP
+        # o por hostname) lo sirve el vhost 'svqpanel-welcome' (default_server),
+        # que muestra una página de bienvenida neutra y atiende el ACME challenge.
+        # El panel se sirve EXCLUSIVAMENTE por HTTPS en su puerto dedicado.
+        http_block = ""
 
         # El panel HTTPS se sirve en el puerto dedicado.
         https_block = f"""
