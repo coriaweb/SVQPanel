@@ -2242,18 +2242,18 @@ import sys
 import os
 sys.path.insert(0, '/opt/svqpanel')
 
-from sqlalchemy import create_engine
-from sqlalchemy.orm import sessionmaker
+# Importar todos los modelos para que los mappers de SQLAlchemy resuelvan
+# (User tiene relationships/FK a plans, etc.). Reutilizamos el engine del panel.
+from api.models.database import engine, SessionLocal
+from api.models import (
+    models_user, models_domain, models_settings, models_dns,
+    models_dns_node, models_mail, models_client_db, models_security,
+    models_server_ip, models_backup, models_notification, models_git,
+    models_plan, models_cron, models_template, models_sftp_account,
+)  # noqa
 from api.models.models_user import User
-from api.models.models_domain import Domain
-from api.models.models_dns import DnsZone, DnsRecord
-from api.models.models_mail import MailDomain, Mailbox, MailAlias
-from api.models.models_client_db import ClientDatabase
 
-DATABASE_URL = "postgresql://panel_user:panel_password_123@localhost/panel_db"
-engine = create_engine(DATABASE_URL)
-Session = sessionmaker(bind=engine)
-session = Session()
+session = SessionLocal()
 
 # Leer contraseña desde variable de entorno
 admin_password = os.environ.get('SVQPANEL_ADMIN_PASS', 'changeme123')
