@@ -96,6 +96,15 @@ class SSLManager(SystemManager):
         return self.create_ssl_with_email(
             domain_name, email, extra_domains=[f"webmail.{domain_name}"])
 
+    def expand_for_mail(self, domain_name: str, email: str) -> dict:
+        """
+        Reemite (expand) el certificado del dominio añadiendo mail.{dominio} como
+        SAN, para presentar TLS válido en IMAP/POP3/SMTP (SNI). Requiere que
+        mail.{dominio} ya resuelva hacia este servidor (validación ACME).
+        """
+        return self.create_ssl_with_email(
+            domain_name, email, extra_domains=[f"mail.{domain_name}"])
+
     def revoke_ssl(self, domain_name: str) -> dict:
         """
         Revoke SSL certificate

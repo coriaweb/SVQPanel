@@ -255,6 +255,57 @@ def _rebuild_rspamd(db: Session):
         logger.error(f"Error actualizando Rspamd: {e}")
 
 
+def _dns_ensure_mail_record(domain_name: str, db: Session) -> bool:
+    """
+    Asegura el registro 'mail' (A → IP del servidor) en la zona del panel, para
+    que mail.{dominio} resuelva (necesario para el cert TLS y para que los
+    clientes conecten). Devuelve True si la zona está en el panel.
+    """
+    zone = db.query(DnsZone).filter(DnsZone.domain_name == domain_name).first()
+    if not zone:
+        return False
+    # IP del servidor desde settings
+    from api.models.models_settings import Settings
+    s = db.query(Settings).filter(Settings.id == 1).first()
+    server_ip = (s.server_ipv4 if s else None) or zone.ip_address
+    if not server_ip:
+        return True  # zona en panel pero sin IP conocida; no rompemos
+
+    from api.routes.dns import _sync_zone_to_bind, _bump_serial
+    existing = db.query(DnsRecord).filter(
+        DnsRecord.zone_id == zone.id, DnsRecord.name == "mail",
+        DnsRecord.record_type == "A",
+    ).first()
+    if existing:
+        if existing.content != server_ip:
+            existing.content = server_ip
+        else:
+            return True
+    else:
+        db.add(DnsRecord(zone_id=zone.id, record_type="A", name="mail",
+                         content=server_ip, ttl=14400, priority=0))
+    zone.serial = _bump_serial(zone.serial)
+    db.commit()
+    db.refresh(zone)
+    try:
+        _sync_zone_to_bind(zone, db)
+    except Exception as e:
+        logger.warning(f"No se pudo sincronizar zona tras mail A: {e}")
+    return True
+
+
+def _rebuild_mail_tls(db: Session):
+    """Regenera la config SNI (Dovecot+Postfix) desde la BD. Tolerante a fallos."""
+    try:
+        from scripts.mail_tls_manager import MailTLSManager
+        all_domains = db.query(MailDomain).filter(MailDomain.is_active == True).all()  # noqa: E712
+        MailTLSManager().rebuild_from_db(all_domains)
+    except PermissionError:
+        logger.warning("Sin permisos para configurar SNI de correo (¿entorno dev?)")
+    except Exception as e:
+        logger.error(f"Error configurando SNI de correo: {e}")
+
+
 def _dns_set_webmail_record(domain_name: str, db: Session, present: bool) -> bool:
     """
     Añade (present=True) o quita el registro 'webmail' (CNAME → dominio) en la
@@ -703,6 +754,76 @@ async def set_domain_relay(domain_id: int, data: DomainRelayRequest,
         raise HTTPException(502, f"Error configurando el relay del dominio: {e}")
 
     return {"status": "success", "enabled": True, "host": data.host, "port": data.port}
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# TLS por dominio de correo (SNI: mail.{dominio} con su propio certificado)
+# ─────────────────────────────────────────────────────────────────────────────
+
+@router.get("/mail/domains/{domain_id}/tls")
+async def get_mail_tls(domain_id: int, current_user=Depends(require_auth),
+                       db: Session = Depends(get_db)):
+    """Estado del TLS propio del dominio: activo, cert válido, DNS, host."""
+    md = _get_mail_domain_or_404(domain_id, db)
+    _require_edit(md, current_user)
+    from scripts.mail_tls_manager import mail_host, cert_includes_mail
+    zone = db.query(DnsZone).filter(DnsZone.domain_name == md.domain_name).first()
+    return {
+        "domain": md.domain_name,
+        "host": mail_host(md.domain_name),
+        "enabled": bool(getattr(md, "mail_tls_enabled", False)),
+        "cert_valid": cert_includes_mail(md.domain_name),
+        "dns_managed": zone is not None,
+    }
+
+
+@router.post("/mail/domains/{domain_id}/tls")
+async def set_mail_tls(domain_id: int, enabled: bool = True,
+                       current_user=Depends(require_auth),
+                       db: Session = Depends(get_db)):
+    """
+    Activa/desactiva el TLS propio del dominio (cert para mail.{dominio} vía SNI).
+    Al activar: asegura el registro DNS 'mail', emite/expande el cert con
+    mail.{dominio} y regenera la config SNI de Dovecot+Postfix.
+    """
+    _require_mail_enabled()
+    md = _get_mail_domain_or_404(domain_id, db)
+    _require_edit(md, current_user)
+
+    if not enabled:
+        md.mail_tls_enabled = False
+        db.commit()
+        _rebuild_mail_tls(db)
+        return {"status": "success", "enabled": False}
+
+    # 1) DNS mail.{dominio} → IP (si la zona está en el panel)
+    _dns_ensure_mail_record(md.domain_name, db)
+
+    # 2) Emitir/expandir el cert del dominio para incluir mail.{dominio}
+    email = getattr(current_user, "email", None) or f"admin@{md.domain_name}"
+    try:
+        from scripts.ssl_manager import SSLManager
+        SSLManager().expand_for_mail(md.domain_name, email)
+    except PermissionError:
+        raise HTTPException(403, "Se necesitan privilegios root")
+    except Exception as e:
+        raise HTTPException(
+            502,
+            f"No se pudo emitir el certificado de mail.{md.domain_name}: {e}. "
+            f"Comprueba que mail.{md.domain_name} apunta a este servidor.")
+
+    # 3) Activar y regenerar SNI
+    md.mail_tls_enabled = True
+    db.commit()
+    _rebuild_mail_tls(db)
+
+    from scripts.mail_tls_manager import cert_includes_mail
+    return {
+        "status": "success", "enabled": True,
+        "cert_valid": cert_includes_mail(md.domain_name),
+        "message": f"TLS activado: los clientes ya pueden usar mail.{md.domain_name} "
+                   f"con certificado válido.",
+    }
 
 
 # ─────────────────────────────────────────────────────────────────────────────

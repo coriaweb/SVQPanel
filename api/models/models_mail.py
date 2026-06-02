@@ -54,6 +54,12 @@ class MailDomain(Base):
     relay_port     = Column(Integer, default=587)
     relay_username = Column(String(255), nullable=True)
 
+    # ── TLS por dominio (SNI) ──────────────────────────────────────────────
+    # Si está activo, el correo de este dominio presenta su propio certificado
+    # en mail.{dominio} (IMAP/POP3/SMTP) vía SNI. El cert es el del dominio
+    # (Let's Encrypt) con mail.{dominio} como SAN.
+    mail_tls_enabled = Column(Boolean, default=False)
+
     # ── Antispam (Rspamd por dominio) ─────────────────────────────────────
     spam_tag_threshold    = Column(Float, default=6.0)   # score → añadir cabecera spam
     spam_reject_threshold = Column(Float, default=15.0)  # score → rechazar

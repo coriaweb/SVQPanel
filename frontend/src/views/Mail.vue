@@ -578,6 +578,42 @@
                 <i v-else class="bi bi-save me-1"></i>
                 {{ relayForm.enabled ? 'Guardar relay del dominio' : 'Desactivar relay del dominio' }}
               </button>
+
+              <!-- TLS propio del dominio (SNI) -->
+              <hr class="my-4">
+              <div v-if="mailtls" class="mb-2">
+                <div class="d-flex justify-content-between align-items-center">
+                  <div>
+                    <h6 class="mb-1"><i class="bi bi-shield-lock me-1"></i>Certificado TLS propio (<code>{{ mailtls.host }}</code>)</h6>
+                    <p class="text-muted small mb-0">
+                      Tus clientes configuran <strong>{{ mailtls.host }}</strong> como servidor IMAP/SMTP
+                      y reciben un certificado válido de su propio dominio (sin avisos).
+                    </p>
+                  </div>
+                  <div class="form-check form-switch">
+                    <input class="form-check-input" type="checkbox" role="switch"
+                           :checked="mailtls.enabled" :disabled="mailtlsSaving"
+                           @change="toggleMailTls($event.target.checked)" style="width:3em;height:1.5em">
+                  </div>
+                </div>
+                <div v-if="mailtls.enabled" class="mt-2">
+                  <span v-if="mailtls.cert_valid" class="badge bg-success">
+                    <i class="bi bi-shield-check me-1"></i>Certificado válido para {{ mailtls.host }}
+                  </span>
+                  <span v-else class="badge bg-warning text-dark">
+                    <i class="bi bi-exclamation-triangle me-1"></i>Certificado pendiente
+                  </span>
+                </div>
+                <p v-if="!mailtls.enabled" class="text-muted small mt-2 mb-0">
+                  Al activarlo se emite el certificado Let's Encrypt para <code>{{ mailtls.host }}</code>.
+                  <span v-if="!mailtls.dns_managed">
+                    Tu DNS es externo: crea primero el registro <code>mail</code> apuntando a la IP del servidor.
+                  </span>
+                </p>
+                <p v-if="mailtlsSaving" class="text-muted small mt-2 mb-0">
+                  <span class="spinner-border spinner-border-sm me-1"></span>Emitiendo certificado y configurando…
+                </p>
+              </div>
             </template>
           </div>
 
@@ -1170,6 +1206,7 @@ export default {
       dkimInfo.value = null
       webmail.value = null
       relay.value = null
+      mailtls.value = null
       settingsForm.value = {
         catch_all:     md.catch_all || '',
         max_mailboxes: md.max_mailboxes,
@@ -1205,6 +1242,32 @@ export default {
     const loadingRelay = ref(false)
     const relaySaving  = ref(false)
 
+    // ── TLS propio del dominio (SNI) ──
+    const mailtls       = ref(null)
+    const mailtlsSaving = ref(false)
+
+    const loadMailTls = async (domainId) => {
+      try {
+        mailtls.value = await api.getMailTls(domainId)
+      } catch (e) {
+        mailtls.value = null
+      }
+    }
+
+    const toggleMailTls = async (enabled) => {
+      mailtlsSaving.value = true
+      try {
+        const r = await api.setMailTls(selectedDomain.value.id, enabled)
+        store.showNotification(r.message || (enabled ? 'TLS activado' : 'TLS desactivado'), 'success')
+        await loadMailTls(selectedDomain.value.id)
+      } catch (e) {
+        store.showNotification('Error: ' + (e.message || e), 'danger')
+        await loadMailTls(selectedDomain.value.id)
+      } finally {
+        mailtlsSaving.value = false
+      }
+    }
+
     const loadRelay = async (domainId) => {
       loadingRelay.value = true
       try {
@@ -1219,6 +1282,8 @@ export default {
       } finally {
         loadingRelay.value = false
       }
+      // El tab "Relay SMTP" muestra también el TLS propio del dominio
+      await loadMailTls(domainId)
     }
 
     const saveDomainRelay = async () => {
@@ -1571,6 +1636,7 @@ export default {
       webmail, loadingWebmail, webmailSaving, webmailSslIssuing,
       loadWebmail, toggleWebmail, issueWebmailSsl,
       relay, relayForm, loadingRelay, relaySaving, loadRelay, saveDomainRelay,
+      mailtls, mailtlsSaving, toggleMailTls,
       loadDomains, openDetail, switchTab,
       openNewDomain, createDomain, saveSettings,
       loadSpamSettings, saveSpamSettings,

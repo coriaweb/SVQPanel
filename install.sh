@@ -471,9 +471,22 @@ service auth {
 }
 DOVESASLEOF
 
+    # ── TLS por dominio (SNI) — estructura base ───────────────────────────
+    # El panel configura un certificado propio por dominio en mail.{dominio}
+    # (Dovecot local_name + Postfix tls_server_sni_maps) desde
+    # scripts/mail_tls_manager.py. Aquí dejamos los ficheros vacíos listos.
+    # Dovecot incluye conf.d/*.conf automáticamente, así que el SNI se aplica
+    # en cuanto el panel lo rellena.
+    : > /etc/dovecot/conf.d/99-svqpanel-sni.conf
+    echo "# SVQPanel — TLS por dominio (SNI). Lo rellena el panel." \
+        > /etc/dovecot/conf.d/99-svqpanel-sni.conf
+    : > /etc/postfix/svqpanel_sni
+    postmap -F hash:/etc/postfix/svqpanel_sni 2>/dev/null || true
+    postconf -e "tls_server_sni_maps = hash:/etc/postfix/svqpanel_sni"
+
     systemctl enable dovecot
     systemctl restart dovecot
-    echo -e "  ${GREEN}✓ Dovecot configurado (IMAP 143/993, POP3 110/995, SASL para Postfix)${NC}"
+    echo -e "  ${GREEN}✓ Dovecot configurado (IMAP 143/993, POP3 110/995, SASL + SNI listo)${NC}"
 
     # ── 3. REDIS ──────────────────────────────────────────────────────────
     echo -e "  ${YELLOW}→ Instalando Redis...${NC}"

@@ -515,6 +515,14 @@ class APIClient {
     return this.post(`/api/mail/domains/${domainId}/relay`, data)
   }
 
+  getMailTls(domainId) {
+    return this.get(`/api/mail/domains/${domainId}/tls`)
+  }
+
+  setMailTls(domainId, enabled) {
+    return this.post(`/api/mail/domains/${domainId}/tls?enabled=${enabled ? 'true' : 'false'}`, {})
+  }
+
   // Mail — DKIM
   generateDkim(domainId, selector = 'mail') {
     return this.post(`/api/mail/domains/${domainId}/dkim`, { selector })

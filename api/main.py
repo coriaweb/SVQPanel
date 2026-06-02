@@ -511,6 +511,8 @@ def _run_migrations():
         "ALTER TABLE mail_domains ADD COLUMN IF NOT EXISTS relay_host VARCHAR(255)",
         "ALTER TABLE mail_domains ADD COLUMN IF NOT EXISTS relay_port INTEGER DEFAULT 587",
         "ALTER TABLE mail_domains ADD COLUMN IF NOT EXISTS relay_username VARCHAR(255)",
+        # TLS por dominio de correo (SNI)
+        "ALTER TABLE mail_domains ADD COLUMN IF NOT EXISTS mail_tls_enabled BOOLEAN NOT NULL DEFAULT FALSE",
     ]
     with engine.connect() as conn:
         for sql in migrations:
