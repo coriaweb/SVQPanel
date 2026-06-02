@@ -204,6 +204,7 @@ apt-get install -y -qq \
     curl \
     wget \
     git \
+    openssh-client \
     vim \
     htop \
     net-tools \

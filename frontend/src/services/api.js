@@ -523,6 +523,39 @@ class APIClient {
     return this.post(`/api/mail/domains/${domainId}/tls?enabled=${enabled ? 'true' : 'false'}`, {})
   }
 
+  // Git deploy por dominio
+  getGitStatus(domainId) {
+    return this.get(`/api/git/domains/${domainId}`)
+  }
+
+  setupGit(domainId, data) {
+    return this.post(`/api/git/domains/${domainId}/setup`, data)
+  }
+
+  updateGit(domainId, data) {
+    return this.put(`/api/git/domains/${domainId}`, data)
+  }
+
+  deployGit(domainId) {
+    return this.post(`/api/git/domains/${domainId}/deploy`, {})
+  }
+
+  rollbackGit(domainId, releaseName) {
+    return this.post(`/api/git/domains/${domainId}/rollback`, { release_name: releaseName })
+  }
+
+  getGitDeployments(domainId) {
+    return this.get(`/api/git/domains/${domainId}/deployments`)
+  }
+
+  genGitDeployKey(domainId) {
+    return this.post(`/api/git/domains/${domainId}/deploy-key`, {})
+  }
+
+  disableGit(domainId) {
+    return this.delete(`/api/git/domains/${domainId}`)
+  }
+
   // Mail — DKIM
   generateDkim(domainId, selector = 'mail') {
     return this.post(`/api/mail/domains/${domainId}/dkim`, { selector })

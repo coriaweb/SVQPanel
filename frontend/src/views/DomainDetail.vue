@@ -185,6 +185,138 @@
         <IPv6Manager :domain="domain" @reload="reloadDomain" />
       </BaseCard>
 
+      <!-- ===== Git deploy ===== -->
+      <BaseCard v-show="tab === 'git'" title="Despliegue Git" icon="git">
+        <template #actions v-if="git && git.enabled">
+          <BaseButton size="sm" variant="primary" :loading="gitDeploying" @click="doDeploy">
+            <i class="bi bi-arrow-repeat"></i> Actualizar ahora
+          </BaseButton>
+        </template>
+
+        <div v-if="gitLoading" class="svq-skeleton" style="height:160px"></div>
+
+        <!-- No activo: formulario de alta -->
+        <template v-else-if="git && !git.enabled">
+          <p class="dd-muted" style="margin-bottom:var(--sp-4)">
+            Despliega tu sitio directamente desde un repositorio Git (GitHub/GitLab).
+            Cada despliegue crea una <strong>release</strong> nueva; puedes volver a una
+            anterior con un clic. Requiere que <code>public_html</code> esté vacío.
+          </p>
+
+          <div class="dd-field">
+            <label>URL del repositorio</label>
+            <input class="form-control mono" v-model="gitForm.repo_url"
+                   placeholder="https://github.com/usuario/repo.git  o  git@github.com:usuario/repo.git">
+          </div>
+          <div class="row g-3">
+            <div class="col-md-4 dd-field">
+              <label>Rama</label>
+              <input class="form-control mono" v-model="gitForm.branch" placeholder="main">
+            </div>
+            <div class="col-md-4 dd-field">
+              <label>Proveedor</label>
+              <select class="form-select" v-model="gitForm.provider">
+                <option value="github">GitHub</option>
+                <option value="gitlab">GitLab</option>
+                <option value="generic">Otro</option>
+              </select>
+            </div>
+            <div class="col-md-4 dd-field">
+              <label>Releases a conservar</label>
+              <input type="number" min="1" max="30" class="form-control" v-model.number="gitForm.keep_releases">
+            </div>
+          </div>
+          <div class="dd-field">
+            <label>Comandos de build (opcional, uno por línea)</label>
+            <textarea class="form-control mono" rows="3" v-model="gitForm.build_commands"
+                      placeholder="composer install --no-dev --optimize-autoloader&#10;npm ci && npm run build"></textarea>
+            <small class="dd-muted">Se ejecutan tras cada despliegue, como tu usuario, dentro de la release.</small>
+          </div>
+
+          <!-- Deploy key para repos privados -->
+          <div class="border rounded p-3 mt-3" style="background:var(--surface-inset)">
+            <div class="d-flex justify-content-between align-items-center mb-2">
+              <strong><i class="bi bi-key me-1"></i>Repositorio privado (deploy key SSH)</strong>
+              <BaseButton size="sm" variant="ghost" :loading="gitKeyGen" @click="genKey">Generar clave</BaseButton>
+            </div>
+            <p class="dd-muted mb-2" style="font-size:.85rem">
+              Si tu repo es privado, genera la clave y añádela como <em>Deploy Key</em> en GitHub/GitLab,
+              luego usa la URL <code>git@…</code>.
+            </p>
+            <textarea v-if="git.deploy_key_pub" class="form-control mono" rows="2" readonly :value="git.deploy_key_pub"></textarea>
+          </div>
+
+          <div class="mt-4">
+            <BaseButton variant="primary" :loading="gitSaving" @click="doSetup">
+              <i class="bi bi-cloud-download"></i> Activar y desplegar
+            </BaseButton>
+          </div>
+        </template>
+
+        <!-- Activo: estado + releases + webhook -->
+        <template v-else-if="git">
+          <div class="dd-kv">
+            <div><span class="dd-muted">Repositorio</span><div class="mono">{{ git.repo_url }}</div></div>
+            <div><span class="dd-muted">Rama</span><div class="mono">{{ git.branch }}</div></div>
+            <div><span class="dd-muted">Release activa</span><div class="mono">{{ git.active_release || '—' }}</div></div>
+            <div v-if="git.last_deployment"><span class="dd-muted">Último commit</span>
+              <div class="mono">{{ (git.last_deployment.commit_sha || '').slice(0,7) }} — {{ git.last_deployment.commit_msg }}</div>
+            </div>
+          </div>
+
+          <!-- Webhook -->
+          <div class="border rounded p-3 mt-3" style="background:var(--surface-inset)">
+            <strong><i class="bi bi-broadcast me-1"></i>Auto-deploy por Webhook</strong>
+            <p class="dd-muted mb-2" style="font-size:.85rem">
+              Añade esta URL en los Webhooks de tu repo (content-type JSON, secret = el token de la URL).
+              Cada push a <code>{{ git.branch }}</code> desplegará automáticamente.
+            </p>
+            <div class="d-flex gap-2">
+              <input class="form-control mono" readonly :value="git.webhook_url">
+              <BaseButton size="sm" variant="ghost" @click="copyText(git.webhook_url)"><i class="bi bi-clipboard"></i></BaseButton>
+            </div>
+          </div>
+
+          <!-- Releases -->
+          <h6 class="mt-4 mb-2"><i class="bi bi-clock-history me-1"></i>Releases</h6>
+          <table class="table table-sm align-middle">
+            <thead><tr><th>Release</th><th>Estado</th><th class="text-end">Acción</th></tr></thead>
+            <tbody>
+              <tr v-for="r in git.releases" :key="r">
+                <td class="mono">{{ r }}</td>
+                <td><StatusBadge v-if="git.active_release === r" status="success" text="Activa" /><span v-else class="dd-muted">—</span></td>
+                <td class="text-end">
+                  <BaseButton v-if="git.active_release !== r" size="sm" variant="ghost"
+                              :loading="gitRolling === r" @click="doRollback(r)">Rollback</BaseButton>
+                </td>
+              </tr>
+              <tr v-if="!git.releases || !git.releases.length"><td colspan="3" class="dd-muted">Sin releases todavía.</td></tr>
+            </tbody>
+          </table>
+
+          <!-- Historial -->
+          <h6 class="mt-4 mb-2"><i class="bi bi-journal-text me-1"></i>Historial de despliegues</h6>
+          <table class="table table-sm align-middle">
+            <thead><tr><th>Fecha</th><th>Commit</th><th>Origen</th><th>Estado</th></tr></thead>
+            <tbody>
+              <tr v-for="d in gitDeployments" :key="d.id">
+                <td>{{ d.created_at ? new Date(d.created_at).toLocaleString('es-ES') : '—' }}</td>
+                <td class="mono">{{ (d.commit_sha || '').slice(0,7) || '—' }} {{ d.commit_msg }}</td>
+                <td>{{ d.trigger }}</td>
+                <td><StatusBadge :status="d.status === 'success' ? 'success' : 'danger'" :text="d.status" /></td>
+              </tr>
+              <tr v-if="!gitDeployments.length"><td colspan="4" class="dd-muted">Sin despliegues.</td></tr>
+            </tbody>
+          </table>
+
+          <div class="mt-3">
+            <BaseButton variant="ghost" size="sm" @click="doDisableGit">
+              <i class="bi bi-x-circle"></i> Desactivar despliegue Git
+            </BaseButton>
+          </div>
+        </template>
+      </BaseCard>
+
       <!-- ===== Logs ===== -->
       <BaseCard v-show="tab === 'logs'" title="Registros" icon="journal-text" flush>
         <template #actions>
@@ -222,7 +354,7 @@
 </template>
 
 <script>
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, onMounted, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useMainStore } from '../stores/useMainStore'
 import api from '../services/api'
@@ -253,6 +385,7 @@ export default {
       { key: 'ssl',      label: 'SSL',     icon: 'shield-lock' },
       { key: 'php',      label: 'PHP',     icon: 'filetype-php' },
       { key: 'ipv6',     label: 'IPv6',    icon: 'diagram-3' },
+      { key: 'git',      label: 'Git',     icon: 'git' },
       { key: 'logs',     label: 'Logs',    icon: 'journal-text' },
     ]
 
@@ -412,6 +545,91 @@ export default {
       }
     }
 
+    // ── Git deploy ──
+    const git = ref(null)
+    const gitDeployments = ref([])
+    const gitLoading = ref(false)
+    const gitSaving = ref(false)
+    const gitDeploying = ref(false)
+    const gitKeyGen = ref(false)
+    const gitRolling = ref('')
+    const gitForm = ref({ repo_url: '', branch: 'main', provider: 'github', build_commands: '', keep_releases: 5 })
+
+    const loadGit = async () => {
+      gitLoading.value = true
+      try {
+        const r = await api.getGitStatus(domainId.value)
+        git.value = r.data
+        if (git.value.enabled) {
+          gitForm.value.branch = git.value.branch || 'main'
+          gitForm.value.build_commands = git.value.build_commands || ''
+          gitForm.value.keep_releases = git.value.keep_releases || 5
+          await loadGitDeployments()
+        }
+      } catch (e) { store.showNotification('Error cargando Git: ' + e.message, 'danger') }
+      finally { gitLoading.value = false }
+    }
+    const loadGitDeployments = async () => {
+      try { const r = await api.getGitDeployments(domainId.value); gitDeployments.value = r.data || [] }
+      catch { gitDeployments.value = [] }
+    }
+    const genKey = async () => {
+      gitKeyGen.value = true
+      try {
+        const r = await api.genGitDeployKey(domainId.value)
+        if (git.value) git.value.deploy_key_pub = r.deploy_key_pub
+        store.showNotification('Deploy key generada', 'success')
+      } catch (e) { store.showNotification('Error: ' + e.message, 'danger') }
+      finally { gitKeyGen.value = false }
+    }
+    const doSetup = async () => {
+      if (!gitForm.value.repo_url.trim()) { store.showNotification('Indica la URL del repositorio', 'danger'); return }
+      gitSaving.value = true
+      try {
+        const r = await api.setupGit(domainId.value, gitForm.value)
+        git.value = r.data
+        store.showNotification(r.message || 'Repositorio desplegado', 'success')
+        await loadGitDeployments()
+      } catch (e) { store.showNotification('Error: ' + e.message, 'danger') }
+      finally { gitSaving.value = false }
+    }
+    const doDeploy = async () => {
+      gitDeploying.value = true
+      try {
+        const r = await api.deployGit(domainId.value)
+        git.value = r.data
+        store.showNotification(r.message || 'Despliegue completado', 'success')
+        await loadGitDeployments()
+      } catch (e) { store.showNotification('Error: ' + e.message, 'danger'); await loadGitDeployments() }
+      finally { gitDeploying.value = false }
+    }
+    const doRollback = async (releaseName) => {
+      if (!confirm(`¿Volver a la release ${releaseName}?`)) return
+      gitRolling.value = releaseName
+      try {
+        const r = await api.rollbackGit(domainId.value, releaseName)
+        git.value = r.data
+        store.showNotification(r.message || 'Rollback completado', 'success')
+        await loadGitDeployments()
+      } catch (e) { store.showNotification('Error: ' + e.message, 'danger') }
+      finally { gitRolling.value = '' }
+    }
+    const doDisableGit = async () => {
+      if (!confirm('¿Desactivar el despliegue Git? Los archivos actuales se conservan.')) return
+      try {
+        await api.disableGit(domainId.value)
+        store.showNotification('Despliegue Git desactivado', 'success')
+        await loadGit()
+      } catch (e) { store.showNotification('Error: ' + e.message, 'danger') }
+    }
+    const copyText = async (txt) => {
+      try { await navigator.clipboard.writeText(txt); store.showNotification('Copiado', 'success') }
+      catch { store.showNotification('No se pudo copiar', 'warning') }
+    }
+
+    // Cargar Git la primera vez que se entra en su pestaña
+    watch(tab, (t) => { if (t === 'git' && git.value === null) loadGit() })
+
     onMounted(async () => {
       await loadDomain()
       try { const d = await api.getPHPVersions(); phpVersions.value = d?.versions?.length ? d.versions : ['8.2'] }
@@ -428,6 +646,8 @@ export default {
       logTab, logLines, logsLoading, logsData, loadLogs, switchLog,
       downloading, downloadSite, suspend, unsuspend, remove, goFiles,
       appForm, installing, installResult, doInstallApp, appNeedsAdmin, appNeedsEmail,
+      git, gitDeployments, gitLoading, gitSaving, gitDeploying, gitKeyGen, gitRolling, gitForm,
+      loadGit, genKey, doSetup, doDeploy, doRollback, doDisableGit, copyText,
     }
   },
 }
@@ -447,6 +667,10 @@ export default {
 .dd-head__actions { display: flex; gap: var(--sp-2); flex-wrap: wrap; }
 .mono { font-family: var(--font-mono); }
 .dd-muted { color: var(--text-muted); font-size: var(--fs-sm); margin: 0 0 var(--sp-3); }
+.dd-field { margin-bottom: var(--sp-3); }
+.dd-field > label { display: block; font-size: var(--fs-sm); font-weight: 500; margin-bottom: 4px; color: var(--text-secondary); }
+.dd-kv { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: var(--sp-3); }
+.dd-kv > div > span { display: block; font-size: var(--fs-sm); color: var(--text-muted); margin-bottom: 2px; }
 .dd-php { font-weight: var(--fw-semibold); color: var(--text); }
 
 .dd-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: var(--sp-4); align-items: start; }

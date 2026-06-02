@@ -61,6 +61,17 @@ class Domain(Base):
     # exec/system/etc. open_basedir y el resto del hardening se mantienen.
     php_hardening_relaxed = Column(Boolean, default=False, nullable=False)
 
+    # Despliegue Git (Fase 21) — repo desplegado en public_html (symlink a
+    # releases/). La clave privada del deploy key NO va en BD (vive en ~/.ssh).
+    git_enabled        = Column(Boolean, default=False, nullable=False)
+    git_repo_url       = Column(String(512), nullable=True)
+    git_branch         = Column(String(255), default="main", nullable=True)
+    git_provider       = Column(String(20), default="github", nullable=True)  # github|gitlab|generic
+    git_webhook_token  = Column(String(64), nullable=True, index=True)  # secreto del webhook
+    git_build_commands = Column(Text, nullable=True)  # uno por línea, ejecutados como el usuario
+    git_deploy_key_pub = Column(Text, nullable=True)  # clave pública SSH (la privada en ~/.ssh)
+    git_keep_releases  = Column(Integer, default=5, nullable=False)
+
     # Estadísticas
     disk_usage = Column(Integer, default=0)  # MB
     
@@ -73,6 +84,7 @@ class Domain(Base):
     user      = relationship("User",           back_populates="domains")
     databases = relationship("ClientDatabase", back_populates="domain", cascade="all, delete-orphan")
     cron_jobs = relationship("CronJob",        back_populates="domain")
+    git_deployments = relationship("GitDeployment", back_populates="domain", cascade="all, delete-orphan")
     
     def __repr__(self):
         return f"<Domain {self.domain_name}>"

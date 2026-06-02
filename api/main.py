@@ -13,7 +13,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from api.models.database import create_tables, get_db
 from config.config import PANEL_NAME, PANEL_VERSION
 
-from api.routes import users, domains, php, ssl, ipv6, auth, settings, dns, system, mail, databases, firewall, fail2ban, security_monitor, ip_lists, file_manager, crowdsec, plans, sftp, crons, server_ips, backups, templates, notifications, dns_cluster
+from api.routes import users, domains, php, ssl, ipv6, auth, settings, dns, system, mail, databases, firewall, fail2ban, security_monitor, ip_lists, file_manager, crowdsec, plans, sftp, crons, server_ips, backups, templates, notifications, dns_cluster, git, git_webhook
 
 # Crear app FastAPI
 app = FastAPI(
@@ -513,6 +513,33 @@ def _run_migrations():
         "ALTER TABLE mail_domains ADD COLUMN IF NOT EXISTS relay_username VARCHAR(255)",
         # TLS por dominio de correo (SNI)
         "ALTER TABLE mail_domains ADD COLUMN IF NOT EXISTS mail_tls_enabled BOOLEAN NOT NULL DEFAULT FALSE",
+        # ─────────────────────────────────────────────────────────────────
+        # Fase 21b: Despliegue Git por dominio (clone + webhook + releases)
+        # ─────────────────────────────────────────────────────────────────
+        "ALTER TABLE domains ADD COLUMN IF NOT EXISTS git_enabled BOOLEAN NOT NULL DEFAULT FALSE",
+        "ALTER TABLE domains ADD COLUMN IF NOT EXISTS git_repo_url VARCHAR(512)",
+        "ALTER TABLE domains ADD COLUMN IF NOT EXISTS git_branch VARCHAR(255) DEFAULT 'main'",
+        "ALTER TABLE domains ADD COLUMN IF NOT EXISTS git_provider VARCHAR(20) DEFAULT 'github'",
+        "ALTER TABLE domains ADD COLUMN IF NOT EXISTS git_webhook_token VARCHAR(64)",
+        "ALTER TABLE domains ADD COLUMN IF NOT EXISTS git_build_commands TEXT",
+        "ALTER TABLE domains ADD COLUMN IF NOT EXISTS git_deploy_key_pub TEXT",
+        "ALTER TABLE domains ADD COLUMN IF NOT EXISTS git_keep_releases INTEGER NOT NULL DEFAULT 5",
+        "CREATE INDEX IF NOT EXISTS ix_domains_git_webhook_token ON domains(git_webhook_token)",
+        """CREATE TABLE IF NOT EXISTS git_deployments (
+            id          SERIAL PRIMARY KEY,
+            domain_id   INTEGER NOT NULL REFERENCES domains(id) ON DELETE CASCADE,
+            commit_sha  VARCHAR(64),
+            commit_msg  VARCHAR(500),
+            branch      VARCHAR(255),
+            ref         VARCHAR(255),
+            release_dir VARCHAR(512),
+            status      VARCHAR(20) NOT NULL DEFAULT 'running',
+            trigger     VARCHAR(20) NOT NULL DEFAULT 'manual',
+            build_log   TEXT,
+            created_at  TIMESTAMP NOT NULL DEFAULT NOW()
+        )""",
+        "CREATE INDEX IF NOT EXISTS ix_git_deployments_domain_id ON git_deployments(domain_id)",
+        "CREATE INDEX IF NOT EXISTS ix_git_deployments_created_at ON git_deployments(created_at)",
     ]
     with engine.connect() as conn:
         for sql in migrations:
@@ -617,8 +644,11 @@ app.include_router(backups.router,          prefix="/api", tags=["Backups"])
 app.include_router(templates.router,        prefix="/api", tags=["Templates"])
 app.include_router(file_manager.router,     prefix="/api", tags=["File Manager"])
 app.include_router(notifications.router,     prefix="/api", tags=["Notifications"])
+app.include_router(git.router,               prefix="/api", tags=["Git Deploy"])
 # Autoconfig/Autodiscover sin prefijo (clientes de correo los buscan en rutas raíz)
 app.include_router(mail.router, prefix="", include_in_schema=False)
+# Webhook de despliegue Git sin prefijo (GitHub/GitLab llaman a /git/webhook/{token})
+app.include_router(git_webhook.router, prefix="", include_in_schema=False)
 
 # Manejo de errores HTTP 413 (Payload Too Large)
 @app.exception_handler(HTTPException)

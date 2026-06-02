@@ -40,6 +40,6 @@ def create_tables():
     from api.models import (
         models_user, models_domain, models_settings, models_dns,
         models_mail, models_client_db, models_security, models_server_ip,
-        models_backup, models_notification,
+        models_backup, models_notification, models_git,
     )  # noqa
     Base.metadata.create_all(bind=engine)
