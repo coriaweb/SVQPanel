@@ -1296,21 +1296,10 @@ source venv/bin/activate
 python3 << 'PYEOF'
 import sys
 sys.path.insert(0, '/opt/svqpanel')
-from sqlalchemy import create_engine
-from api.models.database import Base
-from api.models.models_user import User
-from api.models.models_domain import Domain
-from api.models.models_settings import Settings
-from api.models.models_dns import DnsZone, DnsRecord
-from api.models.models_mail import MailDomain, Mailbox, MailAlias
-from api.models.models_client_db import ClientDatabase
-from api.models.models_security import (
-    FirewallRule, BannedIp, IpList, SecurityAuditLog,
-)
-
-DATABASE_URL = "postgresql://panel_user:panel_password_123@localhost/panel_db"
-engine = create_engine(DATABASE_URL)
-Base.metadata.create_all(engine)
+# Usar create_tables() del panel: importa TODOS los modelos y hace create_all.
+# Evita listas de import manuales que se desincronizan y rompen FKs.
+from api.models.database import create_tables
+create_tables()
 print("✓ Tablas creadas correctamente")
 PYEOF
 
