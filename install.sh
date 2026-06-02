@@ -1236,17 +1236,37 @@ fi
 ###############################################################################
 echo -e "${YELLOW}Clonando repositorio SVQPanel...${NC}"
 
-# Clonar repo público
+# Clonar repo público. /opt/svqpanel puede YA existir (p.ej. .credentials que
+# creó la fase de MariaDB, o una instalación anterior), por lo que git clone
+# directo fallaría ("directory exists and is not empty"). Clonamos a un temporal
+# y volcamos el contenido preservando lo que ya hubiera (credenciales, .env…).
 REPO_URL="https://github.com/coriaweb/SVQPanel.git"
-git clone "$REPO_URL" /opt/svqpanel 2>/dev/null || {
-    echo -e "${YELLOW}⚠ No se pudo clonar el repo. Creando estructura básica...${NC}"
+_CLONE_TMP=$(mktemp -d)
+rmdir "$_CLONE_TMP"   # git clone exige que el destino no exista
+if git clone --depth 1 "$REPO_URL" "$_CLONE_TMP" 2>/tmp/svq_clone.log; then
     mkdir -p /opt/svqpanel
-}
+    # Copiar TODO el repo (incluidos dotfiles) sobre /opt/svqpanel sin borrar
+    # lo preexistente (.credentials, .env). cp -a preserva permisos.
+    cp -a "$_CLONE_TMP"/. /opt/svqpanel/
+    rm -rf "$_CLONE_TMP"
+    echo -e "${GREEN}✓ Repositorio clonado en /opt/svqpanel${NC}"
+else
+    echo -e "${RED}✗ No se pudo clonar el repositorio:${NC}"
+    cat /tmp/svq_clone.log
+    echo -e "${RED}  Verifica conectividad a github.com y que el repo sea accesible.${NC}"
+    exit 1
+fi
 
 cd /opt/svqpanel
 
-# Crear carpetas si no existen
-mkdir -p {scripts,api,config,logs,data}
+# Verificar que el código realmente está presente
+if [[ ! -f /opt/svqpanel/requirements.txt || ! -d /opt/svqpanel/api/models ]]; then
+    echo -e "${RED}✗ El repositorio se clonó pero falta código esencial (requirements.txt / api/models).${NC}"
+    exit 1
+fi
+
+# Crear carpetas auxiliares si no existen
+mkdir -p logs data
 
 echo -e "${GREEN}✓ SVQPanel listo en: /opt/svqpanel${NC}\n"
 
