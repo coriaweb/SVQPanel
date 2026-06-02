@@ -1025,16 +1025,28 @@ if [[ "$INSTALL_MARIADB" == true ]]; then
          print(''.join(secrets.choice(chars) for _ in range(24)))")
 
     # ── Asegurar instalación (equivale a mysql_secure_installation) ────────────
-    mysql --user=root << MARIADBEOF
+    # En instalación limpia MariaDB en Debian usa unix_socket para root,
+    # lo que permite conectar sin contraseña desde el SO root.
+    # En reinstalación puede que ya exista contraseña: usamos --defaults-file
+    # de Debian (contiene credenciales de mantenimiento) como fallback.
+    _mariadb_root() {
+        # Intenta sin contraseña (instalación limpia / unix_socket)
+        if mariadb --user=root --connect-timeout=5 -e "SELECT 1" &>/dev/null; then
+            mariadb --user=root "$@"
+        else
+            # Fallback: fichero de mantenimiento de Debian
+            mariadb --defaults-file=/etc/mysql/debian.cnf "$@"
+        fi
+    }
+
+    _mariadb_root << MARIADBEOF
 -- Contraseña root
-ALTER USER 'root'@'localhost' IDENTIFIED BY '${MARIADB_ROOT_PASS}';
+ALTER USER 'root'@'localhost' IDENTIFIED VIA mysql_native_password USING PASSWORD('${MARIADB_ROOT_PASS}');
 -- Eliminar usuarios anónimos y BD test
 DELETE FROM mysql.user WHERE User='';
 DROP DATABASE IF EXISTS test;
 DELETE FROM mysql.db WHERE Db='test' OR Db='test\\_%';
 -- Usuario administrador del panel SVQPanel
--- Necesita privilegios de datos WITH GRANT OPTION para poder otorgarlos
--- a los usuarios cliente (GRANT ALL ON db.* TO cliente)
 DROP USER IF EXISTS 'svqpanel_admin'@'localhost';
 CREATE USER 'svqpanel_admin'@'localhost'
     IDENTIFIED BY '${MARIADB_PANEL_PASS}';
@@ -1099,14 +1111,14 @@ MDBCREDEOF
              print(''.join(secrets.choice(chars) for _ in range(24)))")
 
         # ── BD phpmyadmin + usuario pma (controluser) ─────────────────────────
-        mariadb --user=root << PMADBEOF
+        _mariadb_root << PMADBEOF
 CREATE DATABASE IF NOT EXISTS phpmyadmin CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
 DROP USER IF EXISTS 'pma'@'localhost';
 CREATE USER 'pma'@'localhost' IDENTIFIED BY '${PMA_CONTROL_PASS}';
 GRANT SELECT, INSERT, UPDATE, DELETE ON phpmyadmin.* TO 'pma'@'localhost';
 FLUSH PRIVILEGES;
 PMADBEOF
-        mariadb --user=root phpmyadmin < "${PMA_DIR}/sql/create_tables.sql"
+        _mariadb_root phpmyadmin < "${PMA_DIR}/sql/create_tables.sql"
         echo -e "  ${GREEN}✓ BD phpmyadmin y usuario pma creados${NC}"
 
         cat > "${PMA_DIR}/config.inc.php" << PMACFGEOF
