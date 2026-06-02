@@ -1021,29 +1021,52 @@ if [[ "$INSTALL_MARIADB" == true ]]; then
          chars=string.ascii_letters+string.digits; \
          print(''.join(secrets.choice(chars) for _ in range(24)))")
 
-    # ── Asegurar instalación (equivale a mysql_secure_installation) ────────────
-    # Mantenemos la autenticación de root vía unix_socket (default en Debian):
-    # el root del SO conecta sin contraseña, y NO se puede conectar por red.
-    # Esto es más seguro y, sobre todo, idempotente: una reinstalación vuelve
-    # a poder administrar MariaDB sin depender de una contraseña anterior.
-    # _mariadb_root sirve para todas las operaciones administrativas del install.
-    _mariadb_root() {
-        # 1) unix_socket como root del SO (instalación limpia y la habitual)
+    # ── Garantizar acceso root vía unix_socket (idempotente) ──────────────────
+    # En Debian/MariaDB limpio, root usa unix_socket: el root del SO conecta sin
+    # contraseña. Pero una instalación ANTERIOR pudo dejar root con
+    # mysql_native_password y una contraseña que ya no conocemos. En ese caso
+    # 'mariadb -u root' falla con "Access denied (using password: NO)".
+    # Esta función fuerza root de vuelta a unix_socket arrancando MariaDB en
+    # modo --skip-grant-tables (sin verificación de credenciales) solo si el
+    # acceso normal por socket no funciona.
+    _ensure_mariadb_root_socket() {
         if mariadb --user=root --connect-timeout=5 -e "SELECT 1" &>/dev/null; then
-            mariadb --user=root "$@"
-        # 2) reinstalación donde root quedó con contraseña: usar la guardada
-        elif [[ -f /opt/svqpanel/.credentials/mariadb.txt ]] && \
-             _PREV_ROOT_PASS=$(grep -oP 'MariaDB root:\s+root\s+/\s+\K\S+' /opt/svqpanel/.credentials/mariadb.txt 2>/dev/null) && \
-             [[ -n "$_PREV_ROOT_PASS" ]] && \
-             mariadb --user=root --password="$_PREV_ROOT_PASS" --connect-timeout=5 -e "SELECT 1" &>/dev/null; then
-            mariadb --user=root --password="$_PREV_ROOT_PASS" "$@"
-        # 3) último recurso: credenciales de mantenimiento de Debian
-        else
-            mariadb --defaults-file=/etc/mysql/debian.cnf "$@"
+            return 0   # ya accesible por socket, nada que hacer
         fi
+        echo -e "  ${YELLOW}root de MariaDB no accesible por socket; reseteando a unix_socket...${NC}"
+        systemctl stop mariadb 2>/dev/null
+        # Arrancar el daemon sin tablas de privilegios, solo socket local
+        mariadbd-safe --skip-grant-tables --skip-networking &>/dev/null &
+        local _pid=$!
+        # Esperar a que el socket esté listo (máx ~15s)
+        local _i
+        for _i in $(seq 1 30); do
+            mariadb --user=root -e "SELECT 1" &>/dev/null && break
+            sleep 0.5
+        done
+        # Restaurar root a unix_socket (FLUSH PRIVILEGES reactiva la tabla de grants)
+        mariadb --user=root <<'SKIPEOF' &>/dev/null
+FLUSH PRIVILEGES;
+ALTER USER 'root'@'localhost' IDENTIFIED VIA unix_socket;
+FLUSH PRIVILEGES;
+SKIPEOF
+        # Parar el daemon temporal y arrancar el servicio normal
+        mariadb-admin --user=root shutdown &>/dev/null || kill "$_pid" 2>/dev/null
+        sleep 2
+        systemctl start mariadb
+        for _i in $(seq 1 30); do
+            mariadb --user=root -e "SELECT 1" &>/dev/null && break
+            sleep 0.5
+        done
     }
+    _ensure_mariadb_root_socket
 
-    _mariadb_root << MARIADBEOF
+    # A partir de aquí root conecta siempre por socket sin contraseña.
+    _mariadb_root() { mariadb --user=root "$@"; }
+
+    if ! _mariadb_root << MARIADBEOF
+-- Asegurar que root use unix_socket (idempotente, no rompe instalaciones limpias)
+ALTER USER 'root'@'localhost' IDENTIFIED VIA unix_socket;
 -- Eliminar usuarios anónimos y BD test
 DELETE FROM mysql.user WHERE User='';
 DROP DATABASE IF EXISTS test;
@@ -1059,6 +1082,10 @@ GRANT SELECT, INSERT, UPDATE, DELETE, CREATE, DROP, INDEX, ALTER,
       ON *.* TO 'svqpanel_admin'@'localhost' WITH GRANT OPTION;
 FLUSH PRIVILEGES;
 MARIADBEOF
+    then
+        echo -e "${RED}✗ Error configurando MariaDB (root no accesible). Abortando.${NC}"
+        exit 1
+    fi
 
     echo -e "  ${GREEN}✓ MariaDB asegurado y usuario del panel creado${NC}"
 
