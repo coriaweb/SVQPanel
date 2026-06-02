@@ -316,9 +316,14 @@ class GitManager:
             ["git", "--git-dir", bare, "log", "-1", "--pretty=%s", branch], env=env)
         commit_msg = (msg or "")[:480]
 
-        # 3) Crear la carpeta de release y hacer checkout del árbol (como ROOT)
+        # 3) Crear la carpeta de release y hacer checkout del árbol (como ROOT).
+        #    Si ya existe (dos deploys del mismo commit en el mismo segundo),
+        #    añadimos un sufijo para no sobrescribir la release anterior.
         rel_name = f"{_timestamp()}-{sha7}"
-        rel_dir = f"{_releases_dir(user, domain)}/{rel_name}"
+        rels_dir = _releases_dir(user, domain)
+        if os.path.exists(f"{rels_dir}/{rel_name}"):
+            rel_name = f"{rel_name}-{secrets.token_hex(2)}"
+        rel_dir = f"{rels_dir}/{rel_name}"
         _run(["install", "-d", "-m", "755", "-o", user, "-g", user, rel_dir])
         rc, _, err = _run_root(
             ["git", "--git-dir", bare, "--work-tree", rel_dir, "checkout", "-f", branch],
