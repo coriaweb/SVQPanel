@@ -706,7 +706,10 @@ server {{
     ssl_ciphers         HIGH:!aNULL:!MD5;
     ssl_session_cache   shared:SSL:10m;
     ssl_session_timeout 10m;
-    add_header Strict-Transport-Security "max-age=31536000; includeSubDomains" always;
+    # NO enviamos HSTS: el panel corre en un puerto no estándar ({PANEL_WEB_PORT}).
+    # HSTS forzaría al navegador a usar HTTPS:443 para el hostname (sin puerto),
+    # donde no hay nada escuchando -> timeout. Sin HSTS, http(s)://hostname (sin
+    # puerto) cae en el vhost de bienvenida y el panel sigue solo en su puerto.
 
     # Si llega HTTP plano a este puerto SSL (p.ej. http://host:{PANEL_WEB_PORT}),
     # nginx devuelve 497; lo redirigimos a HTTPS en el mismo puerto en vez de
