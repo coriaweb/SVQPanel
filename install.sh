@@ -2341,6 +2341,49 @@ chmod 600 /opt/svqpanel/.credentials/admin.txt
 
 echo -e "${GREEN}✓ Usuario administrador creado${NC}\n"
 
+# Sembrar un plan global "Ilimitado" por defecto, listo para asignar a clientes
+# desde el primer momento. Todos los límites a 0 = ilimitado. owner_id=NULL
+# (plan global de admins). Idempotente: si ya existe, no lo duplica.
+echo -e "${YELLOW}Creando plan por defecto (Ilimitado)...${NC}"
+python3 << 'PLANEOF'
+import sys
+sys.path.insert(0, '/opt/svqpanel')
+from api.models.database import SessionLocal, load_all_models
+load_all_models()
+from api.models.models_plan import Plan
+
+session = SessionLocal()
+try:
+    existing = session.query(Plan).filter(
+        Plan.owner_id.is_(None), Plan.name == "Ilimitado"
+    ).first()
+    if existing:
+        print("Plan 'Ilimitado' ya existe")
+    else:
+        plan = Plan(
+            name="Ilimitado",
+            description="Plan sin límites — todos los recursos ilimitados",
+            owner_id=None,            # plan global (admins)
+            disk_quota_mb=0,          # 0 = ilimitado
+            traffic_quota_mb_month=0,
+            domains_limit=0,
+            databases_limit=0,
+            mailboxes_limit=0,
+            dns_zones_limit=0,
+            is_default=True,          # se aplica por defecto a nuevos usuarios
+        )
+        session.add(plan)
+        session.commit()
+        print("Plan 'Ilimitado' creado y marcado como default")
+except Exception as e:
+    print(f"Error creando plan por defecto: {e}")
+    session.rollback()
+finally:
+    session.close()
+PLANEOF
+
+echo -e "${GREEN}✓ Plan por defecto listo${NC}\n"
+
 ###############################################################################
 # 14. REGISTRAR IPs DEL SERVIDOR EN EL PANEL
 ###############################################################################
