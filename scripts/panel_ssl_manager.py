@@ -693,6 +693,29 @@ server {{
         # El panel se sirve EXCLUSIVAMENTE por HTTPS en su puerto dedicado.
         http_block = ""
 
+        # Puerto 443: bienvenida por HTTPS (sin puerto). Como ya tenemos cert del
+        # hostname, servimos aquí la misma página neutra que en el 80. Así
+        # https://hostname (sin :puerto) carga la bienvenida en vez de timeout.
+        # El panel sigue solo en su puerto dedicado. Es default_server del 443.
+        welcome_https_block = f"""
+server {{
+    listen 443 ssl http2 default_server;
+    listen [::]:443 ssl http2 default_server;
+    server_name _;
+
+    ssl_certificate     {cert_path};
+    ssl_certificate_key {key_path};
+    ssl_protocols       TLSv1.2 TLSv1.3;
+    ssl_ciphers         HIGH:!aNULL:!MD5;
+
+    root /var/www/html;
+    index index.html;
+    location / {{
+        try_files $uri $uri/ =200;
+    }}
+}}
+"""
+
         # El panel HTTPS se sirve en el puerto dedicado.
         https_block = f"""
 server {{
@@ -735,7 +758,10 @@ server {{
 }}
 """
 
-        config = f"# SVQPanel — vhost SSL generado automáticamente\n{http_block}\n{https_block}"
+        config = (
+            f"# SVQPanel — vhost SSL generado automáticamente\n"
+            f"{http_block}\n{welcome_https_block}\n{https_block}"
+        )
         self._write_conf(config)
 
     def _write_conf(self, config: str) -> None:
