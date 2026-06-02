@@ -502,6 +502,15 @@ def _run_migrations():
         # Rate-limit de envío de correo (Rspamd) por buzón y por dominio
         "ALTER TABLE mailboxes ADD COLUMN IF NOT EXISTS send_limit_hour INTEGER NOT NULL DEFAULT 200",
         "ALTER TABLE mail_domains ADD COLUMN IF NOT EXISTS send_limit_hour INTEGER NOT NULL DEFAULT 1000",
+        # SMTP relay (smarthost) global + override por dominio
+        "ALTER TABLE settings ADD COLUMN IF NOT EXISTS relay_enabled BOOLEAN NOT NULL DEFAULT FALSE",
+        "ALTER TABLE settings ADD COLUMN IF NOT EXISTS relay_host VARCHAR(255)",
+        "ALTER TABLE settings ADD COLUMN IF NOT EXISTS relay_port INTEGER DEFAULT 587",
+        "ALTER TABLE settings ADD COLUMN IF NOT EXISTS relay_username VARCHAR(255)",
+        "ALTER TABLE mail_domains ADD COLUMN IF NOT EXISTS relay_enabled BOOLEAN NOT NULL DEFAULT FALSE",
+        "ALTER TABLE mail_domains ADD COLUMN IF NOT EXISTS relay_host VARCHAR(255)",
+        "ALTER TABLE mail_domains ADD COLUMN IF NOT EXISTS relay_port INTEGER DEFAULT 587",
+        "ALTER TABLE mail_domains ADD COLUMN IF NOT EXISTS relay_username VARCHAR(255)",
     ]
     with engine.connect() as conn:
         for sql in migrations:

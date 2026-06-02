@@ -498,6 +498,23 @@ class APIClient {
     return this.post(`/api/mail/domains/${domainId}/webmail/ssl`, {})
   }
 
+  // Mail — SMTP relay
+  getGlobalRelay() {
+    return this.get('/api/settings/relay')
+  }
+
+  setGlobalRelay(data) {
+    return this.post('/api/settings/relay', data)
+  }
+
+  getDomainRelay(domainId) {
+    return this.get(`/api/mail/domains/${domainId}/relay`)
+  }
+
+  setDomainRelay(domainId, data) {
+    return this.post(`/api/mail/domains/${domainId}/relay`, data)
+  }
+
   // Mail — DKIM
   generateDkim(domainId, selector = 'mail') {
     return this.post(`/api/mail/domains/${domainId}/dkim`, { selector })

@@ -45,6 +45,15 @@ class MailDomain(Base):
     # buzones. 0 = sin límite. Anti-abuso si una cuenta es comprometida.
     send_limit_hour = Column(Integer, default=1000)
 
+    # ── SMTP relay propio del dominio (override del relay global) ──────────
+    # Si está activo, el correo de ESTE dominio sale por su smarthost (p. ej.
+    # Proxmox Mail Gateway, Brevo). La contraseña vive en el password map de
+    # Postfix (0600), no en la BD.
+    relay_enabled  = Column(Boolean, default=False)
+    relay_host     = Column(String(255), nullable=True)
+    relay_port     = Column(Integer, default=587)
+    relay_username = Column(String(255), nullable=True)
+
     # ── Antispam (Rspamd por dominio) ─────────────────────────────────────
     spam_tag_threshold    = Column(Float, default=6.0)   # score → añadir cabecera spam
     spam_reject_threshold = Column(Float, default=15.0)  # score → rechazar

@@ -393,9 +393,24 @@ submission inet n       -       y       -       -       smtpd
 MASTEREOF
     fi
 
+    # ── SMTP relay (smarthost) — estructura base ──────────────────────────
+    # El panel configura el relay GLOBAL (relayhost) y el override por dominio
+    # (sender_dependent_relayhost_maps) desde scripts/mail_manager.py. Aquí
+    # dejamos los maps vacíos + las directivas SASL para que esté listo. Las
+    # credenciales se guardan en svqpanel_relay_passwd con permisos 0600.
+    touch /etc/postfix/svqpanel_relay_sender /etc/postfix/svqpanel_relay_passwd
+    chmod 600 /etc/postfix/svqpanel_relay_passwd
+    postmap /etc/postfix/svqpanel_relay_sender
+    postmap /etc/postfix/svqpanel_relay_passwd
+    chmod 600 /etc/postfix/svqpanel_relay_passwd.db 2>/dev/null || true
+    postconf -e "smtp_sasl_auth_enable = yes"
+    postconf -e "smtp_sasl_password_maps = hash:/etc/postfix/svqpanel_relay_passwd"
+    postconf -e "smtp_sasl_security_options = noanonymous"
+    postconf -e "sender_dependent_relayhost_maps = hash:/etc/postfix/svqpanel_relay_sender"
+
     systemctl enable postfix
     systemctl restart postfix
-    echo -e "  ${GREEN}✓ Postfix configurado (SMTP 25 + submission 587)${NC}"
+    echo -e "  ${GREEN}✓ Postfix configurado (SMTP 25 + submission 587 + relay listo)${NC}"
 
     # ── 2. DOVECOT ────────────────────────────────────────────────────────
     echo -e "  ${YELLOW}→ Instalando Dovecot...${NC}"

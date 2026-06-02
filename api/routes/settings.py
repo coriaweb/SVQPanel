@@ -264,6 +264,73 @@ async def revoke_panel_ssl(
     }
 
 
+# ─── SMTP relay global (smarthost) ───────────────────────────────────────────
+
+from pydantic import BaseModel as _BM, Field as _F
+
+
+class GlobalRelayRequest(_BM):
+    enabled:  bool = True
+    host:     str = _F("", max_length=255)
+    port:     int = _F(587, ge=1, le=65535)
+    username: str = _F("", max_length=255)
+    password: str = _F("", max_length=255)
+
+
+@router.get("/settings/relay")
+async def get_global_relay(current_user=Depends(require_admin), db: Session = Depends(get_db)):
+    """Configuración del relay SMTP global del servidor (sin la contraseña)."""
+    s = get_or_create_settings(db)
+    return {
+        "enabled":  bool(s.relay_enabled),
+        "host":     s.relay_host or "",
+        "port":     s.relay_port or 587,
+        "username": s.relay_username or "",
+        "has_password": bool(s.relay_username),  # si hay user, asumimos pass guardada
+    }
+
+
+@router.post("/settings/relay")
+async def set_global_relay(data: GlobalRelayRequest,
+                           current_user=Depends(require_admin),
+                           db: Session = Depends(get_db)):
+    """
+    Configura/actualiza o desactiva el relay SMTP global. Si enabled=False,
+    se quita el relayhost (vuelta a envío directo).
+    """
+    s = get_or_create_settings(db)
+    from scripts.mail_manager import MailManager
+
+    if not data.enabled:
+        s.relay_enabled = False
+        db.commit()
+        try:
+            MailManager().remove_global_relay()
+        except PermissionError:
+            raise HTTPException(403, "Se necesitan privilegios root")
+        except Exception as e:
+            raise HTTPException(502, f"Error quitando el relay: {e}")
+        return {"status": "success", "enabled": False}
+
+    if not data.host:
+        raise HTTPException(400, "Indica el host del relay")
+
+    s.relay_enabled  = True
+    s.relay_host     = data.host.strip()
+    s.relay_port     = data.port
+    s.relay_username = data.username.strip() or None
+    db.commit()
+
+    try:
+        MailManager().set_global_relay(data.host, data.port, data.username, data.password)
+    except PermissionError:
+        raise HTTPException(403, "Se necesitan privilegios root")
+    except Exception as e:
+        raise HTTPException(502, f"Error configurando el relay: {e}")
+
+    return {"status": "success", "enabled": True, "host": data.host, "port": data.port}
+
+
 # ─── Timezone ────────────────────────────────────────────────────────────────
 
 @router.get("/settings/timezones")

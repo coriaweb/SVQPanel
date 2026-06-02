@@ -631,6 +631,81 @@ async def issue_webmail_ssl(
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# SMTP relay propio del dominio (override del relay global)
+# ─────────────────────────────────────────────────────────────────────────────
+from pydantic import BaseModel as _BM, Field as _F
+
+
+class DomainRelayRequest(_BM):
+    enabled:  bool = True
+    host:     str = _F("", max_length=255)
+    port:     int = _F(587, ge=1, le=65535)
+    username: str = _F("", max_length=255)
+    password: str = _F("", max_length=255)
+
+
+@router.get("/mail/domains/{domain_id}/relay")
+async def get_domain_relay(domain_id: int, current_user=Depends(require_auth),
+                           db: Session = Depends(get_db)):
+    """Relay SMTP propio del dominio (override del global). Sin la contraseña."""
+    md = _get_mail_domain_or_404(domain_id, db)
+    _require_edit(md, current_user)
+    # ¿Hay relay global activo? (para informar de qué se usa si no hay override)
+    from api.models.models_settings import Settings
+    s = db.query(Settings).filter(Settings.id == 1).first()
+    return {
+        "domain":   md.domain_name,
+        "enabled":  bool(getattr(md, "relay_enabled", False)),
+        "host":     getattr(md, "relay_host", None) or "",
+        "port":     getattr(md, "relay_port", None) or 587,
+        "username": getattr(md, "relay_username", None) or "",
+        "global_relay_active": bool(s and s.relay_enabled),
+        "global_relay_host": (s.relay_host if s and s.relay_enabled else None),
+    }
+
+
+@router.post("/mail/domains/{domain_id}/relay")
+async def set_domain_relay(domain_id: int, data: DomainRelayRequest,
+                           current_user=Depends(require_auth),
+                           db: Session = Depends(get_db)):
+    """Configura o quita el relay SMTP propio de este dominio."""
+    _require_mail_enabled()
+    md = _get_mail_domain_or_404(domain_id, db)
+    _require_edit(md, current_user)
+    from scripts.mail_manager import MailManager
+
+    if not data.enabled:
+        md.relay_enabled = False
+        db.commit()
+        try:
+            MailManager().remove_domain_relay(md.domain_name)
+        except PermissionError:
+            raise HTTPException(403, "Se necesitan privilegios root")
+        except Exception as e:
+            raise HTTPException(502, f"Error quitando el relay del dominio: {e}")
+        return {"status": "success", "enabled": False}
+
+    if not data.host:
+        raise HTTPException(400, "Indica el host del relay")
+
+    md.relay_enabled  = True
+    md.relay_host     = data.host.strip()
+    md.relay_port     = data.port
+    md.relay_username = data.username.strip() or None
+    db.commit()
+
+    try:
+        MailManager().set_domain_relay(md.domain_name, data.host, data.port,
+                                       data.username, data.password)
+    except PermissionError:
+        raise HTTPException(403, "Se necesitan privilegios root")
+    except Exception as e:
+        raise HTTPException(502, f"Error configurando el relay del dominio: {e}")
+
+    return {"status": "success", "enabled": True, "host": data.host, "port": data.port}
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # DKIM
 # ─────────────────────────────────────────────────────────────────────────────
 

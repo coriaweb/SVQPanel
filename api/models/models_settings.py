@@ -48,6 +48,13 @@ class Settings(Base):
     dns_ns1 = Column(String(255), nullable=True)              # ns1.tudominio.com
     dns_ns2 = Column(String(255), nullable=True)              # ns2.tudominio.com
 
+    # SMTP relay GLOBAL (smarthost) — para enviar cuando el ISP bloquea el :25.
+    # La contraseña se guarda en el password map de Postfix (0600), no aquí.
+    relay_enabled  = Column(Boolean, default=False)
+    relay_host     = Column(String(255), nullable=True)       # smtp.proveedor.com
+    relay_port     = Column(Integer, default=587)
+    relay_username = Column(String(255), nullable=True)       # vacío = sin auth
+
     # Cluster DNS — clave TSIG compartida master↔slave (ver models_dns_node.py)
     dns_tsig_name   = Column(String(64), nullable=True)       # nombre de la clave, ej: svq-xfer
     dns_tsig_secret = Column(String(128), nullable=True)      # secreto base64

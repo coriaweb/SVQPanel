@@ -127,6 +127,49 @@
             <div class="form-text">Dirección IPv4 principal del servidor.</div>
           </div>
         </div>
+
+        <!-- SMTP Relay global -->
+        <div class="card mt-3">
+          <div class="card-header d-flex justify-content-between align-items-center">
+            <span><i class="bi bi-arrow-up-right-circle me-1"></i> Relay SMTP global</span>
+            <span v-if="relay.enabled" class="badge bg-success">Activo</span>
+            <span v-else class="badge bg-light text-muted border">Envío directo</span>
+          </div>
+          <div class="card-body">
+            <p class="text-muted small mb-3">
+              Smarthost por el que sale TODO el correo del servidor — útil si tu proveedor
+              bloquea el puerto 25 saliente. Cada dominio puede overridearlo con su propio relay.
+            </p>
+            <div class="form-check form-switch mb-3">
+              <input class="form-check-input" type="checkbox" role="switch" v-model="relay.enabled" id="relaySw">
+              <label class="form-check-label" for="relaySw">Usar relay global</label>
+            </div>
+            <div v-if="relay.enabled" class="row g-2">
+              <div class="col-8">
+                <label class="form-label small mb-1">Host</label>
+                <input v-model="relay.host" class="form-control form-control-sm font-monospace" placeholder="smtp-relay.brevo.com">
+              </div>
+              <div class="col-4">
+                <label class="form-label small mb-1">Puerto</label>
+                <input v-model.number="relay.port" type="number" class="form-control form-control-sm" placeholder="587">
+              </div>
+              <div class="col-6">
+                <label class="form-label small mb-1">Usuario <span class="text-muted">(vacío = sin auth)</span></label>
+                <input v-model="relay.username" class="form-control form-control-sm" autocomplete="off">
+              </div>
+              <div class="col-6">
+                <label class="form-label small mb-1">Contraseña</label>
+                <input v-model="relay.password" type="password" class="form-control form-control-sm"
+                       autocomplete="new-password" :placeholder="relay.has_password ? '(sin cambios)' : ''">
+              </div>
+            </div>
+            <button class="btn btn-primary btn-sm mt-3" @click="saveRelay" :disabled="relaySaving">
+              <span v-if="relaySaving" class="spinner-border spinner-border-sm me-1"></span>
+              <i v-else class="bi bi-save me-1"></i>
+              {{ relay.enabled ? 'Guardar relay' : 'Desactivar relay' }}
+            </button>
+          </div>
+        </div>
       </div>
 
       <!-- PHP Default -->
@@ -614,6 +657,43 @@ export default {
       max_extract_mb: 500,
     })
 
+    // ─── SMTP relay global ───
+    const relay = reactive({
+      enabled: false, host: '', port: 587, username: '', password: '', has_password: false,
+    })
+    const relaySaving = ref(false)
+
+    const loadRelay = async () => {
+      try {
+        const r = await api.getGlobalRelay()
+        relay.enabled = r.enabled
+        relay.host = r.host || ''
+        relay.port = r.port || 587
+        relay.username = r.username || ''
+        relay.password = ''
+        relay.has_password = r.has_password || false
+      } catch (e) { /* silencioso */ }
+    }
+
+    const saveRelay = async () => {
+      if (relay.enabled && !relay.host) {
+        store.showNotification('Indica el host del relay', 'danger'); return
+      }
+      relaySaving.value = true
+      try {
+        await api.setGlobalRelay({
+          enabled: relay.enabled, host: relay.host, port: relay.port,
+          username: relay.username, password: relay.password,
+        })
+        store.showNotification(relay.enabled ? 'Relay global guardado' : 'Relay global desactivado', 'success')
+        await loadRelay()
+      } catch (e) {
+        store.showNotification('Error: ' + (e.message || e), 'danger')
+      } finally {
+        relaySaving.value = false
+      }
+    }
+
     const parsedRange = computed(() => {
       if (!form.ipv6_range) return null
       try {
@@ -858,6 +938,7 @@ export default {
       await loadPHPStatus()
       loadTimezones()
       loadCurrentTimezone()
+      loadRelay()
     })
 
     return {
@@ -870,6 +951,7 @@ export default {
       issueSSL, revokeSSL, formatExpiry,
       tzCurrent, tzSelected, tzSearch, tzList, tzSaving,
       filteredTimezones, saveTimezone,
+      relay, relaySaving, saveRelay,
     }
   }
 }

@@ -29,6 +29,9 @@ class MailManager(SystemManager):
     POSTFIX_DIR = "/etc/postfix"
     DOVECOT_USERS = "/etc/dovecot/users"
     SENDER_TRANSPORT_MAP  = "sender_dependent_transport"
+    # SMTP relay (smarthost): credenciales y relayhost por remitente.
+    RELAY_PASSWORD_MAP    = "svqpanel_relay_passwd"   # "[host]:port  user:pass"
+    RELAY_SENDER_MAP      = "svqpanel_relay_sender"   # "@dominio  [host]:port"
     POSTFIX_MAIN_CF       = "/etc/postfix/main.cf"
     POSTFIX_MASTER_CF     = "/etc/postfix/master.cf"
     _MASTER_START = "# BEGIN SVQPANEL_SMTP_BIND"
@@ -503,6 +506,127 @@ class MailManager(SystemManager):
         self._rebuild_master_cf_smtp_binds()
         self._reload_postfix()
         logger.info(f"remove_domain_sender_ip: {domain_name} → IP por defecto")
+        return {"success": True, "domain": domain_name}
+
+    # ─────────────────────────────────────────────────────────────────────
+    # SMTP relay / smarthost (global + override por dominio)
+    # ─────────────────────────────────────────────────────────────────────
+    # Postfix:
+    #   relayhost = [host]:port                          (relay GLOBAL)
+    #   sender_dependent_relayhost_maps = hash:relay_sender  (override por dominio)
+    #   smtp_sasl_password_maps = hash:relay_passwd      (credenciales por host)
+    # El password map se escribe SIN postmap de logging del valor (credenciales).
+
+    @staticmethod
+    def _relay_target(host: str, port: int) -> str:
+        """'[host]:port' — los corchetes evitan que Postfix busque MX del host."""
+        return f"[{host.strip()}]:{int(port)}"
+
+    def _ensure_relay_main_cf(self):
+        """
+        Garantiza en main.cf las directivas base del relay con SASL. Idempotente.
+        No fija relayhost aquí (lo gestiona set_global_relay para poder quitarlo).
+        """
+        passwd = self._map_path(self.RELAY_PASSWORD_MAP)
+        sender = self._map_path(self.RELAY_SENDER_MAP)
+        directives = {
+            "smtp_sasl_auth_enable": "yes",
+            "smtp_sasl_password_maps": f"hash:{passwd}",
+            "smtp_sasl_security_options": "noanonymous",
+            "smtp_tls_security_level": "may",
+            "sender_dependent_relayhost_maps": f"hash:{sender}",
+        }
+        for k, v in directives.items():
+            self.execute_command(["postconf", "-e", f"{k} = {v}"])
+
+    def _write_relay_password_map(self, entries: dict):
+        """
+        Escribe el password map (host → user:pass) con permisos 0600 y postmap.
+        entries: {'[host]:port': 'user:pass'}.
+        """
+        path = self._map_path(self.RELAY_PASSWORD_MAP)
+        tmp = path + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as f:
+            f.write("# SVQPanel relay — credenciales SMTP, NO editar a mano\n")
+            for target in sorted(entries):
+                f.write(f"{target} {entries[target]}\n")
+        os.replace(tmp, path)
+        os.chmod(path, 0o600)
+        self.execute_command(["postmap", path])
+        try:
+            os.chmod(path + ".db", 0o600)
+        except OSError:
+            pass
+
+    def _read_relay_password_map(self) -> dict:
+        out = {}
+        path = self._map_path(self.RELAY_PASSWORD_MAP)
+        try:
+            with open(path, encoding="utf-8") as f:
+                for line in f:
+                    line = line.strip()
+                    if not line or line.startswith("#"):
+                        continue
+                    parts = line.split(None, 1)
+                    if len(parts) == 2:
+                        out[parts[0]] = parts[1]
+        except FileNotFoundError:
+            pass
+        return out
+
+    def set_global_relay(self, host: str, port: int,
+                         username: str = "", password: str = "") -> dict:
+        """Configura el relayhost GLOBAL del servidor (con credenciales opcionales)."""
+        if not self.mail_available():
+            return {"success": False, "reason": "postfix_not_installed"}
+        target = self._relay_target(host, port)
+        self._ensure_relay_main_cf()
+        self.execute_command(["postconf", "-e", f"relayhost = {target}"])
+        if username:
+            pw = self._read_relay_password_map()
+            pw[target] = f"{username}:{password}"
+            self._write_relay_password_map(pw)
+        self._reload_postfix()
+        logger.info(f"set_global_relay: {target} (auth={'sí' if username else 'no'})")
+        return {"success": True, "relayhost": target}
+
+    def remove_global_relay(self) -> dict:
+        """Quita el relayhost global; el correo vuelve a envío directo."""
+        if not self.mail_available():
+            return {"success": False, "reason": "postfix_not_installed"}
+        self.execute_command(["postconf", "-e", "relayhost ="])
+        self._reload_postfix()
+        logger.info("remove_global_relay")
+        return {"success": True}
+
+    def set_domain_relay(self, domain_name: str, host: str, port: int,
+                         username: str = "", password: str = "") -> dict:
+        """
+        Configura un relay SOLO para el correo de este dominio (override del
+        global). El correo de @dominio sale por host:port; el resto sigue su ruta.
+        """
+        if not self.mail_available():
+            return {"success": False, "reason": "postfix_not_installed"}
+        target = self._relay_target(host, port)
+        self._ensure_relay_main_cf()
+        # @dominio → [host]:port
+        self._map_set(self.RELAY_SENDER_MAP, f"@{domain_name}", target)
+        # credenciales del host (si las hay)
+        if username:
+            pw = self._read_relay_password_map()
+            pw[target] = f"{username}:{password}"
+            self._write_relay_password_map(pw)
+        self._reload_postfix()
+        logger.info(f"set_domain_relay: {domain_name} → {target}")
+        return {"success": True, "domain": domain_name, "relayhost": target}
+
+    def remove_domain_relay(self, domain_name: str) -> dict:
+        """Quita el relay propio del dominio; vuelve al relay global o envío directo."""
+        if not self.mail_available():
+            return {"success": False, "reason": "postfix_not_installed"}
+        self._map_remove(self.RELAY_SENDER_MAP, f"@{domain_name}")
+        self._reload_postfix()
+        logger.info(f"remove_domain_relay: {domain_name}")
         return {"success": True, "domain": domain_name}
 
     # ─────────────────────────────────────────────────────────────────────

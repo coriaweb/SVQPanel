@@ -212,6 +212,12 @@
               </button>
             </li>
             <li class="nav-item">
+              <button class="nav-link" :class="{ active: activeTab === 'relay' }"
+                      @click="switchTab('relay')">
+                <i class="bi bi-arrow-up-right-circle me-1"></i>Relay SMTP
+              </button>
+            </li>
+            <li class="nav-item">
               <button class="nav-link" :class="{ active: activeTab === 'settings' }"
                       @click="switchTab('settings')">
                 <i class="bi bi-sliders me-1"></i>Ajustes
@@ -509,6 +515,69 @@
                   (registro DNS + servidor web). El correo se gestiona en Roundcube.
                 </p>
               </template>
+            </template>
+          </div>
+
+          <!-- ── TAB: Relay SMTP ── -->
+          <div v-if="activeTab === 'relay'">
+            <div v-if="loadingRelay" class="text-center py-4">
+              <div class="spinner-border spinner-border-sm text-primary"></div>
+            </div>
+            <template v-else-if="relay">
+              <div class="d-flex justify-content-between align-items-center mb-2">
+                <div>
+                  <h6 class="mb-1"><i class="bi bi-arrow-up-right-circle me-1"></i>Relay SMTP propio del dominio</h6>
+                  <p class="text-muted small mb-0">
+                    Envía el correo de <strong>{{ selectedDomain.domain_name }}</strong> a través de un
+                    smarthost (Proxmox Mail Gateway, Brevo, SendGrid…) en vez de directo.
+                  </p>
+                </div>
+                <div class="form-check form-switch">
+                  <input class="form-check-input" type="checkbox" role="switch"
+                         v-model="relayForm.enabled" style="width:3em;height:1.5em">
+                </div>
+              </div>
+
+              <!-- Info del relay global -->
+              <div class="alert py-2 small" :class="relay.global_relay_active ? 'alert-info' : 'alert-light border'">
+                <i class="bi bi-info-circle me-1"></i>
+                <span v-if="relay.global_relay_active">
+                  Relay <strong>global</strong> activo (<code>{{ relay.global_relay_host }}</code>).
+                  Sin relay propio, este dominio usa el global. Configura uno aquí para overridearlo.
+                </span>
+                <span v-else>
+                  No hay relay global. Sin relay propio, este dominio envía <strong>directo</strong> (puerto 25).
+                </span>
+              </div>
+
+              <div v-if="relayForm.enabled" class="row g-2 mb-3">
+                <div class="col-md-6">
+                  <label class="form-label small mb-1">Host del smarthost</label>
+                  <input v-model="relayForm.host" class="form-control form-control-sm font-monospace"
+                         placeholder="pmg.midominio.com">
+                </div>
+                <div class="col-md-2">
+                  <label class="form-label small mb-1">Puerto</label>
+                  <input v-model.number="relayForm.port" type="number" class="form-control form-control-sm"
+                         placeholder="587">
+                </div>
+                <div class="col-md-4"></div>
+                <div class="col-md-6">
+                  <label class="form-label small mb-1">Usuario <span class="text-muted">(vacío = sin auth)</span></label>
+                  <input v-model="relayForm.username" class="form-control form-control-sm" autocomplete="off">
+                </div>
+                <div class="col-md-6">
+                  <label class="form-label small mb-1">Contraseña</label>
+                  <input v-model="relayForm.password" type="password" class="form-control form-control-sm"
+                         autocomplete="new-password" :placeholder="relay.username ? '(sin cambios)' : ''">
+                </div>
+              </div>
+
+              <button class="btn btn-primary btn-sm" @click="saveDomainRelay" :disabled="relaySaving">
+                <span v-if="relaySaving" class="spinner-border spinner-border-sm me-1"></span>
+                <i v-else class="bi bi-save me-1"></i>
+                {{ relayForm.enabled ? 'Guardar relay del dominio' : 'Desactivar relay del dominio' }}
+              </button>
             </template>
           </div>
 
@@ -1100,6 +1169,7 @@ export default {
       activeTab.value = 'mailboxes'
       dkimInfo.value = null
       webmail.value = null
+      relay.value = null
       settingsForm.value = {
         catch_all:     md.catch_all || '',
         max_mailboxes: md.max_mailboxes,
@@ -1123,6 +1193,47 @@ export default {
       }
       if (tab === 'webmail') {
         await loadWebmail(selectedDomain.value.id)
+      }
+      if (tab === 'relay') {
+        await loadRelay(selectedDomain.value.id)
+      }
+    }
+
+    // ── SMTP relay por dominio ──
+    const relay        = ref(null)
+    const relayForm    = ref({ enabled: false, host: '', port: 587, username: '', password: '' })
+    const loadingRelay = ref(false)
+    const relaySaving  = ref(false)
+
+    const loadRelay = async (domainId) => {
+      loadingRelay.value = true
+      try {
+        const r = await api.getDomainRelay(domainId)
+        relay.value = r
+        relayForm.value = {
+          enabled: r.enabled, host: r.host || '', port: r.port || 587,
+          username: r.username || '', password: '',
+        }
+      } catch (e) {
+        relay.value = null
+      } finally {
+        loadingRelay.value = false
+      }
+    }
+
+    const saveDomainRelay = async () => {
+      if (relayForm.value.enabled && !relayForm.value.host) {
+        store.showNotification('Indica el host del smarthost', 'danger'); return
+      }
+      relaySaving.value = true
+      try {
+        await api.setDomainRelay(selectedDomain.value.id, { ...relayForm.value })
+        store.showNotification(relayForm.value.enabled ? 'Relay del dominio guardado' : 'Relay del dominio desactivado', 'success')
+        await loadRelay(selectedDomain.value.id)
+      } catch (e) {
+        store.showNotification('Error: ' + (e.message || e), 'danger')
+      } finally {
+        relaySaving.value = false
       }
     }
 
@@ -1459,6 +1570,7 @@ export default {
       // Webmail por dominio
       webmail, loadingWebmail, webmailSaving, webmailSslIssuing,
       loadWebmail, toggleWebmail, issueWebmailSsl,
+      relay, relayForm, loadingRelay, relaySaving, loadRelay, saveDomainRelay,
       loadDomains, openDetail, switchTab,
       openNewDomain, createDomain, saveSettings,
       loadSpamSettings, saveSpamSettings,
