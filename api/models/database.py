@@ -34,15 +34,24 @@ def get_db():
     finally:
         db.close()
 
-# Crear todas las tablas
-def create_tables():
-    # Importar TODOS los modelos para que SQLAlchemy los registre en Base.metadata
-    # antes de create_all. Si falta alguno con FK (p.ej. User.plan_id -> plans),
-    # create_all falla con NoReferencedTableError. Mantener esta lista completa.
-    from api.models import (
+def load_all_models():
+    """Importa TODOS los modelos para registrarlos en Base.metadata y permitir
+    que SQLAlchemy resuelva las relationships por nombre (p.ej. Domain ->
+    'GitDeployment', User -> 'CronJob') y las FK (User.plan_id -> plans).
+
+    ÚNICA fuente de verdad: cualquier script que use la BD (install, cli,
+    main, schedulers) debe llamar a esto ANTES de hacer queries o create_all.
+    Si se añade un modelo nuevo, añadirlo SOLO aquí.
+    """
+    from api.models import (  # noqa: F401
         models_user, models_domain, models_settings, models_dns,
         models_dns_node, models_mail, models_client_db, models_security,
         models_server_ip, models_backup, models_notification, models_git,
         models_plan, models_cron, models_template, models_sftp_account,
-    )  # noqa
+    )
+
+
+# Crear todas las tablas
+def create_tables():
+    load_all_models()
     Base.metadata.create_all(bind=engine)

@@ -10,15 +10,11 @@ import argparse
 import logging
 from datetime import datetime, timedelta
 
-from api.models.database import SessionLocal
-# Cargar TODOS los modelos para que SQLAlchemy pueda resolver las FK
-# (ej. ip_lists.created_by → users.id). Sin esto, el primer flush() casca
-# con NoReferencedTableError.
-from api.models import (  # noqa: F401
-    models_user, models_domain, models_settings, models_dns,
-    models_mail, models_client_db, models_security, models_plan,
-    models_cron, models_notification, models_dns_node,
-)
+from api.models.database import SessionLocal, load_all_models
+# Cargar TODOS los modelos para que SQLAlchemy pueda resolver las FK y las
+# relationships por nombre (ej. Domain → 'GitDeployment', User → 'CronJob').
+# Sin esto, el primer query()/flush() casca con InvalidRequestError.
+load_all_models()
 from api.models.models_security import IpList, SecurityAuditLog
 from api.models.models_domain import Domain
 from api.models.models_user import User

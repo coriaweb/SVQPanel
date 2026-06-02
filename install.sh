@@ -2242,15 +2242,10 @@ import sys
 import os
 sys.path.insert(0, '/opt/svqpanel')
 
-# Importar todos los modelos para que los mappers de SQLAlchemy resuelvan
-# (User tiene relationships/FK a plans, etc.). Reutilizamos el engine del panel.
-from api.models.database import engine, SessionLocal
-from api.models import (
-    models_user, models_domain, models_settings, models_dns,
-    models_dns_node, models_mail, models_client_db, models_security,
-    models_server_ip, models_backup, models_notification, models_git,
-    models_plan, models_cron, models_template, models_sftp_account,
-)  # noqa
+# Cargar todos los modelos para que los mappers de SQLAlchemy resuelvan
+# (User tiene relationships/FK a plans, CronJob, etc.).
+from api.models.database import SessionLocal, load_all_models
+load_all_models()
 from api.models.models_user import User
 
 session = SessionLocal()
