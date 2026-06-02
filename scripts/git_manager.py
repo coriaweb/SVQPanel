@@ -11,10 +11,15 @@ Layout en /home/{user}/web/{domain}/:
 Claves del diseño:
   - nginx y el pool PHP-FPM apuntan a public_html y NO se tocan en cada deploy:
     el symlink absorbe el cambio de versión. Rollback = reapuntar el symlink.
-  - Todo git/checkout/build se ejecuta COMO EL USUARIO del dominio (sudo -u),
-    nunca como root, igual que el autoinstalador (app_installer).
-  - La clave privada del deploy key vive en ~/.ssh (0600 del usuario); en BD solo
-    la pública.
+  - web/{dominio} es root:root 750 (aislamiento Hestia: el usuario no entra en
+    su propia carpeta de dominio). Por eso:
+      · git clone/fetch/checkout y el symlink → como ROOT (operación de sistema,
+        no ejecuta código del repo). Los ficheros quedan con owner del usuario.
+      · el BUILD del cliente (composer/npm) → como el USUARIO sin privilegios.
+        Una ACL de solo-traverse (u:user:--x) en web/{dominio} le deja entrar a
+        su release sin poder listar el dir ni ver otras carpetas (verificado).
+  - La clave privada del deploy key vive en ~/.ssh (0600 del usuario); root puede
+    leerla para clonar repos privados. En BD solo la pública.
 
 Reutiliza helpers de app_installer (_run, _gen_password, _empty_or_safe,
 _chown_tree) para no duplicar el patrón de ejecución segura sin shell=True.
@@ -115,7 +120,8 @@ def _git_env(user: str, domain: str) -> dict:
 
 
 def _run_user(cmd, user, cwd=None, timeout=600, env=None, input_text=None):
-    """git/comando como el usuario del dominio, con su GIT_SSH_COMMAND."""
+    """Comando como el usuario del dominio (sin privilegios). Para el BUILD del
+    cliente: nunca corre código del repo como root."""
     full = ["sudo", "-u", user, "-H"]
     if env:
         for k in ("GIT_SSH_COMMAND",):
@@ -131,6 +137,32 @@ def _run_user(cmd, user, cwd=None, timeout=600, env=None, input_text=None):
         return -1, "", f"timeout tras {timeout}s"
     except Exception as e:
         return -1, "", str(e)
+
+
+def _run_root(cmd, cwd=None, timeout=600, env=None, input_text=None):
+    """Comando como ROOT, con env opcional (para GIT_SSH_COMMAND). Operaciones de
+    sistema: clone/fetch/checkout/symlink. NUNCA ejecuta código del repo cliente."""
+    import subprocess
+    try:
+        r = subprocess.run(cmd, cwd=cwd, capture_output=True, text=True,
+                           timeout=timeout, env=env or _SYS_ENV, input=input_text)
+        return r.returncode, r.stdout.strip(), r.stderr.strip()
+    except subprocess.TimeoutExpired:
+        return -1, "", f"timeout tras {timeout}s"
+    except Exception as e:
+        return -1, "", str(e)
+
+
+def _ensure_traverse_acl(user: str, domain: str):
+    """
+    Da al usuario permiso de SOLO ATRAVESAR (--x, sin lectura) el directorio
+    web/{dominio}, que es root:root 750 por el aislamiento Hestia. Con esto el
+    build del cliente (que corre como el usuario) puede 'cd' a su release y
+    trabajar dentro, PERO sigue sin poder listar el dir del dominio ni acceder a
+    otras carpetas root-only. Es el mínimo privilegio necesario; no relaja el
+    aislamiento (verificado en el servidor de test).
+    """
+    _run(["setfacl", "-m", f"u:{user}:--x", _domain_root(user, domain)])
 
 
 def _timestamp() -> str:
@@ -152,7 +184,18 @@ def _reload_php(domain: str):
 # GitManager
 # ─────────────────────────────────────────────────────────────────────────────
 class GitManager:
-    """Orquesta clone/deploy/rollback de un dominio. Todo como el usuario dueño."""
+    """
+    Orquesta clone/deploy/rollback de un dominio.
+
+    Modelo de seguridad (web/{dominio} es root:root 750 por el aislamiento Hestia;
+    el usuario no puede entrar en su propia carpeta de dominio):
+      - Operaciones de SISTEMA (clone, fetch, checkout, symlink, copia) → ROOT.
+        No ejecutan código del repo; solo mueven ficheros. Los archivos quedan
+        con owner del usuario (chown), nunca root.
+      - BUILD del cliente (composer/npm/artisan) → SIEMPRE como el usuario sin
+        privilegios. Una ACL de solo-traverse (u:{user}:--x) en web/{dominio} le
+        deja 'cd' a su release sin poder listar el dir ni ver otras carpetas.
+    """
 
     # ── Deploy key ──────────────────────────────────────────────────────────
     def gen_deploy_key(self, user: str, domain: str) -> str:
@@ -208,26 +251,33 @@ class GitManager:
                     "limpio (haz backup y vacía public_html, o usa otro dominio)."
                 )
 
+        # ACL de solo-traverse para que el build (que corre como el usuario)
+        # pueda 'cd' a su release dentro de web/{dominio} (root:root 750).
+        _ensure_traverse_acl(user, domain)
+
         git_dir = _git_dir(user, domain)
         bare = _bare_repo(user, domain)
         for d in (git_dir, _releases_dir(user, domain), _shared_dir(user, domain)):
             _run(["install", "-d", "-m", "755", "-o", user, "-g", user, d])
 
         env = _git_env(user, domain)
-        # Clon bare (rápido, solo metadatos; los work-trees salen por release)
-        _run_user(["rm", "-rf", bare], user=user)
-        rc, _, err = _run_user(
+        # Clon bare como ROOT (operación de sistema; web/{dominio} es root-owned).
+        # No ejecuta código del repo, solo descarga objetos git. Usa la deploy key
+        # del usuario (root puede leerla) para repos privados.
+        _run(["rm", "-rf", bare])
+        rc, _, err = _run_root(
             ["git", "clone", "--bare", "--branch", branch, repo_url, bare],
-            user=user, env=env, timeout=900,
+            env=env, timeout=900,
         )
         if rc != 0:
             # Reintento sin --branch (algunos repos usan master u otra rama default)
-            rc2, _, err2 = _run_user(
+            rc2, _, err2 = _run_root(
                 ["git", "clone", "--bare", repo_url, bare],
-                user=user, env=env, timeout=900,
+                env=env, timeout=900,
             )
             if rc2 != 0:
                 raise GitError(f"No se pudo clonar el repositorio: {err or err2}")
+        _chown_tree(bare, user)
 
         return self.deploy(user, domain, branch=branch,
                            build_commands=build_commands, keep=keep,
@@ -244,38 +294,35 @@ class GitManager:
             raise GitError("El despliegue Git no está configurado para este dominio")
 
         env = _git_env(user, domain)
+        # Asegurar la ACL de traverse en cada deploy (idempotente; cubre dominios
+        # cuyo git se configuró antes de existir esta ACL).
+        _ensure_traverse_acl(user, domain)
 
-        # 1) Traer cambios del remoto a la rama configurada
-        rc, _, err = _run_user(
+        # 1) Traer cambios del remoto (como ROOT: operación de sistema)
+        rc, _, err = _run_root(
             ["git", "--git-dir", bare, "fetch", "--prune", "origin",
              f"+refs/heads/{branch}:refs/heads/{branch}"],
-            user=user, env=env, timeout=900,
+            env=env, timeout=900,
         )
         if rc != 0:
             raise GitError(f"git fetch falló: {err}")
 
         # 2) Resolver el commit actual de la rama
-        rc, sha, err = _run_user(
-            ["git", "--git-dir", bare, "rev-parse", branch],
-            user=user, env=env,
-        )
+        rc, sha, err = _run_root(["git", "--git-dir", bare, "rev-parse", branch], env=env)
         if rc != 0 or not sha:
             raise GitError(f"No se pudo resolver la rama {branch}: {err}")
         sha7 = sha[:7]
-        rc, msg, _ = _run_user(
-            ["git", "--git-dir", bare, "log", "-1", "--pretty=%s", branch],
-            user=user, env=env,
-        )
+        rc, msg, _ = _run_root(
+            ["git", "--git-dir", bare, "log", "-1", "--pretty=%s", branch], env=env)
         commit_msg = (msg or "")[:480]
 
-        # 3) Crear la carpeta de release y hacer checkout del árbol
+        # 3) Crear la carpeta de release y hacer checkout del árbol (como ROOT)
         rel_name = f"{_timestamp()}-{sha7}"
         rel_dir = f"{_releases_dir(user, domain)}/{rel_name}"
         _run(["install", "-d", "-m", "755", "-o", user, "-g", user, rel_dir])
-        rc, _, err = _run_user(
-            ["git", "--git-dir", bare, "--work-tree", rel_dir,
-             "checkout", "-f", branch],
-            user=user, env=env, timeout=600,
+        rc, _, err = _run_root(
+            ["git", "--git-dir", bare, "--work-tree", rel_dir, "checkout", "-f", branch],
+            env=env, timeout=600,
         )
         if rc != 0:
             _run(["rm", "-rf", rel_dir])
@@ -284,11 +331,13 @@ class GitManager:
         # 4) Symlink de shared/.env si existe (persistencia entre releases)
         shared_env = f"{_shared_dir(user, domain)}/.env"
         if os.path.isfile(shared_env):
-            _run_user(["ln", "-sfn", shared_env, f"{rel_dir}/.env"], user=user)
+            _run(["ln", "-sfn", shared_env, f"{rel_dir}/.env"])
 
+        # Los archivos del repo quedan con owner del usuario (no root)
         _chown_tree(rel_dir, user)
 
-        # 5) Ejecutar comandos de build (como el usuario, en la release)
+        # 5) Ejecutar comandos de build COMO EL USUARIO sin privilegios (código
+        #    del cliente: jamás como root). La ACL de traverse le deja entrar.
         build_log = ""
         ok_build = True
         if build_commands and build_commands.strip():
@@ -329,19 +378,29 @@ class GitManager:
         }
 
     def _activate_release(self, user: str, domain: str, rel_dir: str):
-        """public_html → rel_dir, atómico. Maneja el caso primer-deploy (dir real)."""
+        """public_html → rel_dir, atómico. Maneja el caso primer-deploy (dir real).
+
+        El symlink se crea como ROOT: el directorio padre web/{dominio} es
+        root-owned (lo crea create_domain como root), así que el usuario no puede
+        escribir ahí. El enlace queda con owner del usuario por coherencia (nginx
+        solo necesita poder seguirlo, no importa el owner del symlink).
+        """
         public_html = _public_html(user, domain)
         if os.path.isdir(public_html) and not os.path.islink(public_html):
             # Primer deploy: public_html era una carpeta (vacía/trivial). La
             # quitamos para poder ponerla como symlink.
             _run(["rm", "-rf", public_html])
-        # ln -sfn vía un tmp + mv para que el cambio sea atómico
+        # ln -s vía un tmp + mv -T para que el reemplazo sea atómico (como root)
         tmp_link = f"{public_html}.tmp.{secrets.token_hex(4)}"
-        _run_user(["ln", "-s", rel_dir, tmp_link], user=user)
-        rc, _, err = _run_user(["mv", "-Tf", tmp_link, public_html], user=user)
+        rc, _, err = _run(["ln", "-s", rel_dir, tmp_link])
+        if rc != 0:
+            raise GitError(f"No se pudo crear el symlink de la release: {err}")
+        rc, _, err = _run(["mv", "-Tf", tmp_link, public_html])
         if rc != 0:
             _run(["rm", "-f", tmp_link])
             raise GitError(f"No se pudo activar la release (symlink): {err}")
+        # owner del symlink = usuario (no afecta a nginx, pero mantiene coherencia)
+        _run(["chown", "-h", f"{user}:{user}", public_html])
 
     def _prune_releases(self, user: str, domain: str, keep: int):
         """Conserva las `keep` releases más recientes; borra el resto."""
@@ -422,10 +481,10 @@ class GitManager:
         if restore_files and os.path.islink(public_html):
             active = self.active_release(user, domain)
             if active and os.path.isdir(active):
+                # Copia como root (web/{dominio} es root-owned); luego owner=usuario.
                 tmp = f"{public_html}.real.{secrets.token_hex(4)}"
                 _run(["install", "-d", "-m", "755", "-o", user, "-g", user, tmp])
-                _run_user(["bash", "-lc",
-                           f"shopt -s dotglob && cp -a {active}/. {tmp}/"], user=user)
+                _run(["bash", "-c", f"shopt -s dotglob && cp -a {active}/. {tmp}/"])
                 _run(["rm", "-f", public_html])
                 _run(["mv", "-Tf", tmp, public_html])
                 _chown_tree(public_html, user)
