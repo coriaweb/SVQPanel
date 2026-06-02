@@ -65,6 +65,14 @@ class BackupJob(Base):
     # ── Retención ─────────────────────────────────────────────────────────────
     retention_copies = Column(Integer, default=7, nullable=False)  # cuántas copias conservar
 
+    # ── Programación automática ───────────────────────────────────────────────
+    schedule_enabled = Column(Boolean, default=False, nullable=False)
+    # Campos cron estilo unix (* = cualquier valor)
+    schedule_minute  = Column(String(20), default="0",  nullable=False)
+    schedule_hour    = Column(String(20), default="2",  nullable=False)
+    schedule_day     = Column(String(20), default="*",  nullable=False)
+    schedule_weekday = Column(String(20), default="*",  nullable=False)
+
     # ── Estado ────────────────────────────────────────────────────────────────
     is_active = Column(Boolean, default=True, nullable=False)
 

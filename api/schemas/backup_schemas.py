@@ -36,6 +36,14 @@ class BackupJobBase(BaseModel):
     sftp_key_path: Optional[str] = Field(None, max_length=512)
 
     retention_copies: int = Field(7, ge=1, le=365)
+
+    # Programación automática
+    schedule_enabled: bool = False
+    schedule_minute:  str  = Field("0", max_length=20)
+    schedule_hour:    str  = Field("2", max_length=20)
+    schedule_day:     str  = Field("*", max_length=20)
+    schedule_weekday: str  = Field("*", max_length=20)
+
     is_active:        bool = True
 
     @field_validator("name")
@@ -72,6 +80,13 @@ class BackupJobUpdate(BaseModel):
     sftp_path:        Optional[str] = Field(None, max_length=512)
     sftp_key_path:    Optional[str] = Field(None, max_length=512)
     retention_copies: Optional[int] = Field(None, ge=1, le=365)
+
+    schedule_enabled: Optional[bool] = None
+    schedule_minute:  Optional[str]  = Field(None, max_length=20)
+    schedule_hour:    Optional[str]  = Field(None, max_length=20)
+    schedule_day:     Optional[str]  = Field(None, max_length=20)
+    schedule_weekday: Optional[str]  = Field(None, max_length=20)
+
     is_active:        Optional[bool] = None
 
     class Config:

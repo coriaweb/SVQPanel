@@ -72,8 +72,12 @@ if _cors_origins:
 async def startup():
     create_tables()
     _run_migrations()
+    # Daemon de backups programados (hilo de fondo, no bloquea)
+    from scripts.backup_scheduler import start_scheduler
+    start_scheduler()
     print(f"✓ {PANEL_NAME} v{PANEL_VERSION} iniciado")
     print(f"✓ Base de datos sincronizada")
+    print(f"✓ Scheduler de backups activo")
 
 
 def _run_migrations():
@@ -417,6 +421,12 @@ def _run_migrations():
         "CREATE INDEX IF NOT EXISTS ix_backup_records_user_id ON backup_records(user_id)",
         # Fase 15.1: restauración — distinguir copia de restauración
         "ALTER TABLE backup_records ADD COLUMN IF NOT EXISTS kind VARCHAR(20) NOT NULL DEFAULT 'backup'",
+        # Fase 15.3: programación automática de backups
+        "ALTER TABLE backup_jobs ADD COLUMN IF NOT EXISTS schedule_enabled BOOLEAN NOT NULL DEFAULT FALSE",
+        "ALTER TABLE backup_jobs ADD COLUMN IF NOT EXISTS schedule_minute  VARCHAR(20) NOT NULL DEFAULT '0'",
+        "ALTER TABLE backup_jobs ADD COLUMN IF NOT EXISTS schedule_hour    VARCHAR(20) NOT NULL DEFAULT '2'",
+        "ALTER TABLE backup_jobs ADD COLUMN IF NOT EXISTS schedule_day     VARCHAR(20) NOT NULL DEFAULT '*'",
+        "ALTER TABLE backup_jobs ADD COLUMN IF NOT EXISTS schedule_weekday VARCHAR(20) NOT NULL DEFAULT '*'",
         # ─────────────────────────────────────────────────────────────────
         # Fase 15.2: Plantillas web (nginx + PHP-FPM presets)
         # ─────────────────────────────────────────────────────────────────

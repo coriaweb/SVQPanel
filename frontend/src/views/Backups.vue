@@ -38,6 +38,7 @@
                 <th>Contenido</th>
                 <th>Tipo</th>
                 <th>Destino</th>
+                <th>Programación</th>
                 <th>Última copia</th>
                 <th>Acciones</th>
               </tr>
@@ -62,6 +63,12 @@
                 <td class="small">
                   <i :class="job.destination_type === 'sftp' ? 'bi bi-hdd-network' : 'bi bi-hdd'"></i>
                   {{ job.destination_type === 'sftp' ? (job.sftp_host || 'SFTP') : 'Local' }}
+                </td>
+                <td class="small">
+                  <span v-if="job.schedule_enabled" class="text-success" :title="cronSummary(job)">
+                    <i class="bi bi-clock"></i> {{ cronSummary(job) }}
+                  </span>
+                  <span v-else class="text-muted">Manual</span>
                 </td>
                 <td class="small">
                   <span v-if="runningJobId === job.id" class="text-primary">
@@ -221,6 +228,75 @@
                 <span v-if="sftpTestMsg" :class="sftpTestOk ? 'text-success ms-2' : 'text-danger ms-2'">
                   {{ sftpTestMsg }}
                 </span>
+              </div>
+            </div>
+
+            <hr />
+
+            <!-- Programación automática -->
+            <div class="d-flex align-items-center gap-2 mb-3">
+              <div class="form-check form-switch mb-0">
+                <input class="form-check-input" type="checkbox" id="schedEnabled" v-model="form.schedule_enabled" />
+                <label class="form-check-label fw-semibold" for="schedEnabled">Programación automática</label>
+              </div>
+            </div>
+
+            <div v-if="form.schedule_enabled" class="border rounded p-3 mb-3 bg-light">
+              <!-- Presets -->
+              <label class="form-label fw-semibold d-block mb-2">Frecuencia</label>
+              <div class="d-flex flex-wrap gap-2 mb-3">
+                <button type="button" class="btn btn-sm"
+                        :class="schedPreset === 'daily' ? 'btn-primary' : 'btn-outline-secondary'"
+                        @click="applyPreset('daily')">Diario</button>
+                <button type="button" class="btn btn-sm"
+                        :class="schedPreset === 'weekly' ? 'btn-primary' : 'btn-outline-secondary'"
+                        @click="applyPreset('weekly')">Semanal (lunes)</button>
+                <button type="button" class="btn btn-sm"
+                        :class="schedPreset === 'monthly' ? 'btn-primary' : 'btn-outline-secondary'"
+                        @click="applyPreset('monthly')">Mensual (día 1)</button>
+                <button type="button" class="btn btn-sm"
+                        :class="schedPreset === 'custom' ? 'btn-primary' : 'btn-outline-secondary'"
+                        @click="schedPreset = 'custom'">Personalizado</button>
+              </div>
+
+              <!-- Hora para diario/semanal/mensual -->
+              <div v-if="schedPreset !== 'custom'" class="row g-2 align-items-end">
+                <div class="col-auto">
+                  <label class="form-label mb-1">Hora</label>
+                  <select v-model="presetHour" class="form-select form-select-sm" style="width:auto"
+                          @change="applyPreset(schedPreset)">
+                    <option v-for="h in 24" :key="h-1" :value="h-1">{{ String(h-1).padStart(2,'0') }}:00</option>
+                  </select>
+                </div>
+                <div class="col">
+                  <span class="text-muted small">{{ schedSummary }}</span>
+                </div>
+              </div>
+
+              <!-- Campos cron personalizados -->
+              <div v-if="schedPreset === 'custom'" class="row g-2">
+                <div class="col">
+                  <label class="form-label mb-1 small">Minuto</label>
+                  <input v-model="form.schedule_minute" class="form-control form-control-sm font-monospace" placeholder="0" />
+                </div>
+                <div class="col">
+                  <label class="form-label mb-1 small">Hora</label>
+                  <input v-model="form.schedule_hour" class="form-control form-control-sm font-monospace" placeholder="2" />
+                </div>
+                <div class="col">
+                  <label class="form-label mb-1 small">Día mes</label>
+                  <input v-model="form.schedule_day" class="form-control form-control-sm font-monospace" placeholder="*" />
+                </div>
+                <div class="col">
+                  <label class="form-label mb-1 small">Día semana</label>
+                  <input v-model="form.schedule_weekday" class="form-control form-control-sm font-monospace" placeholder="* (0=lun)" />
+                </div>
+                <div class="col-12">
+                  <span class="text-muted small font-monospace">
+                    {{ form.schedule_minute }} {{ form.schedule_hour }} * * {{ form.schedule_weekday }}
+                    &nbsp;—&nbsp;{{ schedSummary }}
+                  </span>
+                </div>
               </div>
             </div>
 
@@ -398,7 +474,7 @@
 </template>
 
 <script>
-import { ref, onMounted } from 'vue'
+import { ref, watch, onMounted } from 'vue'
 import api from '../services/api.js'
 import { useMainStore } from '../stores/useMainStore.js'
 
@@ -420,6 +496,11 @@ function emptyForm() {
     sftp_path: '/backups',
     sftp_key_path: '',
     retention_copies: 7,
+    schedule_enabled: false,
+    schedule_minute: '0',
+    schedule_hour: '2',
+    schedule_day: '*',
+    schedule_weekday: '*',
     is_active: true,
   }
 }
@@ -518,8 +599,14 @@ export default {
         sftp_path: job.sftp_path || '/backups',
         sftp_key_path: job.sftp_key_path || '',
         retention_copies: job.retention_copies,
+        schedule_enabled: job.schedule_enabled || false,
+        schedule_minute:  job.schedule_minute  || '0',
+        schedule_hour:    job.schedule_hour    || '2',
+        schedule_day:     job.schedule_day     || '*',
+        schedule_weekday: job.schedule_weekday || '*',
         is_active: job.is_active,
       }
+      schedPreset.value = detectPreset(form.value)
       formError.value = ''
       sftpTestMsg.value = ''
       showForm.value = true
@@ -696,6 +783,60 @@ export default {
       }
     }
 
+    // ── Lógica de programación (presets + cron summary) ──────────────────────
+    const schedPreset = ref('daily')
+    const presetHour  = ref(2)
+
+    const applyPreset = (preset) => {
+      schedPreset.value = preset
+      form.value.schedule_minute = '0'
+      form.value.schedule_hour   = String(presetHour.value)
+      form.value.schedule_day    = '*'
+      if (preset === 'daily')   { form.value.schedule_weekday = '*' }
+      if (preset === 'weekly')  { form.value.schedule_weekday = '0' }
+      if (preset === 'monthly') { form.value.schedule_day = '1'; form.value.schedule_weekday = '*' }
+    }
+
+    // Detecta qué preset coincide con los valores del form al abrir edición
+    const detectPreset = (job) => {
+      if (job.schedule_minute === '0' && job.schedule_day === '*' && job.schedule_weekday === '*') {
+        presetHour.value = parseInt(job.schedule_hour) || 2
+        return 'daily'
+      }
+      if (job.schedule_minute === '0' && job.schedule_day === '*' && job.schedule_weekday === '0') {
+        presetHour.value = parseInt(job.schedule_hour) || 2
+        return 'weekly'
+      }
+      if (job.schedule_minute === '0' && job.schedule_day === '1' && job.schedule_weekday === '*') {
+        presetHour.value = parseInt(job.schedule_hour) || 2
+        return 'monthly'
+      }
+      return 'custom'
+    }
+
+    const schedSummary = ref('')
+    const updateSchedSummary = () => {
+      const h = String(presetHour.value).padStart(2, '0')
+      if (schedPreset.value === 'daily')        schedSummary.value = `Todos los días a las ${h}:00`
+      else if (schedPreset.value === 'weekly')  schedSummary.value = `Cada lunes a las ${h}:00`
+      else if (schedPreset.value === 'monthly') schedSummary.value = `El día 1 de cada mes a las ${h}:00`
+      else schedSummary.value = `${form.value.schedule_minute} ${form.value.schedule_hour} ${form.value.schedule_day} * ${form.value.schedule_weekday}`
+    }
+    watch([schedPreset, presetHour, () => form.value.schedule_minute, () => form.value.schedule_hour,
+           () => form.value.schedule_day, () => form.value.schedule_weekday], updateSchedSummary, { immediate: true })
+
+    // Resumen legible para la tabla (desde las propiedades del job)
+    const cronSummary = (job) => {
+      const h = String(job.schedule_hour || '2').padStart(2, '0')
+      if (job.schedule_minute === '0' && job.schedule_day === '*' && job.schedule_weekday === '*')
+        return `Diario ${h}:00`
+      if (job.schedule_minute === '0' && job.schedule_day === '*' && job.schedule_weekday === '0')
+        return `Lunes ${h}:00`
+      if (job.schedule_minute === '0' && job.schedule_day === '1' && job.schedule_weekday === '*')
+        return `Mensual ${h}:00`
+      return `${job.schedule_minute} ${job.schedule_hour} ${job.schedule_day} * ${job.schedule_weekday}`
+    }
+
     const formatDate = (dt) => {
       if (!dt) return '—'
       return new Date(dt).toLocaleDateString('es-ES', { day: '2-digit', month: 'short', year: 'numeric' })
@@ -723,6 +864,7 @@ export default {
       runJob, openHistory, deleteJob,
       openRestore, doRestore, formatSnapshot,
       formatDate, formatDateTime,
+      schedPreset, presetHour, schedSummary, applyPreset, cronSummary,
     }
   }
 }
