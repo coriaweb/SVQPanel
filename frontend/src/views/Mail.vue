@@ -578,42 +578,6 @@
                 <i v-else class="bi bi-save me-1"></i>
                 {{ relayForm.enabled ? 'Guardar relay del dominio' : 'Desactivar relay del dominio' }}
               </button>
-
-              <!-- TLS propio del dominio (SNI) -->
-              <hr class="my-4">
-              <div v-if="mailtls" class="mb-2">
-                <div class="d-flex justify-content-between align-items-center">
-                  <div>
-                    <h6 class="mb-1"><i class="bi bi-shield-lock me-1"></i>Certificado TLS propio (<code>{{ mailtls.host }}</code>)</h6>
-                    <p class="text-muted small mb-0">
-                      Tus clientes configuran <strong>{{ mailtls.host }}</strong> como servidor IMAP/SMTP
-                      y reciben un certificado válido de su propio dominio (sin avisos).
-                    </p>
-                  </div>
-                  <div class="form-check form-switch">
-                    <input class="form-check-input" type="checkbox" role="switch"
-                           :checked="mailtls.enabled" :disabled="mailtlsSaving"
-                           @change="toggleMailTls($event.target.checked)" style="width:3em;height:1.5em">
-                  </div>
-                </div>
-                <div v-if="mailtls.enabled" class="mt-2">
-                  <span v-if="mailtls.cert_valid" class="badge bg-success">
-                    <i class="bi bi-shield-check me-1"></i>Certificado válido para {{ mailtls.host }}
-                  </span>
-                  <span v-else class="badge bg-warning text-dark">
-                    <i class="bi bi-exclamation-triangle me-1"></i>Certificado pendiente
-                  </span>
-                </div>
-                <p v-if="!mailtls.enabled" class="text-muted small mt-2 mb-0">
-                  Al activarlo se emite el certificado Let's Encrypt para <code>{{ mailtls.host }}</code>.
-                  <span v-if="!mailtls.dns_managed">
-                    Tu DNS es externo: crea primero el registro <code>mail</code> apuntando a la IP del servidor.
-                  </span>
-                </p>
-                <p v-if="mailtlsSaving" class="text-muted small mt-2 mb-0">
-                  <span class="spinner-border spinner-border-sm me-1"></span>Emitiendo certificado y configurando…
-                </p>
-              </div>
             </template>
           </div>
 
@@ -818,6 +782,45 @@
                  class="mt-3 text-muted small">
               <i class="bi bi-info-circle me-1"></i>
               Aún no hay mensajes registrados para este dominio.
+            </div>
+
+            <!-- ── Seguridad TLS (certificado propio del correo, SNI) ── -->
+            <hr class="my-4">
+            <div class="d-flex align-items-center mb-3">
+              <h6 class="mb-0"><i class="bi bi-shield-lock me-2 text-success"></i>Seguridad TLS del correo</h6>
+            </div>
+            <div v-if="mailtls" class="border rounded p-3">
+              <div class="d-flex justify-content-between align-items-center">
+                <div>
+                  <div class="fw-semibold">Certificado propio en <code>{{ mailtls.host }}</code></div>
+                  <p class="text-muted small mb-0">
+                    Tus clientes configuran <strong>{{ mailtls.host }}</strong> como servidor IMAP/SMTP
+                    y reciben un certificado válido de su propio dominio (sin avisos).
+                  </p>
+                </div>
+                <div class="form-check form-switch">
+                  <input class="form-check-input" type="checkbox" role="switch"
+                         :checked="mailtls.enabled" :disabled="mailtlsSaving"
+                         @change="toggleMailTls($event.target.checked)" style="width:3em;height:1.5em">
+                </div>
+              </div>
+              <div v-if="mailtls.enabled" class="mt-2">
+                <span v-if="mailtls.cert_valid" class="badge bg-success">
+                  <i class="bi bi-shield-check me-1"></i>Certificado válido para {{ mailtls.host }}
+                </span>
+                <span v-else class="badge bg-warning text-dark">
+                  <i class="bi bi-exclamation-triangle me-1"></i>Certificado pendiente
+                </span>
+              </div>
+              <p v-if="!mailtls.enabled" class="text-muted small mt-2 mb-0">
+                Al activarlo se emite el certificado Let's Encrypt para <code>{{ mailtls.host }}</code>.
+                <span v-if="!mailtls.dns_managed">
+                  Tu DNS es externo: crea primero el registro <code>mail</code> apuntando a la IP del servidor.
+                </span>
+              </p>
+              <p v-if="mailtlsSaving" class="text-muted small mt-2 mb-0">
+                <span class="spinner-border spinner-border-sm me-1"></span>Emitiendo certificado y configurando…
+              </p>
             </div>
 
           </div>
@@ -1225,8 +1228,11 @@ export default {
       if (tab === 'dkim' && dkimInfo.value === null) {
         await loadDkim(selectedDomain.value.id)
       }
-      if (tab === 'settings' && !spamSettings.value.spam_tag_threshold) {
-        await loadSpamSettings(selectedDomain.value.id)
+      if (tab === 'settings') {
+        if (!spamSettings.value.spam_tag_threshold) {
+          await loadSpamSettings(selectedDomain.value.id)
+        }
+        await loadMailTls(selectedDomain.value.id)
       }
       if (tab === 'webmail') {
         await loadWebmail(selectedDomain.value.id)
@@ -1282,8 +1288,6 @@ export default {
       } finally {
         loadingRelay.value = false
       }
-      // El tab "Relay SMTP" muestra también el TLS propio del dominio
-      await loadMailTls(domainId)
     }
 
     const saveDomainRelay = async () => {
