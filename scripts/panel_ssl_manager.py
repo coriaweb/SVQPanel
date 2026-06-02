@@ -719,6 +719,11 @@ server {{
     ssl_session_timeout 10m;
     add_header Strict-Transport-Security "max-age=31536000; includeSubDomains" always;
 
+    # Si llega HTTP plano a este puerto SSL (p.ej. http://host:{PANEL_WEB_PORT}),
+    # nginx devuelve 497; lo redirigimos a HTTPS en el mismo puerto en vez de
+    # mostrar "400 Bad Request: plain HTTP request sent to HTTPS port".
+    error_page 497 =301 https://$host:{PANEL_WEB_PORT}$request_uri;
+
     root {PANEL_FRONTEND_PATH};
     index index.html;
 

@@ -2334,13 +2334,25 @@ echo -e "${GREEN}╚════════════════════
 # Iniciar servicio automáticamente
 systemctl start svqpanel
 
+# ── Detectar la IP pública del servidor para mostrarla en las URLs ──────────
+# Prioridad: IP de salida hacia internet (ip route get) → primera IP global de
+# hostname -I → servicio externo (por si hay NAT) → placeholder.
+SERVER_IP="$(ip -4 route get 1.1.1.1 2>/dev/null | grep -oP 'src \K[\d.]+' | head -1)"
+if [[ -z "$SERVER_IP" ]]; then
+    SERVER_IP="$(hostname -I 2>/dev/null | tr ' ' '\n' | grep -vE '^(127\.|10\.|172\.(1[6-9]|2[0-9]|3[01])\.|192\.168\.)' | head -1)"
+fi
+if [[ -z "$SERVER_IP" ]]; then
+    SERVER_IP="$(hostname -I 2>/dev/null | awk '{print $1}')"
+fi
+[[ -z "$SERVER_IP" ]] && SERVER_IP="IP_DEL_SERVIDOR"
+
 echo -e "Proximos pasos:"
 echo "  1. Verifica el estado: systemctl status svqpanel"
 echo "  2. Ver logs: journalctl -u svqpanel -f"
 echo -e "\n${GREEN}SVQPanel estará disponible en:${NC}"
-echo "  • Panel Web:    http://IP_DEL_SERVIDOR:${PANEL_WEB_PORT}"
-echo "  • Seguridad:    http://IP_DEL_SERVIDOR:${PANEL_WEB_PORT}/security  (firewall, fail2ban, listas IP)"
-echo "  • API Docs:     http://IP_DEL_SERVIDOR:${PANEL_WEB_PORT}/docs"
+echo "  • Panel Web:    http://${SERVER_IP}:${PANEL_WEB_PORT}"
+echo "  • Seguridad:    http://${SERVER_IP}:${PANEL_WEB_PORT}/security  (firewall, fail2ban, listas IP)"
+echo "  • API Docs:     http://${SERVER_IP}:${PANEL_WEB_PORT}/docs"
 echo -e "  ${YELLOW}Sugerencia de seguridad:${NC} cierra el puerto ${PANEL_WEB_PORT} en tu firewall"
 echo "  perimetral (Proxmox, etc.) y ábrelo solo a tus IPs de administración."
 echo -e "\n${YELLOW}Base de datos:${NC}"
@@ -2367,20 +2379,20 @@ if [[ "$INSTALL_MAIL" == true ]]; then
     echo "  • SMTP envío:    puerto 587  (clientes con STARTTLS + auth)"
     echo "  • IMAP:          puerto 143  (STARTTLS) / 993 (TLS)"
     echo "  • POP3:          puerto 110  (STARTTLS) / 995 (TLS)"
-    echo "  • Rspamd UI:     http://IP_DEL_SERVIDOR:11334"
+    echo "  • Rspamd UI:     http://${SERVER_IP}:11334"
     echo "  • Buzones en:    /home/{usuario}/mail/{dominio}/{buzon}/"
     echo -e "  ${YELLOW}Configura por dominio: registro MX, rDNS (PTR), SPF, DKIM y DMARC${NC}"
 fi
 if [[ "$INSTALL_ROUNDCUBE" == true ]]; then
     echo -e "\n${YELLOW}Roundcube Webmail:${NC}"
-    echo "  • URL:           http://IP_DEL_SERVIDOR/webmail/"
+    echo "  • URL:           http://${SERVER_IP}/webmail/"
     echo "  • Autologin:     botón ✉ junto a cada buzón en el panel"
     echo "  • Plugin:        svqpanel_autologin (instalado automáticamente)"
     echo "  • Credenciales:  /opt/svqpanel/.credentials/roundcube.txt"
 fi
 
 echo -e "\n${YELLOW}Seguridad (Fase 12):${NC}"
-echo "  • UI:                  http://IP_DEL_SERVIDOR/security"
+echo "  • UI:                  http://${SERVER_IP}/security"
 echo "  • Firewall:            nftables (tabla 'inet svqpanel')"
 echo "                         /etc/nftables.conf + /etc/nftables/svqpanel-*.nft"
 echo "  • Brute-force:         fail2ban (sshd, recidive y más con correo)"
