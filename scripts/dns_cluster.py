@@ -20,11 +20,30 @@ import logging
 import os
 import secrets
 import shlex
+import shutil
 import subprocess
 import tempfile
 from typing import Dict, List, Optional, Tuple
 
 logger = logging.getLogger(__name__)
+
+
+def _bin(name: str) -> str:
+    """Resuelve la ruta absoluta de un binario del sistema.
+
+    El servicio systemd del panel puede correr con un PATH reducido; buscamos
+    primero en rutas estándar de Debian y luego en el PATH. Si no se encuentra,
+    devolvemos el nombre tal cual (subprocess dará un error claro).
+    """
+    explicit = (
+        f"/usr/bin/{name}", f"/bin/{name}",
+        f"/usr/sbin/{name}", f"/sbin/{name}",
+        f"/usr/local/bin/{name}",
+    )
+    for path in explicit:
+        if os.path.isfile(path) and os.access(path, os.X_OK):
+            return path
+    return shutil.which(name) or name
 
 # Rutas estándar en los nodos Debian 12 (idénticas al VPS de test)
 REMOTE_ZONES_DIR   = "/etc/bind/zones"           # master: ficheros estáticos (subidos por scp)
@@ -149,7 +168,7 @@ class DNSCluster:
         if not os.path.exists(PANEL_SSH_KEY):
             os.makedirs(os.path.dirname(PANEL_SSH_KEY), mode=0o700, exist_ok=True)
             subprocess.run(
-                ["ssh-keygen", "-t", "ed25519", "-N", "", "-f", PANEL_SSH_KEY,
+                [_bin("ssh-keygen"), "-t", "ed25519", "-N", "", "-f", PANEL_SSH_KEY,
                  "-C", "svqpanel-dns-cluster"],
                 capture_output=True, text=True, timeout=30,
             )

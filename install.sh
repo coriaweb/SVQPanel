@@ -1426,7 +1426,10 @@ After=network.target postgresql.service
 Type=simple
 User=root
 WorkingDirectory=/opt/svqpanel
-Environment="PATH=/opt/svqpanel/venv/bin"
+# PATH debe incluir las rutas del sistema: el panel invoca binarios del SO
+# (ssh-keygen/ssh/scp para el cluster DNS, nft, certbot, etc.). Solo con el venv
+# fallaban con FileNotFoundError.
+Environment="PATH=/opt/svqpanel/venv/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
 ExecStart=/opt/svqpanel/venv/bin/uvicorn api.main:app --host 127.0.0.1 --port 8001
 Restart=always
 RestartSec=10
