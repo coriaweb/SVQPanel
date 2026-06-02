@@ -1801,6 +1801,14 @@ if [[ "$INSTALL_MAIL" == true ]]; then
     MAIL_JAILS_ENABLED="true"
 fi
 
+# Action custom: banea en los sets f2b_v4/f2b_v6 de la tabla 'inet svqpanel',
+# que tienen reglas drop para IPv4 E IPv6 (la nftables-multiport por defecto
+# solo crea set/regla IPv4 → los atacantes por IPv6 no se bloqueaban).
+if [[ -f /opt/svqpanel/scripts/assets/fail2ban-svqpanel-nft.conf ]]; then
+    cp /opt/svqpanel/scripts/assets/fail2ban-svqpanel-nft.conf \
+       /etc/fail2ban/action.d/svqpanel-nft.conf
+fi
+
 cat > /etc/fail2ban/jail.local << F2BEOF
 # /etc/fail2ban/jail.local — gestionado por SVQPanel (Fase 12)
 # Cualquier cambio desde el panel puede sobrescribir este archivo.
@@ -1810,8 +1818,11 @@ bantime  = 1h
 findtime = 10m
 maxretry = 5
 backend  = systemd
-banaction = nftables-multiport
-banaction_allports = nftables-allports
+# allowipv6=auto: fail2ban detecta y procesa IPs IPv6 si el sistema tiene IPv6.
+allowipv6 = auto
+# banaction propia → escribe en inet svqpanel (cubre IPv4 + IPv6).
+banaction = svqpanel-nft
+banaction_allports = svqpanel-nft
 ignoreip = $IGNOREIP
 
 [sshd]
