@@ -49,7 +49,7 @@
                   <div class="fw-semibold">{{ job.name }}</div>
                   <div v-if="job.description" class="text-muted small">{{ job.description }}</div>
                 </td>
-                <td class="small">{{ domainName(job.domain_id) }}</td>
+                <td class="small">{{ job.domain_id ? domainName(job.domain_id) : 'Todos' }}</td>
                 <td>
                   <span v-if="job.include_files" class="badge bg-primary me-1" title="Archivos web">Web</span>
                   <span v-if="job.include_databases" class="badge bg-info me-1" title="Bases de datos">BD</span>
@@ -126,11 +126,12 @@
                 <input v-model="form.name" class="form-control" placeholder="Ej: Backup diario tienda" />
               </div>
               <div class="col-md-6">
-                <label class="form-label fw-semibold">Dominio <span class="text-danger">*</span></label>
+                <label class="form-label fw-semibold">Dominio</label>
                 <select v-model="form.domain_id" class="form-select" :disabled="editing">
-                  <option :value="null" disabled>Selecciona un dominio</option>
+                  <option :value="null">— Todos mis dominios —</option>
                   <option v-for="d in domains" :key="d.id" :value="d.id">{{ d.domain_name }}</option>
                 </select>
+                <div class="form-text">Sin selección: respalda todos tus dominios en una sola ejecución.</div>
               </div>
               <div class="col-12">
                 <label class="form-label">Descripción (opcional)</label>
@@ -349,8 +350,8 @@
                   </tr>
                 </thead>
                 <tbody>
-                  <template v-for="r in records" :key="r.id">
-                    <tr>
+                  <template v-for="r in records">
+                    <tr :key="r.id">
                       <td>
                         <span class="badge" :class="r.kind === 'restore' ? 'bg-dark' : 'bg-light text-dark border'">
                           {{ r.kind === 'restore' ? 'Restaurar' : 'Copia' }}
@@ -371,7 +372,7 @@
                         </button>
                       </td>
                     </tr>
-                    <tr v-if="expanded === r.id">
+                    <tr v-if="expanded === r.id" :key="'exp-' + r.id">
                       <td colspan="9" class="bg-light">
                         <div v-if="r.error_message" class="text-danger small mb-2">{{ r.error_message }}</div>
                         <pre class="small mb-0" style="max-height:240px;overflow:auto;white-space:pre-wrap">{{ r.log_output || 'Sin log' }}</pre>
@@ -617,7 +618,6 @@ export default {
     const submitForm = async () => {
       formError.value = ''
       if (!form.value.name.trim()) { formError.value = 'El nombre es obligatorio.'; return }
-      if (!form.value.domain_id) { formError.value = 'Debes seleccionar un dominio.'; return }
       if (!form.value.include_files && !form.value.include_databases && !form.value.include_mail) {
         formError.value = 'Selecciona al menos un contenido a respaldar.'; return
       }

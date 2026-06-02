@@ -151,6 +151,34 @@ def _job_to_config(job: BackupJob) -> dict:
 # Ejecución en segundo plano
 # ─────────────────────────────────────────────────────────────────────────────
 
+def _domains_for_job(job: BackupJob, db: Session) -> list:
+    """
+    Devuelve la lista de dominios a respaldar para este job.
+    - Si job.domain_id está definido: solo ese dominio.
+    - Si no (backup global): todos los dominios activos del propietario del job
+      (o de todos los usuarios si el creador es admin).
+    Cada elemento: (domain_obj, owner_user_obj)
+    """
+    if job.domain_id:
+        domain = db.query(Domain).filter(Domain.id == job.domain_id).first()
+        if not domain:
+            return []
+        owner = db.query(User).filter(User.id == domain.user_id).first()
+        return [(domain, owner)]
+
+    # Backup global
+    creator = db.query(User).filter(User.id == job.user_id).first()
+    query = db.query(Domain).filter(Domain.is_active == True)  # noqa: E712
+    if not (creator and creator.is_admin):
+        query = query.filter(Domain.user_id == job.user_id)
+    domains = query.order_by(Domain.domain_name).all()
+    result = []
+    for d in domains:
+        owner = db.query(User).filter(User.id == d.user_id).first()
+        result.append((d, owner))
+    return result
+
+
 def _execute_backup(job_id: int, record_id: int, force_full: bool):
     """Ejecuta el backup y actualiza el BackupRecord. Corre en BackgroundTasks."""
     db = SessionLocal()
@@ -163,55 +191,75 @@ def _execute_backup(job_id: int, record_id: int, force_full: bool):
         record.status = "running"
         db.commit()
 
-        domain = db.query(Domain).filter(Domain.id == job.domain_id).first()
-        # Los archivos viven bajo el home del DUEÑO del dominio, no el del creador del job
-        owner = db.query(User).filter(User.id == domain.user_id).first() if domain else None
-        username = owner.username if owner else "root"
-        domain_name = domain.domain_name if domain else None
-
         from scripts.utils import get_domain_root
-        files_path = (
-            get_domain_root(username, domain_name)
-            if job.include_files and domain_name else None
-        )
-        mail_path = (
-            f"/home/{username}/mail/{domain_name}"
-            if job.include_mail and domain_name else None
-        )
-
-        databases = []
-        if job.include_databases and domain:
-            dbs = (
-                db.query(ClientDatabase)
-                .filter(ClientDatabase.domain_id == domain.id,
-                        ClientDatabase.is_active == True)  # noqa: E712
-                .all()
-            )
-            databases = [{"db_name": d.db_name} for d in dbs]
-
         from scripts.backup_manager import BackupManager
         mgr = BackupManager()
-        res = mgr.run_backup(
-            job_config=_job_to_config(job),
-            username=username,
-            domain_name=domain_name,
-            files_path=files_path,
-            mail_path=mail_path,
-            databases=databases,
-            force_full=force_full,
-        )
+        job_config = _job_to_config(job)
 
-        record.status            = res["status"]
-        record.is_incremental    = res["is_incremental"]
-        record.backup_path       = res["backup_path"]
-        record.size_bytes        = res["size_bytes"]
-        record.files_transferred = res["files_transferred"]
-        record.files_total       = res["files_total"]
-        record.db_count          = res["db_count"]
-        record.log_output        = "\n".join(res["log"])[:50000]
-        record.error_message     = res["error"]
+        domains_to_backup = _domains_for_job(job, db)
+
+        all_log: list[str] = []
+        total_size = 0
+        total_files_transferred = 0
+        total_files_total = 0
+        total_db_count = 0
+        any_failed = False
+        last_path = None
+
+        if not domains_to_backup:
+            all_log.append("WARN: no hay dominios que respaldar para este job")
+
+        for domain, owner in domains_to_backup:
+            username    = owner.username if owner else "root"
+            domain_name = domain.domain_name
+
+            files_path = (
+                get_domain_root(username, domain_name)
+                if job.include_files else None
+            )
+            mail_path = (
+                f"/home/{username}/mail/{domain_name}"
+                if job.include_mail else None
+            )
+            databases = []
+            if job.include_databases:
+                dbs = (
+                    db.query(ClientDatabase)
+                    .filter(ClientDatabase.domain_id == domain.id,
+                            ClientDatabase.is_active == True)  # noqa: E712
+                    .all()
+                )
+                databases = [{"db_name": d.db_name} for d in dbs]
+
+            all_log.append(f"── {domain_name} ({username}) ──")
+            res = mgr.run_backup(
+                job_config=job_config,
+                username=username,
+                domain_name=domain_name,
+                files_path=files_path,
+                mail_path=mail_path,
+                databases=databases,
+                force_full=force_full,
+            )
+            all_log.extend(res["log"])
+            total_size             += res["size_bytes"]
+            total_files_transferred += res["files_transferred"]
+            total_files_total      += res["files_total"]
+            total_db_count         += res["db_count"]
+            last_path               = res["backup_path"]
+            if res["status"] == "failed":
+                any_failed = True
+                all_log.append(f"ERROR {domain_name}: {res['error']}")
+
+        record.status            = "failed" if any_failed else "success"
+        record.backup_path       = last_path
+        record.size_bytes        = total_size
+        record.files_transferred = total_files_transferred
+        record.files_total       = total_files_total
+        record.db_count          = total_db_count
+        record.log_output        = "\n".join(all_log)[:50000]
+        record.error_message     = "Algunos dominios fallaron, revisa el log" if any_failed else None
         record.finished_at       = datetime.utcnow()
-
         job.last_run = datetime.utcnow()
         db.commit()
 
@@ -296,12 +344,11 @@ async def create_backup_job(
     db: Session = Depends(get_db),
 ):
     """Crea un nuevo job de backup. El dominio es obligatorio."""
-    if not payload.domain_id:
-        raise HTTPException(status_code=400, detail="Debes seleccionar un dominio")
     if not (payload.include_files or payload.include_databases or payload.include_mail):
         raise HTTPException(status_code=400, detail="Selecciona al menos un contenido a respaldar")
 
-    _assert_domain_ownership(payload.domain_id, current_user, db)
+    if payload.domain_id:
+        _assert_domain_ownership(payload.domain_id, current_user, db)
 
     if payload.destination_type == "sftp" and (not payload.sftp_host or not payload.sftp_user):
         raise HTTPException(status_code=400, detail="Host y usuario SFTP son obligatorios para destino remoto")

@@ -75,14 +75,10 @@ def _cron_matches(job, now: datetime) -> bool:
 # ─────────────────────────────────────────────────────────────────────────────
 
 def _run_job(job_id: int):
-    """Lanza un backup para el job dado. Se ejecuta en un hilo separado."""
+    """Lanza un backup para el job dado. Reutiliza _execute_backup de la ruta API."""
     from api.models.database import SessionLocal
     from api.models.models_backup import BackupJob, BackupRecord
-    from api.models.models_domain import Domain
-    from api.models.models_user import User
-    from api.models.models_client_db import ClientDatabase
-    from scripts.backup_manager import BackupManager
-    from scripts.utils import get_domain_root
+    from api.routes.backups import _execute_backup, _job_to_config
 
     db = SessionLocal()
     record_id = None
@@ -91,7 +87,6 @@ def _run_job(job_id: int):
         if not job or not job.is_active or not job.schedule_enabled:
             return
 
-        # Crear registro pending
         record = BackupRecord(
             job_id=job.id,
             user_id=job.user_id,
@@ -102,106 +97,31 @@ def _run_job(job_id: int):
         db.commit()
         db.refresh(record)
         record_id = record.id
+        db.close()
 
-        record.status = "running"
-        db.commit()
-
-        # Resolver paths
-        domain = db.query(Domain).filter(Domain.id == job.domain_id).first()
-        owner  = db.query(User).filter(User.id == domain.user_id).first() if domain else None
-        username    = owner.username if owner else "root"
-        domain_name = domain.domain_name if domain else None
-
-        files_path = (
-            get_domain_root(username, domain_name)
-            if job.include_files and domain_name else None
-        )
-        mail_path = (
-            f"/home/{username}/mail/{domain_name}"
-            if job.include_mail and domain_name else None
-        )
-
-        databases = []
-        if job.include_databases and domain:
-            dbs = (
-                db.query(ClientDatabase)
-                .filter(ClientDatabase.domain_id == domain.id,
-                        ClientDatabase.is_active == True)  # noqa: E712
-                .all()
-            )
-            databases = [{"db_name": d.db_name} for d in dbs]
-
-        # Descifrar password SFTP igual que en backups.py
-        sftp_password = job.sftp_password
-        if sftp_password:
-            try:
-                import os
-                from cryptography.fernet import Fernet
-                key = os.getenv("PANEL_ENCRYPTION_KEY", "")
-                if key:
-                    sftp_password = Fernet(key.encode()).decrypt(sftp_password.encode()).decode()
-            except Exception:
-                pass
-
-        job_config = {
-            "include_files":     job.include_files,
-            "include_databases": job.include_databases,
-            "include_mail":      job.include_mail,
-            "backup_type":       job.backup_type,
-            "destination_type":  job.destination_type,
-            "local_path":        job.local_path,
-            "sftp_host":         job.sftp_host,
-            "sftp_port":         job.sftp_port or 22,
-            "sftp_user":         job.sftp_user,
-            "sftp_password":     sftp_password,
-            "sftp_path":         job.sftp_path,
-            "sftp_key_path":     job.sftp_key_path,
-            "retention_copies":  job.retention_copies,
-        }
-
-        mgr = BackupManager()
-        res = mgr.run_backup(
-            job_config=job_config,
-            username=username,
-            domain_name=domain_name,
-            files_path=files_path,
-            mail_path=mail_path,
-            databases=databases,
-            force_full=False,
-        )
-
-        record.status            = res["status"]
-        record.is_incremental    = res["is_incremental"]
-        record.backup_path       = res["backup_path"]
-        record.size_bytes        = res["size_bytes"]
-        record.files_transferred = res["files_transferred"]
-        record.files_total       = res["files_total"]
-        record.db_count          = res["db_count"]
-        record.log_output        = "\n".join(res["log"])[:50000]
-        record.error_message     = res["error"]
-        record.finished_at       = datetime.utcnow()
-        job.last_run = datetime.utcnow()
-        db.commit()
-
-        logger.info(
-            "Backup programado job=%d status=%s size=%s bytes",
-            job_id, res["status"], res["size_bytes"],
-        )
+        # Delegar en la misma función que usa el endpoint /run
+        _execute_backup(job_id, record_id, force_full=False)
+        logger.info("Backup programado job=%d record=%d completado", job_id, record_id)
 
     except Exception as exc:
-        logger.exception("Error en backup programado job=%d", job_id)
+        logger.exception("Error lanzando backup programado job=%d", job_id)
         if record_id:
             try:
-                rec = db.query(BackupRecord).filter(BackupRecord.id == record_id).first()
+                db2 = SessionLocal()
+                rec = db2.query(BackupRecord).filter(BackupRecord.id == record_id).first()
                 if rec:
                     rec.status = "failed"
                     rec.error_message = str(exc)
                     rec.finished_at = datetime.utcnow()
-                    db.commit()
+                    db2.commit()
+                db2.close()
             except Exception:
                 pass
     finally:
-        db.close()
+        try:
+            db.close()
+        except Exception:
+            pass
 
 
 # ─────────────────────────────────────────────────────────────────────────────
