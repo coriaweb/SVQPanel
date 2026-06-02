@@ -59,6 +59,10 @@ class Settings(Base):
     dns_tsig_name   = Column(String(64), nullable=True)       # nombre de la clave, ej: svq-xfer
     dns_tsig_secret = Column(String(128), nullable=True)      # secreto base64
     dns_tsig_algo   = Column(String(32), default="hmac-sha256")
+    # Identificador único y estable de ESTA instalación del panel. Se usa como
+    # namespace en los nodos DNS para que varios paneles compartan ns1/ns2 sin
+    # pisarse las configuraciones. Se genera al primer load_cluster() si está vacío.
+    dns_panel_id    = Column(String(32), nullable=True)       # ej: p7a3f9e2
     # Último health-check del cluster (lo escribe el timer; lo lee la UI)
     dns_cluster_health_json = Column(Text, nullable=True)     # JSON con rows+summary
     dns_cluster_health_at   = Column(DateTime, nullable=True) # cuándo se calculó

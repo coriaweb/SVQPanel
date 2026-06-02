@@ -184,9 +184,19 @@ def _do_provision(db: Session) -> dict:
         db.commit()
         db.refresh(s)
 
-    cl = DNSCluster()
+    # panel_id: namespace único y estable de esta instalación en los nodos DNS
+    # compartidos. Lo necesitamos antes de la TSIG para derivar su nombre.
+    import secrets as _secrets
+    if not s.dns_panel_id:
+        s.dns_panel_id = "p" + _secrets.token_hex(4)
+        db.commit()
+    panel_id = s.dns_panel_id
+
+    cl = DNSCluster(panel_id=panel_id)
     if not s.dns_tsig_secret:
-        tsig = cl.generate_tsig()
+        # Nombre de clave único por panel (svq-{panel_id}) para no colisionar con
+        # otros paneles que compartan los mismos nodos.
+        tsig = cl.generate_tsig(key_name=f"svq-{panel_id}")
         s.dns_tsig_name = tsig["name"]
         s.dns_tsig_secret = tsig["secret"]
         s.dns_tsig_algo = tsig["algo"]

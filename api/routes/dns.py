@@ -421,8 +421,9 @@ async def delete_zone(
         cluster = load_cluster(db)
         if cluster:
             slave = cluster["slave"] or cluster["master"]
-            DNSCluster().remove_zone(cluster["master"], slave, cluster["tsig"],
-                                     domain_name, all_zones_meta(db))
+            DNSCluster(panel_id=cluster["panel_id"]).remove_zone(
+                cluster["master"], slave, cluster["tsig"],
+                domain_name, all_zones_meta(db))
             return None
     except Exception as e:
         import logging
@@ -567,7 +568,7 @@ async def get_dnssec(
         if cluster:
             out["cluster"] = True
             if zone.dnssec_enabled:
-                cl = DNSCluster()
+                cl = DNSCluster(panel_id=cluster["panel_id"])
                 st = cl.dnssec_status(cluster["master"], zone.domain_name)
                 out["signed"] = st["signed"]
                 out["dnskeys"] = st["dnskeys"]

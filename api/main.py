@@ -503,6 +503,8 @@ def _run_migrations():
         "ALTER TABLE settings ADD COLUMN IF NOT EXISTS dns_tsig_name VARCHAR(64)",
         "ALTER TABLE settings ADD COLUMN IF NOT EXISTS dns_tsig_secret VARCHAR(128)",
         "ALTER TABLE settings ADD COLUMN IF NOT EXISTS dns_tsig_algo VARCHAR(32) DEFAULT 'hmac-sha256'",
+        # Namespace por panel en los nodos DNS compartidos (varios paneles, mismos ns1/ns2)
+        "ALTER TABLE settings ADD COLUMN IF NOT EXISTS dns_panel_id VARCHAR(32)",
         # Salud del cluster DNS (la escribe el timer dns-cluster-health)
         "ALTER TABLE settings ADD COLUMN IF NOT EXISTS dns_cluster_health_json TEXT",
         "ALTER TABLE settings ADD COLUMN IF NOT EXISTS dns_cluster_health_at TIMESTAMP",

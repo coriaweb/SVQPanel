@@ -45,24 +45,32 @@ def _bin(name: str) -> str:
             return path
     return shutil.which(name) or name
 
-# Rutas estándar en los nodos Debian 12 (idénticas al VPS de test)
-REMOTE_ZONES_DIR   = "/etc/bind/zones"           # master: ficheros estáticos (subidos por scp)
-REMOTE_ZONES_CONF  = "/etc/bind/named.conf.zones"
-REMOTE_NAMED_LOCAL = "/etc/bind/named.conf.local"
-REMOTE_TSIG_CONF   = "/etc/bind/svqpanel-tsig.conf"
-# El slave ESCRIBE las zonas recibidas por AXFR: deben ir a una ruta escribible
-# por named y permitida por el perfil AppArmor de Debian (/var/lib/bind), no a
-# /etc/bind (de solo lectura para named bajo AppArmor).
-REMOTE_SLAVE_ZONES_DIR = "/var/lib/bind"
-# Con DNSSEC (dnssec-policy + inline-signing) BIND reescribe la zona firmada y
-# su journal, y guarda las claves: todo eso necesita un directorio escribible
-# por named. Usamos /var/lib/bind también en el MASTER para las zonas firmadas
-# y como key-directory. Las zonas SIN firmar siguen estáticas en /etc/bind/zones.
-REMOTE_SIGNED_ZONES_DIR = "/var/lib/bind"
-REMOTE_KEYS_DIR         = "/var/lib/bind"
+# ── Namespace por panel en los nodos DNS compartidos ───────────────────────────
+# Varios paneles SVQPanel pueden compartir los mismos nodos (ns1/ns2). Para que
+# no se pisen las configuraciones, CADA panel escribe bajo su propio namespace
+# /etc/bind/svqpanel/{panel_id}/ y /var/lib/bind/svqpanel/{panel_id}/. Las rutas
+# concretas las construye DNSCluster a partir de self.panel_id (ver propiedades).
+#
+# El named.conf.local del nodo NO contiene las zonas: incluye UNA sola vez (de
+# forma idempotente) el fichero compartido _INCLUDES_CONF, que a su vez incluye
+# (con globs) los tsig.conf/zones.conf de TODOS los paneles.
+REMOTE_BIND_DIR      = "/etc/bind"                 # raíz BIND del nodo
+REMOTE_BIND_ETC_BASE = "/etc/bind/svqpanel"       # raíz común (un subdir por panel)
+REMOTE_BIND_VAR_BASE = "/var/lib/bind/svqpanel"   # raíz común escribible por named
+REMOTE_NAMED_LOCAL   = "/etc/bind/named.conf.local"
+REMOTE_INCLUDES_CONF = f"{REMOTE_BIND_ETC_BASE}/_includes.conf"
 # Política DNSSEC de BIND 9.16+: 'default' = ECDSAP256SHA256, CSK, rotación e
 # inline-signing automáticos. No requiere gestionar claves a mano.
 DNSSEC_POLICY = "default"
+
+# Contenido (reescribible) del _includes.conf compartido. Sus globs ya cubren a
+# TODOS los paneles automáticamente, así que regenerarlo entero es seguro: no
+# contiene nada específico de un panel concreto.
+_INCLUDES_CONF_TEXT = (
+    "// SVQPanel — includes de todos los paneles (no editar a mano)\n"
+    f'include "{REMOTE_BIND_ETC_BASE}/*/tsig.conf";\n'
+    f'include "{REMOTE_BIND_ETC_BASE}/*/zones.conf";\n'
+)
 
 DEFAULT_TSIG_ALGO = "hmac-sha256"
 
@@ -81,7 +89,65 @@ class DNSCluster:
     """
     Gestiona los nodos DNS remotos por SSH. Recibe dicts de nodo con:
       {hostname, ip, ssh_user, ssh_port, ssh_key_path, ssh_password?}
+
+    `panel_id` es el namespace de ESTA instalación en los nodos compartidos: todas
+    las rutas remotas (tsig, zones.conf, zone files, zonas firmadas, key-directory)
+    cuelgan de él para que varios paneles compartan ns1/ns2 sin pisarse. Es
+    obligatorio para las operaciones que tocan rutas por-panel (provision_*,
+    push_zone, remove_zone); las puramente diagnósticas (test_connection,
+    query_serial, dnssec_status…) no lo necesitan.
     """
+
+    def __init__(self, panel_id: Optional[str] = None):
+        self.panel_id = panel_id
+
+    # ── Rutas por-panel (namespace) ──────────────────────────────────────────
+    def _require_panel_id(self) -> str:
+        if not self.panel_id:
+            raise DNSClusterError(
+                "DNSCluster sin panel_id: esta operación escribe rutas por-panel "
+                "en los nodos. Instancia DNSCluster(panel_id=...) desde load_cluster()."
+            )
+        return self.panel_id
+
+    @property
+    def _base_etc(self) -> str:
+        # /etc/bind/svqpanel/{panel_id} — config legible por named (root:bind)
+        return f"{REMOTE_BIND_ETC_BASE}/{self._require_panel_id()}"
+
+    @property
+    def _base_var(self) -> str:
+        # /var/lib/bind/svqpanel/{panel_id} — escribible por named (bind:bind):
+        # zonas firmadas DNSSEC, zonas AXFR del slave y key-directory.
+        return f"{REMOTE_BIND_VAR_BASE}/{self._require_panel_id()}"
+
+    @property
+    def _zones_conf(self) -> str:
+        return f"{self._base_etc}/zones.conf"
+
+    @property
+    def _tsig_conf(self) -> str:
+        return f"{self._base_etc}/tsig.conf"
+
+    @property
+    def _zones_dir(self) -> str:
+        # Zone files NO firmados (estáticos, subidos por scp).
+        return f"{self._base_etc}/zones"
+
+    @property
+    def _signed_dir(self) -> str:
+        # Zonas firmadas DNSSEC (inline-signing las reescribe → dir escribible).
+        return self._base_var
+
+    @property
+    def _keys_dir(self) -> str:
+        # key-directory DNSSEC (named genera/rota las claves aquí).
+        return self._base_var
+
+    @property
+    def _slave_zones_dir(self) -> str:
+        # El slave escribe aquí las zonas recibidas por AXFR.
+        return self._base_var
 
     # ── SSH helpers ──────────────────────────────────────────────────────────
     def _ssh_base(self, node: Dict) -> List[str]:
@@ -223,12 +289,19 @@ class DNSCluster:
         return {"ok": True, "info": out}
 
     # ── TSIG ───────────────────────────────────────────────────────────────────
-    def generate_tsig(self, key_name: str = "svq-xfer",
+    def generate_tsig(self, key_name: str = None,
                       algo: str = DEFAULT_TSIG_ALGO) -> Dict[str, str]:
         """
         Genera una clave TSIG localmente (tsig-keygen del paquete bind9-utils,
         instalado en el VPS panel). Devuelve {name, algo, secret}.
+
+        `key_name` debería ser único por panel (p. ej. svq-{panel_id}) para que
+        varios paneles que compartan los mismos nodos no colisionen. Si no se
+        indica, usamos el panel_id de la instancia o, en último término, un
+        nombre derivado de bytes aleatorios.
         """
+        if not key_name:
+            key_name = f"svq-{self.panel_id}" if self.panel_id else f"svq-{secrets.token_hex(4)}"
         try:
             r = subprocess.run(["tsig-keygen", "-a", algo, key_name],
                               capture_output=True, text=True, timeout=30)
@@ -258,18 +331,9 @@ class DNSCluster:
         )
 
     # ── Generación de config BIND ──────────────────────────────────────────────
-    def _master_named_local(self, slave_ip: str, tsig_name: str) -> str:
-        """named.conf.local del master: include TSIG + include de zonas."""
-        return (
-            "// Generado por SVQPanel — cluster DNS (master)\n"
-            f'include "{REMOTE_TSIG_CONF}";\n'
-            f'include "{REMOTE_ZONES_CONF}";\n'
-        )
-
-    @staticmethod
-    def master_zone_file(domain: str, dnssec: bool = False) -> str:
-        """Ruta del zone file en el master según esté firmada o no."""
-        base = REMOTE_SIGNED_ZONES_DIR if dnssec else REMOTE_ZONES_DIR
+    def master_zone_file(self, domain: str, dnssec: bool = False) -> str:
+        """Ruta (por-panel) del zone file en el master según esté firmada o no."""
+        base = self._signed_dir if dnssec else self._zones_dir
         return f"{base}/db.{domain}"
 
     def _master_zone_block(self, domain: str, slave_ip: str, tsig_name: str,
@@ -292,7 +356,7 @@ class DNSCluster:
             block += (
                 f'    dnssec-policy {DNSSEC_POLICY};\n'
                 f'    inline-signing yes;\n'
-                f'    key-directory "{REMOTE_KEYS_DIR}";\n'
+                f'    key-directory "{self._keys_dir}";\n'
             )
         block += '};\n\n'
         return block
@@ -301,39 +365,80 @@ class DNSCluster:
         return (
             f'zone "{domain}" IN {{\n'
             f'    type slave;\n'
-            f'    file "{REMOTE_SLAVE_ZONES_DIR}/db.{domain}";\n'
+            f'    file "{self._slave_zones_dir}/db.{domain}";\n'
             f'    masters {{ {master_ip} key {tsig_name}; }};\n'
             f'    allow-notify {{ {master_ip}; }};\n'
             f'}};\n\n'
         )
 
-    def _slave_named_local(self, master_ip: str, tsig_name: str,
-                           domains: List[str]) -> str:
-        lines = [
-            "// Generado por SVQPanel — cluster DNS (slave)\n",
-            f'include "{REMOTE_TSIG_CONF}";\n',
-            f'include "{REMOTE_ZONES_CONF}";\n',
-        ]
-        return "".join(lines)
-
     # ── Aprovisionamiento ────────────────────────────────────────────────────
     def _ensure_bind_installed(self, node: Dict) -> Tuple[bool, str]:
-        """Instala bind9+dnsutils en el nodo si no está. Idempotente."""
+        """Instala bind9+dnsutils y crea el namespace por-panel. Idempotente."""
         sudo = "" if node.get("ssh_user", "root") == "root" else "sudo "
+        base_etc = self._base_etc
+        zones_dir = self._zones_dir
+        base_var = self._base_var
         # Instalamos siempre dnsutils (dig) además de bind9/bind9-utils.
+        # Creamos:
+        #  - {base_etc}/zones   (root:bind 2775)  → config + zone files no firmados
+        #  - {base_var}         (bind:bind)       → firmadas DNSSEC / AXFR / claves
         rc, out, err = self._run_remote(
             node,
             f"{sudo}bash -c '(command -v named >/dev/null 2>&1 && command -v dig >/dev/null 2>&1) || "
             f"(export DEBIAN_FRONTEND=noninteractive; apt-get update -qq && "
             f"apt-get install -y -qq bind9 bind9-utils dnsutils)' && "
-            f"{sudo}mkdir -p {REMOTE_ZONES_DIR} && "
-            f"{sudo}chown root:bind {REMOTE_ZONES_DIR} && "
-            f"{sudo}chmod 2775 {REMOTE_ZONES_DIR} && "
-            f"{sudo}touch {REMOTE_ZONES_CONF}",
+            f"{sudo}mkdir -p {zones_dir} && "
+            f"{sudo}chown root:bind {REMOTE_BIND_ETC_BASE} {base_etc} {zones_dir} && "
+            f"{sudo}chmod 2775 {REMOTE_BIND_ETC_BASE} {base_etc} {zones_dir} && "
+            f"{sudo}touch {self._zones_conf} && "
+            f"{sudo}mkdir -p {base_var} && "
+            f"{sudo}chown bind:bind {base_var} && "
+            f"{sudo}chmod 2775 {base_var}",
             timeout=300,
         )
         if rc != 0:
             return False, err or "fallo instalando bind9"
+        # Asegurar el include compartido en named.conf.local (idempotente) y
+        # (re)generar el _includes.conf con los globs de todos los paneles.
+        ok, ierr = self._ensure_local_include(node)
+        if not ok:
+            return False, ierr
+        return True, ""
+
+    def _ensure_local_include(self, node: Dict) -> Tuple[bool, str]:
+        """
+        Hace que named.conf.local incluya UNA sola vez el _includes.conf compartido
+        (append idempotente, sin reescribir el resto del fichero) y (re)genera el
+        _includes.conf con los globs que cubren a TODOS los paneles.
+        """
+        # 1) (re)generar el _includes.conf compartido (seguro: solo globs)
+        rc, _, err = self._upload(node, _INCLUDES_CONF_TEXT, REMOTE_INCLUDES_CONF)
+        if rc != 0:
+            return False, f"subiendo _includes.conf: {err}"
+        sudo = "" if node.get("ssh_user", "root") == "root" else "sudo "
+        include_line = f'include "{REMOTE_INCLUDES_CONF}";'
+        # 2) Limpiar residuo del esquema GLOBAL antiguo (pre multi-panel): los
+        #    includes y ficheros /etc/bind/svqpanel-tsig.conf y named.conf.zones
+        #    colisionan con el namespace nuevo (p.ej. clave TSIG 'svq-xfer'
+        #    duplicada → named no arranca). Es el caso "nodo ya usado".
+        legacy_tsig  = f"{REMOTE_BIND_DIR}/svqpanel-tsig.conf"
+        legacy_zones = f"{REMOTE_BIND_DIR}/named.conf.zones"
+        # 3) append idempotente de la línea include en named.conf.local. NO se
+        #    reescribe el fichero (eso borraría includes de otros paneles/sistema).
+        rc, _, err = self._run_remote(
+            node,
+            f"{sudo}touch {REMOTE_NAMED_LOCAL} && "
+            # quitar includes legacy globales (líneas exactas) si existieran
+            f"{sudo}sed -i '\\#include \"{legacy_tsig}\";#d; \\#include \"{legacy_zones}\";#d' {REMOTE_NAMED_LOCAL} && "
+            f"{sudo}rm -f {legacy_tsig} {legacy_zones} && "
+            f"{sudo}chown root:bind {REMOTE_INCLUDES_CONF} && "
+            f"{sudo}chmod 640 {REMOTE_INCLUDES_CONF} && "
+            f"{sudo}grep -qF {shlex.quote(include_line)} {REMOTE_NAMED_LOCAL} || "
+            f"echo {shlex.quote(include_line)} | {sudo}tee -a {REMOTE_NAMED_LOCAL} >/dev/null",
+            timeout=30,
+        )
+        if rc != 0:
+            return False, f"asegurando include en named.conf.local: {err}"
         return True, ""
 
     def _fix_bind_perms(self, node: Dict) -> None:
@@ -345,14 +450,14 @@ class DNSCluster:
         sudo = "" if node.get("ssh_user", "root") == "root" else "sudo "
         self._run_remote(
             node,
-            f"{sudo}chown root:bind {REMOTE_TSIG_CONF} {REMOTE_ZONES_CONF} && "
-            f"{sudo}chmod 640 {REMOTE_TSIG_CONF} {REMOTE_ZONES_CONF} && "
-            f"{sudo}chown root:bind {REMOTE_ZONES_DIR}/db.* 2>/dev/null; "
-            f"{sudo}chmod 644 {REMOTE_ZONES_DIR}/db.* 2>/dev/null; "
-            # Zonas firmadas en /var/lib/bind: bind debe poder reescribirlas
+            f"{sudo}chown root:bind {self._tsig_conf} {self._zones_conf} && "
+            f"{sudo}chmod 640 {self._tsig_conf} {self._zones_conf} && "
+            f"{sudo}chown root:bind {self._zones_dir}/db.* 2>/dev/null; "
+            f"{sudo}chmod 644 {self._zones_dir}/db.* 2>/dev/null; "
+            # Zonas firmadas en {base_var}: bind debe poder reescribirlas
             # (inline-signing) y crear .jnl/.signed/claves → owner bind:bind.
-            f"{sudo}chown bind:bind {REMOTE_SIGNED_ZONES_DIR}/db.* 2>/dev/null; "
-            f"{sudo}chmod 644 {REMOTE_SIGNED_ZONES_DIR}/db.* 2>/dev/null; true",
+            f"{sudo}chown bind:bind {self._signed_dir}/db.* 2>/dev/null; "
+            f"{sudo}chmod 644 {self._signed_dir}/db.* 2>/dev/null; true",
             timeout=45,
         )
 
@@ -367,20 +472,15 @@ class DNSCluster:
         if not ok:
             raise DNSClusterError(f"master {master['ip']}: {err}")
 
-        rc, _, err = self._upload(master, self._tsig_conf_text(tsig), REMOTE_TSIG_CONF)
+        rc, _, err = self._upload(master, self._tsig_conf_text(tsig), self._tsig_conf)
         if rc != 0:
             raise DNSClusterError(f"master TSIG upload: {err}")
 
-        rc, _, err = self._upload(
-            master, self._master_named_local(slave["ip"], tsig["name"]),
-            REMOTE_NAMED_LOCAL)
-        if rc != 0:
-            raise DNSClusterError(f"master named.conf.local: {err}")
-
-        # key-directory escribible por named (para DNSSEC) — idempotente
+        # key-directory escribible por named (para DNSSEC) — idempotente. El
+        # namespace por-panel ya lo crea _ensure_bind_installed; reforzamos owner.
         sudo0 = "" if master.get("ssh_user", "root") == "root" else "sudo "
-        self._run_remote(master, f"{sudo0}mkdir -p {REMOTE_KEYS_DIR} && "
-                                 f"{sudo0}chown bind:bind {REMOTE_KEYS_DIR}", timeout=30)
+        self._run_remote(master, f"{sudo0}mkdir -p {self._keys_dir} && "
+                                 f"{sudo0}chown bind:bind {self._keys_dir}", timeout=30)
 
         # Construir named.conf.zones (bloques master) y subir cada zone file.
         # Las zonas firmadas van a /var/lib/bind (escribible para inline-signing);
@@ -394,7 +494,7 @@ class DNSCluster:
                                       self.master_zone_file(z["domain"], dnssec))
             if rc != 0:
                 raise DNSClusterError(f"master zone {z['domain']}: {err}")
-        rc, _, err = self._upload(master, zones_conf, REMOTE_ZONES_CONF)
+        rc, _, err = self._upload(master, zones_conf, self._zones_conf)
         if rc != 0:
             raise DNSClusterError(f"master named.conf.zones: {err}")
 
@@ -414,31 +514,25 @@ class DNSCluster:
         if not ok:
             raise DNSClusterError(f"slave {slave['ip']}: {err}")
 
-        rc, _, err = self._upload(slave, self._tsig_conf_text(tsig), REMOTE_TSIG_CONF)
+        rc, _, err = self._upload(slave, self._tsig_conf_text(tsig), self._tsig_conf)
         if rc != 0:
             raise DNSClusterError(f"slave TSIG upload: {err}")
-
-        rc, _, err = self._upload(
-            slave, self._slave_named_local(master["ip"], tsig["name"], domains),
-            REMOTE_NAMED_LOCAL)
-        if rc != 0:
-            raise DNSClusterError(f"slave named.conf.local: {err}")
 
         zones_conf = "// SVQPanel zones (slave) — no editar a mano\n\n"
         for domain in domains:
             zones_conf += self._slave_zone_block(domain, master["ip"], tsig["name"])
-        rc, _, err = self._upload(slave, zones_conf, REMOTE_ZONES_CONF)
+        rc, _, err = self._upload(slave, zones_conf, self._zones_conf)
         if rc != 0:
             raise DNSClusterError(f"slave named.conf.zones: {err}")
 
         self._fix_bind_perms(slave)
         sudo = "" if slave.get("ssh_user", "root") == "root" else "sudo "
-        # El slave ESCRIBE las zonas recibidas por AXFR en /var/lib/bind (ruta
-        # escribible por named y permitida por AppArmor). Aseguramos que existe
-        # y es de bind.
+        # El slave ESCRIBE las zonas recibidas por AXFR bajo el namespace por-panel
+        # en /var/lib/bind (escribible por named y permitido por AppArmor).
+        # _ensure_bind_installed ya creó el dir; reforzamos owner y recargamos.
         rc, out, err = self._run_remote(
-            slave, f"{sudo}mkdir -p {REMOTE_SLAVE_ZONES_DIR} && "
-                   f"{sudo}chown bind:bind {REMOTE_SLAVE_ZONES_DIR} && "
+            slave, f"{sudo}mkdir -p {self._slave_zones_dir} && "
+                   f"{sudo}chown bind:bind {self._slave_zones_dir} && "
                    f"{sudo}named-checkconf && {sudo}systemctl restart named && "
                    f"{sudo}systemctl is-active named", timeout=60)
         if rc != 0 or "active" not in out:
@@ -491,13 +585,13 @@ class DNSCluster:
             f"{other_file}.signed {other_file}.signed.jnl 2>/dev/null; "
             # claves del dominio (solo al volver a NO firmado; si firmamos las
             # genera named). Las dejamos si dnssec=True.
-            + (f"{sudo}rm -f {REMOTE_KEYS_DIR}/K{domain}.+*.key "
-               f"{REMOTE_KEYS_DIR}/K{domain}.+*.private "
-               f"{REMOTE_KEYS_DIR}/K{domain}.+*.state 2>/dev/null; " if not dnssec else "")
+            + (f"{sudo}rm -f {self._keys_dir}/K{domain}.+*.key "
+               f"{self._keys_dir}/K{domain}.+*.private "
+               f"{self._keys_dir}/K{domain}.+*.state 2>/dev/null; " if not dnssec else "")
             + "true")
 
         zones_conf = self._master_zones_conf(all_zones, slave["ip"], tsig["name"])
-        rc, _, err = self._upload(master, zones_conf, REMOTE_ZONES_CONF)
+        rc, _, err = self._upload(master, zones_conf, self._zones_conf)
         if rc != 0:
             raise DNSClusterError(f"push named.conf.zones: {err}")
 
@@ -513,7 +607,7 @@ class DNSCluster:
         # retransferencia completa en el slave para que adopte la nueva zona.
         if dnssec_changed and slave and slave.get("ip") != master.get("ip"):
             sudo_s = "" if slave.get("ssh_user", "root") == "root" else "sudo "
-            self._run_remote(slave, f"{sudo_s}rm -f {REMOTE_SLAVE_ZONES_DIR}/db.{domain} 2>/dev/null; "
+            self._run_remote(slave, f"{sudo_s}rm -f {self._slave_zones_dir}/db.{domain} 2>/dev/null; "
                                     f"{sudo_s}rndc retransfer {shlex.quote(domain)} 2>/dev/null; true",
                              timeout=45)
         return {"ok": True}
@@ -527,14 +621,14 @@ class DNSCluster:
                      self.master_zone_file(domain, True)):
             self._run_remote(master, f"{sudo_m}rm -f {path} {path}.jnl {path}.signed 2>/dev/null; true")
         zones_conf = self._master_zones_conf(all_zones, slave["ip"], tsig["name"])
-        self._upload(master, zones_conf, REMOTE_ZONES_CONF)
+        self._upload(master, zones_conf, self._zones_conf)
         self._run_remote(master, f"{sudo_m}named-checkconf && {sudo_m}rndc reload")
 
         # Slave
         sudo_s = "" if slave.get("ssh_user", "root") == "root" else "sudo "
-        self._run_remote(slave, f"{sudo_s}rm -f {REMOTE_SLAVE_ZONES_DIR}/db.{domain} 2>/dev/null; true")
+        self._run_remote(slave, f"{sudo_s}rm -f {self._slave_zones_dir}/db.{domain} 2>/dev/null; true")
         slave_conf = self._slave_zones_conf(all_zones, master["ip"], tsig["name"])
-        self._upload(slave, slave_conf, REMOTE_ZONES_CONF)
+        self._upload(slave, slave_conf, self._zones_conf)
         self._run_remote(slave, f"{sudo_s}named-checkconf && {sudo_s}rndc reload")
         return {"ok": True}
 
@@ -666,15 +760,28 @@ def load_cluster(db) -> Optional[Dict]:
     s = db.query(Settings).filter(Settings.id == 1).first()
     if not s or not s.dns_tsig_secret:
         return None
+
+    # panel_id: namespace único y estable de esta instalación en los nodos. Si
+    # aún no existe (instalación previa al cambio o recién creada), lo generamos
+    # y persistimos. "p" + 8 hex = 9 chars, cabe holgado en VARCHAR(32).
+    panel_id = s.dns_panel_id
+    if not panel_id:
+        panel_id = "p" + secrets.token_hex(4)
+        s.dns_panel_id = panel_id
+        db.commit()
+
     tsig = {
-        "name":   s.dns_tsig_name or "svq-xfer",
+        # Por compatibilidad con clusters ya montados, respetamos el nombre
+        # guardado. Solo cae al derivado del panel cuando no hay ninguno.
+        "name":   s.dns_tsig_name or f"svq-{panel_id}",
         "algo":   s.dns_tsig_algo or DEFAULT_TSIG_ALGO,
         "secret": s.dns_tsig_secret,
     }
     return {
-        "master": _node_dict(master_row),
-        "slave":  _node_dict(slave_row) if slave_row else None,
-        "tsig":   tsig,
+        "master":   _node_dict(master_row),
+        "slave":    _node_dict(slave_row) if slave_row else None,
+        "tsig":     tsig,
+        "panel_id": panel_id,
     }
 
 
@@ -698,7 +805,7 @@ def compute_cluster_health(db) -> Optional[Dict]:
         {"domain": z.domain_name, "db_serial": z.serial}
         for z in db.query(DnsZone).filter(DnsZone.is_active == True).all()  # noqa: E712
     ]
-    cl = DNSCluster()
+    cl = DNSCluster(panel_id=cluster["panel_id"])
     rows = cl.cluster_health(cluster["master"], cluster["slave"], zones)
 
     summary = {"total": len(rows), "ok": 0, "desync": 0,
@@ -731,7 +838,7 @@ def push_zone_to_cluster(db, domain: str, zone_text: str,
     cluster = load_cluster(db)
     if not cluster:
         return False
-    cl = DNSCluster()
+    cl = DNSCluster(panel_id=cluster["panel_id"])
     # El slave puede no estar dado de alta todavía; usamos su IP solo para
     # also-notify. Si no hay slave, also-notify queda con la IP del master (no
     # rompe; simplemente no notifica a nadie externo).
