@@ -350,8 +350,8 @@
                   </tr>
                 </thead>
                 <tbody>
-                  <template v-for="r in records">
-                    <tr :key="r.id">
+                  <template v-for="r in records" :key="r.id">
+                    <tr>
                       <td>
                         <span class="badge" :class="r.kind === 'restore' ? 'bg-dark' : 'bg-light text-dark border'">
                           {{ r.kind === 'restore' ? 'Restaurar' : 'Copia' }}
