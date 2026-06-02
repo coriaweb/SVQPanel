@@ -68,6 +68,7 @@ class MailDomainUpdate(BaseModel):
     catch_all:     Optional[str]  = None
     max_mailboxes: Optional[int]  = Field(None, ge=0)
     is_active:     Optional[bool] = None
+    send_limit_hour: Optional[int] = Field(None, ge=0, le=1000000)
 
     @field_validator("catch_all")
     @classmethod
@@ -89,6 +90,7 @@ class MailDomainResponse(BaseModel):
     dkim_selector:  str
     catch_all:      Optional[str]  = None
     max_mailboxes:  int
+    send_limit_hour: int           = 1000
     mailbox_count:  int            = 0
     alias_count:    int            = 0
     created_at:     Optional[datetime] = None
@@ -126,6 +128,8 @@ class MailboxCreate(BaseModel):
                           description="Prefijo del email, ej: 'info' para info@dominio.com")
     password: str = Field(..., min_length=8)
     quota_mb: int = Field(1024, ge=0, description="Cuota en MB; 0 = sin límite")
+    send_limit_hour: int = Field(200, ge=0, le=100000,
+                                 description="Máx. correos/hora que puede enviar; 0 = sin límite")
 
     @field_validator("username")
     @classmethod
@@ -142,6 +146,7 @@ class MailboxUpdate(BaseModel):
     password:  Optional[str] = Field(None, min_length=8)
     quota_mb:  Optional[int] = Field(None, ge=0)
     is_active: Optional[bool] = None
+    send_limit_hour: Optional[int] = Field(None, ge=0, le=100000)
 
     @field_validator("password")
     @classmethod
@@ -156,6 +161,7 @@ class MailboxResponse(BaseModel):
     mail_domain_id: int
     username:       str
     quota_mb:       int
+    send_limit_hour: int = 200
     is_active:      bool
     full_email:     str = ""
     disk_usage_mb:  float = 0.0

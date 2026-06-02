@@ -21,7 +21,14 @@ class RspamdManager:
     SETTINGS_FILE   = "/etc/rspamd/local.d/settings.conf"
     MULTIMAP_FILE   = "/etc/rspamd/local.d/multimap.conf"
     CONTROLLER_FILE = "/etc/rspamd/local.d/worker-controller.inc"
+    RATELIMIT_FILE  = "/etc/rspamd/local.d/ratelimit.conf"
+    RATELIMIT_LUA   = "/etc/rspamd/svqpanel_ratelimit.lua"
     MAPS_DIR        = "/etc/rspamd/maps/domains"
+    # Mapas (formato hash) de límite de envío leídos por el Lua de ratelimit:
+    #   user_ratelimit.map    → "info@dominio.com 200 / 1h"  (por buzón autenticado)
+    #   domain_ratelimit.map  → "dominio.com 1000 / 1h"      (por dominio remitente)
+    RATELIMIT_USER_MAP   = "/etc/rspamd/maps/user_ratelimit.map"
+    RATELIMIT_DOMAIN_MAP = "/etc/rspamd/maps/domain_ratelimit.map"
     RSPAMD_API      = "http://127.0.0.1:11334"
 
     # ─── Helpers ──────────────────────────────────────────────────────────
@@ -208,6 +215,105 @@ class RspamdManager:
         d = os.path.join(self.MAPS_DIR, self._safe_name(domain))
         if os.path.exists(d):
             shutil.rmtree(d)
+
+    # ─── Rate-limit de envío (ratelimit module) ───────────────────────────────
+
+    def _write_map(self, path: str, lines: list):
+        """Escribe un fichero de mapa de Rspamd de forma atómica."""
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        content = "# SVQPanel — generado automáticamente. NO editar.\n" + \
+                  "\n".join(lines) + ("\n" if lines else "")
+        tmp = path + ".tmp"
+        with open(tmp, "w") as f:
+            f.write(content)
+        os.replace(tmp, path)
+
+    def _build_ratelimit_lua(self) -> str:
+        """
+        Script Lua (custom_keywords) que aplica el límite de envío leyendo el
+        valor por clave de dos mapas hash: por buzón (usuario SASL) y por dominio
+        del remitente autenticado. Solo actúa sobre correo autenticado (saliente).
+        Cada función devuelve (clave_de_bucket, "N / 1h") o nil (sin límite).
+        """
+        return f"""-- SVQPanel — rate-limit de envío. Generado automáticamente. NO editar.
+local custom_keywords = {{}}
+
+local user_map = rspamd_config:add_map({{
+  url = '{self.RATELIMIT_USER_MAP}',
+  type = 'map',
+  description = 'SVQPanel: límite de envío por buzón',
+}})
+local domain_map = rspamd_config:add_map({{
+  url = '{self.RATELIMIT_DOMAIN_MAP}',
+  type = 'map',
+  description = 'SVQPanel: límite de envío por dominio',
+}})
+
+-- Por buzón autenticado (login SASL == email completo)
+custom_keywords.svq_user_send = function(task)
+  local user = task:get_user()
+  if not user then return end           -- sin auth → no es saliente de cliente
+  local lim = user_map and user_map:get_key(user:lower())
+  if lim then
+    return 'svq_user_' .. user:lower(), lim
+  end
+end
+
+-- Por dominio del remitente autenticado
+custom_keywords.svq_domain_send = function(task)
+  local user = task:get_user()
+  if not user then return end
+  local dom = user:match('@(.+)$')
+  if not dom then return end
+  local lim = domain_map and domain_map:get_key(dom:lower())
+  if lim then
+    return 'svq_domain_' .. dom:lower(), lim
+  end
+end
+
+return custom_keywords
+"""
+
+    def _build_ratelimit_conf(self) -> str:
+        return f"""# SVQPanel — Rate-limit de envío saliente. NO editar manualmente.
+# Los límites por clave los aporta el Lua (lee los mapas por buzón/dominio).
+custom_keywords = "{self.RATELIMIT_LUA}";
+"""
+
+    def rebuild_ratelimit_from_db(self, mail_domains, reload=True):
+        """
+        Regenera los mapas de rate-limit (por buzón y por dominio), el Lua y la
+        config del módulo ratelimit desde la BD. mail_domains: MailDomain con sus
+        mailboxes cargados. Formato de mapa hash: "clave  N / 1h".
+        """
+        user_lines = []
+        domain_lines = []
+        for md in mail_domains:
+            dlimit = int(getattr(md, "send_limit_hour", 0) or 0)
+            if dlimit > 0:
+                domain_lines.append(f"{md.domain_name.lower()} {dlimit} / 1h")
+            for mb in getattr(md, "mailboxes", []) or []:
+                mlimit = int(getattr(mb, "send_limit_hour", 0) or 0)
+                if mlimit > 0:
+                    addr = f"{mb.username}@{md.domain_name}".lower()
+                    user_lines.append(f"{addr} {mlimit} / 1h")
+
+        self._write_map(self.RATELIMIT_USER_MAP, user_lines)
+        self._write_map(self.RATELIMIT_DOMAIN_MAP, domain_lines)
+
+        # Lua + conf (idempotentes)
+        for path, content in (
+            (self.RATELIMIT_LUA, self._build_ratelimit_lua()),
+            (self.RATELIMIT_FILE, self._build_ratelimit_conf()),
+        ):
+            os.makedirs(os.path.dirname(path), exist_ok=True)
+            tmp = path + ".tmp"
+            with open(tmp, "w") as f:
+                f.write(content)
+            os.replace(tmp, path)
+
+        if reload:
+            self._reload_rspamd()
 
     # ─── Estadísticas ─────────────────────────────────────────────────────
 

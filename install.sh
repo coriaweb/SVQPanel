@@ -527,6 +527,43 @@ RSPAMDBAYESEOF
 enabled = true;
 RSPAMDGREYEOF
 
+    # ── Rate-limit de envío saliente (anti-abuso) ─────────────────────────
+    # Límite de correos/hora por buzón y por dominio del remitente AUTENTICADO.
+    # El panel rellena los mapas desde la BD (scripts/rspamd_manager.py →
+    # rebuild_ratelimit_from_db); aquí dejamos la estructura base (Lua + conf +
+    # mapas vacíos) para que un servidor nuevo nazca con el ratelimit operativo.
+    # Usa el mismo Redis ya configurado arriba.
+    mkdir -p /etc/rspamd/maps
+    touch /etc/rspamd/maps/user_ratelimit.map /etc/rspamd/maps/domain_ratelimit.map
+    cat > /etc/rspamd/svqpanel_ratelimit.lua << 'RSPAMDRLLUAEOF'
+-- SVQPanel — rate-limit de envío (estructura base; el panel regenera el cuerpo)
+local custom_keywords = {}
+local user_map = rspamd_config:add_map({
+  url = '/etc/rspamd/maps/user_ratelimit.map', type = 'map',
+  description = 'SVQPanel: límite de envío por buzón',
+})
+local domain_map = rspamd_config:add_map({
+  url = '/etc/rspamd/maps/domain_ratelimit.map', type = 'map',
+  description = 'SVQPanel: límite de envío por dominio',
+})
+custom_keywords.svq_user_send = function(task)
+  local user = task:get_user(); if not user then return end
+  local lim = user_map and user_map:get_key(user:lower())
+  if lim then return 'svq_user_' .. user:lower(), lim end
+end
+custom_keywords.svq_domain_send = function(task)
+  local user = task:get_user(); if not user then return end
+  local dom = user:match('@(.+)$'); if not dom then return end
+  local lim = domain_map and domain_map:get_key(dom:lower())
+  if lim then return 'svq_domain_' .. dom:lower(), lim end
+end
+return custom_keywords
+RSPAMDRLLUAEOF
+    cat > /etc/rspamd/local.d/ratelimit.conf << 'RSPAMDRLCONFEOF'
+# SVQPanel — Rate-limit de envío saliente. NO editar manualmente.
+custom_keywords = "/etc/rspamd/svqpanel_ratelimit.lua";
+RSPAMDRLCONFEOF
+
     systemctl enable rspamd
     systemctl restart rspamd
     echo -e "  ${GREEN}✓ Rspamd configurado (antispam + DKIM + greylisting + Bayes/Redis)${NC}"

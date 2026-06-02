@@ -41,6 +41,9 @@ class MailDomain(Base):
 
     # ── Límites ───────────────────────────────────────────────────────────
     max_mailboxes = Column(Integer, default=0)   # 0 = sin límite
+    # Rate-limit de envío del dominio (Rspamd): correos/hora sumando todos sus
+    # buzones. 0 = sin límite. Anti-abuso si una cuenta es comprometida.
+    send_limit_hour = Column(Integer, default=1000)
 
     # ── Antispam (Rspamd por dominio) ─────────────────────────────────────
     spam_tag_threshold    = Column(Float, default=6.0)   # score → añadir cabecera spam
@@ -87,6 +90,8 @@ class Mailbox(Base):
     password_hash      = Column(String(255), nullable=False)   # {SHA512-CRYPT}...
     encrypted_password = Column(String(512),  nullable=True)   # Fernet-AES para autologin webmail
     quota_mb           = Column(Integer, default=1024)         # MB; 0 = sin límite
+    # Rate-limit de envío de ESTE buzón (Rspamd): correos/hora. 0 = sin límite.
+    send_limit_hour    = Column(Integer, default=200)
     is_active          = Column(Boolean, default=True)
     created_at         = Column(DateTime, default=datetime.utcnow)
     updated_at         = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)

@@ -248,6 +248,8 @@
                     <span class="mbx__quota">
                       <i class="bi bi-hdd"></i>
                       {{ mb.quota_mb === 0 ? 'Sin límite de cuota' : 'Cuota ' + mb.quota_mb + ' MB' }}
+                      <span class="ms-2"><i class="bi bi-send"></i>
+                        {{ mb.send_limit_hour === 0 ? 'envío libre' : mb.send_limit_hour + '/h' }}</span>
                     </span>
                   </div>
                   <span class="mbx__status" :class="mb.is_active ? 'is-on' : 'is-off'">
@@ -532,6 +534,13 @@
                        min="0" max="9999">
               </div>
               <div class="col-md-3">
+                <label class="form-label">Envío del dominio
+                  <small class="text-muted">(correos/hora, 0 = sin límite)</small>
+                </label>
+                <input type="number" class="form-control" v-model.number="settingsForm.send_limit_hour"
+                       min="0" max="1000000" placeholder="1000">
+              </div>
+              <div class="col-md-3">
                 <label class="form-label">Estado</label>
                 <select class="form-select" v-model="settingsForm.is_active">
                   <option :value="true">Activo</option>
@@ -801,7 +810,7 @@
                 </div>
                 <div class="form-text">Mínimo 8 caracteres.</div>
               </div>
-              <div class="mb-0">
+              <div class="mb-3">
                 <label class="form-label">Cuota (MB)</label>
                 <select class="form-select" v-model.number="newMailboxForm.quota_mb">
                   <option :value="0">Sin límite</option>
@@ -812,6 +821,18 @@
                   <option :value="5120">5 GB</option>
                   <option :value="10240">10 GB</option>
                 </select>
+              </div>
+              <div class="mb-0">
+                <label class="form-label">Límite de envío (correos/hora)</label>
+                <select class="form-select" v-model.number="newMailboxForm.send_limit_hour">
+                  <option :value="0">Sin límite</option>
+                  <option :value="50">50 / hora</option>
+                  <option :value="100">100 / hora</option>
+                  <option :value="200">200 / hora</option>
+                  <option :value="500">500 / hora</option>
+                  <option :value="1000">1000 / hora</option>
+                </select>
+                <div class="form-text">Anti-abuso: si la cuenta se ve comprometida, no podrá enviar spam masivo.</div>
               </div>
             </div>
             <div class="modal-footer">
@@ -983,7 +1004,7 @@ export default {
     const copied              = ref(null)  // 'name' | 'value' | null
 
     // ── Ajustes ───────────────────────────────────────────────────────
-    const settingsForm   = ref({ catch_all: '', max_mailboxes: 0, is_active: true })
+    const settingsForm   = ref({ catch_all: '', max_mailboxes: 0, send_limit_hour: 1000, is_active: true })
     const spamSettings   = ref({ stats: { scanned:0, clean:0, tagged:0, greylisted:0, rejected:0, history:[] } })
     const spamForm       = ref({ spam_tag_threshold: 6.0, spam_reject_threshold: 15.0, whitelist_senders: '', blacklist_senders: '' })
     const loadingSpam    = ref(false)
@@ -1001,7 +1022,7 @@ export default {
 
     // ── Formularios ───────────────────────────────────────────────────
     const newDomainForm  = ref({ domain_name: '', catch_all: '', max_mailboxes: 0 })
-    const newMailboxForm = ref({ username: '', password: '', quota_mb: 1024 })
+    const newMailboxForm = ref({ username: '', password: '', quota_mb: 1024, send_limit_hour: 200 })
     const newAliasForm   = ref({ source: '', destination: '' })
     const passwordTarget = ref(null)
     const newPassword    = ref('')
@@ -1082,6 +1103,7 @@ export default {
       settingsForm.value = {
         catch_all:     md.catch_all || '',
         max_mailboxes: md.max_mailboxes,
+        send_limit_hour: md.send_limit_hour ?? 1000,
         is_active:     md.is_active,
       }
       await Promise.all([
@@ -1179,6 +1201,7 @@ export default {
         const payload = {
           catch_all:     settingsForm.value.catch_all || null,
           max_mailboxes: settingsForm.value.max_mailboxes,
+          send_limit_hour: settingsForm.value.send_limit_hour,
           is_active:     settingsForm.value.is_active,
         }
         const updated = await api.updateMailDomain(selectedDomain.value.id, payload)
@@ -1284,7 +1307,7 @@ export default {
       try {
         await api.createMailbox(selectedDomain.value.id, newMailboxForm.value)
         showNewMailbox.value = false
-        newMailboxForm.value = { username: '', password: '', quota_mb: 1024 }
+        newMailboxForm.value = { username: '', password: '', quota_mb: 1024, send_limit_hour: 200 }
         showPwd.value = false
         store.showNotification('Buzón creado', 'success')
         await loadMailboxes(selectedDomain.value.id)

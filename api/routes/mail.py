@@ -115,6 +115,7 @@ def _mail_domain_to_dict(md: MailDomain, current_user) -> dict:
         "dkim_selector": md.dkim_selector,
         "catch_all":     md.catch_all,
         "max_mailboxes": md.max_mailboxes,
+        "send_limit_hour": getattr(md, "send_limit_hour", 1000),
         "mailbox_count": len(md.mailboxes),
         "alias_count":   len(md.aliases),
         "created_at":    md.created_at,
@@ -129,6 +130,7 @@ def _mailbox_to_dict(mb: Mailbox) -> dict:
         "mail_domain_id": mb.mail_domain_id,
         "username":       mb.username,
         "quota_mb":       mb.quota_mb,
+        "send_limit_hour": getattr(mb, "send_limit_hour", 200),
         "is_active":      mb.is_active,
         "full_email":     f"{mb.username}@{mb.mail_domain.domain_name}",
         "disk_usage_mb":  0.0,   # calculado aparte para no ralentizar el listado
@@ -224,6 +226,33 @@ def _dns_remove_dkim_record(domain_name: str, selector: str, db: Session):
         DnsRecord.name == dkim_name,
     ).delete()
     db.commit()
+
+
+def _rebuild_rspamd(db: Session):
+    """
+    Regenera TODA la config de Rspamd derivada de la BD: umbrales/listas
+    (settings+multimap) y rate-limit de envío (mapas + ratelimit.conf).
+    Tolerante a fallos (entorno dev sin root). Llamar tras cualquier cambio en
+    dominios de correo, buzones o sus límites.
+    """
+    try:
+        from scripts.rspamd_manager import RspamdManager
+        from sqlalchemy.orm import joinedload
+        mgr = RspamdManager()
+        if not mgr.rspamd_available():
+            return
+        all_domains = (
+            db.query(MailDomain)
+            .options(joinedload(MailDomain.mailboxes))
+            .filter(MailDomain.is_active == True)  # noqa: E712
+            .all()
+        )
+        mgr.rebuild_from_db(all_domains)
+        mgr.rebuild_ratelimit_from_db(all_domains)
+    except PermissionError:
+        logger.warning("Sin permisos para actualizar Rspamd (¿entorno dev?)")
+    except Exception as e:
+        logger.error(f"Error actualizando Rspamd: {e}")
 
 
 def _dns_set_webmail_record(domain_name: str, db: Session, present: bool) -> bool:
@@ -346,6 +375,9 @@ async def create_mail_domain(
     # registro DNS + vhost nginx que sirve el Roundcube compartido.
     _activate_webmail(data.domain_name, db)
 
+    # Rate-limit de envío (el dominio entra con su send_limit_hour por defecto)
+    _rebuild_rspamd(db)
+
     return _mail_domain_to_dict(md, current_user)
 
 
@@ -410,12 +442,16 @@ async def update_mail_domain(
 
     old_catch_all = md.catch_all
 
+    send_limit_changed = False
     if data.catch_all is not None:
         md.catch_all = data.catch_all or None
     if data.max_mailboxes is not None:
         md.max_mailboxes = data.max_mailboxes
     if data.is_active is not None:
         md.is_active = data.is_active
+    if data.send_limit_hour is not None and data.send_limit_hour != md.send_limit_hour:
+        md.send_limit_hour = data.send_limit_hour
+        send_limit_changed = True
 
     db.commit()
     db.refresh(md)
@@ -431,6 +467,10 @@ async def update_mail_domain(
                 mgr.remove_catch_all(md.domain_name)
         except Exception as e:
             logger.warning(f"Error actualizando catch-all en Postfix: {e}")
+
+    # Aplicar el nuevo límite de envío del dominio en Rspamd
+    if send_limit_changed:
+        _rebuild_rspamd(db)
 
     return _mail_domain_to_dict(md, current_user)
 
@@ -480,6 +520,14 @@ async def delete_mail_domain(
         DkimManager().remove_key(domain_name, dkim_selector)
     except Exception as e:
         logger.warning(f"No se pudo eliminar clave DKIM: {e}")
+
+    # Regenerar Rspamd (el dominio y sus buzones salen de los mapas/listas)
+    try:
+        from scripts.rspamd_manager import RspamdManager
+        RspamdManager().remove_domain(domain_name)
+    except Exception:
+        pass
+    _rebuild_rspamd(db)
 
     return None
 
@@ -798,10 +846,14 @@ async def create_mailbox(
         password_hash      = pwd_hash,
         encrypted_password = enc_pwd,
         quota_mb           = data.quota_mb,
+        send_limit_hour    = getattr(data, "send_limit_hour", 200),
     )
     db.add(mb)
     db.commit()
     db.refresh(mb)
+
+    # Actualizar el rate-limit de Rspamd (nuevo buzón en el mapa)
+    _rebuild_rspamd(db)
 
     return _mailbox_to_dict(mb)
 
@@ -881,8 +933,16 @@ async def update_mailbox(
     except Exception as e:
         raise HTTPException(500, f"Error actualizando buzón: {e}")
 
+    # Límite de envío (solo BD; lo aplica Rspamd vía el mapa)
+    send_limit_changed = False
+    if getattr(data, "send_limit_hour", None) is not None and data.send_limit_hour != mb.send_limit_hour:
+        mb.send_limit_hour = data.send_limit_hour
+        send_limit_changed = True
+
     db.commit()
     db.refresh(mb)
+    if send_limit_changed:
+        _rebuild_rspamd(db)
     return _mailbox_to_dict(mb)
 
 
@@ -919,6 +979,9 @@ async def delete_mailbox(
         logger.warning("Sin permisos root para eliminar buzón del sistema (¿entorno dev?)")
     except Exception as e:
         logger.error(f"Error eliminando buzón del sistema: {e}")
+
+    # El buzón sale del mapa de rate-limit
+    _rebuild_rspamd(db)
 
     return None
 
@@ -1084,15 +1147,8 @@ async def update_spam_settings(
     if payload.blacklist_senders     is not None: md.blacklist_senders     = payload.blacklist_senders.strip()
     db.commit()
 
-    # Regenerar settings.conf de Rspamd con todos los dominios
-    try:
-        from scripts.rspamd_manager import RspamdManager
-        all_domains = db.query(MailDomain).filter(MailDomain.is_active == True).all()
-        RspamdManager().rebuild_from_db(all_domains)
-    except PermissionError:
-        logger.warning("Sin permisos para actualizar config Rspamd (¿entorno dev?)")
-    except Exception as e:
-        logger.error(f"Error actualizando Rspamd: {e}")
+    # Regenerar toda la config de Rspamd (umbrales/listas + rate-limit)
+    _rebuild_rspamd(db)
 
     return SpamSettingsResponse(
         spam_tag_threshold=md.spam_tag_threshold,
