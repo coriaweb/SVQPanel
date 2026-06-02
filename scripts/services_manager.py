@@ -33,7 +33,9 @@ KNOWN_SERVICES = [
     ("spamassassin",   "Filtro spam SpamAssassin"),
     ("spamd",          "Filtro spam spamd"),
     ("dovecot",        "Servidor IMAP/POP3"),
-    ("exim4",          "Servidor de correo Exim"),
+    # Exim NO se monitoriza: SVQPanel usa Postfix como MTA y purga Exim4 en la
+    # instalación de correo. Mostrarlo confundía (aparecía inactivo en un panel
+    # que no lo usa).
     ("postfix",        "Servidor de correo Postfix"),
     ("rspamd",         "Filtro antispam / DKIM (Rspamd)"),
     ("cron",           "Programador de tareas"),

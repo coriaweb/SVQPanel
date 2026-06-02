@@ -328,6 +328,16 @@ echo -e "${GREEN}✓ BIND9 instalado y configurado${NC}\n"
 if [[ "$INSTALL_MAIL" == true ]]; then
     echo -e "${YELLOW}Instalando servidor de correo...${NC}"
 
+    # Debian trae Exim4 como MTA por defecto. SVQPanel usa Postfix (más fácil de
+    # automatizar y estándar en hosting), así que purgamos Exim para que no
+    # compita por el puerto 25 ni aparezca en el monitor de servicios del panel.
+    if dpkg -l 2>/dev/null | grep -q '^ii.*exim4'; then
+        echo -e "  ${YELLOW}→ Eliminando Exim4 (se usa Postfix)...${NC}"
+        systemctl stop exim4 2>/dev/null || true
+        DEBIAN_FRONTEND=noninteractive apt-get purge -y -qq \
+            exim4 exim4-base exim4-config exim4-daemon-light 2>/dev/null || true
+    fi
+
     # Instalar ssl-cert (certificado snakeoil para TLS inicial)
     apt-get install -y -qq ssl-cert
 
