@@ -125,12 +125,54 @@ class SSLManager(SystemManager):
 
     def expand_for_mail(self, domain_name: str, email: str) -> dict:
         """
-        Reemite (expand) el certificado del dominio añadiendo mail.{dominio} como
-        SAN, para presentar TLS válido en IMAP/POP3/SMTP (SNI). Requiere que
-        mail.{dominio} ya resuelva hacia este servidor (validación ACME).
+        Emite un certificado independiente para mail.{dominio} usando --webroot.
+        Crea un vhost nginx temporal para que el challenge ACME pueda resolverse
+        en mail.{dominio}:80 (el vhost del dominio principal no incluye ese server_name).
         """
-        return self.create_ssl_with_email(
-            domain_name, email, extra_domains=[f"mail.{domain_name}"])
+        import os
+        from pathlib import Path
+
+        mail_host = f"mail.{domain_name}"
+        acme_root = "/var/www/svqpanel-acme"
+        os.makedirs(f"{acme_root}/.well-known/acme-challenge", exist_ok=True)
+
+        # Vhost temporal solo para el challenge ACME
+        tmp_vhost_path = f"/etc/nginx/sites-available/svqpanel-acme-{domain_name}"
+        tmp_link_path  = f"/etc/nginx/sites-enabled/svqpanel-acme-{domain_name}"
+        tmp_conf = (
+            f"server {{\n"
+            f"    listen 80;\n"
+            f"    server_name {mail_host};\n"
+            f"    location ^~ /.well-known {{\n"
+            f"        root {acme_root};\n"
+            f"        allow all;\n"
+            f"    }}\n"
+            f"    location / {{ return 444; }}\n"
+            f"}}\n"
+        )
+        Path(tmp_vhost_path).write_text(tmp_conf)
+        try:
+            self.execute_command(["ln", "-sf", tmp_vhost_path, tmp_link_path], check=False)
+            self.execute_command(["nginx", "-s", "reload"], check=False)
+
+            cmd = [
+                "certbot", "certonly", "--webroot",
+                "-w", acme_root,
+                "-d", mail_host,
+                "--non-interactive", "--agree-tos", "-m", email,
+            ]
+            self.execute_command(cmd)
+            logger.info(f"Mail TLS cert emitido para {mail_host}")
+            return {"success": True, "domain": mail_host,
+                    "cert": f"/etc/letsencrypt/live/{mail_host}/fullchain.pem"}
+        except Exception as e:
+            logger.error(f"Failed to issue mail TLS cert: {e}")
+            raise
+        finally:
+            # Limpiar vhost temporal siempre
+            Path(tmp_link_path).unlink(missing_ok=True)
+            Path(tmp_vhost_path).unlink(missing_ok=True)
+            self.execute_command(["nginx", "-s", "reload"], check=False)
 
     def revoke_ssl(self, domain_name: str) -> dict:
         """
