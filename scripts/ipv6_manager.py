@@ -9,62 +9,88 @@ from .utils import validate_ipv6
 
 logger = logging.getLogger(__name__)
 
-NETPLAN_FILE = Path("/etc/netplan/61-ipv6.yaml")
+# Archivo netplan exclusivo para IPs de dominios gestionados por SVQPanel.
+# Se escribe completamente en cada operación — no se toca el 61-ipv6.yaml del sistema.
+NETPLAN_FILE = Path("/etc/netplan/62-svqpanel-ipv6.yaml")
+
+
+def _read_managed_ips(interface: str) -> list:
+    """Lee las IPs en CIDR que SVQPanel gestiona actualmente."""
+    if not NETPLAN_FILE.exists():
+        return []
+    lines = NETPLAN_FILE.read_text().splitlines()
+    ips = []
+    in_addresses = False
+    for line in lines:
+        stripped = line.strip()
+        if stripped == "addresses:":
+            in_addresses = True
+            continue
+        if in_addresses:
+            if stripped.startswith("- "):
+                ips.append(stripped[2:].strip())
+            elif stripped and not stripped.startswith("#"):
+                in_addresses = False
+    return ips
+
+
+def _write_netplan(interface: str, addresses: list):
+    """Escribe el archivo netplan de SVQPanel con la lista de IPs dada."""
+    if not addresses:
+        # Sin IPs que gestionar: eliminar el archivo si existe
+        if NETPLAN_FILE.exists():
+            NETPLAN_FILE.unlink()
+            logger.info("Netplan SVQPanel: archivo eliminado (sin IPs)")
+        return
+
+    lines = [
+        "# Generado por SVQPanel — no editar manualmente",
+        "network:",
+        "  version: 2",
+        "  ethernets:",
+        f"    {interface}:",
+        "      addresses:",
+    ]
+    for addr in addresses:
+        lines.append(f"        - {addr}")
+    NETPLAN_FILE.write_text("\n".join(lines) + "\n")
+    logger.info(f"Netplan SVQPanel: {len(addresses)} IPs escritas en {NETPLAN_FILE}")
 
 
 def _netplan_add(interface: str, cidr: str):
-    """Añade una dirección CIDR al archivo netplan de IPs adicionales y aplica."""
-    import yaml
-
-    if NETPLAN_FILE.exists():
-        data = yaml.safe_load(NETPLAN_FILE.read_text()) or {}
-    else:
-        data = {}
-
-    # Estructura mínima si el archivo estaba vacío
-    data.setdefault("network", {})
-    data["network"].setdefault("version", 2)
-    data["network"].setdefault("ethernets", {})
-    data["network"]["ethernets"].setdefault(interface, {})
-    iface = data["network"]["ethernets"][interface]
-    iface.setdefault("dhcp6", False)
-    iface.setdefault("addresses", [])
-
-    # Normalizar a forma expandida para comparar sin duplicados
+    """Añade una CIDR al archivo netplan de SVQPanel y aplica."""
     addr_only = cidr.split("/")[0]
     prefix = cidr.split("/")[1] if "/" in cidr else "64"
     normalized = f"{ipaddress.IPv6Address(addr_only)}/{prefix}"
 
-    existing = [str(a) for a in iface["addresses"]]
-    if normalized not in existing:
-        iface["addresses"].append(normalized)
-        NETPLAN_FILE.write_text(yaml.dump(data, default_flow_style=False))
-        logger.info(f"Netplan: añadida {normalized} a {interface}")
+    current = _read_managed_ips(interface)
+    # Normalizar las existentes para comparar sin duplicados
+    current_normalized = []
+    for a in current:
+        try:
+            p = a.split("/")[1] if "/" in a else "64"
+            current_normalized.append(f"{ipaddress.IPv6Address(a.split('/')[0])}/{p}")
+        except Exception:
+            current_normalized.append(a)
+
+    if normalized not in current_normalized:
+        current_normalized.append(normalized)
+        _write_netplan(interface, current_normalized)
 
     _netplan_apply()
 
 
 def _netplan_remove(interface: str, addr_only: str):
-    """Elimina una dirección (sin prefijo) del archivo netplan y aplica."""
-    import yaml
-
-    if not NETPLAN_FILE.exists():
-        return
-
-    data = yaml.safe_load(NETPLAN_FILE.read_text()) or {}
-    try:
-        addresses = data["network"]["ethernets"][interface]["addresses"]
-    except KeyError:
-        return
-
+    """Elimina una IP (sin prefijo) del archivo netplan de SVQPanel y aplica."""
     normalized = str(ipaddress.IPv6Address(addr_only))
-    new_list = [a for a in addresses if str(ipaddress.IPv6Address(a.split("/")[0])) != normalized]
-    if len(new_list) == len(addresses):
-        return  # no estaba
-
-    data["network"]["ethernets"][interface]["addresses"] = new_list
-    NETPLAN_FILE.write_text(yaml.dump(data, default_flow_style=False))
-    logger.info(f"Netplan: eliminada {addr_only} de {interface}")
+    current = _read_managed_ips(interface)
+    new_list = [
+        a for a in current
+        if str(ipaddress.IPv6Address(a.split("/")[0])) != normalized
+    ]
+    if len(new_list) == len(current):
+        return  # no estaba gestionada por nosotros
+    _write_netplan(interface, new_list)
     _netplan_apply()
 
 
