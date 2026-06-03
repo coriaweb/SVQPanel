@@ -834,6 +834,13 @@ PYEOF
 \$config['skin']             = 'elastic';
 \$config['auto_create_user'] = true;
 \$config['login_autocomplete'] = 2;
+
+// Carpetas especiales (IMAP standard)
+\$config['sent_mbox']   = 'Sent';
+\$config['trash_mbox']  = 'Trash';
+\$config['drafts_mbox'] = 'Drafts';
+\$config['junk_mbox']   = 'Spam';
+\$config['create_default_folders'] = true;
 RCCONFEOF
 
     # Enlace /etc/roundcube → config en RC_APP_DIR (compatibilidad)

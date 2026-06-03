@@ -287,10 +287,20 @@ class MailManager(SystemManager):
         email   = f"{mailbox_username}@{domain_name}"
         maildir = self.maildir_path(panel_username, domain_name, mailbox_username)
 
-        # Crear estructura Maildir
+        # Crear estructura Maildir (INBOX) y carpetas estándar IMAP
         for subdir in ("cur", "new", "tmp"):
             os.makedirs(os.path.join(maildir, subdir), exist_ok=True)
+        for folder in ("Sent", "Drafts", "Trash", "Spam"):
+            for subdir in ("cur", "new", "tmp"):
+                os.makedirs(os.path.join(maildir, f".{folder}", subdir), exist_ok=True)
         self.execute_command(["chown", "-R", "vmail:vmail", maildir], check=False)
+        # Crear carpetas y suscripciones vía doveadm (más fiable que Maildir manual)
+        self.execute_command(
+            ["doveadm", "mailbox", "create", "-u", email, "Sent", "Drafts", "Trash", "Spam"],
+            check=False)
+        self.execute_command(
+            ["doveadm", "mailbox", "subscribe", "-u", email, "INBOX", "Sent", "Drafts", "Trash", "Spam"],
+            check=False)
         logger.info(f"Maildir creado: {maildir}")
 
         # Hash de contraseña
