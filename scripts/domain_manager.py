@@ -223,7 +223,7 @@ class DomainManager(SystemManager):
                 "php_version": php_version,
                 "public_html": public_html,
                 "logs_dir": logs_dir,
-                "nginx_config": nginx_config
+                "config_path": config_path
             }
 
         except Exception as e:
