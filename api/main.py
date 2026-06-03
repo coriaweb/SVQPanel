@@ -465,6 +465,8 @@ def _run_migrations():
         # Modo solo-lectura HTTP por dominio
         "ALTER TABLE domains ADD COLUMN IF NOT EXISTS readonly_mode_enabled BOOLEAN NOT NULL DEFAULT FALSE",
         "ALTER TABLE domains ADD COLUMN IF NOT EXISTS allowed_mutation_ips TEXT",
+        # Headers HTTP de seguridad por dominio
+        "ALTER TABLE domains ADD COLUMN IF NOT EXISTS security_headers_enabled BOOLEAN NOT NULL DEFAULT FALSE",
         # ─────────────────────────────────────────────────────────────────
         # Fase 18: Notificaciones (avisos de cuota disco/tráfico al usuario)
         # ─────────────────────────────────────────────────────────────────

@@ -47,6 +47,8 @@ class DomainUpdate(BaseModel):
     # Modo solo-lectura HTTP
     readonly_mode_enabled: Optional[bool] = None
     allowed_mutation_ips:  Optional[str]  = None  # JSON array de IPs/CIDRs
+    # Headers HTTP de seguridad
+    security_headers_enabled: Optional[bool] = None
 
     @field_validator('allowed_mutation_ips')
     @classmethod
@@ -97,6 +99,8 @@ class DomainResponse(BaseModel):
     # Modo solo-lectura HTTP
     readonly_mode_enabled: Optional[bool] = False
     allowed_mutation_ips:  Optional[str]  = None  # JSON array
+    # Headers HTTP de seguridad
+    security_headers_enabled: Optional[bool] = False
     created_at: Optional[datetime] = None
     updated_at: Optional[datetime] = None
 

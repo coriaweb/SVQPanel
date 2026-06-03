@@ -116,6 +116,32 @@
           </div>
         </BaseCard>
 
+        <!-- Headers HTTP de seguridad -->
+        <BaseCard title="Headers de seguridad" icon="shield-check">
+          <template #actions>
+            <StatusBadge
+              :status="domain.security_headers_enabled ? 'active' : 'none'"
+              :label="domain.security_headers_enabled ? 'Activo' : 'Off'"
+            />
+          </template>
+          <p class="dd-muted">
+            {{ domain.security_headers_enabled
+              ? 'Headers de seguridad activos: X-Frame-Options, X-Content-Type-Options, Referrer-Policy, Permissions-Policy, X-XSS-Protection.'
+              : 'Activa headers HTTP de seguridad para proteger a los visitantes del sitio. No afecta al contenido ni rompe scripts.' }}
+          </p>
+          <div class="dd-actions-row">
+            <BaseButton
+              :variant="domain.security_headers_enabled ? 'danger' : 'subtle'"
+              size="sm"
+              :icon="domain.security_headers_enabled ? 'shield-slash' : 'shield-check'"
+              :loading="secHeadersSaving"
+              @click="toggleSecurityHeaders"
+            >
+              {{ domain.security_headers_enabled ? 'Desactivar' : 'Activar headers' }}
+            </BaseButton>
+          </div>
+        </BaseCard>
+
         <BaseCard title="Recursos" icon="hdd" class="dd-span2">
           <template #actions>
             <BaseButton variant="ghost" size="sm" icon="arrow-repeat" @click="loadDisk" :loading="diskLoading">Recalcular</BaseButton>
@@ -854,6 +880,26 @@ export default {
       }
     }
 
+    // ── Headers HTTP de seguridad ───────────────────────────────────────────
+    const secHeadersSaving = ref(false)
+
+    const toggleSecurityHeaders = async () => {
+      secHeadersSaving.value = true
+      try {
+        const enable = !domain.value?.security_headers_enabled
+        await api.updateDomain(domainId.value, { security_headers_enabled: enable })
+        await reloadDomain()
+        store.showNotification(
+          enable ? 'Headers de seguridad activados' : 'Headers de seguridad desactivados',
+          enable ? 'success' : 'warning'
+        )
+      } catch (e) {
+        store.showNotification('Error: ' + e.message, 'danger')
+      } finally {
+        secHeadersSaving.value = false
+      }
+    }
+
     onMounted(async () => {
       await loadDomain()
       try { const d = await api.getPHPVersions(); phpVersions.value = d?.versions?.length ? d.versions : ['8.2'] }
@@ -875,6 +921,7 @@ export default {
       loadGit, genKey, doSetup, doDeploy, doRollback, doDisableGit, copyText,
       showReadonlyForm, readonlyIps, readonlySaving, saveReadonlyMode, editReadonlyIps,
       domainKnownBots, domainCustomBots, botsLoading, botsSaving, saveDomainBots,
+      secHeadersSaving, toggleSecurityHeaders,
     }
   },
 }

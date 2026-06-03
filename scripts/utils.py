@@ -298,6 +298,7 @@ def generate_nginx_config(
     readonly_mode_enabled: bool = False,
     allowed_mutation_ips: Optional[str] = None,
     blocked_user_agents: Optional[list] = None,
+    security_headers_enabled: bool = False,
 ) -> str:
     """Generate Nginx vhost configuration (Hestia-style paths)"""
 
@@ -355,6 +356,19 @@ def generate_nginx_config(
         if (hsts and ssl_enabled) else ""
     )
 
+    # Headers de seguridad HTTP (sin CSP para no romper contenido de clientes)
+    sec_headers_http = ""
+    sec_headers_https = ""
+    if security_headers_enabled:
+        _sh = """\
+    add_header X-Frame-Options "SAMEORIGIN" always;
+    add_header X-Content-Type-Options "nosniff" always;
+    add_header Referrer-Policy "strict-origin-when-cross-origin" always;
+    add_header Permissions-Policy "accelerometer=(), camera=(), geolocation=(), gyroscope=(), magnetometer=(), microphone=(), payment=(), usb=()" always;
+    add_header X-XSS-Protection "1; mode=block" always;"""
+        sec_headers_http = "\n" + _sh
+        sec_headers_https = "\n" + _sh
+
     # Si force_https: el bloque HTTP solo redirige a HTTPS
     if force_https and ssl_enabled:
         http_block = f"""server {{
@@ -380,7 +394,7 @@ def generate_nginx_config(
     {ipv6_listen_http}
     server_name {server_names};
     root {public_html};
-
+{sec_headers_http}
     index index.php index.html index.htm;
 {skip_block}
     # Pasamos el upstream al template via variable para que los location blocks
@@ -442,7 +456,7 @@ server {{
     ssl_certificate_key /etc/letsencrypt/live/{domain}/privkey.pem;
     ssl_protocols TLSv1.2 TLSv1.3;
     ssl_ciphers HIGH:!aNULL:!MD5;
-{hsts_header}
+{hsts_header}{sec_headers_https}
 
     index index.php index.html index.htm;
 {skip_block}    set $phpfpm_backend php_{backend_name};

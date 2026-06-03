@@ -370,6 +370,7 @@ class DomainManager(SystemManager):
         readonly_mode_enabled: bool = False,
         allowed_mutation_ips: str = None,
         blocked_user_agents: list = None,
+        security_headers_enabled: bool = False,
         webserver: str = None,
     ) -> dict:
         """
@@ -455,6 +456,7 @@ class DomainManager(SystemManager):
                 readonly_mode_enabled=readonly_mode_enabled,
                 allowed_mutation_ips=allowed_mutation_ips,
                 blocked_user_agents=blocked_user_agents or [],
+                security_headers_enabled=security_headers_enabled,
             )
             with open(config_path, "w") as f:
                 f.write(config_content)

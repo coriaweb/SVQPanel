@@ -395,11 +395,18 @@ async def update_domain(
                 db_domain.allowed_mutation_ips = new_ips
                 readonly_changed = True
 
+        # Headers de seguridad HTTP
+        sec_headers_changed = False
+        if domain_update.security_headers_enabled is not None:
+            if domain_update.security_headers_enabled != db_domain.security_headers_enabled:
+                db_domain.security_headers_enabled = domain_update.security_headers_enabled
+                sec_headers_changed = True
+
         db.commit()
         db.refresh(db_domain)
 
         # Regenerar vhost si cambió algún parámetro que afecta a nginx
-        if redir_changed or docroot_changed or ipv4_changed or ipv6_changed or readonly_changed:
+        if redir_changed or docroot_changed or ipv4_changed or ipv6_changed or readonly_changed or sec_headers_changed:
             owner = db.query(User).filter(User.id == db_domain.user_id).first()
             if owner:
                 try:
@@ -428,6 +435,7 @@ async def update_domain(
                         readonly_mode_enabled=db_domain.readonly_mode_enabled or False,
                         allowed_mutation_ips=db_domain.allowed_mutation_ips,
                         blocked_user_agents=__import__('json').loads(db_domain.blocked_user_agents) if db_domain.blocked_user_agents else [],
+                        security_headers_enabled=db_domain.security_headers_enabled or False,
                     )
                 except Exception as vhost_err:
                     import logging
@@ -658,6 +666,7 @@ async def set_domain_cache(
             rate_limit_enabled=domain.rate_limit_enabled or False,
             rate_limit_rps=domain.rate_limit_rps or 10,
             rate_limit_burst=domain.rate_limit_burst or 20,
+            security_headers_enabled=domain.security_headers_enabled or False,
         )
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error aplicando cache: {e}")
@@ -725,6 +734,7 @@ async def set_domain_rate_limit(
             rate_limit_enabled=enabled,
             rate_limit_rps=rps,
             rate_limit_burst=burst,
+            security_headers_enabled=domain.security_headers_enabled or False,
         )
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error aplicando rate limit: {e}")
@@ -795,6 +805,7 @@ async def set_domain_bad_bots(
             readonly_mode_enabled=domain.readonly_mode_enabled or False,
             allowed_mutation_ips=domain.allowed_mutation_ips,
             blocked_user_agents=patterns,
+            security_headers_enabled=domain.security_headers_enabled or False,
         )
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error aplicando bloqueo de bots: {e}")
@@ -932,6 +943,7 @@ async def set_domain_php_config(
             rate_limit_enabled=domain.rate_limit_enabled or False,
             rate_limit_rps=domain.rate_limit_rps or 10,
             rate_limit_burst=domain.rate_limit_burst or 20,
+            security_headers_enabled=domain.security_headers_enabled or False,
         )
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error regenerando vhost: {e}")
@@ -1008,6 +1020,7 @@ async def set_domain_php_hardening(
             rate_limit_enabled=domain.rate_limit_enabled or False,
             rate_limit_rps=domain.rate_limit_rps or 10,
             rate_limit_burst=domain.rate_limit_burst or 20,
+            security_headers_enabled=domain.security_headers_enabled or False,
         )
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error regenerando vhost: {e}")
