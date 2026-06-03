@@ -151,7 +151,7 @@ async def create_ssl(
         ssl_manager.create_ssl(domain.domain_name)
 
         expiry_date = datetime.utcnow() + timedelta(days=90)
-        domain.ssl_enabled    = True
+        domain.ssl_enabled     = True
         domain.ssl_certificate = "Let's Encrypt"
         domain.ssl_key         = "Managed by certbot"
         domain.ssl_expires     = expiry_date
@@ -159,6 +159,41 @@ async def create_ssl(
 
         db.commit()
         db.refresh(domain)
+
+        # Regenerar vhost nginx con SSL activo
+        owner = db.query(User).filter(User.id == domain.user_id).first()
+        if owner:
+            try:
+                from scripts import php_ini_manager as phpini
+                import json as _json
+                php_sock = phpini.pool_socket_path(domain.domain_name) if phpini.has_pool(domain.domain_name) else None
+                DomainManager().regenerate_vhost(
+                    username=owner.username,
+                    domain_name=domain.domain_name,
+                    php_version=domain.php_version or "8.2",
+                    ssl_enabled=True,
+                    ipv6=domain.ipv6,
+                    php_socket_override=php_sock,
+                    template_nginx_extra=domain.template_nginx_extra,
+                    redirect_to=domain.redirect_to,
+                    custom_docroot=domain.custom_docroot,
+                    ipv4=domain.ipv4,
+                    force_https=domain.force_https or False,
+                    hsts=domain.hsts_enabled or False,
+                    rate_limit_enabled=domain.rate_limit_enabled or False,
+                    rate_limit_rps=domain.rate_limit_rps or 10,
+                    rate_limit_burst=domain.rate_limit_burst or 20,
+                    fastcgi_cache_enabled=domain.fastcgi_cache_enabled or False,
+                    fastcgi_cache_ttl_minutes=domain.fastcgi_cache_ttl_minutes or 60,
+                    readonly_mode_enabled=domain.readonly_mode_enabled or False,
+                    allowed_mutation_ips=domain.allowed_mutation_ips,
+                    blocked_user_agents=_json.loads(domain.blocked_user_agents) if domain.blocked_user_agents else [],
+                    security_headers_enabled=domain.security_headers_enabled or False,
+                    http3_enabled=domain.http3_enabled or False,
+                )
+            except Exception as vhost_err:
+                import logging
+                logging.getLogger(__name__).warning(f"regenerate_vhost SSL falló: {vhost_err}")
 
         return _domain_ssl_response(domain, ssl_manager)
     except HTTPException:
