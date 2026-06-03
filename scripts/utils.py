@@ -176,7 +176,7 @@ fastcgi_cache_path {cache_dir}
 """
 
 
-def _fastcgi_cache_block(domain: str, ttl_minutes: int) -> str:
+def _fastcgi_cache_block(domain: str, ttl_minutes: int, sec_headers: str = "") -> str:
     """
     Devuelve el snippet que se inserta DENTRO del 'location ~ \\.php$' cuando
     la cache está habilitada para este dominio.
@@ -192,7 +192,7 @@ def _fastcgi_cache_block(domain: str, ttl_minutes: int) -> str:
         fastcgi_cache_valid  404 1m;
         fastcgi_cache_use_stale error timeout invalid_header updating http_500 http_503;
         fastcgi_cache_lock   on;
-        add_header X-Cache-Status $upstream_cache_status always;
+        add_header X-Cache-Status $upstream_cache_status always;{sec_headers}
 """
 
 
@@ -324,7 +324,7 @@ def generate_nginx_config(
     backend_name = domain.replace('.', '_').replace('-', '_')
 
     skip_block  = _skip_cache_block() if fastcgi_cache_enabled else ""
-    cache_block = _fastcgi_cache_block(domain, fastcgi_cache_ttl_minutes) if fastcgi_cache_enabled else ""
+    cache_block = ""  # built below after _sh is defined
     readonly_block = _readonly_mode_block(allowed_mutation_ips) if readonly_mode_enabled else ""
 
     # Bloque de bloqueo de user-agents por dominio
@@ -370,6 +370,7 @@ def generate_nginx_config(
     # Headers de seguridad HTTP (sin CSP para no romper contenido de clientes)
     sec_headers_http = ""
     sec_headers_https = ""
+    _sh = ""
     if security_headers_enabled:
         _sh = """\
     add_header X-Frame-Options "SAMEORIGIN" always;
@@ -379,6 +380,7 @@ def generate_nginx_config(
     add_header X-XSS-Protection "1; mode=block" always;"""
         sec_headers_http = "\n" + _sh
         sec_headers_https = "\n" + _sh
+    cache_block = _fastcgi_cache_block(domain, fastcgi_cache_ttl_minutes, sec_headers=_sh if security_headers_enabled else "") if fastcgi_cache_enabled else ""
 
     # Si force_https: el bloque HTTP solo redirige a HTTPS
     if force_https and ssl_enabled:
