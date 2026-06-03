@@ -484,6 +484,8 @@ class DomainManager(SystemManager):
         rate_limit_enabled: bool = False,
         rate_limit_rps: int = 10,
         rate_limit_burst: int = 20,
+        security_headers_enabled: bool = False,
+        http3_enabled: bool = False,
     ) -> dict:
         """Activa o desactiva FastCGI cache. Delega en regenerate_vhost."""
         try:
@@ -499,6 +501,8 @@ class DomainManager(SystemManager):
                 rate_limit_enabled=rate_limit_enabled,
                 rate_limit_rps=rate_limit_rps,
                 rate_limit_burst=rate_limit_burst,
+                security_headers_enabled=security_headers_enabled,
+                http3_enabled=http3_enabled,
             )
             logger.info(f"FastCGI cache {'enabled' if enabled else 'disabled'} para {domain_name}")
             return {
