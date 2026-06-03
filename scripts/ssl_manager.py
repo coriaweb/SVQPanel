@@ -136,12 +136,24 @@ class SSLManager(SystemManager):
         acme_root = "/var/www/svqpanel-acme"
         os.makedirs(f"{acme_root}/.well-known/acme-challenge", exist_ok=True)
 
+        # Detectar la IP pública del servidor para el listen con IP específica.
+        # Es necesario porque los vhosts de dominios usan listen {ip}:80, que
+        # tiene prioridad sobre listen 80 genérico aunque el server_name coincida.
+        import socket as _sock
+        try:
+            srv_ip = _sock.gethostbyname(_sock.gethostname())
+        except Exception:
+            srv_ip = None
+
         # Vhost temporal solo para el challenge ACME
         tmp_vhost_path = f"/etc/nginx/sites-available/svqpanel-acme-{domain_name}"
         tmp_link_path  = f"/etc/nginx/sites-enabled/svqpanel-acme-{domain_name}"
+        ip_listen = f"    listen {srv_ip}:80;\n" if srv_ip else ""
         tmp_conf = (
             f"server {{\n"
             f"    listen 80;\n"
+            f"{ip_listen}"
+            f"    listen [::]:80;\n"
             f"    server_name {mail_host};\n"
             f"    location ^~ /.well-known {{\n"
             f"        root {acme_root};\n"
