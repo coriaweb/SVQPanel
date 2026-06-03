@@ -213,6 +213,10 @@ async def create_domain(
                 except Exception:
                     pass  # Correo no bloquea la creación del dominio
 
+        # Liberar memoria de subprocesos (nginx, PHP-FPM, chown...) retenida
+        # temporalmente por Python. Sin esto, el spike de ~800MB al crear un
+        # dominio puede persistir hasta el siguiente GC automático.
+        import gc; gc.collect()
         return db_domain
     except HTTPException:
         raise

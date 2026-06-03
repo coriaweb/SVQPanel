@@ -1457,8 +1457,8 @@ TimeoutStartSec=30
 # Reiniciar automáticamente si el proceso supera 900 MB de RAM.
 # El proceso Python carga muchos modelos y puede acumular memoria;
 # con MemoryMax systemd lo reinicia limpiamente antes de llegar al límite del SO.
-MemoryMax=900M
-MemorySwapMax=400M
+MemoryMax=1500M
+MemorySwapMax=800M
 
 [Install]
 WantedBy=multi-user.target
