@@ -130,7 +130,8 @@ export default {
   name: 'DatabaseForm',
   props: {
     database: { type: Object, default: null },
-    domains: { type: Array, default: () => [] }
+    domains: { type: Array, default: () => [] },
+    ownerUsername: { type: String, default: '' }
   },
   emits: ['submit', 'cancel'],
   setup(props, { emit }) {
@@ -167,13 +168,13 @@ export default {
 
     const predictedDbName = computed(() => {
       if (!form.value.db_name_suffix) return '(nombre real)'
-      const prefix = currentUser.value?.username?.slice(0, 16) || 'user'
+      const prefix = (props.ownerUsername || currentUser.value?.username || 'user').slice(0, 16)
       return `${prefix}_${form.value.db_name_suffix}`.slice(0, 64)
     })
 
     const predictedDbUser = computed(() => {
       if (!form.value.db_user_suffix) return '(usuario real)'
-      const prefix = currentUser.value?.username?.slice(0, 10) || 'user'
+      const prefix = (props.ownerUsername || currentUser.value?.username || 'user').slice(0, 10)
       return `${prefix}_${form.value.db_user_suffix}`.slice(0, 32)
     })
 

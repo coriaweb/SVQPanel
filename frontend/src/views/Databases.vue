@@ -144,6 +144,7 @@
       <DatabaseForm
         :database="editingDatabase"
         :domains="userDomains"
+        :owner-username="currentUser?.username || ''"
         @submit="handleFormSubmit"
         @cancel="showFormModal = false"
       />
@@ -378,13 +379,19 @@ export default {
       ['admin', 'reseller'].includes(store.currentUser?.role)
     )
 
+    const allDomains = ref([])
+
     const userDomains = computed(() => {
-      // Para admin/reseller, mostrar dominios del usuario seleccionado
-      if (store.currentUser?.is_admin && selectedUser.value && selectedUser.value !== 'all') {
-        return [] // Podría loadear dominios del usuario seleccionado
-      }
-      return []
+      if (!selectedUser.value || selectedUser.value === 'all') return allDomains.value
+      return allDomains.value.filter(d => d.user_id === Number(selectedUser.value))
     })
+
+    const loadDomains = async () => {
+      try {
+        const data = await api.getDomains()
+        allDomains.value = Array.isArray(data) ? data : (data?.items || [])
+      } catch { allDomains.value = [] }
+    }
 
     const loadDatabases = async () => {
       loading.value = true
@@ -573,6 +580,7 @@ export default {
     onMounted(() => {
       loadDatabases()
       loadUsers()
+      loadDomains()
     })
 
     return {
