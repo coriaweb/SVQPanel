@@ -2272,14 +2272,46 @@ Unit=svqpanel-dns-cluster-health.service
 WantedBy=timers.target
 DCHTEOF
 
+# ─── Timer cada minuto: ejecutar backups programados ─────────────────────────
+# Los backups se lanzan desde cli.py (proceso independiente que termina),
+# en vez de un hilo de fondo en el panel (causa fuga de memoria).
+cat > /etc/systemd/system/svqpanel-backup-scheduler.service << 'BKSEOF'
+[Unit]
+Description=SVQPanel — ejecuta backups programados (cron)
+After=network.target svqpanel.service
+
+[Service]
+Type=oneshot
+User=root
+WorkingDirectory=/opt/svqpanel
+Environment="PATH=/opt/svqpanel/venv/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+ExecStart=/opt/svqpanel/venv/bin/python -m api.cli run_scheduled_backups
+TimeoutStartSec=3600
+BKSEOF
+
+cat > /etc/systemd/system/svqpanel-backup-scheduler.timer << 'BKTEOF'
+[Unit]
+Description=SVQPanel — timer cada minuto para backups programados
+
+[Timer]
+OnBootSec=2min
+OnUnitActiveSec=1min
+Persistent=false
+
+[Install]
+WantedBy=timers.target
+BKTEOF
+
 systemctl daemon-reload
-systemctl enable --now svqpanel-domain-stats.timer       >/dev/null 2>&1 || true
-systemctl enable --now svqpanel-ssl-check.timer          >/dev/null 2>&1 || true
-systemctl enable --now svqpanel-dns-cluster-health.timer >/dev/null 2>&1 || true
+systemctl enable --now svqpanel-domain-stats.timer          >/dev/null 2>&1 || true
+systemctl enable --now svqpanel-ssl-check.timer             >/dev/null 2>&1 || true
+systemctl enable --now svqpanel-dns-cluster-health.timer    >/dev/null 2>&1 || true
+systemctl enable --now svqpanel-backup-scheduler.timer      >/dev/null 2>&1 || true
 
 echo -e "${GREEN}✓ systemd timer: svqpanel-domain-stats.timer (cada 4h)${NC}"
 echo -e "${GREEN}✓ systemd timer: svqpanel-ssl-check.timer (diario 05:15)${NC}"
 echo -e "${GREEN}✓ systemd timer: svqpanel-dns-cluster-health.timer (cada 10 min)${NC}"
+echo -e "${GREEN}✓ systemd timer: svqpanel-backup-scheduler.timer (cada minuto)${NC}"
 echo ""
 
 ###############################################################################

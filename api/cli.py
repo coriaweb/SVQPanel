@@ -535,6 +535,52 @@ def cmd_dns_cluster_health() -> int:
         db.close()
 
 
+def cmd_run_scheduled_backups() -> int:
+    """
+    Ejecuta los BackupJobs cuya expresión cron coincida con el minuto actual.
+    Diseñado para llamarse cada minuto desde el timer systemd svqpanel-backup-scheduler.
+    Arranca cada job que toque en un hilo y espera a que terminen.
+    """
+    import json
+    from api.models.models_backup import BackupJob, BackupRecord
+    from api.models.models_domain import Domain
+    from api.models.models_client_db import ClientDatabase
+    from scripts.backup_scheduler import _cron_matches, _run_job
+    import threading
+
+    now = datetime.now(timezone.utc) if 'timezone' in dir() else __import__('datetime').datetime.utcnow()
+    # Importar timezone si no está
+    from datetime import timezone as _tz
+    now = __import__('datetime').datetime.now(_tz.utc)
+
+    db = SessionLocal()
+    try:
+        jobs = (
+            db.query(BackupJob)
+            .filter(BackupJob.is_active == True,         # noqa: E712
+                    BackupJob.schedule_enabled == True)  # noqa: E712
+            .all()
+        )
+        threads = []
+        count = 0
+        for job in jobs:
+            if _cron_matches(job, now):
+                logging.getLogger("svqpanel-cli").info("Lanzando backup job=%d (%s)", job.id, job.name)
+                t = threading.Thread(target=_run_job, args=(job.id,), daemon=False)
+                t.start()
+                threads.append(t)
+                count += 1
+        for t in threads:
+            t.join(timeout=3600)  # esperar máx 1h por job
+        logging.getLogger("svqpanel-cli").info("run_scheduled_backups: %d jobs ejecutados", count)
+        return 0
+    except Exception as e:
+        logging.getLogger("svqpanel-cli").error("run_scheduled_backups error: %s", e)
+        return 1
+    finally:
+        db.close()
+
+
 def main():
     parser = argparse.ArgumentParser(prog="api.cli", description="SVQPanel CLI")
     sub = parser.add_subparsers(dest="cmd", required=True)
@@ -546,7 +592,8 @@ def main():
     sub.add_parser("refresh_domain_stats", help="Recalcula disk_usage por dominio")
     sub.add_parser("refresh_ssl_expires",  help="Sincroniza fechas de expiración SSL desde certbot")
     sub.add_parser("register_server_ips",  help="Registra las IPs del sistema en la BD (post-instalación)")
-    sub.add_parser("dns_cluster_health",   help="Comprueba sincronización del cluster DNS y avisa a admins")
+    sub.add_parser("dns_cluster_health",      help="Comprueba sincronización del cluster DNS y avisa a admins")
+    sub.add_parser("run_scheduled_backups",   help="Ejecuta los backups programados cuyo cron coincide ahora")
 
     p_pools = sub.add_parser("migrate_php_pools", help="Crea pool PHP-FPM dedicado (seguridad) para dominios sin él")
     p_pools.add_argument("--dry-run", action="store_true", help="Solo muestra lo que haría")
@@ -568,6 +615,8 @@ def main():
         sys.exit(cmd_dns_cluster_health())
     if args.cmd == "migrate_php_pools":
         sys.exit(cmd_migrate_php_pools(dry_run=args.dry_run, only_domain=args.domain, force=args.force))
+    if args.cmd == "run_scheduled_backups":
+        sys.exit(cmd_run_scheduled_backups())
 
 
 if __name__ == "__main__":
