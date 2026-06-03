@@ -330,6 +330,8 @@ class DomainManager(SystemManager):
         rate_limit_rps: int = 10,
         rate_limit_burst: int = 20,
         docroot_subdir: str = None,
+        readonly_mode_enabled: bool = False,
+        allowed_mutation_ips: str = None,
     ) -> dict:
         """
         Regenera la vhost completa del dominio con TODO el estado actual
@@ -370,6 +372,8 @@ class DomainManager(SystemManager):
             rate_limit_enabled=rate_limit_enabled,
             rate_limit_burst=rate_limit_burst,
             docroot_subdir=docroot_subdir,
+            readonly_mode_enabled=readonly_mode_enabled,
+            allowed_mutation_ips=allowed_mutation_ips,
         )
         with open(nginx_config, "w") as f:
             f.write(config_content)

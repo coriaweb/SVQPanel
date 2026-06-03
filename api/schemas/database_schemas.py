@@ -2,8 +2,8 @@
 Schemas Pydantic para gestión de bases de datos MariaDB de clientes.
 """
 
-from pydantic import BaseModel, field_validator, model_validator
-from typing import Optional
+from pydantic import BaseModel, field_validator, model_validator, Field
+from typing import Optional, List
 from datetime import datetime
 import re
 
@@ -167,3 +167,78 @@ class DatabaseListResponse(BaseModel):
     """Lista paginada de BDs"""
     total: int
     items: list[DatabaseResponse]
+
+
+# ─── Usuarios adicionales de BD ───────────────────────────────────────────────
+
+ALLOWED_PERMISSIONS = {
+    "SELECT", "INSERT", "UPDATE", "DELETE",
+    "CREATE", "DROP", "INDEX", "ALTER",
+    "REFERENCES", "LOCK TABLES",
+}
+
+
+class DatabaseUserCreate(BaseModel):
+    """Crea un usuario adicional de MariaDB para una BD."""
+    username_suffix: str = Field(
+        ...,
+        min_length=1,
+        max_length=16,
+        pattern=r'^[a-z0-9_]+$',
+    )
+    password: str = Field(..., min_length=8, max_length=128)
+    permissions: List[str] = Field(
+        default=["SELECT", "INSERT", "UPDATE", "DELETE"],
+    )
+
+    @field_validator("permissions")
+    @classmethod
+    def validate_perms(cls, v):
+        invalid = set(v) - ALLOWED_PERMISSIONS
+        if invalid:
+            raise ValueError(f"Permisos no válidos: {invalid}")
+        if not v:
+            raise ValueError("Debe haber al menos un permiso")
+        return list(set(v))  # deduplicar
+
+
+class DatabaseUserUpdate(BaseModel):
+    """Actualiza permisos y/o contraseña de un usuario adicional."""
+    permissions: Optional[List[str]] = None
+    password: Optional[str] = Field(None, min_length=8, max_length=128)
+    is_active: Optional[bool] = None
+
+    @field_validator("permissions")
+    @classmethod
+    def validate_perms(cls, v):
+        if v is None:
+            return v
+        invalid = set(v) - ALLOWED_PERMISSIONS
+        if invalid:
+            raise ValueError(f"Permisos no válidos: {invalid}")
+        if not v:
+            raise ValueError("Debe haber al menos un permiso")
+        return list(set(v))
+
+
+class DatabaseUserResponse(BaseModel):
+    """Datos de un usuario adicional de BD (sin contraseña)."""
+    id: int
+    database_id: int
+    username: str
+    username_suffix: str
+    permissions: List[str]
+    is_active: bool
+    created_at: datetime
+    updated_at: Optional[datetime] = None
+
+    class Config:
+        from_attributes = True
+
+    @field_validator("permissions", mode="before")
+    @classmethod
+    def parse_permissions(cls, v):
+        import json
+        if isinstance(v, str):
+            return json.loads(v)
+        return v

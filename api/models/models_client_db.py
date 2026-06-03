@@ -65,6 +65,11 @@ class ClientDatabase(Base):
     # ── Relaciones ────────────────────────────────────────────────────────────
     user   = relationship("User",   back_populates="databases")
     domain = relationship("Domain", back_populates="databases")
+    db_users = relationship(
+        "DatabaseUser",
+        back_populates="database",
+        cascade="all, delete-orphan",
+    )
 
     def __repr__(self):
         return f"<ClientDatabase {self.db_name} (user_id={self.user_id})>"

@@ -68,6 +68,54 @@
           </div>
         </BaseCard>
 
+        <!-- Modo solo-lectura HTTP -->
+        <BaseCard title="Modo solo-lectura" icon="slash-circle">
+          <template #actions>
+            <StatusBadge
+              :status="domain.readonly_mode_enabled ? 'warning' : 'none'"
+              :label="domain.readonly_mode_enabled ? 'Activo' : 'Off'"
+            />
+          </template>
+          <p class="dd-muted">
+            {{ domain.readonly_mode_enabled
+              ? 'POST/PUT/DELETE bloqueados. Solo las IPs indicadas pueden escribir.'
+              : 'Bloquea POST/PUT/DELETE/PATCH excepto desde IPs autorizadas. Útil para contener un sitio comprometido.' }}
+          </p>
+          <div v-if="showReadonlyForm" class="dd-readonly-form">
+            <label class="dd-label">IPs/CIDRs autorizadas para escribir (una por línea)</label>
+            <textarea
+              v-model="readonlyIps"
+              class="svq-input mono"
+              rows="3"
+              placeholder="1.2.3.4&#10;10.0.0.0/8&#10;(vacío = nadie puede hacer POST)"
+            ></textarea>
+            <div class="dd-actions-row">
+              <BaseButton variant="primary" size="sm" icon="check2" :loading="readonlySaving" @click="saveReadonlyMode(true)">
+                Activar
+              </BaseButton>
+              <BaseButton variant="ghost" size="sm" @click="showReadonlyForm = false">Cancelar</BaseButton>
+            </div>
+          </div>
+          <div v-else class="dd-actions-row">
+            <BaseButton
+              v-if="!domain.readonly_mode_enabled"
+              variant="subtle" size="sm" icon="slash-circle"
+              @click="showReadonlyForm = true"
+            >Activar modo solo-lectura</BaseButton>
+            <BaseButton
+              v-else
+              variant="danger" size="sm" icon="slash-circle"
+              :loading="readonlySaving"
+              @click="saveReadonlyMode(false)"
+            >Desactivar</BaseButton>
+            <BaseButton
+              v-if="domain.readonly_mode_enabled"
+              variant="ghost" size="sm" icon="pencil"
+              @click="editReadonlyIps"
+            >Editar IPs</BaseButton>
+          </div>
+        </BaseCard>
+
         <BaseCard title="Recursos" icon="hdd" class="dd-span2">
           <template #actions>
             <BaseButton variant="ghost" size="sm" icon="arrow-repeat" @click="loadDisk" :loading="diskLoading">Recalcular</BaseButton>
@@ -630,6 +678,47 @@ export default {
     // Cargar Git la primera vez que se entra en su pestaña
     watch(tab, (t) => { if (t === 'git' && git.value === null) loadGit() })
 
+    // ── Modo solo-lectura HTTP ──────────────────────────────────────────────
+    const showReadonlyForm = ref(false)
+    const readonlyIps = ref('')
+    const readonlySaving = ref(false)
+
+    const editReadonlyIps = () => {
+      // Rellenar el textarea con las IPs actuales (una por línea)
+      try {
+        const ips = JSON.parse(domain.value?.allowed_mutation_ips || '[]')
+        readonlyIps.value = Array.isArray(ips) ? ips.join('\n') : ''
+      } catch { readonlyIps.value = '' }
+      showReadonlyForm.value = true
+    }
+
+    const saveReadonlyMode = async (enable) => {
+      readonlySaving.value = true
+      try {
+        // Convertir las líneas en un JSON array de IPs válidas
+        let ipsJson = null
+        if (enable) {
+          const ips = readonlyIps.value
+            .split('\n').map(s => s.trim()).filter(Boolean)
+          ipsJson = JSON.stringify(ips)
+        }
+        await api.updateDomain(domainId.value, {
+          readonly_mode_enabled: enable,
+          allowed_mutation_ips: ipsJson,
+        })
+        await reloadDomain()
+        showReadonlyForm.value = false
+        store.showNotification(
+          enable ? 'Modo solo-lectura activado' : 'Modo solo-lectura desactivado',
+          enable ? 'warning' : 'success'
+        )
+      } catch (e) {
+        store.showNotification('Error: ' + e.message, 'danger')
+      } finally {
+        readonlySaving.value = false
+      }
+    }
+
     onMounted(async () => {
       await loadDomain()
       try { const d = await api.getPHPVersions(); phpVersions.value = d?.versions?.length ? d.versions : ['8.2'] }
@@ -648,6 +737,7 @@ export default {
       appForm, installing, installResult, doInstallApp, appNeedsAdmin, appNeedsEmail,
       git, gitDeployments, gitLoading, gitSaving, gitDeploying, gitKeyGen, gitRolling, gitForm,
       loadGit, genKey, doSetup, doDeploy, doRollback, doDisableGit, copyText,
+      showReadonlyForm, readonlyIps, readonlySaving, saveReadonlyMode, editReadonlyIps,
     }
   },
 }

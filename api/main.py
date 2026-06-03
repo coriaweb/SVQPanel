@@ -463,6 +463,9 @@ def _run_migrations():
         "ALTER TABLE domains ADD COLUMN IF NOT EXISTS rate_limit_burst INTEGER NOT NULL DEFAULT 20",
         # Hardening PHP relajado por dominio (Fase 20)
         "ALTER TABLE domains ADD COLUMN IF NOT EXISTS php_hardening_relaxed BOOLEAN NOT NULL DEFAULT FALSE",
+        # Modo solo-lectura HTTP por dominio
+        "ALTER TABLE domains ADD COLUMN IF NOT EXISTS readonly_mode_enabled BOOLEAN NOT NULL DEFAULT FALSE",
+        "ALTER TABLE domains ADD COLUMN IF NOT EXISTS allowed_mutation_ips TEXT",
         # ─────────────────────────────────────────────────────────────────
         # Fase 18: Notificaciones (avisos de cuota disco/tráfico al usuario)
         # ─────────────────────────────────────────────────────────────────
@@ -554,6 +557,22 @@ def _run_migrations():
         )""",
         "CREATE INDEX IF NOT EXISTS ix_git_deployments_domain_id ON git_deployments(domain_id)",
         "CREATE INDEX IF NOT EXISTS ix_git_deployments_created_at ON git_deployments(created_at)",
+        # ─────────────────────────────────────────────────────────────────
+        # Usuarios adicionales de BD (múltiples usuarios por base de datos)
+        # ─────────────────────────────────────────────────────────────────
+        """CREATE TABLE IF NOT EXISTS database_users (
+            id               SERIAL PRIMARY KEY,
+            database_id      INTEGER NOT NULL REFERENCES client_databases(id) ON DELETE CASCADE,
+            username         VARCHAR(64)  NOT NULL,
+            username_suffix  VARCHAR(48)  NOT NULL,
+            permissions      TEXT NOT NULL DEFAULT '["SELECT","INSERT","UPDATE","DELETE"]',
+            db_password_hash VARCHAR(255) NOT NULL,
+            db_password_enc  VARCHAR(500),
+            is_active        BOOLEAN NOT NULL DEFAULT TRUE,
+            created_at       TIMESTAMP NOT NULL DEFAULT NOW(),
+            updated_at       TIMESTAMP DEFAULT NOW()
+        )""",
+        "CREATE INDEX IF NOT EXISTS ix_database_users_database_id ON database_users(database_id)",
     ]
     with engine.connect() as conn:
         for sql in migrations:

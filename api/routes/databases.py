@@ -37,12 +37,14 @@ from sqlalchemy.exc import IntegrityError
 
 from api.models.database import get_db
 from api.models.models_client_db import ClientDatabase
+from api.models.models_db_user import DatabaseUser
 from api.models.models_user import User
 from api.models.models_domain import Domain
 from api.schemas.database_schemas import (
     DatabaseCreate, DatabaseUpdate, DatabaseChangePassword,
     DatabaseResponse, DatabaseCreateResponse,
     DatabasePasswordResetResponse, DatabaseListResponse,
+    DatabaseUserCreate, DatabaseUserUpdate, DatabaseUserResponse,
 )
 from api.dependencies import get_current_user, require_admin
 
@@ -674,6 +676,340 @@ def delete_database(
                 "message": "BD eliminada del panel pero con errores en MariaDB",
                 "errors": mariadb_errors,
             }
+        )
+
+    return None
+
+
+# ── Endpoints: usuarios adicionales de BD ────────────────────────────────────
+
+def _check_db_access(current_user: User, client_db: ClientDatabase, db: Session):
+    """
+    Lanza 403/404 si current_user no puede gestionar esta BD.
+    Reutiliza la lógica de _assert_can_manage.
+    """
+    _assert_can_manage(current_user, client_db.user_id, db)
+
+
+def _make_db_extra_user(owner_username: str, suffix: str) -> str:
+    """
+    Genera el nombre de un usuario adicional de MariaDB.
+    Formato: {owner_username[:10]}_{suffix}  →  máx 64 chars.
+    El límite real de MariaDB para usuarios es 80 chars desde 10.4,
+    pero usamos 64 para ser conservadores y evitar problemas con versiones antiguas.
+    """
+    prefix = re.sub(r'[^a-z0-9_]', '_', owner_username.lower())[:10]
+    full = f"{prefix}_{suffix}"
+    if len(full) > 64:
+        raise ValueError(
+            f"El nombre de usuario resultante '{full}' supera 64 caracteres. "
+            f"Usa un suffix más corto."
+        )
+    return full
+
+
+@router.get(
+    "/databases/{db_id}/users",
+    response_model=List[DatabaseUserResponse],
+    tags=["Databases"],
+)
+def list_db_users(
+    db_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """
+    Lista los usuarios adicionales de una BD.
+    El usuario principal (db_user) NO aparece aquí.
+    """
+    client_db = db.query(ClientDatabase).filter(ClientDatabase.id == db_id).first()
+    if not client_db:
+        raise HTTPException(status_code=404, detail="Base de datos no encontrada")
+
+    _check_db_access(current_user, client_db, db)
+
+    users_list = (
+        db.query(DatabaseUser)
+        .filter(DatabaseUser.database_id == db_id)
+        .order_by(DatabaseUser.created_at)
+        .all()
+    )
+    return users_list
+
+
+@router.post(
+    "/databases/{db_id}/users",
+    response_model=DatabaseUserResponse,
+    status_code=status.HTTP_201_CREATED,
+    tags=["Databases"],
+)
+def create_db_user(
+    db_id: int,
+    data: DatabaseUserCreate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """
+    Crea un usuario adicional de MariaDB para una BD.
+
+    - El nombre completo en MariaDB: `{owner_username}_{suffix}` (máx 64 chars)
+    - Permisos configurables: SELECT, INSERT, UPDATE, DELETE, CREATE, DROP, INDEX, ALTER, REFERENCES, LOCK TABLES
+    - La contraseña se guarda cifrada con Fernet para phpMyAdmin autologin
+    - Si falla el INSERT en PostgreSQL, se hace DROP USER en MariaDB (rollback limpio)
+    """
+    _check_mariadb_enabled()
+
+    client_db = db.query(ClientDatabase).filter(ClientDatabase.id == db_id).first()
+    if not client_db:
+        raise HTTPException(status_code=404, detail="Base de datos no encontrada")
+
+    _check_db_access(current_user, client_db, db)
+
+    # Obtener el propietario de la BD para construir el nombre del usuario
+    owner = db.query(User).filter(User.id == client_db.user_id).first()
+    if not owner:
+        raise HTTPException(status_code=404, detail="Propietario de la BD no encontrado")
+
+    # Construir nombre completo en MariaDB
+    try:
+        full_username = _make_db_extra_user(owner.username, data.username_suffix)
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc))
+
+    # Verificar que el suffix no colisione con el usuario principal
+    if full_username == client_db.db_user:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Este nombre de usuario coincide con el usuario principal de la BD",
+        )
+
+    # Verificar unicidad en la tabla database_users
+    existing = (
+        db.query(DatabaseUser)
+        .filter(
+            DatabaseUser.database_id == db_id,
+            DatabaseUser.username == full_username,
+        )
+        .first()
+    )
+    if existing:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f"El usuario '{full_username}' ya existe para esta BD",
+        )
+
+    # Construir sentencia GRANT
+    safe_username = full_username.replace("'", "''")
+    safe_password = data.password.replace("'", "''")
+    safe_db_name  = client_db.db_name.replace("`", "``")
+    perms_str     = ", ".join(sorted(data.permissions))
+
+    created_mariadb_user = False
+    try:
+        _run_mariadb(
+            f"CREATE USER '{safe_username}'@'localhost' IDENTIFIED BY '{safe_password}';"
+        )
+        created_mariadb_user = True
+
+        _run_mariadb(
+            f"GRANT {perms_str} ON `{safe_db_name}`.* "
+            f"TO '{safe_username}'@'localhost';"
+        )
+        _run_mariadb("FLUSH PRIVILEGES;")
+
+    except Exception as exc:
+        # Limpieza: si el usuario se creó pero el GRANT falló, hacer DROP
+        if created_mariadb_user:
+            try:
+                _run_mariadb(f"DROP USER IF EXISTS '{safe_username}'@'localhost';")
+                _run_mariadb("FLUSH PRIVILEGES;")
+            except Exception:
+                pass
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error creando usuario en MariaDB: {exc}",
+        )
+
+    # Guardar en PostgreSQL
+    import json
+    try:
+        db_user_obj = DatabaseUser(
+            database_id      = db_id,
+            username         = full_username,
+            username_suffix  = data.username_suffix,
+            permissions      = json.dumps(sorted(data.permissions)),
+            db_password_hash = _hash_password(data.password),
+            db_password_enc  = _encrypt_password(data.password),
+            is_active        = True,
+        )
+        db.add(db_user_obj)
+        db.commit()
+        db.refresh(db_user_obj)
+    except IntegrityError:
+        db.rollback()
+        # Rollback en MariaDB
+        try:
+            _run_mariadb(
+                f"REVOKE ALL ON `{safe_db_name}`.* FROM '{safe_username}'@'localhost';"
+            )
+            _run_mariadb(f"DROP USER IF EXISTS '{safe_username}'@'localhost';")
+            _run_mariadb("FLUSH PRIVILEGES;")
+        except Exception:
+            pass
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Conflicto al guardar el usuario en el panel",
+        )
+
+    return db_user_obj
+
+
+@router.put(
+    "/databases/{db_id}/users/{user_id}",
+    response_model=DatabaseUserResponse,
+    tags=["Databases"],
+)
+def update_db_user(
+    db_id: int,
+    user_id: int,
+    data: DatabaseUserUpdate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """
+    Actualiza permisos y/o contraseña de un usuario adicional.
+
+    - Para los permisos: REVOKE ALL + GRANT nuevos permisos + FLUSH PRIVILEGES
+    - Para la contraseña: ALTER USER + actualizar hash/cifrado en PostgreSQL
+    - is_active=False no revoca permisos en MariaDB (solo marca en panel)
+    """
+    _check_mariadb_enabled()
+
+    client_db = db.query(ClientDatabase).filter(ClientDatabase.id == db_id).first()
+    if not client_db:
+        raise HTTPException(status_code=404, detail="Base de datos no encontrada")
+
+    _check_db_access(current_user, client_db, db)
+
+    db_user_obj = (
+        db.query(DatabaseUser)
+        .filter(
+            DatabaseUser.id == user_id,
+            DatabaseUser.database_id == db_id,
+        )
+        .first()
+    )
+    if not db_user_obj:
+        raise HTTPException(status_code=404, detail="Usuario de BD no encontrado")
+
+    safe_username = db_user_obj.username.replace("'", "''")
+    safe_db_name  = client_db.db_name.replace("`", "``")
+
+    import json
+
+    # ── Actualizar permisos en MariaDB ────────────────────────────────────
+    if data.permissions is not None:
+        perms_str = ", ".join(sorted(data.permissions))
+        try:
+            _run_mariadb(
+                f"REVOKE ALL PRIVILEGES ON `{safe_db_name}`.* "
+                f"FROM '{safe_username}'@'localhost';"
+            )
+            _run_mariadb(
+                f"GRANT {perms_str} ON `{safe_db_name}`.* "
+                f"TO '{safe_username}'@'localhost';"
+            )
+            _run_mariadb("FLUSH PRIVILEGES;")
+        except Exception as exc:
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=f"Error actualizando permisos en MariaDB: {exc}",
+            )
+        db_user_obj.permissions = json.dumps(sorted(data.permissions))
+
+    # ── Actualizar contraseña en MariaDB ──────────────────────────────────
+    if data.password is not None:
+        safe_password = data.password.replace("'", "''")
+        try:
+            _run_mariadb(
+                f"ALTER USER '{safe_username}'@'localhost' "
+                f"IDENTIFIED BY '{safe_password}';"
+            )
+            _run_mariadb("FLUSH PRIVILEGES;")
+        except Exception as exc:
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=f"Error actualizando contraseña en MariaDB: {exc}",
+            )
+        db_user_obj.db_password_hash = _hash_password(data.password)
+        db_user_obj.db_password_enc  = _encrypt_password(data.password)
+
+    # ── Actualizar estado activo (solo en panel) ──────────────────────────
+    if data.is_active is not None:
+        db_user_obj.is_active = data.is_active
+
+    db.commit()
+    db.refresh(db_user_obj)
+    return db_user_obj
+
+
+@router.delete(
+    "/databases/{db_id}/users/{user_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    tags=["Databases"],
+)
+def delete_db_user(
+    db_id: int,
+    user_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """
+    Elimina un usuario adicional de MariaDB y borra el registro del panel.
+
+    - Ejecuta DROP USER IF EXISTS en MariaDB + FLUSH PRIVILEGES
+    - Elimina siempre el registro del panel aunque MariaDB falle
+      (se devuelve 207 con detalle de errores si los hay)
+    """
+    _check_mariadb_enabled()
+
+    client_db = db.query(ClientDatabase).filter(ClientDatabase.id == db_id).first()
+    if not client_db:
+        raise HTTPException(status_code=404, detail="Base de datos no encontrada")
+
+    _check_db_access(current_user, client_db, db)
+
+    db_user_obj = (
+        db.query(DatabaseUser)
+        .filter(
+            DatabaseUser.id == user_id,
+            DatabaseUser.database_id == db_id,
+        )
+        .first()
+    )
+    if not db_user_obj:
+        raise HTTPException(status_code=404, detail="Usuario de BD no encontrado")
+
+    safe_username = db_user_obj.username.replace("'", "''")
+    mariadb_errors = []
+
+    try:
+        _run_mariadb(f"DROP USER IF EXISTS '{safe_username}'@'localhost';")
+        _run_mariadb("FLUSH PRIVILEGES;")
+    except Exception as exc:
+        mariadb_errors.append(f"drop_user: {exc}")
+
+    # Eliminar siempre del panel, aunque haya errores en MariaDB
+    db.delete(db_user_obj)
+    db.commit()
+
+    if mariadb_errors:
+        raise HTTPException(
+            status_code=207,
+            detail={
+                "message": "Usuario eliminado del panel pero con errores en MariaDB",
+                "errors": mariadb_errors,
+            },
         )
 
     return None

@@ -362,11 +362,23 @@ async def update_domain(
                 db_domain.custom_docroot = new_docroot
                 docroot_changed = True
 
+        # Modo solo-lectura HTTP
+        readonly_changed = False
+        if domain_update.readonly_mode_enabled is not None:
+            if domain_update.readonly_mode_enabled != db_domain.readonly_mode_enabled:
+                db_domain.readonly_mode_enabled = domain_update.readonly_mode_enabled
+                readonly_changed = True
+        if 'allowed_mutation_ips' in domain_update.model_fields_set:
+            new_ips = domain_update.allowed_mutation_ips or None
+            if new_ips != db_domain.allowed_mutation_ips:
+                db_domain.allowed_mutation_ips = new_ips
+                readonly_changed = True
+
         db.commit()
         db.refresh(db_domain)
 
         # Regenerar vhost si cambió algún parámetro que afecta a nginx
-        if redir_changed or docroot_changed or ipv4_changed:
+        if redir_changed or docroot_changed or ipv4_changed or readonly_changed:
             owner = db.query(User).filter(User.id == db_domain.user_id).first()
             if owner:
                 try:
@@ -392,9 +404,10 @@ async def update_domain(
                         rate_limit_enabled=db_domain.rate_limit_enabled or False,
                         rate_limit_rps=db_domain.rate_limit_rps or 10,
                         rate_limit_burst=db_domain.rate_limit_burst or 20,
+                        readonly_mode_enabled=db_domain.readonly_mode_enabled or False,
+                        allowed_mutation_ips=db_domain.allowed_mutation_ips,
                     )
                 except Exception as vhost_err:
-                    # No bloquear la respuesta si falla nginx (log del error)
                     import logging
                     logging.getLogger(__name__).warning(
                         f"regenerate_vhost falló para {db_domain.domain_name}: {vhost_err}"

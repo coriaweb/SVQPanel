@@ -103,6 +103,14 @@
                       <i class="bi bi-pencil"></i>
                     </button>
                     <button
+                      class="btn btn-outline-secondary"
+                      @click="openUsersModal(db)"
+                      title="Gestionar usuarios"
+                      v-if="canManage(db)"
+                    >
+                      <i class="bi bi-people"></i>
+                    </button>
+                    <button
                       class="btn btn-outline-warning"
                       @click="openPasswordForm(db)"
                       title="Cambiar contraseña"
@@ -139,6 +147,134 @@
         @submit="handleFormSubmit"
         @cancel="showFormModal = false"
       />
+    </Modal>
+
+    <!-- Modal: Usuarios adicionales de BD -->
+    <Modal
+      :isOpen="showUsersModal"
+      :title="`Usuarios de BD: ${selectedDatabase?.db_name || ''}`"
+      @close="showUsersModal = false"
+    >
+      <div>
+        <!-- Info BD -->
+        <p class="text-muted small mb-3">
+          <i class="bi bi-info-circle me-1"></i>
+          Usuario principal: <code>{{ selectedDatabase?.db_user }}</code> (gestionado desde Editar / Cambiar contraseña).
+          Aquí puedes añadir usuarios adicionales con permisos limitados.
+        </p>
+
+        <!-- Tabla de usuarios existentes -->
+        <div v-if="dbUsersLoading" class="text-center py-3">
+          <div class="spinner-border spinner-border-sm" role="status"></div>
+        </div>
+        <div v-else-if="dbUsers.length === 0" class="alert alert-info mb-3">
+          <i class="bi bi-info-circle me-1"></i>No hay usuarios adicionales.
+        </div>
+        <div v-else class="table-responsive mb-4">
+          <table class="table table-sm table-hover align-middle mb-0">
+            <thead class="table-light">
+              <tr>
+                <th>Usuario MariaDB</th>
+                <th>Permisos</th>
+                <th>Estado</th>
+                <th></th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr v-for="u in dbUsers" :key="u.id">
+                <td><code class="small">{{ u.username }}</code></td>
+                <td>
+                  <span
+                    v-for="p in u.permissions"
+                    :key="p"
+                    class="badge bg-secondary me-1"
+                  >{{ p }}</span>
+                </td>
+                <td>
+                  <span v-if="u.is_active" class="badge bg-success">Activo</span>
+                  <span v-else class="badge bg-secondary">Inactivo</span>
+                </td>
+                <td>
+                  <button
+                    class="btn btn-outline-danger btn-sm"
+                    @click="confirmDeleteDbUser(u)"
+                    title="Eliminar usuario"
+                  >
+                    <i class="bi bi-trash"></i>
+                  </button>
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        <!-- Formulario: añadir usuario -->
+        <h6 class="fw-semibold mb-2"><i class="bi bi-person-plus me-1"></i>Añadir usuario</h6>
+        <form @submit.prevent="handleCreateDbUser">
+          <div class="row g-2 mb-2">
+            <div class="col-sm-5">
+              <label class="form-label small mb-1">Sufijo de usuario <span class="text-muted">(a-z, 0-9, _)</span></label>
+              <input
+                v-model="newDbUser.suffix"
+                type="text"
+                class="form-control form-control-sm"
+                placeholder="ej: readonly"
+                maxlength="16"
+                pattern="[a-z0-9_]+"
+                required
+              />
+              <div class="form-text">Nombre resultante: <code>{{ dbUserPreviewName }}</code></div>
+            </div>
+            <div class="col-sm-7">
+              <label class="form-label small mb-1">Contraseña</label>
+              <div class="input-group input-group-sm">
+                <input
+                  v-model="newDbUser.password"
+                  :type="showDbUserPassword ? 'text' : 'password'"
+                  class="form-control"
+                  placeholder="Mínimo 8 caracteres"
+                  required
+                />
+                <button
+                  type="button"
+                  class="btn btn-outline-secondary"
+                  @click="showDbUserPassword = !showDbUserPassword"
+                >
+                  <i :class="showDbUserPassword ? 'bi bi-eye-slash' : 'bi bi-eye'"></i>
+                </button>
+              </div>
+            </div>
+          </div>
+
+          <!-- Permisos (checkboxes) -->
+          <div class="mb-3">
+            <label class="form-label small mb-1">Permisos</label>
+            <div class="d-flex flex-wrap gap-2">
+              <div
+                v-for="perm in availablePermissions"
+                :key="perm"
+                class="form-check form-check-inline"
+              >
+                <input
+                  class="form-check-input"
+                  type="checkbox"
+                  :id="`perm-${perm}`"
+                  :value="perm"
+                  v-model="newDbUser.permissions"
+                />
+                <label class="form-check-label small" :for="`perm-${perm}`">{{ perm }}</label>
+              </div>
+            </div>
+          </div>
+
+          <div class="d-flex gap-2">
+            <button type="submit" class="btn btn-primary btn-sm" :disabled="dbUserCreateLoading">
+              <span v-if="dbUserCreateLoading" class="spinner-border spinner-border-sm me-1"></span>
+              <i v-else class="bi bi-person-plus me-1"></i>Añadir usuario
+            </button>
+          </div>
+        </form>
+      </div>
     </Modal>
 
     <!-- Modal: Cambiar contraseña -->
@@ -213,6 +349,28 @@ export default {
     const showNewPassword = ref(false)
     const isMariaDBDisabled = ref(false)
     const pmaLoading = ref(null)  // id de la BD cuyo botón phpMyAdmin está en carga
+
+    // ── Estado: usuarios adicionales de BD ──────────────────────────────────
+    const showUsersModal     = ref(false)
+    const dbUsers            = ref([])
+    const dbUsersLoading     = ref(false)
+    const dbUserCreateLoading = ref(false)
+    const showDbUserPassword = ref(false)
+    const newDbUser = ref({ suffix: '', password: '', permissions: ['SELECT', 'INSERT', 'UPDATE', 'DELETE'] })
+
+    const availablePermissions = [
+      'SELECT', 'INSERT', 'UPDATE', 'DELETE',
+      'CREATE', 'DROP', 'INDEX', 'ALTER',
+    ]
+
+    const dbUserPreviewName = computed(() => {
+      if (!selectedDatabase.value || !newDbUser.value.suffix) return '—'
+      // Simulamos el mismo recorte que el backend (_make_db_extra_user)
+      const ownerUser = users.value.find(u => u.id === selectedDatabase.value?.user_id)
+      const ownerUsername = ownerUser?.username || ''
+      const prefix = ownerUsername.toLowerCase().replace(/[^a-z0-9_]/g, '_').slice(0, 10)
+      return prefix ? `${prefix}_${newDbUser.value.suffix}` : `…_${newDbUser.value.suffix}`
+    })
 
     const currentUser = computed(() => store.currentUser)
 
@@ -347,6 +505,71 @@ export default {
       return user ? `${user.username} (${user.email})` : `Usuario ${userId}`
     }
 
+    // ── Lógica: usuarios adicionales de BD ──────────────────────────────────
+
+    const openUsersModal = async (db) => {
+      selectedDatabase.value = db
+      dbUsers.value = []
+      newDbUser.value = { suffix: '', password: '', permissions: ['SELECT', 'INSERT', 'UPDATE', 'DELETE'] }
+      showDbUserPassword.value = false
+      showUsersModal.value = true
+      await loadDbUsers(db.id)
+    }
+
+    const loadDbUsers = async (dbId) => {
+      dbUsersLoading.value = true
+      try {
+        const data = await api.getDbUsers(dbId)
+        dbUsers.value = Array.isArray(data) ? data : []
+      } catch (error) {
+        store.showNotification(`Error cargando usuarios de BD: ${error.message}`, 'error')
+      } finally {
+        dbUsersLoading.value = false
+      }
+    }
+
+    const handleCreateDbUser = async () => {
+      if (!newDbUser.value.suffix.match(/^[a-z0-9_]+$/)) {
+        store.showNotification('El sufijo solo puede contener letras minúsculas, números y _', 'error')
+        return
+      }
+      if (newDbUser.value.password.length < 8) {
+        store.showNotification('La contraseña debe tener al menos 8 caracteres', 'error')
+        return
+      }
+      if (newDbUser.value.permissions.length === 0) {
+        store.showNotification('Selecciona al menos un permiso', 'error')
+        return
+      }
+      dbUserCreateLoading.value = true
+      try {
+        await api.createDbUser(selectedDatabase.value.id, {
+          username_suffix: newDbUser.value.suffix,
+          password: newDbUser.value.password,
+          permissions: newDbUser.value.permissions,
+        })
+        store.showNotification('Usuario añadido correctamente', 'success')
+        newDbUser.value = { suffix: '', password: '', permissions: ['SELECT', 'INSERT', 'UPDATE', 'DELETE'] }
+        await loadDbUsers(selectedDatabase.value.id)
+      } catch (error) {
+        store.showNotification(`Error creando usuario: ${error.message}`, 'error')
+      } finally {
+        dbUserCreateLoading.value = false
+      }
+    }
+
+    const confirmDeleteDbUser = async (dbUser) => {
+      if (confirm(`¿Eliminar el usuario "${dbUser.username}" de MariaDB? Esta acción no se puede deshacer.`)) {
+        try {
+          await api.deleteDbUser(selectedDatabase.value.id, dbUser.id)
+          store.showNotification('Usuario eliminado correctamente', 'success')
+          await loadDbUsers(selectedDatabase.value.id)
+        } catch (error) {
+          store.showNotification(`Error eliminando usuario: ${error.message}`, 'error')
+        }
+      }
+    }
+
     onMounted(() => {
       loadDatabases()
       loadUsers()
@@ -378,7 +601,19 @@ export default {
       canManage,
       getUserName,
       openPhpMyAdmin,
-      pmaLoading
+      pmaLoading,
+      // Usuarios adicionales de BD
+      showUsersModal,
+      dbUsers,
+      dbUsersLoading,
+      dbUserCreateLoading,
+      showDbUserPassword,
+      newDbUser,
+      availablePermissions,
+      dbUserPreviewName,
+      openUsersModal,
+      handleCreateDbUser,
+      confirmDeleteDbUser,
     }
   }
 }

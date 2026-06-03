@@ -42,6 +42,29 @@ class DomainUpdate(BaseModel):
                 raise ValueError('custom_docroot no puede contener ..')
         return v or None
 
+    # Modo solo-lectura HTTP
+    readonly_mode_enabled: Optional[bool] = None
+    allowed_mutation_ips:  Optional[str]  = None  # JSON array de IPs/CIDRs
+
+    @field_validator('allowed_mutation_ips')
+    @classmethod
+    def validate_ips(cls, v):
+        if v is None or v.strip() == '' or v.strip() == '[]':
+            return None
+        import json, ipaddress
+        try:
+            ips = json.loads(v)
+        except Exception:
+            raise ValueError('allowed_mutation_ips debe ser un JSON array')
+        if not isinstance(ips, list):
+            raise ValueError('allowed_mutation_ips debe ser un JSON array')
+        for ip in ips:
+            try:
+                ipaddress.ip_network(ip, strict=False)
+            except ValueError:
+                raise ValueError(f"IP/CIDR inválido: {ip}")
+        return v
+
 
 class DomainResponse(BaseModel):
     id: int
@@ -69,6 +92,9 @@ class DomainResponse(BaseModel):
     rate_limit_rps:     Optional[int]  = 10
     rate_limit_burst:   Optional[int]  = 20
     php_hardening_relaxed: Optional[bool] = False
+    # Modo solo-lectura HTTP
+    readonly_mode_enabled: Optional[bool] = False
+    allowed_mutation_ips:  Optional[str]  = None  # JSON array
     created_at: Optional[datetime] = None
     updated_at: Optional[datetime] = None
 

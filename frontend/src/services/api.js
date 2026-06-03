@@ -963,6 +963,24 @@ class APIClient {
   setDomainPhpHardening(domainId, relaxed) {
     return this.put(`/api/domains/${domainId}/php-hardening`, { relaxed })
   }
+
+  // ─── Usuarios adicionales de BD ──────────────────────────────────────────
+
+  getDbUsers(dbId) {
+    return this.get(`/api/databases/${dbId}/users`)
+  }
+
+  createDbUser(dbId, data) {
+    return this.post(`/api/databases/${dbId}/users`, data)
+  }
+
+  updateDbUser(dbId, userId, data) {
+    return this.put(`/api/databases/${dbId}/users/${userId}`, data)
+  }
+
+  deleteDbUser(dbId, userId) {
+    return this.delete(`/api/databases/${dbId}/users/${userId}`)
+  }
 }
 
 export default new APIClient()

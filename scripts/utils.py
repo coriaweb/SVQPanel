@@ -256,6 +256,27 @@ server {{
     return config
 
 
+def _readonly_mode_block(allowed_ips_json: Optional[str]) -> str:
+    """
+    Genera el bloque nginx limit_except que bloquea POST/PUT/DELETE/PATCH
+    excepto desde las IPs indicadas (JSON array de IPs o CIDRs).
+    Si allowed_ips_json es None o vacío, bloquea a TODOS.
+    """
+    import json
+    lines = ["    limit_except GET HEAD OPTIONS {"]
+    ips = []
+    if allowed_ips_json:
+        try:
+            ips = json.loads(allowed_ips_json)
+        except Exception:
+            ips = []
+    for ip in ips:
+        lines.append(f"        allow {ip};")
+    lines.append("        deny all;")
+    lines.append("    }")
+    return "\n".join(lines) + "\n"
+
+
 def generate_nginx_config(
     domain: str,
     user: str,
@@ -274,6 +295,8 @@ def generate_nginx_config(
     rate_limit_enabled: bool = False,
     rate_limit_burst: int = 20,
     docroot_subdir: Optional[str] = None,
+    readonly_mode_enabled: bool = False,
+    allowed_mutation_ips: Optional[str] = None,
 ) -> str:
     """Generate Nginx vhost configuration (Hestia-style paths)"""
 
@@ -299,6 +322,7 @@ def generate_nginx_config(
 
     skip_block  = _skip_cache_block() if fastcgi_cache_enabled else ""
     cache_block = _fastcgi_cache_block(domain, fastcgi_cache_ttl_minutes) if fastcgi_cache_enabled else ""
+    readonly_block = _readonly_mode_block(allowed_mutation_ips) if readonly_mode_enabled else ""
 
     # server_name incluye IPv6 cuando está asignada (para acceso por IP directa)
     server_names = f"{domain} www.{domain}"
@@ -350,7 +374,7 @@ def generate_nginx_config(
     set $phpfpm_backend php_{backend_name};
 {tpl_extra}
     location / {{{rl_directive}
-        try_files $uri $uri/ /index.php?$query_string;
+{readonly_block}        try_files $uri $uri/ /index.php?$query_string;
     }}
 
     location ~ \\.php$ {{
@@ -409,7 +433,7 @@ server {{
     index index.php index.html index.htm;
 {skip_block}    set $phpfpm_backend php_{backend_name};
 {tpl_extra}    location / {{{rl_directive}
-        try_files $uri $uri/ /index.php?$query_string;
+{readonly_block}        try_files $uri $uri/ /index.php?$query_string;
     }}
 
     location ~ \\.php$ {{

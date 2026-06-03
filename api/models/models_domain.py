@@ -61,6 +61,12 @@ class Domain(Base):
     # exec/system/etc. open_basedir y el resto del hardening se mantienen.
     php_hardening_relaxed = Column(Boolean, default=False, nullable=False)
 
+    # Modo solo-lectura HTTP: bloquea POST/PUT/DELETE/PATCH excepto desde las
+    # IPs indicadas. Útil para contener un CMS comprometido o proteger APIs.
+    # allowed_mutation_ips: JSON array de IPs/CIDRs, ej: ["1.2.3.4","10.0.0.0/8"]
+    readonly_mode_enabled  = Column(Boolean, default=False, nullable=False)
+    allowed_mutation_ips   = Column(Text, nullable=True)  # JSON array, NULL = nadie
+
     # Despliegue Git (Fase 21) — repo desplegado en public_html (symlink a
     # releases/). La clave privada del deploy key NO va en BD (vive en ~/.ssh).
     git_enabled        = Column(Boolean, default=False, nullable=False)
