@@ -247,11 +247,16 @@
           <div class="row g-2 mb-3">
             <div v-for="bot in domainKnownBots" :key="bot.id" class="col-md-6">
               <div class="border rounded p-2 d-flex align-items-start gap-2"
-                   :class="bot.enabled ? 'border-danger bg-danger bg-opacity-10' : ''">
+                   :class="bot.globalBlocked ? 'border-secondary opacity-60' : (bot.enabled ? 'border-danger bg-danger bg-opacity-10' : '')">
                 <input class="form-check-input mt-0 flex-shrink-0" type="checkbox"
-                       :id="'dbot-'+domain.id+'-'+bot.id" v-model="bot.enabled" />
-                <label :for="'dbot-'+domain.id+'-'+bot.id" class="small cursor-pointer flex-fill">
+                       :id="'dbot-'+domain.id+'-'+bot.id"
+                       v-model="bot.enabled"
+                       :disabled="bot.globalBlocked" />
+                <label :for="'dbot-'+domain.id+'-'+bot.id"
+                       class="small flex-fill"
+                       :class="bot.globalBlocked ? 'text-muted' : 'cursor-pointer'">
                   <span class="fw-semibold">{{ bot.label }}</span>
+                  <span v-if="bot.globalBlocked" class="badge bg-secondary ms-1" style="font-size:.65rem">global</span>
                   <span class="text-muted d-block" style="font-size:.75rem">{{ bot.description }}</span>
                   <code style="font-size:.72rem">~*{{ bot.pattern }}</code>
                 </label>
@@ -760,19 +765,32 @@ export default {
       { id: 'bytespider',     label: 'ByteSpider',        pattern: 'Bytespider',      description: 'Bot TikTok/ByteDance' },
     ]
 
-    const domainKnownBots  = ref([])
-    const domainCustomBots = ref([])
-    const botsLoading      = ref(false)
-    const botsSaving       = ref(false)
+    const domainKnownBots   = ref([])
+    const domainCustomBots  = ref([])
+    const globalBlockedBots = ref(new Set())  // patrones bloqueados globalmente
+    const botsLoading       = ref(false)
+    const botsSaving        = ref(false)
 
-    const loadDomainBots = () => {
+    const loadDomainBots = async () => {
+      botsLoading.value = true
+      try {
+        // Cargar lista global para saber cuáles ya están bloqueados
+        const globalData = await api.get('/api/security/bad-bots')
+        const globalEnabled = (globalData.known_bots || [])
+          .filter(b => b.enabled).map(b => b.pattern.toLowerCase())
+        const globalCustom = (globalData.custom_patterns || []).map(p => p.toLowerCase())
+        globalBlockedBots.value = new Set([...globalEnabled, ...globalCustom])
+      } catch { globalBlockedBots.value = new Set() }
+      finally { botsLoading.value = false }
+
       const raw = domain.value?.blocked_user_agents
       let active = []
       try { active = JSON.parse(raw || '[]') } catch { active = [] }
       const activeSet = new Set(active.map(p => p.toLowerCase()))
       domainKnownBots.value = KNOWN_BOTS_CATALOG.map(b => ({
         ...b,
-        enabled: activeSet.has(b.pattern.toLowerCase()),
+        enabled:       activeSet.has(b.pattern.toLowerCase()),
+        globalBlocked: globalBlockedBots.value.has(b.pattern.toLowerCase()),
       }))
       const knownPatterns = new Set(KNOWN_BOTS_CATALOG.map(b => b.pattern.toLowerCase()))
       domainCustomBots.value = active.filter(p => !knownPatterns.has(p.toLowerCase()))
