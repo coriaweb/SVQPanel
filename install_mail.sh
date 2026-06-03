@@ -151,6 +151,8 @@ chmod 640 /etc/dovecot/users
 chown root:dovecot /etc/dovecot/users
 
 # Auth: passwd-file con ruta de buzón explícita por usuario
+# OJO: en userdb el username_format va DENTRO de args (no como setting suelto,
+# que Dovecot rechaza con "Unknown setting: userdb { username_format").
 cat > /etc/dovecot/conf.d/auth-passwdfile.conf.ext << 'DOVEAUTHEOF'
 passdb {
   driver = passwd-file
@@ -158,16 +160,23 @@ passdb {
 }
 userdb {
   driver = passwd-file
-  username_format = %u
-  args = /etc/dovecot/users
+  args = username_format=%u /etc/dovecot/users
 }
 DOVEAUTHEOF
 
 # Desactivar auth del sistema, activar passwd-file
 sed -i 's/^!include auth-system.conf.ext/#!include auth-system.conf.ext/' \
     /etc/dovecot/conf.d/10-auth.conf
-grep -q "auth-passwdfile.conf.ext" /etc/dovecot/conf.d/10-auth.conf || \
+# El 10-auth.conf por defecto trae la línea COMENTADA (#!include auth-passwdfile…),
+# así que primero la descomentamos si existe; y si no existe en absoluto, la añadimos.
+# (Un grep ingenuo de "auth-passwdfile.conf.ext" encontraría la comentada y nunca
+#  activaría el include → "No passdbs specified" y todo el correo caído.)
+if grep -q '^#!include auth-passwdfile.conf.ext' /etc/dovecot/conf.d/10-auth.conf; then
+    sed -i 's/^#!include auth-passwdfile.conf.ext/!include auth-passwdfile.conf.ext/' \
+        /etc/dovecot/conf.d/10-auth.conf
+elif ! grep -q '^!include auth-passwdfile.conf.ext' /etc/dovecot/conf.d/10-auth.conf; then
     echo "!include auth-passwdfile.conf.ext" >> /etc/dovecot/conf.d/10-auth.conf
+fi
 
 # Permitir auth plaintext (los clientes deben usar STARTTLS/TLS en producción)
 sed -i 's/^#\?disable_plaintext_auth = yes/disable_plaintext_auth = no/' \
