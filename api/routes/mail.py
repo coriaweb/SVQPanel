@@ -1625,3 +1625,182 @@ async def outlook_autodiscover(request: Request, db: Session = Depends(get_db)):
     domain = _domain_from_request(request)
     xml = _autodiscover_xml(domain, _mail_server_hostname())
     return Response(content=xml, media_type="application/xml; charset=utf-8")
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Monitoreo de envío — lector de logs Postfix / Dovecot
+# ─────────────────────────────────────────────────────────────────────────────
+
+import re
+from typing import Optional
+
+# Archivos de log a leer (en orden de preferencia)
+_MAIL_LOGS = [
+    "/var/log/mail.log",
+    "/var/log/maillog",
+    "/var/log/mail/mail.log",
+]
+
+# Pattern Postfix: fecha hora host postfix/qmgr[pid]: QUEUEID: from=<sender>, size=N, nrcpt=N
+_RE_SENT = re.compile(
+    r"^(\w{3}\s+\d+\s+\d{2}:\d{2}:\d{2})\s+\S+\s+postfix/smtp(?:s|d)?\[\d+\]:\s+"
+    r"([A-F0-9]+):\s+to=<([^>]*)>,\s+relay=([^,]+),.*?status=(\w+)"
+)
+_RE_RECV = re.compile(
+    r"^(\w{3}\s+\d+\s+\d{2}:\d{2}:\d{2})\s+\S+\s+postfix/lmtp\[\d+\]:\s+"
+    r"([A-F0-9]+):\s+to=<([^>]*)>,\s+relay=([^,]+),.*?status=(\w+)"
+)
+_RE_FROM = re.compile(
+    r"^(\w{3}\s+\d+\s+\d{2}:\d{2}:\d{2})\s+\S+\s+postfix/\w+\[\d+\]:\s+"
+    r"([A-F0-9]+):\s+from=<([^>]*)>"
+)
+_RE_REJECT = re.compile(
+    r"^(\w{3}\s+\d+\s+\d{2}:\d{2}:\d{2})\s+\S+\s+postfix/smtpd\[\d+\]:\s+"
+    r"NOQUEUE:\s+reject:\s+RCPT\s+from\s+[^:]+:\s+\d+\s+\S+;\s*(.*)"
+)
+_RE_IMAP = re.compile(
+    r"^(\w{3}\s+\d+\s+\d{2}:\d{2}:\d{2})\s+\S+\s+dovecot:\s+imap(?:-login)?\[\d+\]:\s+(.+)"
+)
+
+
+def _read_mail_log(lines: int = 500) -> list[str]:
+    """Lee las últimas N líneas del log de correo."""
+    for path in _MAIL_LOGS:
+        if os.path.exists(path):
+            try:
+                with open(path, "rb") as f:
+                    # Leer las últimas ~200 KB para no cargar todo en memoria
+                    f.seek(0, 2)
+                    size = f.tell()
+                    chunk = min(size, 200_000)
+                    f.seek(-chunk, 2)
+                    raw = f.read(chunk).decode("utf-8", errors="replace")
+                return raw.splitlines()[-lines:]
+            except Exception as e:
+                logger.warning(f"No se pudo leer {path}: {e}")
+    return []
+
+
+def _parse_mail_log(raw_lines: list[str], domain_filter: Optional[str] = None) -> dict:
+    """
+    Parsea líneas de mail.log y devuelve un resumen estructurado:
+    - sent: correos enviados (postfix/smtp status=sent)
+    - received: correos recibidos (postfix/lmtp status=sent)
+    - rejected: rechazados (NOQUEUE reject)
+    - bounced: rebotados (status=bounced)
+    - deferred: diferidos (status=deferred)
+    - events: lista cronológica de los últimos N eventos
+    """
+    # Mapa queueid → from (para enriquecer eventos de entrega)
+    from_map: dict[str, str] = {}
+    events: list[dict] = []
+    counts = {"sent": 0, "received": 0, "rejected": 0, "bounced": 0, "deferred": 0}
+
+    for line in raw_lines:
+        # Acumular from= para asociar al to= posterior
+        m = _RE_FROM.match(line)
+        if m:
+            from_map[m.group(2)] = m.group(3)
+
+        # Enviados (smtp hacia afuera)
+        m = _RE_SENT.match(line)
+        if m:
+            ts, qid, to_addr, relay, st = m.groups()
+            sender = from_map.get(qid, "")
+            if domain_filter and domain_filter not in (to_addr + sender):
+                continue
+            kind = st if st in ("sent", "bounced", "deferred") else "sent"
+            counts[kind] += 1
+            events.append({
+                "ts": ts, "type": "sent", "status": st,
+                "from": sender, "to": to_addr, "relay": relay.split("[")[0].strip(),
+                "qid": qid,
+            })
+            continue
+
+        # Recibidos (lmtp → Dovecot)
+        m = _RE_RECV.match(line)
+        if m:
+            ts, qid, to_addr, relay, st = m.groups()
+            sender = from_map.get(qid, "")
+            if domain_filter and domain_filter not in (to_addr + sender):
+                continue
+            if st == "sent":
+                counts["received"] += 1
+            events.append({
+                "ts": ts, "type": "received", "status": "received",
+                "from": sender, "to": to_addr, "relay": "",
+                "qid": qid,
+            })
+            continue
+
+        # Rechazados
+        m = _RE_REJECT.match(line)
+        if m:
+            ts, reason = m.groups()
+            if domain_filter and domain_filter not in line:
+                continue
+            counts["rejected"] += 1
+            events.append({
+                "ts": ts, "type": "rejected", "status": "rejected",
+                "from": "", "to": "", "relay": "",
+                "reason": reason[:120],
+                "qid": "",
+            })
+
+    # Devolver los últimos 200 eventos (más recientes al inicio)
+    events = list(reversed(events[-200:]))
+    return {"counts": counts, "events": events}
+
+
+@router.get("/mail/logs")
+async def get_mail_logs(
+    domain: Optional[str] = None,
+    lines: int = 500,
+    current_user=Depends(require_auth),
+):
+    """
+    Devuelve un resumen del log de correo (Postfix). Parsea el mail.log del
+    servidor directamente en Python: rápido, sin procesos externos.
+    - domain: filtro opcional (solo eventos donde aparezca ese dominio)
+    - lines: cuántas líneas del final del log leer (máx 2000)
+    """
+    lines = min(lines, 2000)
+    raw = _read_mail_log(lines)
+    if not raw:
+        return {
+            "available": False,
+            "message": "Log de correo no disponible (¿el servidor de correo está instalado?)",
+            "counts": {"sent": 0, "received": 0, "rejected": 0, "bounced": 0, "deferred": 0},
+            "events": [],
+        }
+    result = _parse_mail_log(raw, domain_filter=domain)
+    result["available"] = True
+    result["log_lines_read"] = len(raw)
+    return result
+
+
+@router.get("/mail/domains/{domain_id}/logs")
+async def get_domain_mail_logs(
+    domain_id: int,
+    lines: int = 500,
+    current_user=Depends(require_auth),
+    db: Session = Depends(get_db),
+):
+    """Monitoreo de envío filtrado al dominio dado."""
+    md = _get_mail_domain_or_404(domain_id, db)
+    _require_edit(md, current_user)
+    lines = min(lines, 2000)
+    raw = _read_mail_log(lines)
+    if not raw:
+        return {
+            "available": False,
+            "message": "Log de correo no disponible",
+            "counts": {"sent": 0, "received": 0, "rejected": 0, "bounced": 0, "deferred": 0},
+            "events": [],
+        }
+    result = _parse_mail_log(raw, domain_filter=md.domain_name)
+    result["available"] = True
+    result["domain"] = md.domain_name
+    result["log_lines_read"] = len(raw)
+    return result

@@ -218,6 +218,12 @@
               </button>
             </li>
             <li class="nav-item">
+              <button class="nav-link" :class="{ active: activeTab === 'logs' }"
+                      @click="switchTab('logs')">
+                <i class="bi bi-activity me-1"></i>Monitoreo
+              </button>
+            </li>
+            <li class="nav-item">
               <button class="nav-link" :class="{ active: activeTab === 'settings' }"
                       @click="switchTab('settings')">
                 <i class="bi bi-sliders me-1"></i>Ajustes
@@ -516,6 +522,129 @@
                 </p>
               </template>
             </template>
+          </div>
+
+          <!-- ── TAB: Monitoreo de envío ── -->
+          <div v-if="activeTab === 'logs'">
+            <div class="d-flex justify-content-between align-items-center mb-3">
+              <div>
+                <h6 class="mb-1"><i class="bi bi-activity me-1"></i>Monitoreo de envío</h6>
+                <p class="text-muted small mb-0">
+                  Últimos correos enviados y recibidos en <strong>{{ selectedDomain.domain_name }}</strong>
+                </p>
+              </div>
+              <button class="btn btn-outline-secondary btn-sm" @click="loadMailLogs(selectedDomain.id)"
+                      :disabled="loadingLogs">
+                <span v-if="loadingLogs" class="spinner-border spinner-border-sm me-1"></span>
+                <i v-else class="bi bi-arrow-repeat me-1"></i>Actualizar
+              </button>
+            </div>
+
+            <div v-if="loadingLogs" class="text-center py-5">
+              <div class="spinner-border text-primary"></div>
+              <p class="text-muted mt-2 small">Leyendo logs del servidor…</p>
+            </div>
+
+            <div v-else-if="mailLogs && !mailLogs.available" class="alert alert-warning">
+              <i class="bi bi-exclamation-triangle me-1"></i>
+              {{ mailLogs.message }}
+            </div>
+
+            <template v-else-if="mailLogs">
+              <!-- Contadores -->
+              <div class="row g-2 mb-3">
+                <div class="col-6 col-md">
+                  <div class="card border-0 text-center py-2" style="background:var(--surface-inset)">
+                    <div class="fs-4 fw-bold text-success">{{ mailLogs.counts.sent }}</div>
+                    <div class="small text-muted">Enviados</div>
+                  </div>
+                </div>
+                <div class="col-6 col-md">
+                  <div class="card border-0 text-center py-2" style="background:var(--surface-inset)">
+                    <div class="fs-4 fw-bold text-primary">{{ mailLogs.counts.received }}</div>
+                    <div class="small text-muted">Recibidos</div>
+                  </div>
+                </div>
+                <div class="col-6 col-md">
+                  <div class="card border-0 text-center py-2" style="background:var(--surface-inset)">
+                    <div class="fs-4 fw-bold text-danger">{{ mailLogs.counts.rejected }}</div>
+                    <div class="small text-muted">Rechazados</div>
+                  </div>
+                </div>
+                <div class="col-6 col-md">
+                  <div class="card border-0 text-center py-2" style="background:var(--surface-inset)">
+                    <div class="fs-4 fw-bold text-warning">{{ mailLogs.counts.bounced }}</div>
+                    <div class="small text-muted">Rebotados</div>
+                  </div>
+                </div>
+                <div class="col-6 col-md">
+                  <div class="card border-0 text-center py-2" style="background:var(--surface-inset)">
+                    <div class="fs-4 fw-bold text-secondary">{{ mailLogs.counts.deferred }}</div>
+                    <div class="small text-muted">Diferidos</div>
+                  </div>
+                </div>
+              </div>
+
+              <!-- Filtro de tipo -->
+              <div class="d-flex gap-2 mb-3 flex-wrap">
+                <button v-for="f in logFilters" :key="f.val"
+                        class="btn btn-sm"
+                        :class="logFilter === f.val ? 'btn-primary' : 'btn-outline-secondary'"
+                        @click="logFilter = f.val">
+                  {{ f.label }}
+                </button>
+                <span class="ms-auto text-muted small align-self-center">
+                  {{ filteredLogEvents.length }} eventos · {{ mailLogs.log_lines_read }} líneas leídas
+                </span>
+              </div>
+
+              <!-- Tabla de eventos -->
+              <div v-if="!filteredLogEvents.length" class="text-center py-4 text-muted">
+                <i class="bi bi-inbox display-6"></i>
+                <p class="mt-2 mb-0">Sin eventos para el filtro seleccionado</p>
+              </div>
+
+              <div v-else class="table-responsive">
+                <table class="table table-sm table-hover align-middle mb-0" style="font-size:.82rem">
+                  <thead class="table-light">
+                    <tr>
+                      <th style="width:140px">Fecha/hora</th>
+                      <th style="width:90px" class="text-center">Tipo</th>
+                      <th>De</th>
+                      <th>Para</th>
+                      <th>Relay / Motivo</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <tr v-for="(ev, i) in filteredLogEvents" :key="i">
+                      <td class="text-nowrap font-monospace text-muted" style="font-size:.78rem">
+                        {{ ev.ts }}
+                      </td>
+                      <td class="text-center">
+                        <span :class="logBadge(ev.status)">
+                          {{ logLabel(ev.status) }}
+                        </span>
+                      </td>
+                      <td class="text-truncate font-monospace" style="max-width:160px" :title="ev.from">
+                        {{ ev.from || '—' }}
+                      </td>
+                      <td class="text-truncate font-monospace" style="max-width:160px" :title="ev.to">
+                        {{ ev.to || '—' }}
+                      </td>
+                      <td class="text-truncate text-muted" style="max-width:200px"
+                          :title="ev.reason || ev.relay">
+                        {{ ev.reason || ev.relay || '—' }}
+                      </td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+            </template>
+
+            <div v-else class="text-center py-5 text-muted">
+              <i class="bi bi-activity display-4"></i>
+              <p class="mt-2 mb-0">Carga el monitoreo con el botón Actualizar</p>
+            </div>
           </div>
 
           <!-- ── TAB: Relay SMTP ── -->
@@ -1079,7 +1208,7 @@
 </template>
 
 <script>
-import { ref, onMounted } from 'vue'
+import { ref, computed, onMounted } from 'vue'
 import { useMainStore } from '../stores/useMainStore'
 import api from '../services/api'
 
@@ -1210,6 +1339,8 @@ export default {
       webmail.value = null
       relay.value = null
       mailtls.value = null
+      mailLogs.value = null
+      logFilter.value = 'all'
       settingsForm.value = {
         catch_all:     md.catch_all || '',
         max_mailboxes: md.max_mailboxes,
@@ -1240,7 +1371,62 @@ export default {
       if (tab === 'relay') {
         await loadRelay(selectedDomain.value.id)
       }
+      if (tab === 'logs' && mailLogs.value === null) {
+        await loadMailLogs(selectedDomain.value.id)
+      }
     }
+
+    // ── Monitoreo de envío (logs) ──
+    const mailLogs     = ref(null)
+    const loadingLogs  = ref(false)
+    const logFilter    = ref('all')
+    const logFilters   = [
+      { val: 'all',      label: 'Todos' },
+      { val: 'sent',     label: 'Enviados' },
+      { val: 'received', label: 'Recibidos' },
+      { val: 'rejected', label: 'Rechazados' },
+      { val: 'bounced',  label: 'Rebotados' },
+      { val: 'deferred', label: 'Diferidos' },
+    ]
+
+    const loadMailLogs = async (domainId) => {
+      loadingLogs.value = true
+      try {
+        const data = await api.get(`/api/mail/domains/${domainId}/logs?lines=500`)
+        mailLogs.value = data
+      } catch (e) {
+        store.showNotification('Error cargando logs: ' + e.message, 'danger')
+        mailLogs.value = { available: false, message: e.message, counts: {}, events: [] }
+      } finally {
+        loadingLogs.value = false
+      }
+    }
+
+    const filteredLogEvents = computed(() => {
+      if (!mailLogs.value || !mailLogs.value.events) return []
+      if (logFilter.value === 'all') return mailLogs.value.events
+      return mailLogs.value.events.filter(e =>
+        logFilter.value === 'sent'     ? e.type === 'sent' && e.status === 'sent' :
+        logFilter.value === 'received' ? e.type === 'received' :
+        logFilter.value === 'rejected' ? e.status === 'rejected' :
+        logFilter.value === 'bounced'  ? e.status === 'bounced' :
+        logFilter.value === 'deferred' ? e.status === 'deferred' : true
+      )
+    })
+
+    const logBadge = (status) => ({
+      'badge bg-success':               status === 'sent',
+      'badge bg-primary':               status === 'received',
+      'badge bg-danger':                status === 'rejected',
+      'badge bg-warning text-dark':     status === 'bounced',
+      'badge bg-secondary':             status === 'deferred',
+      'badge bg-light text-dark border': !['sent','received','rejected','bounced','deferred'].includes(status),
+    })
+
+    const logLabel = (status) => ({
+      sent: 'enviado', received: 'recibido', rejected: 'rechazado',
+      bounced: 'rebotado', deferred: 'diferido',
+    }[status] || status)
 
     // ── SMTP relay por dominio ──
     const relay        = ref(null)
@@ -1641,6 +1827,9 @@ export default {
       loadWebmail, toggleWebmail, issueWebmailSsl,
       relay, relayForm, loadingRelay, relaySaving, loadRelay, saveDomainRelay,
       mailtls, mailtlsSaving, toggleMailTls,
+      // Monitoreo de envío
+      mailLogs, loadingLogs, logFilter, logFilters,
+      loadMailLogs, filteredLogEvents, logBadge, logLabel,
       loadDomains, openDetail, switchTab,
       openNewDomain, createDomain, saveSettings,
       loadSpamSettings, saveSpamSettings,
