@@ -27,8 +27,11 @@ from .base import SystemManager
 
 logger = logging.getLogger(__name__)
 
-DOVECOT_SNI_CONF = "/etc/dovecot/conf.d/99-svqpanel-sni.conf"
-POSTFIX_SNI_MAP  = "/etc/postfix/svqpanel_sni"
+DOVECOT_SNI_CONF  = "/etc/dovecot/conf.d/99-svqpanel-sni.conf"
+POSTFIX_SNI_MAP   = "/etc/postfix/svqpanel_sni"
+SITES_AVAILABLE   = "/etc/nginx/sites-available"
+SITES_ENABLED     = "/etc/nginx/sites-enabled"
+ACME_ROOT         = "/var/www/svqpanel-acme"
 
 
 def mail_host(domain: str) -> str:
@@ -107,6 +110,80 @@ class MailTLSManager(SystemManager):
             lines.append(f"{mail_host(d)} {key} {full}")
         return lines
 
+    def _nginx_vhost_name(self, domain: str) -> str:
+        return f"svqpanel-mail-{domain}"
+
+    def _ensure_nginx_vhost(self, domain: str) -> None:
+        """
+        Crea un vhost nginx para mail.{dominio} con su propio cert.
+        Sirve con el cert correcto (sin ERR_CERT_COMMON_NAME_INVALID) y
+        redirige al webmail del dominio. Necesario aunque mail. sea un host
+        de correo: HSTS del padre bloquea el acceso sin un vhost válido.
+        """
+        import subprocess, socket as _sock
+        host = mail_host(domain)
+        full, key = cert_paths(domain)
+        webmail = f"webmail.{domain}"
+        vhost_name = self._nginx_vhost_name(domain)
+        avail = f"{SITES_AVAILABLE}/{vhost_name}"
+        link  = f"{SITES_ENABLED}/{vhost_name}"
+
+        # Detectar IP pública (igual que ssl_manager)
+        srv_ip = None
+        try:
+            r = subprocess.run(
+                ["ip", "-4", "addr", "show", "scope", "global"],
+                capture_output=True, text=True, timeout=5,
+            )
+            for line in r.stdout.splitlines():
+                line = line.strip()
+                if line.startswith("inet "):
+                    srv_ip = line.split()[1].split("/")[0]
+                    break
+        except Exception:
+            pass
+        ip_listen = f"    listen {srv_ip}:443 ssl;\n" if srv_ip else ""
+        ip_listen80 = f"    listen {srv_ip}:80;\n" if srv_ip else ""
+
+        conf = (
+            f"# SVQPanel — vhost mail.{domain} (TLS correo + redirect webmail)\n"
+            f"server {{\n"
+            f"    listen 80;\n"
+            f"{ip_listen80}"
+            f"    listen [::]:80;\n"
+            f"    server_name {host};\n"
+            f"    location ^~ /.well-known {{\n"
+            f"        root {ACME_ROOT};\n"
+            f"        allow all;\n"
+            f"    }}\n"
+            f"    location / {{ return 301 https://$host$request_uri; }}\n"
+            f"}}\n"
+            f"server {{\n"
+            f"    listen 443 ssl;\n"
+            f"{ip_listen}"
+            f"    listen [::]:443 ssl;\n"
+            f"    http2 on;\n"
+            f"    server_name {host};\n"
+            f"    ssl_certificate     {full};\n"
+            f"    ssl_certificate_key {key};\n"
+            f"    ssl_protocols TLSv1.2 TLSv1.3;\n"
+            f"    ssl_ciphers HIGH:!aNULL:!MD5;\n"
+            f"    return 301 https://{webmail}$request_uri;\n"
+            f"}}\n"
+        )
+        import pathlib
+        pathlib.Path(ACME_ROOT).mkdir(parents=True, exist_ok=True)
+        pathlib.Path(avail).write_text(conf)
+        if not pathlib.Path(link).exists():
+            self.execute_command(["ln", "-sf", avail, link], check=False)
+
+    def _remove_nginx_vhost(self, domain: str) -> None:
+        """Elimina el vhost nginx de mail.{dominio} al desactivar TLS."""
+        import pathlib
+        vhost_name = self._nginx_vhost_name(domain)
+        for p in [f"{SITES_ENABLED}/{vhost_name}", f"{SITES_AVAILABLE}/{vhost_name}"]:
+            pathlib.Path(p).unlink(missing_ok=True)
+
     def rebuild_from_db(self, mail_domains, reload=True) -> dict:
         """
         Regenera la config SNI (Dovecot + Postfix) desde la BD. mail_domains:
@@ -116,14 +193,21 @@ class MailTLSManager(SystemManager):
         """
         active = []
         skipped = []
+        inactive_domains = []
         for md in mail_domains:
             if not getattr(md, "mail_tls_enabled", False):
+                inactive_domains.append(md.domain_name)
                 continue
             full, key = cert_paths(md.domain_name)
             if os.path.exists(full) and os.path.exists(key) and cert_includes_mail(md.domain_name):
                 active.append(md.domain_name)
+                self._ensure_nginx_vhost(md.domain_name)
             else:
                 skipped.append(md.domain_name)
+
+        # Borrar vhosts nginx de dominios desactivados
+        for d in inactive_domains + skipped:
+            self._remove_nginx_vhost(d)
 
         # ── Dovecot ──
         os.makedirs(os.path.dirname(DOVECOT_SNI_CONF), exist_ok=True)
@@ -149,6 +233,7 @@ class MailTLSManager(SystemManager):
         if reload:
             self.execute_command(["systemctl", "reload", "dovecot"], check=False)
             self.execute_command(["systemctl", "reload", "postfix"], check=False)
+            self.execute_command(["nginx", "-s", "reload"], check=False)
 
         logger.info(f"mail SNI rebuild: {len(active)} activos, {len(skipped)} omitidos (sin cert)")
         return {"active": active, "skipped": skipped}
