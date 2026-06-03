@@ -178,7 +178,7 @@
             <div v-if="editingDbUser?.id !== u.id" class="d-flex align-items-center gap-2 flex-wrap">
               <code class="small flex-shrink-0">{{ u.username }}</code>
               <div class="flex-fill d-flex flex-wrap gap-1">
-                <span v-for="p in JSON.parse(u.permissions || '[]')" :key="p" class="badge bg-secondary">{{ p }}</span>
+                <span v-for="p in parsePerms(u.permissions)" :key="p" class="badge bg-secondary">{{ p }}</span>
               </div>
               <span v-if="u.is_active" class="badge bg-success">Activo</span>
               <span v-else class="badge bg-secondary">Inactivo</span>
@@ -601,6 +601,17 @@ export default {
       }
     }
 
+    // Parsea permisos que pueden venir como JSON array o como string CSV
+    const parsePerms = (raw) => {
+      if (!raw) return []
+      if (Array.isArray(raw)) return raw
+      const s = raw.trim()
+      if (s.startsWith('[')) {
+        try { return JSON.parse(s) } catch { /* fallback */ }
+      }
+      return s.split(',').map(p => p.trim()).filter(Boolean)
+    }
+
     // ── Edición inline de usuario adicional ────────────────────────────────
     const editingDbUser     = ref(null)   // usuario que se está editando
     const editDbUserLoading = ref(false)
@@ -609,7 +620,7 @@ export default {
     const startEditDbUser = (u) => {
       editingDbUser.value  = u
       editDbUserForm.value = {
-        permissions:  JSON.parse(u.permissions || '[]'),
+        permissions:  parsePerms(u.permissions),
         new_password: '',
         showPassword: false,
       }
@@ -684,6 +695,7 @@ export default {
       openUsersModal,
       handleCreateDbUser,
       confirmDeleteDbUser,
+      parsePerms,
       // Edición inline
       editingDbUser,
       editDbUserLoading,
