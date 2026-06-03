@@ -100,12 +100,28 @@ class SSLManager(SystemManager):
 
     def expand_for_webmail(self, domain_name: str, email: str) -> dict:
         """
-        Reemite (expand) el certificado del dominio añadiendo webmail.{dominio}
-        como SAN. Útil para activar HTTPS en el webmail de un dominio que ya
-        tenía cert. Tras esto hay que regenerar el vhost webmail con ssl=True.
+        Emite un certificado independiente para webmail.{dominio} usando --webroot
+        con /var/www/webmail. No toca el cert del dominio principal.
+        El vhost del webmail debe tener location ^~ /.well-known accesible en HTTP.
         """
-        return self.create_ssl_with_email(
-            domain_name, email, extra_domains=[f"webmail.{domain_name}"])
+        webmail_host = f"webmail.{domain_name}"
+        webroot = "/var/www/webmail"
+        import os
+        os.makedirs(f"{webroot}/.well-known/acme-challenge", exist_ok=True)
+        cmd = [
+            "certbot", "certonly", "--webroot",
+            "-w", webroot,
+            "-d", webmail_host,
+            "--non-interactive", "--agree-tos", "-m", email,
+        ]
+        try:
+            self.execute_command(cmd)
+            logger.info(f"Webmail SSL cert emitido para {webmail_host}")
+            return {"success": True, "domain": webmail_host,
+                    "cert": f"/etc/letsencrypt/live/{webmail_host}/fullchain.pem"}
+        except Exception as e:
+            logger.error(f"Failed to issue webmail SSL: {e}")
+            raise
 
     def expand_for_mail(self, domain_name: str, email: str) -> dict:
         """

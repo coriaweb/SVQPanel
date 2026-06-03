@@ -101,14 +101,27 @@ class WebmailManager(SystemManager):
     location ~ ^/(README|INSTALL|LICENSE|CHANGELOG|UPGRADING)$ {{ deny all; }}
 """
 
+        # El cert puede ser propio del webmail o del dominio padre (expand legacy)
+        webmail_cert = f"/etc/letsencrypt/live/{host}/fullchain.pem"
+        webmail_key  = f"/etc/letsencrypt/live/{host}/privkey.pem"
+        domain_cert  = f"/etc/letsencrypt/live/{domain}/fullchain.pem"
+        domain_key   = f"/etc/letsencrypt/live/{domain}/privkey.pem"
+        import os as _os
+        if _os.path.exists(webmail_cert):
+            ssl_cert, ssl_key = webmail_cert, webmail_key
+        else:
+            ssl_cert, ssl_key = domain_cert, domain_key
+
         out = f"""# SVQPanel — Webmail de {domain} (Roundcube compartido)
 server {{
     listen 80;
     listen [::]:80;
     server_name {host};
 
-    # .well-known SIEMPRE accesible (validación ACME del certificado)
-    location ~ /\\.well-known {{ root {WEBMAIL_ROOT}; allow all; }}
+    # .well-known con ^~ tiene prioridad sobre regex — necesario para certbot ACME
+    location ^~ /.well-known {{
+        allow all;
+    }}
 """
         if ssl:
             # En HTTP solo redirigimos a HTTPS (salvo ACME, ya cubierto arriba)
@@ -116,14 +129,19 @@ server {{
 }}
 
 server {{
-    listen 443 ssl http2;
-    listen [::]:443 ssl http2;
+    listen 443 ssl;
+    listen [::]:443 ssl;
+    http2 on;
     server_name {host};
 
-    ssl_certificate /etc/letsencrypt/live/{domain}/fullchain.pem;
-    ssl_certificate_key /etc/letsencrypt/live/{domain}/privkey.pem;
+    ssl_certificate {ssl_cert};
+    ssl_certificate_key {ssl_key};
     ssl_protocols TLSv1.2 TLSv1.3;
     ssl_ciphers HIGH:!aNULL:!MD5;
+
+    location ^~ /.well-known {{
+        allow all;
+    }}
 
 {rc_locations}
     error_log /var/log/nginx/webmail-{domain}.error.log;
