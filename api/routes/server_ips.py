@@ -104,6 +104,11 @@ async def scan_system_ips(
     result: List[SystemIPInfo] = []
     registered_addrs = {r.address for r in db.query(ServerIP.address).all()}
 
+    # Excluir la IPv6 reservada para el panel (no es una IP de hosting)
+    from api.models.models_settings import Settings
+    _settings = db.query(Settings).filter(Settings.id == 1).first()
+    panel_ipv6 = (_settings.panel_ipv6 or "").strip() if _settings else ""
+
     try:
         proc = subprocess.run(
             ["/sbin/ip", "-o", "addr", "show"],
@@ -135,6 +140,10 @@ async def scan_system_ips(
 
         # Saltar link-local IPv6 (fe80::)
         if addr.lower().startswith("fe80"):
+            continue
+
+        # Saltar la IPv6 reservada para el panel
+        if panel_ipv6 and addr == panel_ipv6:
             continue
 
         ipv6 = (family == "inet6")
