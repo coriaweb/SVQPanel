@@ -89,7 +89,8 @@ export default {
     const loadSSL = async () => {
       try {
         const data = await api.getSSL(props.domain.id)
-        ssl.value = data
+        // Solo considerar SSL activo si ssl_enabled o hay cert_info real
+        ssl.value = (data?.ssl_enabled || data?.cert_info) ? data : null
       } catch (error) {
         ssl.value = null
       }

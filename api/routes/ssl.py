@@ -17,14 +17,16 @@ router = APIRouter()
 
 
 def _domain_ssl_response(domain: Domain, ssl_manager: SSLManager) -> SSLResponse:
+    # Leer cert del disco siempre — ssl_enabled en BD puede quedar desincronizado
+    raw = ssl_manager.get_cert_info(domain.domain_name)
     cert_info = None
-    if domain.ssl_enabled:
-        raw = ssl_manager.get_cert_info(domain.domain_name)
-        if raw:
-            cert_info = SSLCertInfo(**{k: raw[k] for k in SSLCertInfo.model_fields if k in raw})
+    if raw:
+        cert_info = SSLCertInfo(**{k: raw[k] for k in SSLCertInfo.model_fields if k in raw})
+    # Si hay cert en disco pero la BD dice false, corregir el flag
+    ssl_enabled = domain.ssl_enabled or bool(cert_info)
     return SSLResponse(
         domain_id=domain.id,
-        ssl_enabled=domain.ssl_enabled or False,
+        ssl_enabled=ssl_enabled,
         force_https=domain.force_https or False,
         hsts_enabled=domain.hsts_enabled or False,
         ssl_expires=domain.ssl_expires,
