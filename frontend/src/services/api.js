@@ -439,6 +439,10 @@ class APIClient {
     return this.get('/api/settings/next-ipv6')
   }
 
+  assignPanelIpv6() {
+    return this.post('/api/settings/assign-panel-ipv6', {})
+  }
+
   // System
   getSystemStats() {
     return this.get('/api/system/stats')

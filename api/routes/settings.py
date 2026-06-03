@@ -135,7 +135,7 @@ async def get_next_ipv6(
             detail="Rango IPv6 configurado no es válido"
         )
 
-    # IPs ya usadas
+    # IPs ya usadas (dominios + la dedicada al panel)
     used = set()
     domains_with_ipv6 = db.query(Domain).filter(Domain.ipv6 != None).all()
     for domain in domains_with_ipv6:
@@ -146,12 +146,17 @@ async def get_next_ipv6(
         except ValueError:
             pass
 
-    # Buscar la siguiente IP libre (empezamos en ::1, no en ::0 que es la dirección de red)
+    # Reservar la primera IP usable del rango para el panel
+    hosts_list = list(network.hosts())
+    if hosts_list:
+        used.add(hosts_list[0])  # ::1 reservada para el panel
+
+    # Buscar la siguiente IP libre (empezamos en ::2)
     hosts = network.hosts()
     next_ip = None
     for i, ip in enumerate(hosts):
         if i == 0:
-            continue  # Saltar ::0
+            continue  # Saltar ::0 (dirección de red) y ::1 (panel)
         if ip not in used:
             next_ip = str(ip)
             break
@@ -169,6 +174,84 @@ async def get_next_ipv6(
         "range": settings.ipv6_range,
         "network_interface": settings.network_interface or "eth0",
         "used_count": len(used)
+    }
+
+
+@router.post("/settings/assign-panel-ipv6")
+async def assign_panel_ipv6(
+    current_user=Depends(require_admin),
+    db: Session = Depends(get_db)
+):
+    """
+    Asigna la primera IPv6 del rango (::1) como dirección dedicada del panel.
+    La configura en la interfaz de red y actualiza el vhost nginx para que
+    el panel escuche también en esa IPv6 específica.
+    """
+    import subprocess, os
+    settings = get_or_create_settings(db)
+
+    if not settings.ipv6_enabled or not settings.ipv6_range:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="IPv6 no está habilitado o no hay rango configurado"
+        )
+
+    try:
+        network = ipaddress.IPv6Network(settings.ipv6_range, strict=False)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Rango IPv6 inválido")
+
+    # La primera IP usable del rango (::1 relativo) es la del panel
+    hosts = list(network.hosts())
+    if not hosts:
+        raise HTTPException(status_code=400, detail="El rango no tiene IPs usables")
+
+    panel_ip = str(hosts[0])
+    iface    = settings.network_interface or "eth0"
+    prefix   = network.prefixlen
+
+    # Añadir la IP a la interfaz (idempotente: ignorar si ya existe)
+    try:
+        result = subprocess.run(
+            ["ip", "addr", "add", f"{panel_ip}/{prefix}", "dev", iface],
+            capture_output=True, text=True, timeout=10
+        )
+        if result.returncode != 0 and "already assigned" not in result.stderr and "RTNETLINK" not in result.stderr.lower():
+            # No abortar si ya estaba asignada
+            if "File exists" not in result.stderr and "EEXIST" not in result.stderr:
+                raise HTTPException(
+                    status_code=500,
+                    detail=f"Error configurando IPv6 en interfaz: {result.stderr[:200]}"
+                )
+    except FileNotFoundError:
+        raise HTTPException(status_code=500, detail="Comando 'ip' no encontrado")
+
+    # Guardar en Settings
+    settings.panel_ipv6 = panel_ip
+    db.commit()
+
+    # Regenerar el vhost nginx si hay SSL activo para que el panel escuche
+    # también en la IPv6 dedicada (además de [::]:puerto)
+    nginx_updated = False
+    if settings.ssl_panel_enabled and settings.panel_hostname:
+        try:
+            from scripts.panel_ssl_manager import PanelSSLManager
+            mgr = PanelSSLManager()
+            mgr._write_nginx_ssl(settings.panel_hostname, settings.force_https or False)
+            import subprocess as _sp
+            _sp.run(["nginx", "-t"], check=True, capture_output=True)
+            _sp.run(["systemctl", "reload", "nginx"], check=True, capture_output=True)
+            nginx_updated = True
+        except Exception as e:
+            # No abortar — la IP ya está asignada aunque nginx no se haya actualizado
+            pass
+
+    return {
+        "panel_ipv6": panel_ip,
+        "interface": iface,
+        "prefix": prefix,
+        "nginx_updated": nginx_updated,
+        "message": f"IPv6 {panel_ip} asignada al panel en {iface}"
     }
 
 

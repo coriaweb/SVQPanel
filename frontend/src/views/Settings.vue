@@ -76,6 +76,38 @@
                     :disabled="!form.ipv6_enabled"
                   />
                 </div>
+
+                <!-- IPv6 dedicada del panel -->
+                <div class="mt-3 border rounded p-3" :class="{ 'opacity-50': !form.ipv6_enabled }">
+                  <div class="d-flex align-items-center justify-content-between mb-2">
+                    <div>
+                      <div class="fw-semibold"><i class="bi bi-shield-lock me-1"></i> IPv6 del panel</div>
+                      <div class="text-muted small">
+                        Primera IP del rango (::1), reservada exclusivamente para el panel.
+                        Las IPs de clientes se asignan desde ::2 en adelante.
+                      </div>
+                    </div>
+                  </div>
+                  <div v-if="settings?.panel_ipv6" class="d-flex align-items-center gap-2 mb-2">
+                    <span class="badge bg-success font-monospace">{{ settings.panel_ipv6 }}</span>
+                    <span class="text-success small"><i class="bi bi-check-circle me-1"></i>Asignada</span>
+                  </div>
+                  <div v-else class="text-muted small mb-2">
+                    <i class="bi bi-exclamation-circle me-1"></i>No asignada aún
+                  </div>
+                  <button
+                    class="btn btn-sm btn-outline-primary"
+                    :disabled="!form.ipv6_enabled || !settings?.ipv6_range || assigningPanelIpv6"
+                    @click="assignPanelIpv6"
+                  >
+                    <span v-if="assigningPanelIpv6" class="spinner-border spinner-border-sm me-1"></span>
+                    <i v-else class="bi bi-lightning me-1"></i>
+                    {{ settings?.panel_ipv6 ? 'Reasignar IPv6 al panel' : 'Asignar IPv6 al panel' }}
+                  </button>
+                  <div v-if="panelIpv6Msg" class="mt-2 small" :class="panelIpv6Ok ? 'text-success' : 'text-danger'">
+                    {{ panelIpv6Msg }}
+                  </div>
+                </div>
               </div>
 
               <!-- Preview del rango -->
@@ -638,6 +670,28 @@ export default {
       force_https: true,
     })
 
+    // IPv6 del panel
+    const assigningPanelIpv6 = ref(false)
+    const panelIpv6Msg = ref('')
+    const panelIpv6Ok = ref(false)
+
+    const assignPanelIpv6 = async () => {
+      assigningPanelIpv6.value = true
+      panelIpv6Msg.value = ''
+      try {
+        const res = await api.assignPanelIpv6()
+        panelIpv6Ok.value = true
+        panelIpv6Msg.value = res.message || `IPv6 ${res.panel_ipv6} asignada correctamente`
+        // Recargar settings para reflejar la nueva IP
+        await loadSettings()
+      } catch (e) {
+        panelIpv6Ok.value = false
+        panelIpv6Msg.value = e.message || 'Error asignando IPv6 al panel'
+      } finally {
+        assigningPanelIpv6.value = false
+      }
+    }
+
     // PHP state
     const phpVersions = ref([])
     const phpLoading = ref(false)
@@ -952,6 +1006,7 @@ export default {
       tzCurrent, tzSelected, tzSearch, tzList, tzSaving,
       filteredTimezones, saveTimezone,
       relay, relaySaving, saveRelay,
+      assigningPanelIpv6, panelIpv6Msg, panelIpv6Ok, assignPanelIpv6,
     }
   }
 }

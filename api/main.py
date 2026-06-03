@@ -421,6 +421,8 @@ def _run_migrations():
         "CREATE INDEX IF NOT EXISTS ix_backup_records_user_id ON backup_records(user_id)",
         # Fase 15.1: restauración — distinguir copia de restauración
         "ALTER TABLE backup_records ADD COLUMN IF NOT EXISTS kind VARCHAR(20) NOT NULL DEFAULT 'backup'",
+        # IPv6 dedicada del panel
+        "ALTER TABLE settings ADD COLUMN IF NOT EXISTS panel_ipv6 VARCHAR(50)",
         # Fase 15.3: programación automática de backups
         "ALTER TABLE backup_jobs ADD COLUMN IF NOT EXISTS schedule_enabled BOOLEAN NOT NULL DEFAULT FALSE",
         "ALTER TABLE backup_jobs ADD COLUMN IF NOT EXISTS schedule_minute  VARCHAR(20) NOT NULL DEFAULT '0'",

@@ -75,6 +75,7 @@ class SettingsResponse(BaseModel):
     ipv6_enabled: bool
     ipv6_range: Optional[str] = None
     ipv6_gateway: Optional[str] = None
+    panel_ipv6: Optional[str] = None
     network_interface: Optional[str] = "eth0"
     php_default_version: str
     max_upload_mb: int = 100
