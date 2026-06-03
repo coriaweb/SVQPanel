@@ -146,21 +146,19 @@ async def get_next_ipv6(
         except ValueError:
             pass
 
-    # Reservar la primera IP usable del rango para el panel
-    hosts_list = list(network.hosts())
-    if hosts_list:
-        used.add(hosts_list[0])  # ::1 reservada para el panel
+    # Reservar la primera IP usable del rango para el panel (sin materializar toda la lista)
+    network_int = int(network.network_address)
+    first_host = ipaddress.IPv6Address(network_int + 1)
+    used.add(first_host)  # ::1 reservada para el panel
 
-    # Buscar la siguiente IP libre (empezamos en ::2)
-    hosts = network.hosts()
+    # Buscar la siguiente IP libre (empezamos en ::2, máximo 64k búsquedas)
     next_ip = None
-    for i, ip in enumerate(hosts):
-        if i == 0:
-            continue  # Saltar ::0 (dirección de red) y ::1 (panel)
-        if ip not in used:
-            next_ip = str(ip)
+    for offset in range(2, 65538):
+        candidate = ipaddress.IPv6Address(network_int + offset)
+        if candidate not in network:
             break
-        if i > 65535:  # Máximo 64k IPs buscadas
+        if candidate not in used:
+            next_ip = str(candidate)
             break
 
     if not next_ip:
@@ -202,11 +200,12 @@ async def assign_panel_ipv6(
         raise HTTPException(status_code=400, detail="Rango IPv6 inválido")
 
     # La primera IP usable del rango (::1 relativo) es la del panel
-    hosts = list(network.hosts())
-    if not hosts:
+    network_int = int(network.network_address)
+    panel_ip_addr = ipaddress.IPv6Address(network_int + 1)
+    if panel_ip_addr not in network:
         raise HTTPException(status_code=400, detail="El rango no tiene IPs usables")
 
-    panel_ip = str(hosts[0])
+    panel_ip = str(panel_ip_addr)
     iface    = settings.network_interface or "eth0"
     prefix   = network.prefixlen
 
