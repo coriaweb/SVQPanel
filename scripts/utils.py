@@ -380,7 +380,14 @@ def generate_nginx_config(
     add_header X-XSS-Protection "1; mode=block" always;"""
         sec_headers_http = "\n" + _sh
         sec_headers_https = "\n" + _sh
-    cache_block = _fastcgi_cache_block(domain, fastcgi_cache_ttl_minutes, sec_headers=_sh if security_headers_enabled else "") if fastcgi_cache_enabled else ""
+    # cache_block: security headers para HTTP; cache_block_ssl: todos (incluye HSTS+Alt-Svc)
+    _sh_https = _sh
+    if hsts and ssl_enabled:
+        _sh_https += '\n    add_header Strict-Transport-Security "max-age=31536000; includeSubDomains; preload" always;'
+    if http3_enabled and ssl_enabled:
+        _sh_https += '\n    add_header Alt-Svc \'h3=":443"; ma=86400\' always;'
+    cache_block     = _fastcgi_cache_block(domain, fastcgi_cache_ttl_minutes, sec_headers=_sh) if fastcgi_cache_enabled else ""
+    cache_block_ssl = _fastcgi_cache_block(domain, fastcgi_cache_ttl_minutes, sec_headers=_sh_https) if fastcgi_cache_enabled else ""
 
     # Si force_https: el bloque HTTP solo redirige a HTTPS
     if force_https and ssl_enabled:
@@ -423,7 +430,7 @@ def generate_nginx_config(
         fastcgi_pass php_{backend_name};
         fastcgi_index index.php;
         fastcgi_param SCRIPT_FILENAME $document_root$fastcgi_script_name;
-        include fastcgi_params;{cache_block}
+        include fastcgi_params;{cache_block_ssl}
     }}
 
     location ~ /\\.ht {{
@@ -483,7 +490,7 @@ server {{
         fastcgi_pass php_{backend_name};
         fastcgi_index index.php;
         fastcgi_param SCRIPT_FILENAME $document_root$fastcgi_script_name;
-        include fastcgi_params;{cache_block}
+        include fastcgi_params;{cache_block_ssl}
     }}
 
     location ~ /\\.ht {{
