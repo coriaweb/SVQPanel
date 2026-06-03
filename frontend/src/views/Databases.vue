@@ -366,11 +366,10 @@ export default {
 
     const dbUserPreviewName = computed(() => {
       if (!selectedDatabase.value || !newDbUser.value.suffix) return '—'
-      // Simulamos el mismo recorte que el backend (_make_db_extra_user)
       const ownerUser = users.value.find(u => u.id === selectedDatabase.value?.user_id)
-      const ownerUsername = ownerUser?.username || ''
+      const ownerUsername = ownerUser?.username || store.currentUser?.username || ''
       const prefix = ownerUsername.toLowerCase().replace(/[^a-z0-9_]/g, '_').slice(0, 10)
-      return prefix ? `${prefix}_${newDbUser.value.suffix}` : `…_${newDbUser.value.suffix}`
+      return `${prefix}_${newDbUser.value.suffix}`
     })
 
     const currentUser = computed(() => store.currentUser)
