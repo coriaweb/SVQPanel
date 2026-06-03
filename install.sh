@@ -1894,6 +1894,11 @@ if [[ -f /opt/svqpanel/scripts/assets/fail2ban-svqpanel-nft.conf ]]; then
        /etc/fail2ban/action.d/svqpanel-nft.conf
 fi
 
+# Filtro SVQPanel para scanners de vulnerabilidades (phpunit, cgi-bin, eval-stdin, etc.)
+# Solo captura rutas que nunca genera tráfico legítimo → seguro frente a Googlebot.
+cp /opt/svqpanel/config/fail2ban/svqpanel-scanner.conf \
+   /etc/fail2ban/filter.d/svqpanel-scanner.conf
+
 cat > /etc/fail2ban/jail.local << F2BEOF
 # /etc/fail2ban/jail.local — gestionado por SVQPanel (Fase 12)
 # Cualquier cambio desde el panel puede sobrescribir este archivo.
@@ -1953,6 +1958,17 @@ backend  = auto
 bantime  = 1w
 findtime = 1d
 maxretry = 3
+
+[svqpanel-scanner]
+enabled   = true
+filter    = svqpanel-scanner
+port      = http,https
+logpath   = /home/*/web/*/logs/nginx.access.log
+            /var/log/nginx/access.log
+backend   = auto
+maxretry  = 5
+findtime  = 120
+bantime   = 86400
 F2BEOF
 
 # Filtro custom para fallos de login del panel
