@@ -38,6 +38,26 @@ export default {
     return api.delete(`/api/databases/${dbId}`)
   },
 
+  // Listar usuarios adicionales de una BD
+  async listDbUsers(dbId) {
+    return api.get(`/api/databases/${dbId}/users`)
+  },
+
+  // Crear usuario adicional
+  async createDbUser(dbId, data) {
+    return api.post(`/api/databases/${dbId}/users`, data)
+  },
+
+  // Actualizar permisos y/o contraseña de usuario adicional
+  async updateDbUser(dbId, userId, data) {
+    return api.put(`/api/databases/${dbId}/users/${userId}`, data)
+  },
+
+  // Eliminar usuario adicional
+  async deleteDbUser(dbId, userId) {
+    return api.delete(`/api/databases/${dbId}/users/${userId}`)
+  },
+
   // Listar charsets y collations disponibles
   async getCharsets() {
     const data = await api.get('/api/databases/charsets')

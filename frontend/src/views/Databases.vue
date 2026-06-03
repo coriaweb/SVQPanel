@@ -171,42 +171,67 @@
         <div v-else-if="dbUsers.length === 0" class="alert alert-info mb-3">
           <i class="bi bi-info-circle me-1"></i>No hay usuarios adicionales.
         </div>
-        <div v-else class="table-responsive mb-4">
-          <table class="table table-sm table-hover align-middle mb-0">
-            <thead class="table-light">
-              <tr>
-                <th>Usuario MariaDB</th>
-                <th>Permisos</th>
-                <th>Estado</th>
-                <th></th>
-              </tr>
-            </thead>
-            <tbody>
-              <tr v-for="u in dbUsers" :key="u.id">
-                <td><code class="small">{{ u.username }}</code></td>
-                <td>
-                  <span
-                    v-for="p in u.permissions"
-                    :key="p"
-                    class="badge bg-secondary me-1"
-                  >{{ p }}</span>
-                </td>
-                <td>
-                  <span v-if="u.is_active" class="badge bg-success">Activo</span>
-                  <span v-else class="badge bg-secondary">Inactivo</span>
-                </td>
-                <td>
-                  <button
-                    class="btn btn-outline-danger btn-sm"
-                    @click="confirmDeleteDbUser(u)"
-                    title="Eliminar usuario"
-                  >
-                    <i class="bi bi-trash"></i>
+        <div v-else class="mb-4">
+          <div v-for="u in dbUsers" :key="u.id" class="border rounded mb-2 p-2">
+
+            <!-- Fila normal -->
+            <div v-if="editingDbUser?.id !== u.id" class="d-flex align-items-center gap-2 flex-wrap">
+              <code class="small flex-shrink-0">{{ u.username }}</code>
+              <div class="flex-fill d-flex flex-wrap gap-1">
+                <span v-for="p in JSON.parse(u.permissions || '[]')" :key="p" class="badge bg-secondary">{{ p }}</span>
+              </div>
+              <span v-if="u.is_active" class="badge bg-success">Activo</span>
+              <span v-else class="badge bg-secondary">Inactivo</span>
+              <div class="d-flex gap-1 ms-auto">
+                <button class="btn btn-outline-primary btn-sm" @click="startEditDbUser(u)" title="Editar permisos / contraseña">
+                  <i class="bi bi-pencil"></i>
+                </button>
+                <button class="btn btn-outline-danger btn-sm" @click="confirmDeleteDbUser(u)" title="Eliminar">
+                  <i class="bi bi-trash"></i>
+                </button>
+              </div>
+            </div>
+
+            <!-- Formulario de edición inline -->
+            <div v-else>
+              <div class="fw-semibold small mb-2"><code>{{ u.username }}</code></div>
+
+              <!-- Permisos -->
+              <div class="mb-2">
+                <label class="form-label small mb-1">Permisos</label>
+                <div class="d-flex flex-wrap gap-2">
+                  <div v-for="perm in availablePermissions" :key="perm" class="form-check form-check-inline">
+                    <input class="form-check-input" type="checkbox" :id="`edit-perm-${u.id}-${perm}`"
+                      :value="perm" v-model="editDbUserForm.permissions" />
+                    <label class="form-check-label small" :for="`edit-perm-${u.id}-${perm}`">{{ perm }}</label>
+                  </div>
+                </div>
+              </div>
+
+              <!-- Nueva contraseña (opcional) -->
+              <div class="mb-2">
+                <label class="form-label small mb-1">Nueva contraseña <span class="text-muted">(dejar vacío para no cambiar)</span></label>
+                <div class="input-group input-group-sm">
+                  <input v-model="editDbUserForm.new_password"
+                    :type="editDbUserForm.showPassword ? 'text' : 'password'"
+                    class="form-control" placeholder="Mínimo 8 caracteres" />
+                  <button type="button" class="btn btn-outline-secondary"
+                    @click="editDbUserForm.showPassword = !editDbUserForm.showPassword">
+                    <i :class="editDbUserForm.showPassword ? 'bi bi-eye-slash' : 'bi bi-eye'"></i>
                   </button>
-                </td>
-              </tr>
-            </tbody>
-          </table>
+                </div>
+              </div>
+
+              <div class="d-flex gap-2">
+                <button class="btn btn-primary btn-sm" @click="saveEditDbUser" :disabled="editDbUserLoading">
+                  <span v-if="editDbUserLoading" class="spinner-border spinner-border-sm me-1"></span>
+                  <i v-else class="bi bi-check-lg me-1"></i>Guardar
+                </button>
+                <button class="btn btn-outline-secondary btn-sm" @click="cancelEditDbUser">Cancelar</button>
+              </div>
+            </div>
+
+          </div>
         </div>
 
         <!-- Formulario: añadir usuario -->
@@ -576,6 +601,44 @@ export default {
       }
     }
 
+    // ── Edición inline de usuario adicional ────────────────────────────────
+    const editingDbUser     = ref(null)   // usuario que se está editando
+    const editDbUserLoading = ref(false)
+    const editDbUserForm    = ref({ permissions: [], new_password: '', showPassword: false })
+
+    const startEditDbUser = (u) => {
+      editingDbUser.value  = u
+      editDbUserForm.value = {
+        permissions:  JSON.parse(u.permissions || '[]'),
+        new_password: '',
+        showPassword: false,
+      }
+    }
+
+    const cancelEditDbUser = () => { editingDbUser.value = null }
+
+    const saveEditDbUser = async () => {
+      editDbUserLoading.value = true
+      try {
+        const payload = { permissions: editDbUserForm.value.permissions }
+        if (editDbUserForm.value.new_password) {
+          if (editDbUserForm.value.new_password.length < 8) {
+            store.showNotification('La contraseña debe tener al menos 8 caracteres', 'error')
+            return
+          }
+          payload.new_password = editDbUserForm.value.new_password
+        }
+        await databaseService.updateDbUser(selectedDatabase.value.id, editingDbUser.value.id, payload)
+        store.showNotification('Usuario actualizado correctamente', 'success')
+        editingDbUser.value = null
+        await loadDbUsers(selectedDatabase.value.id)
+      } catch (error) {
+        store.showNotification(`Error actualizando usuario: ${error.message}`, 'error')
+      } finally {
+        editDbUserLoading.value = false
+      }
+    }
+
     onMounted(() => {
       loadDatabases()
       loadUsers()
@@ -621,6 +684,13 @@ export default {
       openUsersModal,
       handleCreateDbUser,
       confirmDeleteDbUser,
+      // Edición inline
+      editingDbUser,
+      editDbUserLoading,
+      editDbUserForm,
+      startEditDbUser,
+      cancelEditDbUser,
+      saveEditDbUser,
     }
   }
 }
