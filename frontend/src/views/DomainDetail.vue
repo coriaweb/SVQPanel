@@ -233,6 +233,55 @@
         <IPv6Manager :domain="domain" @reload="reloadDomain" />
       </BaseCard>
 
+      <!-- ===== Bots ===== -->
+      <BaseCard v-show="tab === 'bots'" title="Bloqueo de Bots" icon="robot">
+        <p class="text-muted small mb-3">
+          Bloquea user-agents maliciosos específicamente para este dominio (HTTP 444).
+          Los bots bloqueados globalmente en Seguridad → Bad Bots también aplican.
+        </p>
+        <div v-if="botsLoading" class="text-center py-3">
+          <span class="spinner-border spinner-border-sm"></span>
+        </div>
+        <div v-else>
+          <h6 class="fw-semibold mb-2">Bots conocidos</h6>
+          <div class="row g-2 mb-3">
+            <div v-for="bot in domainKnownBots" :key="bot.id" class="col-md-6">
+              <div class="border rounded p-2 d-flex align-items-start gap-2"
+                   :class="bot.enabled ? 'border-danger bg-danger bg-opacity-10' : ''">
+                <input class="form-check-input mt-0 flex-shrink-0" type="checkbox"
+                       :id="'dbot-'+domain.id+'-'+bot.id" v-model="bot.enabled" />
+                <label :for="'dbot-'+domain.id+'-'+bot.id" class="small cursor-pointer flex-fill">
+                  <span class="fw-semibold">{{ bot.label }}</span>
+                  <span class="text-muted d-block" style="font-size:.75rem">{{ bot.description }}</span>
+                  <code style="font-size:.72rem">~*{{ bot.pattern }}</code>
+                </label>
+              </div>
+            </div>
+          </div>
+          <h6 class="fw-semibold mb-2">Patrones personalizados</h6>
+          <div class="mb-3">
+            <div v-for="(p, i) in domainCustomBots" :key="i"
+                 class="input-group input-group-sm mb-1" style="max-width:380px">
+              <span class="input-group-text font-monospace">~*</span>
+              <input v-model="domainCustomBots[i]" type="text"
+                     class="form-control font-monospace" placeholder="patron-bot" />
+              <button class="btn btn-outline-danger" type="button"
+                      @click="domainCustomBots.splice(i, 1)">
+                <i class="bi bi-trash"></i>
+              </button>
+            </div>
+            <button class="btn btn-outline-secondary btn-sm mt-1"
+                    @click="domainCustomBots.push('')">
+              <i class="bi bi-plus me-1"></i>Añadir patrón
+            </button>
+          </div>
+          <BaseButton variant="primary" size="sm" icon="save" :loading="botsSaving"
+                      @click="saveDomainBots">
+            Guardar y aplicar
+          </BaseButton>
+        </div>
+      </BaseCard>
+
       <!-- ===== Git deploy ===== -->
       <BaseCard v-show="tab === 'git'" title="Despliegue Git" icon="git">
         <template #actions v-if="git && git.enabled">
@@ -433,6 +482,7 @@ export default {
       { key: 'ssl',      label: 'SSL',     icon: 'shield-lock' },
       { key: 'php',      label: 'PHP',     icon: 'filetype-php' },
       { key: 'ipv6',     label: 'IPv6',    icon: 'diagram-3' },
+      { key: 'bots',     label: 'Bots',    icon: 'robot' },
       { key: 'git',      label: 'Git',     icon: 'git' },
       { key: 'logs',     label: 'Logs',    icon: 'journal-text' },
     ]
@@ -688,7 +738,62 @@ export default {
     }
 
     // Cargar Git la primera vez que se entra en su pestaña
-    watch(tab, (t) => { if (t === 'git' && git.value === null) loadGit() })
+    watch(tab, (t) => {
+      if (t === 'git' && git.value === null) loadGit()
+      if (t === 'bots') loadDomainBots()
+    })
+
+    // ── Bots por dominio ───────────────────────────────────────────────────
+    const KNOWN_BOTS_CATALOG = [
+      { id: 'terrabot',       label: 'Terrabot',          pattern: 'terrabot',        description: 'Bot de ataque conocido' },
+      { id: 'masscan',        label: 'Masscan',           pattern: 'masscan',         description: 'Scanner de puertos masivo' },
+      { id: 'zgrab',          label: 'ZGrab',             pattern: 'zgrab',           description: 'Scanner de vulnerabilidades' },
+      { id: 'nikto',          label: 'Nikto',             pattern: 'nikto',           description: 'Scanner de vulnerabilidades web' },
+      { id: 'sqlmap',         label: 'SQLMap',            pattern: 'sqlmap',          description: 'Herramienta SQL injection' },
+      { id: 'nuclei',         label: 'Nuclei',            pattern: 'nuclei',          description: 'Scanner de vulnerabilidades' },
+      { id: 'python_requests',label: 'Python-requests',   pattern: 'python-requests', description: 'Scripts de scraping en Python' },
+      { id: 'semrush',        label: 'SemrushBot',        pattern: 'SemrushBot',      description: 'Bot de SEO agresivo' },
+      { id: 'ahrefsbot',      label: 'AhrefsBot',         pattern: 'AhrefsBot',       description: 'Bot de SEO agresivo' },
+      { id: 'mj12bot',        label: 'MJ12bot',           pattern: 'MJ12bot',         description: 'Bot de SEO agresivo' },
+      { id: 'gptbot',         label: 'GPTBot',            pattern: 'GPTBot',          description: 'Bot scraping OpenAI' },
+      { id: 'ccbot',          label: 'CCBot',             pattern: 'CCBot',           description: 'Bot Common Crawl (datos IA)' },
+      { id: 'bytespider',     label: 'ByteSpider',        pattern: 'Bytespider',      description: 'Bot TikTok/ByteDance' },
+    ]
+
+    const domainKnownBots  = ref([])
+    const domainCustomBots = ref([])
+    const botsLoading      = ref(false)
+    const botsSaving       = ref(false)
+
+    const loadDomainBots = () => {
+      const raw = domain.value?.blocked_user_agents
+      let active = []
+      try { active = JSON.parse(raw || '[]') } catch { active = [] }
+      const activeSet = new Set(active.map(p => p.toLowerCase()))
+      domainKnownBots.value = KNOWN_BOTS_CATALOG.map(b => ({
+        ...b,
+        enabled: activeSet.has(b.pattern.toLowerCase()),
+      }))
+      const knownPatterns = new Set(KNOWN_BOTS_CATALOG.map(b => b.pattern.toLowerCase()))
+      domainCustomBots.value = active.filter(p => !knownPatterns.has(p.toLowerCase()))
+    }
+
+    const saveDomainBots = async () => {
+      botsSaving.value = true
+      try {
+        const patterns = [
+          ...domainKnownBots.value.filter(b => b.enabled).map(b => b.pattern),
+          ...domainCustomBots.value.filter(p => p.trim()),
+        ]
+        await api.setDomainBadBots(domainId.value, patterns)
+        store.showNotification('Bots actualizados y nginx recargado', 'success')
+        await reloadDomain()
+      } catch (e) {
+        store.showNotification('Error: ' + e.message, 'danger')
+      } finally {
+        botsSaving.value = false
+      }
+    }
 
     // ── Modo solo-lectura HTTP ──────────────────────────────────────────────
     const showReadonlyForm = ref(false)
@@ -751,6 +856,7 @@ export default {
       git, gitDeployments, gitLoading, gitSaving, gitDeploying, gitKeyGen, gitRolling, gitForm,
       loadGit, genKey, doSetup, doDeploy, doRollback, doDisableGit, copyText,
       showReadonlyForm, readonlyIps, readonlySaving, saveReadonlyMode, editReadonlyIps,
+      domainKnownBots, domainCustomBots, botsLoading, botsSaving, saveDomainBots,
     }
   },
 }

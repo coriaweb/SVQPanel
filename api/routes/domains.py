@@ -427,6 +427,7 @@ async def update_domain(
                         rate_limit_burst=db_domain.rate_limit_burst or 20,
                         readonly_mode_enabled=db_domain.readonly_mode_enabled or False,
                         allowed_mutation_ips=db_domain.allowed_mutation_ips,
+                        blocked_user_agents=__import__('json').loads(db_domain.blocked_user_agents) if db_domain.blocked_user_agents else [],
                     )
                 except Exception as vhost_err:
                     import logging
@@ -739,6 +740,71 @@ async def set_domain_rate_limit(
         "rate_limit_enabled": domain.rate_limit_enabled,
         "rate_limit_rps":     domain.rate_limit_rps,
         "rate_limit_burst":   domain.rate_limit_burst,
+    }
+
+
+@router.put("/domains/{domain_id}/bad-bots")
+async def set_domain_bad_bots(
+    domain_id:    int,
+    payload:      dict,
+    current_user: User = Depends(require_auth),
+    db:           Session = Depends(get_db),
+):
+    """
+    Actualiza los user-agents bloqueados a nivel de dominio.
+    Body: {"patterns": ["zgrab", "nikto", ...]}
+    Los patrones se inyectan como bloques `if` en el vhost nginx del dominio.
+    """
+    import json
+    patterns = payload.get("patterns", [])
+    if not isinstance(patterns, list):
+        raise HTTPException(status_code=400, detail="patterns debe ser una lista")
+    patterns = [str(p).strip() for p in patterns if str(p).strip()]
+
+    domain = _get_owned_domain(domain_id, db, current_user)
+    if not domain:
+        raise HTTPException(status_code=404, detail="Dominio no encontrado")
+    _check_access(current_user, domain, db)
+
+    owner = db.query(User).filter(User.id == domain.user_id).first()
+    if not owner:
+        raise HTTPException(status_code=500, detail="Propietario del dominio no encontrado")
+
+    from scripts import php_ini_manager as phpini
+    php_socket = phpini.pool_socket_path(domain.domain_name) if phpini.has_pool(domain.domain_name) else None
+
+    try:
+        DomainManager().regenerate_vhost(
+            username=owner.username,
+            domain_name=domain.domain_name,
+            php_version=domain.php_version,
+            ssl_enabled=domain.ssl_enabled,
+            ipv6=domain.ipv6,
+            fastcgi_cache_enabled=domain.fastcgi_cache_enabled,
+            fastcgi_cache_ttl_minutes=domain.fastcgi_cache_ttl_minutes,
+            php_socket_override=php_socket,
+            template_nginx_extra=domain.template_nginx_extra,
+            redirect_to=domain.redirect_to,
+            custom_docroot=domain.custom_docroot,
+            ipv4=domain.ipv4,
+            force_https=domain.force_https or False,
+            hsts=domain.hsts_enabled or False,
+            rate_limit_enabled=domain.rate_limit_enabled or False,
+            rate_limit_rps=domain.rate_limit_rps or 10,
+            rate_limit_burst=domain.rate_limit_burst or 20,
+            readonly_mode_enabled=domain.readonly_mode_enabled or False,
+            allowed_mutation_ips=domain.allowed_mutation_ips,
+            blocked_user_agents=patterns,
+        )
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error aplicando bloqueo de bots: {e}")
+
+    domain.blocked_user_agents = json.dumps(patterns) if patterns else None
+    db.commit()
+    return {
+        "status": "ok",
+        "domain": domain.domain_name,
+        "blocked_patterns": patterns,
     }
 
 

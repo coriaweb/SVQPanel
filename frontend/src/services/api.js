@@ -964,6 +964,10 @@ class APIClient {
     return this.put(`/api/domains/${domainId}/rate-limit`, { enabled, rps, burst })
   }
 
+  setDomainBadBots(domainId, patterns) {
+    return this.put(`/api/domains/${domainId}/bad-bots`, { patterns })
+  }
+
   setDomainPhpHardening(domainId, relaxed) {
     return this.put(`/api/domains/${domainId}/php-hardening`, { relaxed })
   }

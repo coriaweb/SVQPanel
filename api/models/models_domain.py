@@ -67,6 +67,9 @@ class Domain(Base):
     readonly_mode_enabled  = Column(Boolean, default=False, nullable=False)
     allowed_mutation_ips   = Column(Text, nullable=True)  # JSON array, NULL = nadie
 
+    # Bad bots bloqueados a nivel de dominio (JSON array de patrones, ej: ["zgrab","nikto"])
+    blocked_user_agents = Column(Text, nullable=True)
+
     # Despliegue Git (Fase 21) — repo desplegado en public_html (symlink a
     # releases/). La clave privada del deploy key NO va en BD (vive en ~/.ssh).
     git_enabled        = Column(Boolean, default=False, nullable=False)

@@ -332,6 +332,7 @@ class DomainManager(SystemManager):
         docroot_subdir: str = None,
         readonly_mode_enabled: bool = False,
         allowed_mutation_ips: str = None,
+        blocked_user_agents: list = None,
     ) -> dict:
         """
         Regenera la vhost completa del dominio con TODO el estado actual
@@ -374,6 +375,7 @@ class DomainManager(SystemManager):
             docroot_subdir=docroot_subdir,
             readonly_mode_enabled=readonly_mode_enabled,
             allowed_mutation_ips=allowed_mutation_ips,
+            blocked_user_agents=blocked_user_agents or [],
         )
         with open(nginx_config, "w") as f:
             f.write(config_content)

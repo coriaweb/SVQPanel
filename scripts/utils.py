@@ -297,6 +297,7 @@ def generate_nginx_config(
     docroot_subdir: Optional[str] = None,
     readonly_mode_enabled: bool = False,
     allowed_mutation_ips: Optional[str] = None,
+    blocked_user_agents: Optional[list] = None,
 ) -> str:
     """Generate Nginx vhost configuration (Hestia-style paths)"""
 
@@ -324,12 +325,25 @@ def generate_nginx_config(
     cache_block = _fastcgi_cache_block(domain, fastcgi_cache_ttl_minutes) if fastcgi_cache_enabled else ""
     readonly_block = _readonly_mode_block(allowed_mutation_ips) if readonly_mode_enabled else ""
 
+    # Bloque de bloqueo de user-agents por dominio
+    bots_block = ""
+    if blocked_user_agents:
+        lines = []
+        for pattern in blocked_user_agents:
+            pattern = pattern.strip()
+            if pattern:
+                safe = pattern.replace('"', '\\"').replace("'", "\\'")
+                lines.append(f'    if ($http_user_agent ~* "{safe}") {{ return 444; }}')
+        if lines:
+            bots_block = "\n" + "\n".join(lines) + "\n"
+
     # server_name incluye IPv6 cuando está asignada (para acceso por IP directa)
     server_names = f"{domain} www.{domain}"
     if ipv6:
         server_names += f" {ipv6}"   # nginx acepta IPv6 sin corchetes en server_name
 
     tpl_extra = ("\n" + template_nginx_extra.rstrip()) if template_nginx_extra else ""
+
 
     ipv4_listen_http  = f"{ipv4}:80" if ipv4 else "80"
     ipv4_listen_https = f"{ipv4}:443" if ipv4 else "443"
@@ -372,7 +386,7 @@ def generate_nginx_config(
     # Pasamos el upstream al template via variable para que los location blocks
     # de la plantilla puedan usar $phpfpm_backend en lugar del nombre hardcodeado
     set $phpfpm_backend php_{backend_name};
-{tpl_extra}
+{tpl_extra}{bots_block}
     location / {{{rl_directive}
 {readonly_block}        try_files $uri $uri/ /index.php?$query_string;
     }}
@@ -432,7 +446,7 @@ server {{
 
     index index.php index.html index.htm;
 {skip_block}    set $phpfpm_backend php_{backend_name};
-{tpl_extra}    location / {{{rl_directive}
+{tpl_extra}{bots_block}    location / {{{rl_directive}
 {readonly_block}        try_files $uri $uri/ /index.php?$query_string;
     }}
 
