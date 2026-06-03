@@ -1,65 +1,85 @@
 <template>
   <div>
-    <div v-if="!showForm" class="ssl-info">
-      <div v-if="ssl" class="alert alert-success">
-        <i class="bi bi-shield-check"></i>
-        <strong>Certificado Activo</strong>
-        <div class="mt-2 small">
-          <p>
-            <strong>Dominio:</strong> {{ domain.domain_name }}<br>
-            <strong>Emisor:</strong> {{ ssl.cert_info?.issuer || "Let's Encrypt" }}<br>
-            <strong>Válido hasta:</strong> {{ formatDate(ssl.ssl_expires || ssl.cert_info?.not_after) }}<br>
-            <strong>Auto-renovación:</strong> Habilitada (certbot.timer)
-          </p>
-        </div>
-        <div class="mt-3 d-flex gap-2">
-          <button class="btn btn-warning btn-sm" @click="renewSSL" :disabled="loading">
-            <span v-if="loading" class="spinner-border spinner-border-sm me-2" role="status" aria-hidden="true"></span>
-            Renovar
-          </button>
-          <button class="btn btn-danger btn-sm" @click="showRevokeConfirm = true" :disabled="loading">
-            Revocar
-          </button>
+    <!-- Cert activo -->
+    <div v-if="ssl && ssl.ssl_enabled" class="ssl-active">
+      <div class="ssl-badge">
+        <i class="bi bi-shield-check-fill"></i>
+        <div>
+          <strong>Certificado Activo</strong>
+          <span class="ssl-expiry">Válido hasta {{ formatDate(ssl.ssl_expires || ssl.cert_info?.not_after) }}</span>
         </div>
       </div>
-      <div v-else class="alert alert-info">
-        <i class="bi bi-shield-x"></i>
-        <strong>Sin Certificado SSL</strong>
-        <p class="mt-2 mb-0">Este dominio no tiene un certificado SSL configurado.</p>
-        <button class="btn btn-success btn-sm mt-3" @click="showForm = true" :disabled="loading">
-          <i class="bi bi-plus-circle"></i> Crear Certificado
+
+      <div class="ssl-meta">
+        <div class="ssl-meta-row"><span>Emisor</span><span>{{ ssl.cert_info?.issuer || "Let's Encrypt" }}</span></div>
+        <div class="ssl-meta-row"><span>Dominio</span><span class="mono">{{ domain.domain_name }}</span></div>
+        <div v-if="ssl.cert_info?.sans?.length" class="ssl-meta-row"><span>SANs</span><span class="mono">{{ ssl.cert_info.sans.join(', ') }}</span></div>
+        <div class="ssl-meta-row"><span>Auto-renovación</span><span>Habilitada (certbot.timer)</span></div>
+      </div>
+
+      <!-- Opciones SSL -->
+      <div class="ssl-options">
+        <label class="ssl-toggle-row">
+          <div>
+            <span class="ssl-opt-title">Forzar HTTPS</span>
+            <span class="ssl-opt-desc">Redirige todo el tráfico HTTP → HTTPS (301)</span>
+          </div>
+          <input type="checkbox" class="svq-check" v-model="forceHttps" @change="saveToggle" :disabled="toggling" />
+        </label>
+        <label class="ssl-toggle-row">
+          <div>
+            <span class="ssl-opt-title">HSTS</span>
+            <span class="ssl-opt-desc">Strict-Transport-Security: max-age=1 año. Solo activar si el dominio siempre usará HTTPS.</span>
+          </div>
+          <input type="checkbox" class="svq-check" v-model="hsts" @change="saveToggle" :disabled="toggling || !forceHttps" />
+        </label>
+      </div>
+
+      <!-- Acciones -->
+      <div class="ssl-actions">
+        <button class="btn btn-sm btn-outline-primary" @click="renewSSL" :disabled="loading">
+          <span v-if="loading" class="spinner-border spinner-border-sm me-1"></span>
+          <i v-else class="bi bi-arrow-repeat me-1"></i>Renovar
+        </button>
+        <button class="btn btn-sm btn-outline-danger" @click="showRevokeConfirm = true" :disabled="loading">
+          <i class="bi bi-x-circle me-1"></i>Revocar
         </button>
       </div>
 
-      <div v-if="showRevokeConfirm" class="alert alert-warning mt-3">
-        <p class="mb-2">¿Está seguro de que desea revocar el certificado SSL?</p>
+      <div v-if="showRevokeConfirm" class="revoke-confirm">
+        <p><i class="bi bi-exclamation-triangle-fill"></i> ¿Revocar el certificado SSL? El dominio quedará en HTTP.</p>
         <div class="d-flex gap-2">
-          <button class="btn btn-danger btn-sm" @click="revokeSSL" :disabled="loading">
-            Confirmar Revocación
-          </button>
-          <button class="btn btn-secondary btn-sm" @click="showRevokeConfirm = false" :disabled="loading">
-            Cancelar
-          </button>
+          <button class="btn btn-danger btn-sm" @click="revokeSSL" :disabled="loading">Confirmar</button>
+          <button class="btn btn-secondary btn-sm" @click="showRevokeConfirm = false">Cancelar</button>
         </div>
       </div>
     </div>
 
-    <div v-else class="ssl-form">
-      <p class="text-muted">Se creará un certificado Let's Encrypt para: <strong>{{ domain.domain_name }}</strong></p>
-      <div class="alert alert-info">
-        <small>
-          <i class="bi bi-info-circle"></i>
-          El proceso puede tomar algunos minutos. El dominio debe ser accesible desde Internet.
-        </small>
+    <!-- Sin cert -->
+    <div v-else>
+      <div v-if="!showForm" class="ssl-empty">
+        <i class="bi bi-shield-x ssl-empty-icon"></i>
+        <p>Este dominio no tiene certificado SSL.</p>
+        <p class="ssl-empty-hint">Se emitirá un certificado Let's Encrypt gratuito. El dominio debe apuntar a este servidor.</p>
+        <button class="btn btn-success btn-sm" @click="showForm = true">
+          <i class="bi bi-plus-circle me-1"></i>Emitir certificado SSL
+        </button>
       </div>
-      <div class="d-flex gap-2">
-        <button class="btn btn-success" @click="createSSL" :disabled="loading">
-          <span v-if="loading" class="spinner-border spinner-border-sm me-2" role="status" aria-hidden="true"></span>
-          Crear Certificado
-        </button>
-        <button class="btn btn-secondary" @click="showForm = false" :disabled="loading">
-          Cancelar
-        </button>
+
+      <div v-else class="ssl-form">
+        <p>Se emitirá un certificado <strong>Let's Encrypt</strong> para:</p>
+        <div class="mono mb-3">{{ domain.domain_name }}</div>
+        <div class="alert alert-info py-2 small">
+          <i class="bi bi-info-circle me-1"></i>
+          El dominio debe ser accesible desde Internet en el puerto 80. El proceso tarda ~30 segundos.
+        </div>
+        <div class="d-flex gap-2">
+          <button class="btn btn-success btn-sm" @click="createSSL" :disabled="loading">
+            <span v-if="loading" class="spinner-border spinner-border-sm me-1"></span>
+            <i v-else class="bi bi-shield-check me-1"></i>Emitir
+          </button>
+          <button class="btn btn-secondary btn-sm" @click="showForm = false" :disabled="loading">Cancelar</button>
+        </div>
       </div>
     </div>
   </div>
@@ -73,42 +93,58 @@ import api from '../services/api'
 export default {
   name: 'SSLManager',
   props: {
-    domain: {
-      type: Object,
-      required: true
-    }
+    domain: { type: Object, required: true }
   },
   emits: ['reload'],
   setup(props, { emit }) {
     const store = useMainStore()
-    const loading = ref(false)
+    const loading  = ref(false)
+    const toggling = ref(false)
     const showForm = ref(false)
     const showRevokeConfirm = ref(false)
     const ssl = ref(null)
+    const forceHttps = ref(false)
+    const hsts = ref(false)
 
     const loadSSL = async () => {
       try {
         const data = await api.getSSL(props.domain.id)
-        // Solo considerar SSL activo si ssl_enabled o hay cert_info real
         ssl.value = (data?.ssl_enabled || data?.cert_info) ? data : null
-      } catch (error) {
+        forceHttps.value = data?.force_https || false
+        hsts.value = data?.hsts_enabled || false
+      } catch {
         ssl.value = null
+      }
+    }
+
+    const saveToggle = async () => {
+      toggling.value = true
+      try {
+        await api.post(`/api/domains/${props.domain.id}/ssl/toggle`, {
+          enabled: true,
+          force_https: forceHttps.value,
+          hsts_enabled: hsts.value,
+        })
+        await loadSSL()
+        emit('reload')
+      } catch (e) {
+        store.showNotification('Error al guardar opciones SSL: ' + e.message, 'danger')
+        await loadSSL()
+      } finally {
+        toggling.value = false
       }
     }
 
     const createSSL = async () => {
       loading.value = true
       try {
-        await api.createSSL(props.domain.id, {
-          domain_name: props.domain.domain_name,
-          auto_renewal: true
-        })
-        store.showNotification('Certificado SSL creado exitosamente', 'success')
+        await api.createSSL(props.domain.id, { domain_name: props.domain.domain_name, auto_renewal: true })
+        store.showNotification('Certificado SSL emitido correctamente', 'success')
         showForm.value = false
         await loadSSL()
         emit('reload')
-      } catch (error) {
-        store.showNotification('Error al crear certificado: ' + error.message, 'danger')
+      } catch (e) {
+        store.showNotification('Error al crear certificado: ' + e.message, 'danger')
       } finally {
         loading.value = false
       }
@@ -117,14 +153,11 @@ export default {
     const renewSSL = async () => {
       loading.value = true
       try {
-        await api.createSSL(props.domain.id, {
-          domain_name: props.domain.domain_name,
-          auto_renewal: true
-        })
-        store.showNotification('Certificado renovado exitosamente', 'success')
+        await api.createSSL(props.domain.id, { domain_name: props.domain.domain_name, auto_renewal: true })
+        store.showNotification('Certificado renovado correctamente', 'success')
         await loadSSL()
-      } catch (error) {
-        store.showNotification('Error al renovar certificado: ' + error.message, 'danger')
+      } catch (e) {
+        store.showNotification('Error al renovar: ' + e.message, 'danger')
       } finally {
         loading.value = false
       }
@@ -134,12 +167,12 @@ export default {
       loading.value = true
       try {
         await api.deleteSSL(props.domain.id)
-        store.showNotification('Certificado SSL revocado', 'success')
+        store.showNotification('Certificado revocado', 'warning')
         ssl.value = null
         showRevokeConfirm.value = false
         emit('reload')
-      } catch (error) {
-        store.showNotification('Error al revocar certificado: ' + error.message, 'danger')
+      } catch (e) {
+        store.showNotification('Error al revocar: ' + e.message, 'danger')
       } finally {
         loading.value = false
       }
@@ -147,36 +180,69 @@ export default {
 
     const formatDate = (date) => {
       if (!date) return 'N/A'
-      return new Date(date).toLocaleDateString('es-ES')
+      return new Date(date).toLocaleDateString('es-ES', { day: '2-digit', month: 'short', year: 'numeric' })
     }
 
     onMounted(loadSSL)
 
     return {
-      ssl,
-      loading,
-      showForm,
-      showRevokeConfirm,
-      createSSL,
-      renewSSL,
-      revokeSSL,
-      formatDate
+      ssl, loading, toggling, showForm, showRevokeConfirm,
+      forceHttps, hsts,
+      createSSL, renewSSL, revokeSSL, saveToggle, formatDate,
     }
   }
 }
 </script>
 
 <style scoped>
-.ssl-info {
-  padding: 1rem;
-  border-radius: 0.5rem;
-  background-color: #f8f9fa;
-}
+.ssl-active { display: flex; flex-direction: column; gap: 1rem; }
 
-.ssl-form {
-  padding: 1rem;
-  border-radius: 0.5rem;
-  background-color: #f0f8ff;
-  border-left: 4px solid #0d6efd;
+.ssl-badge {
+  display: flex; align-items: center; gap: .75rem;
+  padding: .75rem 1rem;
+  background: color-mix(in srgb, var(--success) 10%, transparent);
+  border: 1px solid color-mix(in srgb, var(--success) 30%, transparent);
+  border-radius: var(--radius-md);
+  color: var(--success);
 }
+.ssl-badge i { font-size: 1.5rem; }
+.ssl-badge strong { display: block; font-size: .95rem; }
+.ssl-expiry { font-size: .8rem; opacity: .8; }
+
+.ssl-meta { display: flex; flex-direction: column; gap: .25rem; }
+.ssl-meta-row { display: flex; gap: 1rem; font-size: .85rem; }
+.ssl-meta-row span:first-child { min-width: 120px; color: var(--text-muted); }
+
+.ssl-options { display: flex; flex-direction: column; gap: .5rem; }
+.ssl-toggle-row {
+  display: flex; align-items: flex-start; justify-content: space-between;
+  gap: 1rem; cursor: pointer;
+  padding: .6rem .75rem;
+  border-radius: var(--radius-sm);
+  background: var(--surface-2);
+}
+.ssl-toggle-row:hover { background: var(--surface-3); }
+.ssl-opt-title { display: block; font-size: .875rem; font-weight: 500; }
+.ssl-opt-desc { display: block; font-size: .78rem; color: var(--text-muted); margin-top: .1rem; }
+
+.ssl-actions { display: flex; gap: .5rem; }
+
+.revoke-confirm {
+  padding: .75rem;
+  border-radius: var(--radius-sm);
+  background: color-mix(in srgb, var(--danger) 8%, transparent);
+  border: 1px solid color-mix(in srgb, var(--danger) 25%, transparent);
+  font-size: .875rem;
+}
+.revoke-confirm p { margin-bottom: .5rem; }
+.revoke-confirm i { color: var(--danger); }
+
+.ssl-empty {
+  display: flex; flex-direction: column; align-items: center;
+  gap: .5rem; text-align: center; padding: 1.5rem 1rem;
+}
+.ssl-empty-icon { font-size: 2.5rem; color: var(--text-muted); }
+.ssl-empty-hint { font-size: .82rem; color: var(--text-muted); max-width: 340px; }
+
+.ssl-form { display: flex; flex-direction: column; gap: .75rem; }
 </style>
