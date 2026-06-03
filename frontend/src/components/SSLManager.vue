@@ -19,20 +19,26 @@
 
       <!-- Opciones SSL -->
       <div class="ssl-options">
-        <label class="ssl-toggle-row">
-          <div>
+        <div class="ssl-opt-row" :class="{ active: forceHttps }">
+          <div class="ssl-opt-info">
             <span class="ssl-opt-title">Forzar HTTPS</span>
-            <span class="ssl-opt-desc">Redirige todo el tráfico HTTP → HTTPS (301)</span>
+            <span class="ssl-opt-desc">Redirige HTTP → HTTPS automáticamente (301)</span>
           </div>
-          <input type="checkbox" class="svq-check" v-model="forceHttps" @change="saveToggle" :disabled="toggling" />
-        </label>
-        <label class="ssl-toggle-row">
-          <div>
-            <span class="ssl-opt-title">HSTS</span>
-            <span class="ssl-opt-desc">Strict-Transport-Security: max-age=1 año. Solo activar si el dominio siempre usará HTTPS.</span>
+          <button class="ssl-pill-btn" :class="forceHttps ? 'on' : 'off'" @click="forceHttps = !forceHttps; saveToggle()" :disabled="toggling">
+            <span class="pill-dot"></span>
+            <span>{{ forceHttps ? 'Activo' : 'Inactivo' }}</span>
+          </button>
+        </div>
+        <div class="ssl-opt-row" :class="{ active: hsts, disabled: !forceHttps }">
+          <div class="ssl-opt-info">
+            <span class="ssl-opt-title">HSTS <span v-if="!forceHttps" class="ssl-req">(requiere Forzar HTTPS)</span></span>
+            <span class="ssl-opt-desc">Obliga HTTPS en el navegador hasta 1 año. Irreversible a corto plazo.</span>
           </div>
-          <input type="checkbox" class="svq-check" v-model="hsts" @change="saveToggle" :disabled="toggling || !forceHttps" />
-        </label>
+          <button class="ssl-pill-btn" :class="hsts ? 'on' : 'off'" @click="if(forceHttps){ hsts = !hsts; saveToggle() }" :disabled="toggling || !forceHttps">
+            <span class="pill-dot"></span>
+            <span>{{ hsts ? 'Activo' : 'Inactivo' }}</span>
+          </button>
+        </div>
       </div>
 
       <!-- Acciones -->
@@ -120,13 +126,14 @@ export default {
     const saveToggle = async () => {
       toggling.value = true
       try {
-        await api.post(`/api/domains/${props.domain.id}/ssl/toggle`, {
+        await api.put(`/api/domains/${props.domain.id}/ssl/toggle`, {
           enabled: true,
           force_https: forceHttps.value,
           hsts_enabled: hsts.value,
         })
         await loadSSL()
         emit('reload')
+        store.showNotification('Opciones SSL guardadas', 'success')
       } catch (e) {
         store.showNotification('Error al guardar opciones SSL: ' + e.message, 'danger')
         await loadSSL()
@@ -214,16 +221,45 @@ export default {
 .ssl-meta-row span:first-child { min-width: 120px; color: var(--text-muted); }
 
 .ssl-options { display: flex; flex-direction: column; gap: .5rem; }
-.ssl-toggle-row {
-  display: flex; align-items: flex-start; justify-content: space-between;
-  gap: 1rem; cursor: pointer;
-  padding: .6rem .75rem;
+
+.ssl-opt-row {
+  display: flex; align-items: center; justify-content: space-between;
+  gap: 1rem; padding: .65rem .85rem;
   border-radius: var(--radius-sm);
   background: var(--surface-2);
+  border: 1px solid transparent;
+  transition: background .15s, border-color .15s;
 }
-.ssl-toggle-row:hover { background: var(--surface-3); }
-.ssl-opt-title { display: block; font-size: .875rem; font-weight: 500; }
-.ssl-opt-desc { display: block; font-size: .78rem; color: var(--text-muted); margin-top: .1rem; }
+.ssl-opt-row.active {
+  background: color-mix(in srgb, var(--accent) 6%, var(--surface-2));
+  border-color: color-mix(in srgb, var(--accent) 20%, transparent);
+}
+.ssl-opt-row.disabled { opacity: .5; }
+.ssl-opt-info { display: flex; flex-direction: column; gap: .15rem; }
+.ssl-opt-title { font-size: .875rem; font-weight: 500; }
+.ssl-opt-desc { font-size: .77rem; color: var(--text-muted); }
+.ssl-req { font-size: .75rem; font-weight: 400; color: var(--text-muted); }
+
+.ssl-pill-btn {
+  display: inline-flex; align-items: center; gap: .4rem;
+  padding: .3rem .75rem; border-radius: 999px;
+  font-size: .78rem; font-weight: 500;
+  border: 1.5px solid; cursor: pointer; white-space: nowrap;
+  transition: background .15s, color .15s, border-color .15s;
+  flex-shrink: 0;
+}
+.ssl-pill-btn.on {
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+  border-color: var(--accent); color: var(--accent);
+}
+.ssl-pill-btn.off {
+  background: var(--surface-3); border-color: var(--border); color: var(--text-muted);
+}
+.ssl-pill-btn:disabled { opacity: .5; cursor: not-allowed; }
+.pill-dot {
+  width: 7px; height: 7px; border-radius: 50%;
+  background: currentColor;
+}
 
 .ssl-actions { display: flex; gap: .5rem; }
 
