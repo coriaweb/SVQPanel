@@ -16,13 +16,17 @@
 
     <!-- Selector de usuario: solo para admin/reseller -->
     <div v-if="isAdminOrReseller && !isEditing" class="mb-3">
-      <label class="form-label">Usuario</label>
+      <label class="form-label">Usuario (cliente propietario)</label>
       <select v-model="form.user_id" class="form-select" required>
-        <option value="">Selecciona un usuario</option>
+        <option value="">Selecciona un cliente</option>
         <option v-for="user in users" :key="user.id" :value="user.id">
           {{ user.username }} ({{ user.email }})
         </option>
       </select>
+      <div v-if="users.length === 0" class="form-text text-warning">
+        No hay cuentas de cliente. Los administradores no pueden alojar dominios;
+        crea primero un cliente en la sección Usuarios.
+      </div>
     </div>
 
     <div class="mb-3">
@@ -446,7 +450,10 @@ export default {
       if (!isAdminOrReseller.value) return
       try {
         const data = await api.getUsers()
-        users.value = Array.isArray(data) ? data : []
+        // Separación administración/hosting: los admins no pueden ser dueños de
+        // dominios (el backend lo rechaza). No los mostramos como opción.
+        users.value = (Array.isArray(data) ? data : [])
+          .filter(u => u.role !== 'admin' && !u.is_admin)
       } catch { /* silencioso */ }
     }
 

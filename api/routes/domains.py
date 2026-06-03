@@ -108,6 +108,19 @@ async def create_domain(
                 detail="Usuario no encontrado"
             )
 
+        # Seguridad: separación administración / hosting. Un administrador NO
+        # puede ser propietario de dominios — su cuenta corre como root del
+        # sistema y alojar sitios (PHP, CMS, plugins) bajo ella ampliaría la
+        # superficie de ataque. Los dominios deben pertenecer a cuentas cliente.
+        if user.role == "admin" or user.is_admin:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=(
+                    "Un administrador no puede ser propietario de dominios. "
+                    "Asigna el dominio a una cuenta de cliente."
+                ),
+            )
+
         # Validar límite de dominios del usuario (0 = sin límite)
         if user.domains_limit and user.domains_limit > 0:
             current_count = db.query(Domain).filter(Domain.user_id == user.id).count()
