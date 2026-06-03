@@ -307,11 +307,14 @@ PINEOF
     apt-get install -y -qq nginx
     systemctl enable nginx
 
-    # El nginx del repo oficial NO incluye sites-enabled por defecto.
-    # Lo añadimos para mantener la estructura Debian (sites-available/sites-enabled).
+    # El nginx del repo oficial NO incluye sites-enabled por defecto y
+    # corre los workers como 'nginx' en vez de 'www-data' (Debian).
+    # Ambas cosas deben corregirse para compatibilidad con la estructura SVQPanel.
     if ! grep -q "sites-enabled" /etc/nginx/nginx.conf; then
         sed -i 's|include /etc/nginx/conf.d/\*.conf;|include /etc/nginx/conf.d/*.conf;\n    include /etc/nginx/sites-enabled/*;|' /etc/nginx/nginx.conf
     fi
+    # Worker user -> www-data (todos los permisos de dominios se dan a www-data)
+    sed -i 's/^user  nginx;/user www-data;/' /etc/nginx/nginx.conf
     mkdir -p /etc/nginx/sites-available /etc/nginx/sites-enabled
 
     # Endurecimiento global: ocultar la versión de nginx (server_tokens off)
