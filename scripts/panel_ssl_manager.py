@@ -495,20 +495,20 @@ def _service_locations() -> str:
             "    }\n"
         )
     if os.path.islink("/var/www/webmail") or os.path.isdir("/var/www/roundcube/public_html"):
-        # Bloque /webmail correcto (Roundcube 1.7+): redirect a barra final +
-        # static.php + deny de config/logs. El panel genera la URL ya con barra
-        # (/webmail/?svqtoken=...).
-        # root /var/www: la petición /webmail/ mapea a /var/www/webmail/ que es
-        # un symlink a roundcube/public_html. (Con root al public_html directo,
-        # nginx buscaría .../public_html/webmail/index.php → 404.)
-        # Roundcube 1.7+ sirve desde public_html/ — usamos alias para que
-        # la URL /webmail/ mapee a /var/www/webmail/public_html/ sin que nginx
-        # busque .../public_html/webmail/index.php (que no existe).
+        # Roundcube 1.7+: el docroot público es public_html/.
+        # Truco nginx: root /var/www + symlink /var/www/webmailpub → public_html
+        # + symlink /var/www/webmailpub/webmail → public_html.
+        # Así SCRIPT_FILENAME = /var/www/webmailpub + $fastcgi_script_name
+        # (/webmail/index.php) = /var/www/webmailpub/webmail/index.php → existe.
+        import subprocess as _sp
+        _sp.run(["mkdir", "-p", "/var/www/webmailpub"], check=False)
+        _sp.run(["ln", "-sfn", "/var/www/webmail/public_html", "/var/www/webmailpub/webmail"],
+                check=False)
         blocks.append(
             "    # Roundcube Webmail — autologin desde SVQPanel\n"
             "    location = /webmail { return 301 /webmail/; }\n"
             "    location /webmail/ {\n"
-            "        alias /var/www/webmail/public_html/;\n"
+            "        root /var/www;\n"
             "        index index.php;\n"
             "        location ~ ^/webmail/static\\.php {\n"
             "            fastcgi_split_path_info ^(/webmail/static\\.php)(/.+)$;\n"
@@ -521,13 +521,12 @@ def _service_locations() -> str:
             "        location ~ \\.php$ {\n"
             "            include snippets/fastcgi-php.conf;\n"
             f"            fastcgi_pass unix:{sock};\n"
-            "            fastcgi_param SCRIPT_FILENAME /var/www/webmail/public_html$fastcgi_script_name;\n"
+            "            fastcgi_param SCRIPT_FILENAME /var/www/webmailpub$fastcgi_script_name;\n"
             "            include fastcgi_params;\n"
             "        }\n"
             "        location ~ ^/webmail/(config|logs|temp|vendor/bin)/ {\n"
             "            deny all;\n"
             "        }\n"
-            "        try_files $uri $uri/ /webmail/index.php?$query_string;\n"
             "    }\n"
         )
     return ("\n" + "\n".join(blocks)) if blocks else ""
