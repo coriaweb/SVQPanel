@@ -3,6 +3,7 @@ Rutas API para configuración del panel
 """
 
 import ipaddress
+import random
 from datetime import datetime
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
@@ -159,12 +160,14 @@ async def get_next_ipv6(
         except ValueError:
             pass
 
-    # Buscar la siguiente IP libre (empezamos en ::2, máximo 64k búsquedas)
+    # Elegir una IP aleatoria libre dentro del rango (offset 2..min(prefixlen, 64k))
+    max_hosts = min(2 ** (128 - network.prefixlen), 65536)
+    # Generar un orden aleatorio de offsets para no repetir candidatos
+    offsets = list(range(2, max_hosts))
+    random.shuffle(offsets)
     next_ip = None
-    for offset in range(2, 65538):
+    for offset in offsets:
         candidate = ipaddress.IPv6Address(network_int + offset)
-        if candidate not in network:
-            break
         if candidate not in used:
             next_ip = str(candidate)
             break
