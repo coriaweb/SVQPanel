@@ -44,17 +44,28 @@ def _find_php_sock() -> str:
 
 
 def cert_includes_webmail(domain: str) -> bool:
-    """¿El certificado del dominio cubre webmail.{dominio}? (mira el live cert)."""
-    cert = f"/etc/letsencrypt/live/{domain}/cert.pem"
-    if not os.path.exists(cert):
+    """
+    ¿Hay un certificado SSL válido para webmail.{dominio}?
+    Comprueba dos fuentes:
+      1. Cert propio de webmail.{dominio} (emitido con --webroot independiente).
+      2. Cert del dominio padre que incluya webmail.{dominio} como SAN (expand legacy).
+    """
+    host = webmail_host(domain)
+    # 1. Cert propio para webmail.{dominio}
+    own_cert = f"/etc/letsencrypt/live/{host}/cert.pem"
+    if os.path.exists(own_cert):
+        return True
+    # 2. SAN en el cert del dominio padre
+    parent_cert = f"/etc/letsencrypt/live/{domain}/cert.pem"
+    if not os.path.exists(parent_cert):
         return False
     try:
         import subprocess
         r = subprocess.run(
-            ["/usr/bin/openssl", "x509", "-noout", "-text", "-in", cert],
+            ["/usr/bin/openssl", "x509", "-noout", "-text", "-in", parent_cert],
             capture_output=True, text=True, timeout=10,
         )
-        return f"DNS:{webmail_host(domain)}" in r.stdout
+        return f"DNS:{host}" in r.stdout
     except Exception:
         return False
 
