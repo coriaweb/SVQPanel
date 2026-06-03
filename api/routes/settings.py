@@ -114,12 +114,13 @@ async def update_settings(
 @router.get("/settings/next-ipv6")
 async def get_next_ipv6(
     exclude: str = None,
+    count: int = 1,
     current_user=Depends(require_auth),
     db: Session = Depends(get_db)
 ):
     """
-    Devuelve la siguiente IPv6 disponible del rango configurado.
-    Útil para asignar IPs dedicadas a nuevos dominios.
+    Devuelve `count` IPs IPv6 aleatorias disponibles del rango configurado.
+    `exclude` es una IP (o lista separada por comas) a excluir de los resultados.
     """
     settings = get_or_create_settings(db)
 
@@ -148,42 +149,43 @@ async def get_next_ipv6(
         except ValueError:
             pass
 
-    # Reservar la primera IP usable del rango para el panel (sin materializar toda la lista)
     network_int = int(network.network_address)
-    first_host = ipaddress.IPv6Address(network_int + 1)
-    used.add(first_host)  # ::1 reservada para el panel
+    used.add(ipaddress.IPv6Address(network_int + 1))  # ::1 reservada para el panel
 
-    # Excluir la IP que ya se mostró (para que "regenerar" devuelva una distinta)
+    # Excluir IPs indicadas (separadas por coma)
     if exclude:
-        try:
-            used.add(ipaddress.IPv6Address(exclude))
-        except ValueError:
-            pass
+        for ex in exclude.split(','):
+            try:
+                used.add(ipaddress.IPv6Address(ex.strip()))
+            except ValueError:
+                pass
 
-    # Elegir una IP aleatoria libre dentro del rango completo
-    # Para rangos grandes (>/64) el espacio es enorme: basta con intentar
-    # unos pocos offsets aleatorios — la probabilidad de colisión es insignificante
-    total_hosts = 2 ** (128 - network.prefixlen) - 2  # excluir red y broadcast
-    max_attempts = 64
-    next_ip = None
+    # Generar `count` IPs aleatorias distintas
+    count = max(1, min(count, 10))
+    total_hosts = 2 ** (128 - network.prefixlen) - 2
+    results = []
+    max_attempts = count * 32
     for _ in range(max_attempts):
+        if len(results) >= count:
+            break
         offset = random.randint(2, max(2, total_hosts))
         candidate = ipaddress.IPv6Address(network_int + offset)
         if candidate in network and candidate not in used:
-            next_ip = str(candidate)
-            break
+            used.add(candidate)  # evitar duplicados entre los resultados
+            results.append(str(candidate))
 
-    if not next_ip:
+    if not results:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail="No hay IPs IPv6 disponibles en el rango configurado"
         )
 
     return {
-        "next_ipv6": next_ip,
+        "next_ipv6": results[0],
+        "suggestions": results,
         "range": settings.ipv6_range,
         "network_interface": settings.network_interface or "eth0",
-        "used_count": len(used)
+        "used_count": len(domains_with_ipv6)
     }
 
 

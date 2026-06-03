@@ -68,14 +68,34 @@
       <label class="form-label small mb-1">
         IPv6 <span class="text-muted fw-normal">(opcional)</span>
       </label>
-      <input
-        v-model="form.ipv6"
-        type="text"
-        class="form-control font-monospace"
-        placeholder="Se puede asignar después desde la pestaña IPv6"
-      />
-      <div class="form-text">
-        Opcional. Si lo dejas vacío, puedes asignarlo después desde el detalle del dominio.
+      <div v-if="ipv6Loading" class="text-muted small py-1">
+        <span class="spinner-border spinner-border-sm me-1"></span> Generando sugerencias…
+      </div>
+      <div v-else class="d-flex flex-column gap-1">
+        <div class="form-check">
+          <input class="form-check-input" type="radio" :name="'ipv6_'+_uid" :id="'ipv6_none_'+_uid"
+            :value="null" v-model="form.ipv6" />
+          <label class="form-check-label text-muted" :for="'ipv6_none_'+_uid">
+            Ninguna (asignar después)
+          </label>
+        </div>
+        <div v-for="(ip, i) in ipv6Suggestions" :key="ip" class="form-check">
+          <input class="form-check-input" type="radio" :name="'ipv6_'+_uid" :id="'ipv6_'+i+'_'+_uid"
+            :value="ip" v-model="form.ipv6" />
+          <label class="form-check-label font-monospace small" :for="'ipv6_'+i+'_'+_uid">
+            {{ ip }}
+          </label>
+        </div>
+        <div v-if="isEditing && form.ipv6 && !ipv6Suggestions.includes(form.ipv6)" class="form-check">
+          <input class="form-check-input" type="radio" :name="'ipv6_'+_uid" :id="'ipv6_current_'+_uid"
+            :value="form.ipv6" v-model="form.ipv6" checked />
+          <label class="form-check-label font-monospace small text-success" :for="'ipv6_current_'+_uid">
+            {{ form.ipv6 }} <span class="badge bg-success ms-1">actual</span>
+          </label>
+        </div>
+      </div>
+      <div class="form-text mt-1">
+        Selecciona una IP dedicada del rango del servidor para este dominio.
       </div>
     </div>
 
@@ -450,17 +470,30 @@ export default {
     }
 
     const ipv6Enabled = ref(false)
+    const ipv6Suggestions = ref([])
+    const ipv6Loading = ref(false)
+    const _uid = Math.random().toString(36).slice(2)
 
     const loadServerIps = async () => {
       try {
         const data = await api.getServerIps() || []
         serverIps.value = data.filter(ip => !ip.is_ipv6 && ip.is_active)
       } catch { serverIps.value = [] }
-      // Comprobar si IPv6 está habilitado en settings
+      // Comprobar si IPv6 está habilitado en settings y cargar sugerencias
       try {
         const s = await api.getSettings()
         ipv6Enabled.value = !!(s.ipv6_enabled && s.ipv6_range)
       } catch { ipv6Enabled.value = false }
+      if (ipv6Enabled.value) {
+        ipv6Loading.value = true
+        try {
+          // Excluir la IP actual si ya tiene una asignada
+          const exclude = form.value.ipv6 || null
+          const data = await api.getNextIPv6(exclude, 3)
+          ipv6Suggestions.value = data.suggestions || (data.next_ipv6 ? [data.next_ipv6] : [])
+        } catch { ipv6Suggestions.value = [] }
+        finally { ipv6Loading.value = false }
+      }
     }
 
     // ── Usuarios / PHP ─────────────────────────────────────────────────────
@@ -695,7 +728,7 @@ export default {
       isAdminOrReseller, availablePhpVersions,
       templates, templateCategories, templatesByCategory,
       selectedTemplate, parsedPhpOverrides,
-      serverIps, ipv6Enabled,
+      serverIps, ipv6Enabled, ipv6Suggestions, ipv6Loading, _uid,
       redirectError, docrootError,
       handleSubmit,
       // SSL
