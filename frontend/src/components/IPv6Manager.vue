@@ -57,9 +57,8 @@
           <!-- 8 campos separados -->
           <div v-else>
             <div class="ipv6-fields d-flex align-items-center gap-1 flex-wrap">
-              <template v-for="(group, i) in groups">
+              <span v-for="(group, i) in groups" :key="i" class="d-flex align-items-center gap-1">
                 <input
-                  :key="'g' + i"
                   v-model="groups[i]"
                   :readonly="i < fixedGroups"
                   type="text"
@@ -68,8 +67,8 @@
                   :class="i < fixedGroups ? 'ipv6-fixed' : 'ipv6-editable'"
                   @input="groups[i] = groups[i].replace(/[^0-9a-fA-F]/g, '').slice(0, 4)"
                 />
-                <span v-if="i < 7" :key="'s' + i" class="ipv6-sep text-muted">:</span>
-              </template>
+                <span v-if="i < 7" class="ipv6-sep text-muted">:</span>
+              </span>
               <button class="btn btn-outline-secondary btn-sm ms-1" type="button" @click="generateIP" :disabled="generating" title="Regenerar">
                 <span v-if="generating" class="spinner-border spinner-border-sm"></span>
                 <i v-else class="bi bi-arrow-repeat"></i>
