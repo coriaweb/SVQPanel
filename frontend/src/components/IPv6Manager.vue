@@ -45,25 +45,8 @@
         <div class="mb-3">
           <label class="form-label fw-bold">Dirección IPv6</label>
 
-          <!-- IP auto-generada -->
-          <div v-if="generatedIP" class="input-group mb-2">
-            <span class="input-group-text bg-success text-white">
-              <i class="bi bi-magic"></i>
-            </span>
-            <input
-              v-model="form.ipv6_address"
-              type="text"
-              class="form-control font-monospace"
-              placeholder="2a01:4f8:1:2::1"
-            />
-            <button class="btn btn-outline-secondary" type="button" @click="generateIP" :disabled="generating">
-              <span v-if="generating" class="spinner-border spinner-border-sm"></span>
-              <i v-else class="bi bi-arrow-repeat"></i>
-            </button>
-          </div>
-
           <!-- Sin IP generada todavía -->
-          <div v-else class="d-grid">
+          <div v-if="!generatedIP" class="d-grid">
             <button class="btn btn-outline-primary" @click="generateIP" :disabled="generating">
               <span v-if="generating" class="spinner-border spinner-border-sm me-2"></span>
               <i v-else class="bi bi-magic me-2"></i>
@@ -71,9 +54,31 @@
             </button>
           </div>
 
-          <div v-if="generatedIP" class="form-text">
-            <i class="bi bi-info-circle me-1"></i>
-            IP del rango <code>{{ ipv6Range }}</code> · {{ usedCount }} IPs ya asignadas
+          <!-- 8 campos separados -->
+          <div v-else>
+            <div class="ipv6-fields d-flex align-items-center gap-1 flex-wrap">
+              <template v-for="(group, i) in groups">
+                <input
+                  :key="'g' + i"
+                  v-model="groups[i]"
+                  :readonly="i < fixedGroups"
+                  type="text"
+                  maxlength="4"
+                  class="form-control form-control-sm font-monospace text-center ipv6-group"
+                  :class="i < fixedGroups ? 'ipv6-fixed' : 'ipv6-editable'"
+                  @input="groups[i] = groups[i].replace(/[^0-9a-fA-F]/g, '').slice(0, 4)"
+                />
+                <span v-if="i < 7" :key="'s' + i" class="ipv6-sep text-muted">:</span>
+              </template>
+              <button class="btn btn-outline-secondary btn-sm ms-1" type="button" @click="generateIP" :disabled="generating" title="Regenerar">
+                <span v-if="generating" class="spinner-border spinner-border-sm"></span>
+                <i v-else class="bi bi-arrow-repeat"></i>
+              </button>
+            </div>
+            <div class="form-text mt-1">
+              <i class="bi bi-info-circle me-1"></i>
+              Prefijo fijo del rango <code>{{ ipv6Range }}</code> · {{ usedCount }} IPs ya asignadas
+            </div>
           </div>
         </div>
 
@@ -89,7 +94,7 @@
         </div>
 
         <div v-if="generatedIP" class="d-flex gap-2">
-          <button class="btn btn-primary" @click="assignIPv6" :disabled="loading || !form.ipv6_address">
+          <button class="btn btn-primary" @click="assignIPv6" :disabled="loading || !isValidIPv6">
             <span v-if="loading" class="spinner-border spinner-border-sm me-2"></span>
             <i v-else class="bi bi-lightning me-1"></i>
             Asignar IPv6
@@ -103,9 +108,23 @@
 </template>
 
 <script>
-import { ref, onMounted } from 'vue'
+import { ref, computed, onMounted } from 'vue'
 import { useMainStore } from '../stores/useMainStore'
 import api from '../services/api'
+
+// Expande una IPv6 a 8 grupos de 4 hex (forma completa)
+function expandIPv6(addr) {
+  // Manejar :: expansion
+  let full = addr
+  if (full.includes('::')) {
+    const sides = full.split('::')
+    const left = sides[0] ? sides[0].split(':') : []
+    const right = sides[1] ? sides[1].split(':') : []
+    const missing = 8 - left.length - right.length
+    full = [...left, ...Array(missing).fill('0'), ...right].join(':')
+  }
+  return full.split(':').map(g => g.padStart(4, '0'))
+}
 
 export default {
   name: 'IPv6Manager',
@@ -124,21 +143,38 @@ export default {
     const generatedIP = ref(false)
     const ipv6Range = ref('')
     const usedCount = ref(0)
+    const fixedGroups = ref(4)  // grupos readonly según prefijo
 
-    const form = ref({
-      ipv6_address: '',
-      network_interface: 'eth0'
+    // Los 8 grupos editables
+    const groups = ref(['0000','0000','0000','0000','0000','0000','0000','0000'])
+
+    const form = ref({ network_interface: 'eth0' })
+
+    // IP compuesta desde los grupos
+    const composedIPv6 = computed(() =>
+      groups.value.map(g => g || '0').join(':')
+    )
+
+    const isValidIPv6 = computed(() => {
+      return groups.value.every(g => /^[0-9a-fA-F]{1,4}$/.test(g))
     })
 
     const generateIP = async () => {
       generating.value = true
       ipv6NotConfigured.value = false
       try {
-        const data = await api.getNextIPv6(form.value.ipv6_address || null)
-        form.value.ipv6_address = data.next_ipv6
+        const exclude = generatedIP.value ? composedIPv6.value : null
+        const data = await api.getNextIPv6(exclude)
+        const expanded = expandIPv6(data.next_ipv6)
+        groups.value = expanded
         form.value.network_interface = data.network_interface || 'eth0'
         ipv6Range.value = data.range
         usedCount.value = data.used_count
+
+        // Calcular cuántos grupos son fijos según el prefijo del rango
+        const prefix = parseInt(data.range.split('/')[1] || '64')
+        fixedGroups.value = Math.floor(prefix / 16)
+
         generatedIP.value = true
       } catch (e) {
         if (e.message?.includes('no está configurado') || e.message?.includes('configurado en el panel')) {
@@ -155,10 +191,10 @@ export default {
       loading.value = true
       try {
         await api.assignIPv6(props.domain.id, {
-          ipv6_address: form.value.ipv6_address,
+          ipv6_address: composedIPv6.value,
           network_interface: form.value.network_interface
         })
-        currentIPv6.value = form.value.ipv6_address
+        currentIPv6.value = composedIPv6.value
         store.showNotification('IPv6 asignada correctamente', 'success')
         generatedIP.value = false
         emit('reload')
@@ -186,10 +222,10 @@ export default {
 
     const reset = () => {
       generatedIP.value = false
-      form.value = { ipv6_address: '', network_interface: 'eth0' }
+      groups.value = ['0000','0000','0000','0000','0000','0000','0000','0000']
+      form.value = { network_interface: 'eth0' }
     }
 
-    // Al abrir, si no tiene IPv6 intenta generar una automáticamente
     onMounted(async () => {
       if (!currentIPv6.value) {
         await generateIP()
@@ -198,9 +234,32 @@ export default {
 
     return {
       loading, generating, confirmRemove, ipv6NotConfigured,
-      currentIPv6, generatedIP, ipv6Range, usedCount, form,
+      currentIPv6, generatedIP, ipv6Range, usedCount,
+      fixedGroups, groups, form,
+      composedIPv6, isValidIPv6,
       generateIP, assignIPv6, removeIPv6, reset
     }
   }
 }
 </script>
+
+<style scoped>
+.ipv6-group {
+  width: 4.2rem;
+  padding: 0.25rem 0.3rem;
+  letter-spacing: 0.05em;
+}
+.ipv6-fixed {
+  background-color: var(--bs-secondary-bg, #e9ecef);
+  color: var(--bs-secondary-color, #6c757d);
+  cursor: default;
+}
+.ipv6-editable {
+  background-color: var(--bs-body-bg, #fff);
+}
+.ipv6-sep {
+  font-family: monospace;
+  font-size: 1.1rem;
+  user-select: none;
+}
+</style>
