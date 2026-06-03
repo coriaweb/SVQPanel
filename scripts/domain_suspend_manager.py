@@ -1,14 +1,5 @@
 """
 Gestión de suspensión/reactivación individual de dominios.
-
-Cuando un dominio se suspende:
- - Se renombra el symlink de sites-enabled → domain.conf.suspended
- - Nginx sirve un 503 con página de mantenimiento
- - El dominio sigue en BD, solo desaparece de nginx
-
-Cuando se reactiva:
- - Se restaura el symlink
- - Se recarga nginx
 """
 
 import logging
@@ -19,55 +10,110 @@ from .utils import get_nginx_config_path, reload_nginx
 
 logger = logging.getLogger(__name__)
 
-SITES_ENABLED  = "/etc/nginx/sites-enabled"
+SITES_ENABLED   = "/etc/nginx/sites-enabled"
 SITES_AVAILABLE = "/etc/nginx/sites-available"
+SUSPENDED_DIR   = "/var/www/svqpanel-suspended"
 
-# Plantilla HTML 503 para dominio suspendido
-_SUSPENDED_HTML = """<!DOCTYPE html>
+_SUSPENDED_HTML = '''<!DOCTYPE html>
 <html lang="es">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <title>Sitio suspendido</title>
   <style>
-    body{font-family:sans-serif;display:flex;align-items:center;justify-content:center;
-         min-height:100vh;margin:0;background:#f8f9fa}
-    .box{text-align:center;padding:2rem;max-width:480px}
-    h1{font-size:3rem;color:#dc3545;margin:0}
-    h2{color:#333;font-weight:400}
-    p{color:#666}
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      background: #0f1117;
+      color: #e2e8f0;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      min-height: 100vh;
+      padding: 1.5rem;
+    }
+    .card {
+      background: #1a1d27;
+      border: 1px solid #2d3148;
+      border-radius: 16px;
+      padding: 3rem 2.5rem;
+      max-width: 480px;
+      width: 100%;
+      text-align: center;
+      box-shadow: 0 20px 60px rgba(0,0,0,.5);
+    }
+    .icon {
+      width: 64px; height: 64px;
+      background: rgba(239,68,68,.12);
+      border: 1px solid rgba(239,68,68,.25);
+      border-radius: 50%;
+      display: flex; align-items: center; justify-content: center;
+      margin: 0 auto 1.5rem;
+      font-size: 1.75rem;
+    }
+    h1 {
+      font-size: 1.5rem;
+      font-weight: 600;
+      color: #f1f5f9;
+      margin-bottom: .5rem;
+    }
+    p {
+      font-size: .95rem;
+      color: #94a3b8;
+      line-height: 1.6;
+      margin-bottom: 1.75rem;
+    }
+    .badge {
+      display: inline-block;
+      background: rgba(239,68,68,.1);
+      border: 1px solid rgba(239,68,68,.2);
+      color: #f87171;
+      font-size: .75rem;
+      font-weight: 600;
+      letter-spacing: .05em;
+      text-transform: uppercase;
+      padding: .3rem .8rem;
+      border-radius: 999px;
+      margin-bottom: 1.5rem;
+    }
+    .divider {
+      border: none;
+      border-top: 1px solid #2d3148;
+      margin: 1.5rem 0;
+    }
+    .contact {
+      font-size: .82rem;
+      color: #64748b;
+    }
   </style>
 </head>
 <body>
-  <div class="box">
-    <h1>503</h1>
-    <h2>Sitio temporalmente suspendido</h2>
-    <p>Este dominio ha sido suspendido. Contacta con el soporte para más información.</p>
+  <div class="card">
+    <div class="icon">&#128683;</div>
+    <span class="badge">Suspendido</span>
+    <h1>Este sitio ha sido suspendido</h1>
+    <p>El dominio ha sido suspendido temporalmente por el administrador del servidor.</p>
+    <hr class="divider">
+    <p class="contact">Si eres el propietario, contacta con el soporte para reactivarlo.</p>
   </div>
 </body>
-</html>
-"""
+</html>'''
 
-_SUSPENDED_NGINX = """\
-# SVQPanel — Dominio suspendido: {domain}
-server {{
-    listen 80;
-    server_name {domain} www.{domain};
-    return 503;
-}}
-server {{
-    listen 443 ssl http2;
-    server_name {domain} www.{domain};
-    ssl_certificate     /etc/nginx/snippets/self-signed.crt;
-    ssl_certificate_key /etc/nginx/snippets/self-signed.key;
-    return 503;
-}}
-error_page 503 /suspended.html;
-location = /suspended.html {{
-    root /var/www/svqpanel-suspended;
-    internal;
-}}
-"""
+
+def _server_block(domain: str, listen: str, ssl_lines: str = "") -> str:
+    return (
+        f"server {{\n"
+        f"    listen {listen};\n"
+        f"{ssl_lines}"
+        f"    server_name {domain} www.{domain};\n"
+        f"    error_page 503 /suspended.html;\n"
+        f"    location = /suspended.html {{\n"
+        f"        root {SUSPENDED_DIR};\n"
+        f"        internal;\n"
+        f"    }}\n"
+        f"    location / {{ return 503; }}\n"
+        f"}}\n"
+    )
 
 
 class DomainSuspendManager(SystemManager):
@@ -75,100 +121,58 @@ class DomainSuspendManager(SystemManager):
         super().__init__(require_root=True)
 
     def _ensure_suspended_page(self):
-        """Crea la página 503 estática si no existe."""
-        html_dir = Path("/var/www/svqpanel-suspended")
+        html_dir = Path(SUSPENDED_DIR)
         html_dir.mkdir(parents=True, exist_ok=True)
-        html_file = html_dir / "suspended.html"
-        if not html_file.exists():
-            html_file.write_text(_SUSPENDED_HTML)
+        (html_dir / "suspended.html").write_text(_SUSPENDED_HTML)
 
     def suspend_domain(self, domain: str) -> dict:
-        """
-        Suspende el dominio: reemplaza el config de nginx por uno que devuelve 503.
-        Guarda el config original en sites-available/{domain}.active
-        """
         self._ensure_suspended_page()
 
-        available = Path(SITES_AVAILABLE) / domain
+        available    = Path(SITES_AVAILABLE) / domain
         active_backup = Path(SITES_AVAILABLE) / f"{domain}.active"
         enabled_link = Path(SITES_ENABLED) / domain
 
-        # Backup del config activo
         if available.exists() and not active_backup.exists():
-            rc, _, err = self.execute_command(
-                ["cp", str(available), str(active_backup)], check=False
-            )
+            self.execute_command(["cp", str(available), str(active_backup)], check=False)
 
-        # Escribir config de suspensión
-        # Verificar si hay cert SSL real
         ssl_cert = f"/etc/letsencrypt/live/{domain}/fullchain.pem"
         ssl_key  = f"/etc/letsencrypt/live/{domain}/privkey.pem"
+        has_ssl  = os.path.exists(ssl_cert)
 
-        if os.path.exists(ssl_cert):
-            suspended_conf = (
-                f"# SVQPanel — Dominio suspendido: {domain}\n"
-                f"server {{\n"
-                f"    listen 80;\n"
-                f"    server_name {domain} www.{domain};\n"
-                f"    return 503;\n"
-                f"}}\n"
-                f"server {{\n"
-                f"    listen 443 ssl http2;\n"
-                f"    server_name {domain} www.{domain};\n"
-                f"    ssl_certificate {ssl_cert};\n"
+        conf = f"# SVQPanel — Dominio suspendido: {domain}\n"
+        conf += _server_block(domain, "80")
+        if has_ssl:
+            ssl_lines = (
+                f"    ssl_certificate     {ssl_cert};\n"
                 f"    ssl_certificate_key {ssl_key};\n"
-                f"    return 503;\n"
-                f"}}\n"
-                f"error_page 503 /suspended.html;\n"
+                f"    http2 on;\n"
             )
-        else:
-            suspended_conf = (
-                f"# SVQPanel — Dominio suspendido: {domain}\n"
-                f"server {{\n"
-                f"    listen 80;\n"
-                f"    server_name {domain} www.{domain};\n"
-                f"    return 503;\n"
-                f"}}\n"
-                f"error_page 503 /suspended.html;\n"
-            )
+            conf += _server_block(domain, "443 ssl", ssl_lines)
 
-        available.write_text(suspended_conf)
+        available.write_text(conf)
 
-        # Asegurarse de que el symlink en sites-enabled apunta al available
         if not enabled_link.exists():
-            self.execute_command(
-                ["ln", "-sf", str(available), str(enabled_link)], check=False
-            )
+            self.execute_command(["ln", "-sf", str(available), str(enabled_link)], check=False)
 
         reload_nginx()
         return {"success": True, "message": f"Dominio {domain} suspendido"}
 
     def unsuspend_domain(self, domain: str) -> dict:
-        """
-        Reactiva el dominio restaurando el config original.
-        """
-        available    = Path(SITES_AVAILABLE) / domain
+        available     = Path(SITES_AVAILABLE) / domain
         active_backup = Path(SITES_AVAILABLE) / f"{domain}.active"
-        enabled_link = Path(SITES_ENABLED) / domain
+        enabled_link  = Path(SITES_ENABLED) / domain
 
         if active_backup.exists():
-            self.execute_command(
-                ["cp", str(active_backup), str(available)], check=False
-            )
+            self.execute_command(["cp", str(active_backup), str(available)], check=False)
             active_backup.unlink(missing_ok=True)
         else:
-            # No hay backup — puede que el dominio no tuviera config, no forzamos
             return {
                 "success": False,
-                "message": f"No se encontró el config original para {domain}. "
-                           "Puede que el dominio no estuviera en nginx."
+                "message": f"No se encontró el config original para {domain}."
             }
 
-        # Restaurar symlink si no existe
         if not enabled_link.exists():
-            self.execute_command(
-                ["ln", "-sf", str(available), str(enabled_link)], check=False
-            )
+            self.execute_command(["ln", "-sf", str(available), str(enabled_link)], check=False)
 
         reload_nginx()
         return {"success": True, "message": f"Dominio {domain} reactivado"}
