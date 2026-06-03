@@ -1641,25 +1641,28 @@ _MAIL_LOGS = [
     "/var/log/mail/mail.log",
 ]
 
-# Pattern Postfix: fecha hora host postfix/qmgr[pid]: QUEUEID: from=<sender>, size=N, nrcpt=N
-_RE_SENT = re.compile(
-    r"^(\w{3}\s+\d+\s+\d{2}:\d{2}:\d{2})\s+\S+\s+postfix/smtp(?:s|d)?\[\d+\]:\s+"
-    r"([A-F0-9]+):\s+to=<([^>]*)>,\s+relay=([^,]+),.*?status=(\w+)"
+# El log usa formato ISO 8601: 2026-06-03T19:53:41.983708+02:00 host proceso[pid]: ...
+# Capturamos la parte de fecha/hora legible (YYYY-MM-DDTHH:MM:SS)
+_TS = r"(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2})\S*"
+
+# Enviados: postfix/smtp (salida directa) o postfix/submission/smtp
+# Línea ejemplo: 2026-06-03T19:44:34... postfix/submission/smtpd[pid]: QUEUEID: to=<dest>, relay=..., status=sent
+_RE_DELIVERY = re.compile(
+    r"^" + _TS + r"\s+\S+\s+postfix/(?:\w+/)?smtp[^/\[]*\[\d+\]:\s+"
+    r"([A-F0-9]+):\s+to=<([^>]*)>,\s+relay=([^,]+),.*?\bstatus=(\w+)"
 )
-_RE_RECV = re.compile(
-    r"^(\w{3}\s+\d+\s+\d{2}:\d{2}:\d{2})\s+\S+\s+postfix/lmtp\[\d+\]:\s+"
-    r"([A-F0-9]+):\s+to=<([^>]*)>,\s+relay=([^,]+),.*?status=(\w+)"
+# Recibidos localmente: postfix/virtual o postfix/lmtp (entrega al buzón Maildir/Dovecot)
+_RE_VIRTUAL = re.compile(
+    r"^" + _TS + r"\s+\S+\s+postfix/(?:virtual|lmtp)\[\d+\]:\s+"
+    r"([A-F0-9]+):\s+to=<([^>]*)>,\s+relay=([^,]+),.*?\bstatus=(\w+)"
 )
+# from= para asociar remitente al queueid
 _RE_FROM = re.compile(
-    r"^(\w{3}\s+\d+\s+\d{2}:\d{2}:\d{2})\s+\S+\s+postfix/\w+\[\d+\]:\s+"
-    r"([A-F0-9]+):\s+from=<([^>]*)>"
+    r"^" + _TS + r"\s+\S+\s+postfix/\S+\[\d+\]:\s+([A-F0-9]+):\s+from=<([^>]*)>"
 )
+# Rechazados: NOQUEUE reject
 _RE_REJECT = re.compile(
-    r"^(\w{3}\s+\d+\s+\d{2}:\d{2}:\d{2})\s+\S+\s+postfix/smtpd\[\d+\]:\s+"
-    r"NOQUEUE:\s+reject:\s+RCPT\s+from\s+[^:]+:\s+\d+\s+\S+;\s*(.*)"
-)
-_RE_IMAP = re.compile(
-    r"^(\w{3}\s+\d+\s+\d{2}:\d{2}:\d{2})\s+\S+\s+dovecot:\s+imap(?:-login)?\[\d+\]:\s+(.+)"
+    r"^" + _TS + r"\s+\S+\s+postfix/\S+smtpd\[\d+\]:\s+NOQUEUE:\s+reject:\s+RCPT\s+from\s+[^:]+:\s+\d+\s+\S+;\s*(.*)"
 )
 
 
@@ -1683,27 +1686,43 @@ def _read_mail_log(lines: int = 500) -> list[str]:
 
 def _parse_mail_log(raw_lines: list[str], domain_filter: Optional[str] = None) -> dict:
     """
-    Parsea líneas de mail.log y devuelve un resumen estructurado:
-    - sent: correos enviados (postfix/smtp status=sent)
-    - received: correos recibidos (postfix/lmtp status=sent)
-    - rejected: rechazados (NOQUEUE reject)
-    - bounced: rebotados (status=bounced)
-    - deferred: diferidos (status=deferred)
-    - events: lista cronológica de los últimos N eventos
+    Parsea líneas de mail.log (formato ISO 8601 de systemd-journal / rsyslog moderno).
+    - sent:     entregados hacia afuera (postfix/smtp)
+    - received: entregados al buzón local (postfix/virtual o postfix/lmtp)
+    - rejected: rechazados en SMTP (NOQUEUE reject)
+    - bounced:  status=bounced
+    - deferred: status=deferred
     """
-    # Mapa queueid → from (para enriquecer eventos de entrega)
     from_map: dict[str, str] = {}
     events: list[dict] = []
     counts = {"sent": 0, "received": 0, "rejected": 0, "bounced": 0, "deferred": 0}
 
     for line in raw_lines:
-        # Acumular from= para asociar al to= posterior
+        # Acumular from= → queueid para enriquecer entregas posteriores
         m = _RE_FROM.match(line)
         if m:
-            from_map[m.group(2)] = m.group(3)
+            _ts, qid, sender = m.groups()
+            from_map[qid] = sender
+            continue
 
-        # Enviados (smtp hacia afuera)
-        m = _RE_SENT.match(line)
+        # Entrega local al buzón (postfix/virtual o postfix/lmtp → recibido)
+        m = _RE_VIRTUAL.match(line)
+        if m:
+            ts, qid, to_addr, relay, st = m.groups()
+            sender = from_map.get(qid, "")
+            if domain_filter and domain_filter not in (to_addr + sender):
+                continue
+            if st == "sent":   # "sent" en postfix/virtual = entregado al maildir
+                counts["received"] += 1
+                events.append({
+                    "ts": ts[:16].replace("T", " "), "type": "received", "status": "received",
+                    "from": sender, "to": to_addr, "relay": "",
+                    "reason": "", "qid": qid,
+                })
+            continue
+
+        # Entrega saliente (postfix/smtp hacia internet o relay)
+        m = _RE_DELIVERY.match(line)
         if m:
             ts, qid, to_addr, relay, st = m.groups()
             sender = from_map.get(qid, "")
@@ -1712,29 +1731,13 @@ def _parse_mail_log(raw_lines: list[str], domain_filter: Optional[str] = None) -
             kind = st if st in ("sent", "bounced", "deferred") else "sent"
             counts[kind] += 1
             events.append({
-                "ts": ts, "type": "sent", "status": st,
+                "ts": ts[:16].replace("T", " "), "type": "sent", "status": st,
                 "from": sender, "to": to_addr, "relay": relay.split("[")[0].strip(),
-                "qid": qid,
+                "reason": "", "qid": qid,
             })
             continue
 
-        # Recibidos (lmtp → Dovecot)
-        m = _RE_RECV.match(line)
-        if m:
-            ts, qid, to_addr, relay, st = m.groups()
-            sender = from_map.get(qid, "")
-            if domain_filter and domain_filter not in (to_addr + sender):
-                continue
-            if st == "sent":
-                counts["received"] += 1
-            events.append({
-                "ts": ts, "type": "received", "status": "received",
-                "from": sender, "to": to_addr, "relay": "",
-                "qid": qid,
-            })
-            continue
-
-        # Rechazados
+        # Rechazados (NOQUEUE reject)
         m = _RE_REJECT.match(line)
         if m:
             ts, reason = m.groups()
@@ -1742,13 +1745,12 @@ def _parse_mail_log(raw_lines: list[str], domain_filter: Optional[str] = None) -
                 continue
             counts["rejected"] += 1
             events.append({
-                "ts": ts, "type": "rejected", "status": "rejected",
+                "ts": ts[:16].replace("T", " "), "type": "rejected", "status": "rejected",
                 "from": "", "to": "", "relay": "",
-                "reason": reason[:120],
-                "qid": "",
+                "reason": reason[:120], "qid": "",
             })
 
-    # Devolver los últimos 200 eventos (más recientes al inicio)
+    # Los últimos 200 eventos, más recientes primero
     events = list(reversed(events[-200:]))
     return {"counts": counts, "events": events}
 
