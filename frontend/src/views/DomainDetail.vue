@@ -496,8 +496,34 @@
             <div class="mono dd-muted" style="margin-top:6px">{{ logsData.path }}</div>
           </div>
           <template v-else>
+            <div class="logs-search-bar">
+              <i class="bi bi-search logs-search-icon"></i>
+              <input
+                class="logs-search-input"
+                v-model="logSearch"
+                placeholder="Filtrar líneas… (IP, ruta, código, texto)"
+                spellcheck="false"
+              />
+              <span v-if="logSearch" class="logs-match-count">
+                {{ filteredLogLines.length }} / {{ logsData.lines.length }}
+              </span>
+              <button v-if="logSearch" class="logs-search-clear" @click="logSearch = ''" title="Limpiar">
+                <i class="bi bi-x"></i>
+              </button>
+            </div>
             <div class="logs-meta mono">{{ logsData.path }} — {{ logsData.count }} líneas</div>
-            <pre class="logs-pre">{{ logsData.lines.join('\n') }}</pre>
+            <div class="logs-pre">
+              <div
+                v-for="(line, i) in filteredLogLines"
+                :key="i"
+                class="log-line"
+                :class="logLineClass(line)"
+                v-html="highlightLog(line)"
+              ></div>
+              <div v-if="filteredLogLines.length === 0" class="dd-muted" style="padding:var(--sp-4)">
+                Sin resultados para <strong>{{ logSearch }}</strong>
+              </div>
+            </div>
           </template>
         </div>
       </BaseCard>
@@ -646,14 +672,43 @@ export default {
 
     // ── Logs ──
     const logTab = ref('access'), logLines = ref(200), logsLoading = ref(false)
+    const logSearch = ref('')
     const logsData = ref({ exists: false, lines: [], path: '' })
+
     const loadLogs = async () => {
       logsLoading.value = true
-      try { logsData.value = await api.getDomainLogs(domainId.value, logTab.value, logLines.value) }
+      try {
+        const data = await api.getDomainLogs(domainId.value, logTab.value, logLines.value)
+        // Invertir: líneas más nuevas arriba
+        if (data.lines) data.lines = [...data.lines].reverse()
+        logsData.value = data
+      }
       catch (e) { logsData.value = { exists: false, lines: [], path: '', message: e.message } }
       finally { logsLoading.value = false }
     }
-    const switchLog = (t) => { logTab.value = t; loadLogs() }
+    const switchLog = (t) => { logTab.value = t; logSearch.value = ''; loadLogs() }
+
+    const filteredLogLines = computed(() => {
+      if (!logSearch.value.trim()) return logsData.value.lines || []
+      const q = logSearch.value.toLowerCase()
+      return (logsData.value.lines || []).filter(l => l.toLowerCase().includes(q))
+    })
+
+    const logLineClass = (line) => {
+      if (/\s(5\d{2})\s/.test(line) || /\[error\]|\[crit\]|\[emerg\]/i.test(line)) return 'log-error'
+      if (/\s(4\d{2})\s/.test(line) || /\[warn\]/i.test(line)) return 'log-warn'
+      if (/\s(2\d{2})\s/.test(line)) return 'log-ok'
+      return ''
+    }
+
+    const highlightLog = (line) => {
+      if (!logSearch.value.trim()) return escHtml(line)
+      const q = logSearch.value
+      const re = new RegExp(q.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'gi')
+      return escHtml(line).replace(re, m => `<mark class="log-mark">${m}</mark>`)
+    }
+
+    const escHtml = (s) => s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
 
     // ── Acciones ──
     const downloading = ref(false)
@@ -965,6 +1020,7 @@ export default {
       cacheSaving, toggleCache, purgeCache,
       phpLoading, phpSaving, phpDirectives, phpDefaults, phpForm, phpHasPool, savePhp, changePHP,
       logTab, logLines, logsLoading, logsData, loadLogs, switchLog,
+      logSearch, filteredLogLines, logLineClass, highlightLog,
       downloading, downloadSite, suspend, unsuspend, remove, goFiles,
       appForm, installing, installResult, doInstallApp, appNeedsAdmin, appNeedsEmail,
       git, gitDeployments, gitLoading, gitSaving, gitDeploying, gitKeyGen, gitRolling, gitForm,
@@ -1054,13 +1110,40 @@ export default {
 .seg button.active { background: var(--surface); color: var(--color-primary); box-shadow: var(--shadow-xs); }
 .icon-act { width: 32px; height: 32px; border: 1px solid var(--border); background: var(--surface); border-radius: var(--r-sm); color: var(--text-secondary); cursor: pointer; }
 .icon-act:hover { background: var(--surface-inset); color: var(--text); }
-.logs-meta { padding: var(--sp-3) var(--sp-5); font-size: var(--fs-sm); color: var(--text-muted); border-bottom: 1px solid var(--border); }
-.logs-pre {
-  margin: 0; padding: var(--sp-4) var(--sp-5);
-  background: var(--surface-inset); color: var(--text-secondary);
-  font-family: var(--font-mono); font-size: 12px; line-height: 1.6;
-  max-height: 60vh; overflow: auto; white-space: pre-wrap; word-break: break-all;
+.logs-search-bar {
+  display: flex; align-items: center; gap: var(--sp-2);
+  padding: var(--sp-2) var(--sp-4);
+  border-bottom: 1px solid var(--border);
+  background: var(--surface-2);
 }
+.logs-search-icon { color: var(--text-muted); font-size: 13px; flex-shrink: 0; }
+.logs-search-input {
+  flex: 1; background: transparent; border: none; outline: none;
+  font-size: var(--fs-sm); color: var(--text-primary); font-family: var(--font-mono);
+}
+.logs-match-count { font-size: var(--fs-xs); color: var(--text-muted); white-space: nowrap; }
+.logs-search-clear {
+  background: none; border: none; cursor: pointer; color: var(--text-muted); padding: 0 2px;
+  line-height: 1; font-size: 14px;
+}
+.logs-search-clear:hover { color: var(--text-primary); }
+
+.logs-meta { padding: var(--sp-2) var(--sp-5); font-size: var(--fs-sm); color: var(--text-muted); border-bottom: 1px solid var(--border); }
+.logs-pre {
+  margin: 0;
+  background: var(--surface-inset);
+  font-family: var(--font-mono); font-size: 12px; line-height: 1.6;
+  max-height: 60vh; overflow: auto;
+}
+.log-line {
+  padding: 1px var(--sp-5); white-space: pre-wrap; word-break: break-all;
+  border-left: 2px solid transparent;
+}
+.log-line:hover { background: color-mix(in srgb, var(--accent) 4%, transparent); }
+.log-error { color: #f87171; border-left-color: #f87171; background: color-mix(in srgb, #f87171 5%, transparent); }
+.log-warn  { color: #fb923c; border-left-color: #fb923c; background: color-mix(in srgb, #fb923c 5%, transparent); }
+.log-ok    { color: var(--text-secondary); }
+.log-mark  { background: #fef08a; color: #1a1a1a; border-radius: 2px; padding: 0 1px; }
 
 @media (max-width: 1000px) { .dd-grid { grid-template-columns: 1fr 1fr; } .dd-span2 { grid-column: span 2; } }
 @media (max-width: 680px) { .dd-grid { grid-template-columns: 1fr; } .dd-span2 { grid-column: auto; } .disk-grid { grid-template-columns: 1fr; } }
