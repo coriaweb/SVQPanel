@@ -435,8 +435,9 @@ class APIClient {
     return this.post('/api/settings/revoke-ssl', {})
   }
 
-  getNextIPv6() {
-    return this.get('/api/settings/next-ipv6')
+  getNextIPv6(exclude = null) {
+    const qs = exclude ? `?exclude=${encodeURIComponent(exclude)}` : ''
+    return this.get(`/api/settings/next-ipv6${qs}`)
   }
 
   assignPanelIpv6() {

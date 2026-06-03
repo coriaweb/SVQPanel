@@ -134,7 +134,7 @@ export default {
       generating.value = true
       ipv6NotConfigured.value = false
       try {
-        const data = await api.getNextIPv6()
+        const data = await api.getNextIPv6(form.value.ipv6_address || null)
         form.value.ipv6_address = data.next_ipv6
         form.value.network_interface = data.network_interface || 'eth0'
         ipv6Range.value = data.range

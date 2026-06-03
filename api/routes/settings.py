@@ -112,6 +112,7 @@ async def update_settings(
 
 @router.get("/settings/next-ipv6")
 async def get_next_ipv6(
+    exclude: str = None,
     current_user=Depends(require_auth),
     db: Session = Depends(get_db)
 ):
@@ -150,6 +151,13 @@ async def get_next_ipv6(
     network_int = int(network.network_address)
     first_host = ipaddress.IPv6Address(network_int + 1)
     used.add(first_host)  # ::1 reservada para el panel
+
+    # Excluir la IP que ya se mostró (para que "regenerar" devuelva una distinta)
+    if exclude:
+        try:
+            used.add(ipaddress.IPv6Address(exclude))
+        except ValueError:
+            pass
 
     # Buscar la siguiente IP libre (empezamos en ::2, máximo 64k búsquedas)
     next_ip = None
