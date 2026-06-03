@@ -131,10 +131,10 @@ class DatabaseResponse(BaseModel):
     db_user: str          # usuario real en MariaDB (con prefijo)
     db_user_suffix: str   # sufijo elegido por el usuario
 
-    db_charset: str
-    db_collation: str
-    size_mb: int
-    quota_mb: int
+    db_charset: Optional[str] = "utf8mb4"
+    db_collation: Optional[str] = "utf8mb4_unicode_ci"
+    size_mb: Optional[int] = 0
+    quota_mb: Optional[int] = 0
     is_active: bool
 
     created_at: datetime
