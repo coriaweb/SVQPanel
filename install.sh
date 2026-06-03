@@ -1825,6 +1825,8 @@ table inet svqpanel {
         # puedes cerrar este puerto en tu firewall perimetral y dejarlo abierto
         # solo a tus IPs de administración.
         tcp dport __PANEL_WEB_PORT__ accept
+        # UDP mismo puerto: necesario para HTTP/3 (QUIC)
+        udp dport __PANEL_WEB_PORT__ accept
         # Correo: SMTP, submission, IMAP(S), POP3(S)
         tcp dport { 25, 587, 465, 143, 993, 110, 995 } accept
         # DNS (BIND) — consultas entrantes a las zonas alojadas
