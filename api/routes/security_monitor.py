@@ -14,7 +14,7 @@ from api.models.models_security import SecurityAuditLog
 from api.models.models_domain import Domain
 from api.models.models_user import User
 from api.schemas.security_schemas import AuditLogResponse, ActiveConnection
-from api.dependencies import require_admin
+from api.dependencies import require_admin, require_auth
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -201,7 +201,7 @@ class BadBotsUpdate(BaseModel):
 
 
 @router.get("/security/bad-bots")
-async def get_bad_bots(current_user=Depends(require_admin)):
+async def get_bad_bots(current_user=Depends(require_auth)):
     """Lista el catálogo de bots con su estado activo/inactivo y los patrones custom."""
     from scripts.bad_bots_manager import get_known_bots, get_custom_bots
     return {
