@@ -137,13 +137,22 @@ class SSLManager(SystemManager):
         os.makedirs(f"{acme_root}/.well-known/acme-challenge", exist_ok=True)
 
         # Detectar la IP pública del servidor para el listen con IP específica.
-        # Es necesario porque los vhosts de dominios usan listen {ip}:80, que
-        # tiene prioridad sobre listen 80 genérico aunque el server_name coincida.
-        import socket as _sock
+        # gethostbyname(gethostname()) puede devolver 127.0.1.1 — usamos
+        # `ip addr` para obtener la IP global real de la interfaz de red.
+        import subprocess as _sp
+        srv_ip = None
         try:
-            srv_ip = _sock.gethostbyname(_sock.gethostname())
+            r = _sp.run(
+                ["ip", "-4", "addr", "show", "scope", "global"],
+                capture_output=True, text=True, timeout=5,
+            )
+            for line in r.stdout.splitlines():
+                line = line.strip()
+                if line.startswith("inet "):
+                    srv_ip = line.split()[1].split("/")[0]
+                    break
         except Exception:
-            srv_ip = None
+            pass
 
         # Vhost temporal solo para el challenge ACME
         tmp_vhost_path = f"/etc/nginx/sites-available/svqpanel-acme-{domain_name}"
