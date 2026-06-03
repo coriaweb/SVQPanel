@@ -1326,4 +1326,34 @@ async def install_app(
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error instalando {app}: {e}")
 
+    # Registrar la BD creada por el instalador en el panel (client_databases)
+    if result.get("db_name") and result.get("db_user"):
+        try:
+            from api.models.models_client_db import ClientDatabase
+            from api.routes.databases import _hash_password, _encrypt_password
+            existing = db.query(ClientDatabase).filter(
+                ClientDatabase.db_name == result["db_name"]
+            ).first()
+            if not existing:
+                _pw = result.get("db_pass", "")
+                # Extract suffix: part after first underscore of the base name
+                _suffix = result["db_name"].split("_", 1)[-1] if "_" in result["db_name"] else result["db_name"]
+                _usuffix = result["db_user"].split("_", 1)[-1] if "_" in result["db_user"] else result["db_user"]
+                client_db = ClientDatabase(
+                    user_id=owner.id,
+                    domain_id=domain.id,
+                    db_name=result["db_name"],
+                    db_name_suffix=_suffix,
+                    db_user=result["db_user"],
+                    db_user_suffix=_usuffix,
+                    db_password_hash=_hash_password(_pw),
+                    db_password_enc=_encrypt_password(_pw),
+                    is_active=True,
+                )
+                db.add(client_db)
+                db.commit()
+        except Exception as reg_err:
+            import logging
+            logging.getLogger(__name__).warning(f"No se pudo registrar BD en panel: {reg_err}")
+
     return {"status": "success", "message": f"{SUPPORTED_APPS[app]['name']} instalado", "data": result}
