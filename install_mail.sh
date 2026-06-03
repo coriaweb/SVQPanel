@@ -95,9 +95,18 @@ postconf -e "smtpd_sasl_type = dovecot"
 postconf -e "smtpd_sasl_path = private/auth"
 postconf -e "smtpd_sasl_security_options = noanonymous"
 
-# TLS con snakeoil (reemplazar con cert real en producción)
-postconf -e "smtpd_tls_cert_file = /etc/ssl/certs/ssl-cert-snakeoil.pem"
-postconf -e "smtpd_tls_key_file = /etc/ssl/private/ssl-cert-snakeoil.key"
+# TLS — usar cert del panel si existe; si no, snakeoil como fallback temporal
+# El cert real se aplica por dominio vía SNI map (mail_tls_manager.py).
+# El cert por defecto global cubre el hostname del servidor (FQDN del panel).
+PANEL_CERT="/etc/letsencrypt/live/$(hostname -f)/fullchain.pem"
+PANEL_KEY="/etc/letsencrypt/live/$(hostname -f)/privkey.pem"
+if [[ -f "$PANEL_CERT" ]]; then
+    postconf -e "smtpd_tls_cert_file = $PANEL_CERT"
+    postconf -e "smtpd_tls_key_file = $PANEL_KEY"
+else
+    postconf -e "smtpd_tls_cert_file = /etc/ssl/certs/ssl-cert-snakeoil.pem"
+    postconf -e "smtpd_tls_key_file = /etc/ssl/private/ssl-cert-snakeoil.key"
+fi
 postconf -e "smtpd_tls_security_level = may"
 postconf -e "smtp_tls_security_level = may"
 postconf -e "smtpd_tls_protocols = !SSLv2,!SSLv3"
@@ -119,7 +128,7 @@ hostname -f > /etc/mailname
 postconf -e "myhostname = $(hostname -f)"
 postconf -e "myorigin = /etc/mailname"
 
-# Puerto 587 (submission) — solo añadir si no está ya
+# Puerto 587 (submission / STARTTLS) — solo añadir si no está ya
 if ! grep -q "^submission" /etc/postfix/master.cf; then
     cat >> /etc/postfix/master.cf << 'MASTEREOF'
 
@@ -133,9 +142,23 @@ submission inet n       -       y       -       -       smtpd
 MASTEREOF
 fi
 
+# Puerto 465 (smtps / implicit TLS) — RFC 8314, compatible con todos los clientes
+if ! grep -q "^smtps" /etc/postfix/master.cf; then
+    cat >> /etc/postfix/master.cf << 'MASTEREOF'
+
+smtps     inet  n       -       y       -       -       smtpd
+  -o syslog_name=postfix/smtps
+  -o smtpd_tls_wrappermode=yes
+  -o smtpd_sasl_auth_enable=yes
+  -o smtpd_reject_unlisted_recipient=no
+  -o smtpd_recipient_restrictions=permit_sasl_authenticated,reject
+  -o milter_macro_daemon_name=ORIGINATING
+MASTEREOF
+fi
+
 systemctl enable postfix
 systemctl restart postfix
-echo -e "${GREEN}✓ Postfix configurado (SMTP 25 + submission 587)${NC}"
+echo -e "${GREEN}✓ Postfix configurado (SMTP 25 + submission 587 + smtps 465)${NC}"
 
 # ── 3. DOVECOT ────────────────────────────────────────────────────────────────
 echo -e "${YELLOW}→ Instalando Dovecot...${NC}"
