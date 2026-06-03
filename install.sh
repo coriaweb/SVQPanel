@@ -2265,61 +2265,79 @@ echo -e "${YELLOW}Creando usuario administrador...${NC}"
 cd /opt/svqpanel
 source venv/bin/activate
 
-# Generar contraseña aleatoria de 16 caracteres (A-Z, a-z, 0-9)
-ADMIN_PASSWORD=$(python3 << 'PASSWDEOF'
-import random
-import string
-chars = string.ascii_letters + string.digits
-print(''.join(random.choice(chars) for _ in range(16)))
-PASSWDEOF
-)
-
-# Crear usuario del SISTEMA 'admin' además del usuario del panel.
-# Si el admin del panel intenta alojar dominios (chown user:www-data ...) y
-# no existe en /etc/passwd, falla. Hestia hace lo mismo: el admin tiene
-# cuenta de sistema desde el primer momento.
-if ! id admin >/dev/null 2>&1; then
-    useradd -m -s /bin/bash -d /home/admin admin
-    echo "admin:$ADMIN_PASSWORD" | chpasswd
-    # Estructura web estilo Hestia (igual que UserManager.create_user)
-    mkdir -p /home/admin/web
-    chown admin:www-data /home/admin/web
-    chmod 750 /home/admin/web
-    mkdir -p /home/admin/tmp
-    chown admin:admin /home/admin/tmp
-    chmod 750 /home/admin/tmp
-    echo -e "  ${GREEN}✓ Usuario del sistema 'admin' creado${NC}"
+# ── Nombre de usuario admin ───────────────────────────────────────────────────
+# "admin" es el nombre más atacado por bots de fuerza bruta. Permitimos elegir
+# uno personalizado; si se deja en blanco, se genera uno aleatorio tipo svq_a3f9.
+# El mismo nombre se usa para el usuario del panel (PostgreSQL) Y para el usuario
+# del sistema operativo (estructura /home, pools PHP, etc.).
+echo ""
+echo -e "${YELLOW}Nombre de usuario administrador del panel:${NC}"
+echo -e "  Deja en blanco para generar uno aleatorio (recomendado por seguridad)"
+read -p "  Usuario admin (Enter = aleatorio): " _ADMIN_USER_INPUT
+if [[ -z "$_ADMIN_USER_INPUT" ]]; then
+    ADMIN_USER="svq_$(python3 -c 'import secrets,string; print(secrets.token_hex(3))')"
+    echo -e "  ${GREEN}✓ Usuario generado: ${YELLOW}${ADMIN_USER}${NC}"
 else
-    echo -e "  ${YELLOW}⚠ Usuario del sistema 'admin' ya existía, no se recrea${NC}"
+    # Validar: solo letras minúsculas, números y guiones bajos, 3-32 chars
+    if [[ "$_ADMIN_USER_INPUT" =~ ^[a-z][a-z0-9_]{2,31}$ ]]; then
+        ADMIN_USER="$_ADMIN_USER_INPUT"
+        echo -e "  ${GREEN}✓ Usuario: ${ADMIN_USER}${NC}"
+    else
+        ADMIN_USER="svq_$(python3 -c 'import secrets; print(secrets.token_hex(3))')"
+        echo -e "  ${YELLOW}⚠ Nombre inválido (solo a-z, 0-9, _; mínimo 3 chars). Usando: ${ADMIN_USER}${NC}"
+    fi
+fi
+echo ""
+
+# ── Contraseña aleatoria de 16 caracteres (A-Z, a-z, 0-9) ───────────────────
+ADMIN_PASSWORD=$(python3 -c \
+    "import secrets,string; chars=string.ascii_letters+string.digits; \
+     print(''.join(secrets.choice(chars) for _ in range(16)))")
+
+# Crear usuario del SISTEMA además del usuario del panel.
+# El panel necesita un usuario del SO para operaciones de sistema (pools PHP-FPM,
+# estructura de directorios, etc.). Hestia hace lo mismo con su cuenta admin.
+if ! id "$ADMIN_USER" >/dev/null 2>&1; then
+    useradd -m -s /bin/bash -d "/home/${ADMIN_USER}" "$ADMIN_USER"
+    echo "${ADMIN_USER}:${ADMIN_PASSWORD}" | chpasswd
+    # Estructura web estilo Hestia (igual que UserManager.create_user)
+    mkdir -p "/home/${ADMIN_USER}/web"
+    chown "${ADMIN_USER}:www-data" "/home/${ADMIN_USER}/web"
+    chmod 750 "/home/${ADMIN_USER}/web"
+    mkdir -p "/home/${ADMIN_USER}/tmp"
+    chown "${ADMIN_USER}:${ADMIN_USER}" "/home/${ADMIN_USER}/tmp"
+    chmod 750 "/home/${ADMIN_USER}/tmp"
+    echo -e "  ${GREEN}✓ Usuario del sistema '${ADMIN_USER}' creado${NC}"
+else
+    echo -e "  ${YELLOW}⚠ Usuario del sistema '${ADMIN_USER}' ya existía, no se recrea${NC}"
 fi
 
-# Crear usuario admin en la BD (pasar contraseña via variable de entorno)
-SVQPANEL_ADMIN_PASS="$ADMIN_PASSWORD" python3 << 'PYTHONEOF'
+# Crear usuario admin en la BD (pasar nombre y contraseña via variables de entorno)
+SVQPANEL_ADMIN_USER="$ADMIN_USER" SVQPANEL_ADMIN_PASS="$ADMIN_PASSWORD" python3 << 'PYTHONEOF'
 import sys
 import os
 sys.path.insert(0, '/opt/svqpanel')
 
-# Cargar todos los modelos para que los mappers de SQLAlchemy resuelvan
-# (User tiene relationships/FK a plans, CronJob, etc.).
 from api.models.database import SessionLocal, load_all_models
 load_all_models()
 from api.models.models_user import User
 
 session = SessionLocal()
 
-# Leer contraseña desde variable de entorno
+admin_username = os.environ.get('SVQPANEL_ADMIN_USER', 'svqadmin')
 admin_password = os.environ.get('SVQPANEL_ADMIN_PASS', 'changeme123')
 
 try:
-    # Verificar si el admin ya existe
-    existing_admin = session.query(User).filter(User.username == "admin").first()
+    # Idempotente: si ya existe un admin (por username o por role), no duplicar
+    existing_admin = session.query(User).filter(
+        (User.username == admin_username) | (User.role == "admin")
+    ).first()
     if existing_admin:
-        print("Admin user already exists")
+        print(f"Admin user already exists: {existing_admin.username}")
         sys.exit(0)
 
-    # Crear usuario admin con rol correcto
     admin_user = User(
-        username="admin",
+        username=admin_username,
         email="admin@localhost",
         role="admin",
         is_admin=True,
@@ -2339,7 +2357,7 @@ PYTHONEOF
 
 # Guardar credenciales en archivo seguro
 mkdir -p /opt/svqpanel/.credentials
-echo "admin:$ADMIN_PASSWORD" > /opt/svqpanel/.credentials/admin.txt
+echo "${ADMIN_USER}:${ADMIN_PASSWORD}" > /opt/svqpanel/.credentials/admin.txt
 chmod 600 /opt/svqpanel/.credentials/admin.txt
 
 echo -e "${GREEN}✓ Usuario administrador creado${NC}\n"
@@ -2427,7 +2445,7 @@ echo "  Base de datos panel: panel_db (PostgreSQL)"
 echo -e "\n${GREEN}╔════════════════════════════════════════════════════════════╗${NC}"
 echo -e "${GREEN}║   SVQPanel - Credenciales de Administrador                 ║${NC}"
 echo -e "${GREEN}╠════════════════════════════════════════════════════════════╣${NC}"
-echo -e "${GREEN}║${NC} Usuario:    ${YELLOW}admin${NC}"
+echo -e "${GREEN}║${NC} Usuario:    ${YELLOW}${ADMIN_USER}${NC}"
 echo -e "${GREEN}║${NC} Contraseña: ${YELLOW}$ADMIN_PASSWORD${NC}"
 echo -e "${GREEN}║${NC} Email:      ${YELLOW}admin@localhost${NC}"
 echo -e "${GREEN}╚════════════════════════════════════════════════════════════╝${NC}\n"
