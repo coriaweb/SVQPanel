@@ -1,17 +1,13 @@
 """
-Gestión de bloqueo de user-agents maliciosos en nginx.
+Gestión de bloqueo de user-agents maliciosos (nginx y Apache).
 
-Escribe /etc/nginx/conf.d/bad-bots.conf con un bloque `map` que asigna
-$bad_bot=1 para los user-agents bloqueados. El vhost de cada dominio ya
-incluye `if ($bad_bot) { return 444; }` gracias a domain_manager.
+Para NGINX:
+  Escribe /etc/nginx/conf.d/bad-bots.conf con un bloque `map` que asigna
+  $bad_bot=1 para los user-agents bloqueados. El vhost de cada dominio ya
+  incluye `if ($bad_bot) { return 444; }` gracias a apache_vhost_generator.
 
-Formato del archivo generado:
-    map $http_user_agent $bad_bot {
-        default         0;
-        ~*terrabot      1;
-        ~*masscan       1;
-        ...
-    }
+Para APACHE:
+  Se inyecta en cada vhost Apache via apache_vhost_generator (RewriteCond).
 """
 
 import logging
@@ -66,10 +62,15 @@ def get_custom_bots() -> list:
 
 def update_bad_bots(enabled_ids: list, custom_patterns: list) -> dict:
     """
-    Actualiza el archivo nginx con los bots seleccionados.
+    Actualiza el bloqueo de bots según el webserver detectado.
     enabled_ids: lista de IDs del catálogo a activar (ej: ["terrabot", "zgrab"])
     custom_patterns: patrones libres adicionales (ej: ["mymalbbot", "evilcrawler"])
+
+    Para Nginx: escribe /etc/nginx/conf.d/bad-bots.conf y recarga nginx
+    Para Apache: los patrones se inyectan en cada vhost al regenerar (backend)
     """
+    from scripts.webserver_config import get_webserver
+
     patterns = []
 
     # Patrones del catálogo seleccionados
@@ -84,8 +85,20 @@ def update_bad_bots(enabled_ids: list, custom_patterns: list) -> dict:
         if p and p not in patterns:
             patterns.append(p)
 
-    _write_nginx_conf(patterns)
-    _reload_nginx()
+    ws = get_webserver()
+
+    # Para nginx, escribir el conf global
+    if ws in ("nginx", "apache+nginx"):
+        _write_nginx_conf(patterns)
+        if ws == "nginx":
+            _reload_nginx()
+        # Si es apache+nginx, solo escribimos nginx pero no recargamos aquí
+        # Los vhosts Apache se regenerarán en el backend cuando se asignen a un dominio
+
+    # Para Apache, la inyección de patrones ocurre en apache_vhost_generator
+    # cuando el backend regenera los vhosts de los dominios asignados a Apache.
+    # Por ahora, solo marcamos que se actualizaron.
+
     return {"blocked_count": len(patterns), "patterns": patterns}
 
 

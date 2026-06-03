@@ -62,6 +62,11 @@ case $WEBSERVER_CHOICE in
         ;;
 esac
 
+# Guardar la opción de webserver para que los scripts de Python la puedan leer
+mkdir -p /etc/svqpanel
+echo "$WEBSERVER" > /etc/svqpanel/webserver.conf
+chmod 644 /etc/svqpanel/webserver.conf
+
 ###############################################################################
 # 1b. PUERTO DEL PANEL
 ###############################################################################

@@ -31,7 +31,8 @@ class DomainManager(SystemManager):
         self,
         username: str,
         domain_name: str,
-        php_version: str = "8.2"
+        php_version: str = "8.2",
+        webserver: str = None
     ) -> dict:
         """
         Create a new domain for a user (Hestia-style structure)
@@ -46,6 +47,7 @@ class DomainManager(SystemManager):
             username: System username
             domain_name: Domain name (e.g., example.com)
             php_version: PHP version (7.4, 8.0-8.5)
+            webserver: "nginx", "apache", o None para auto-detectar
 
         Returns:
             {'success': True, 'domain': 'example.com', ...}
@@ -60,11 +62,19 @@ class DomainManager(SystemManager):
         if php_version not in valid_php:
             raise ValueError(f"Invalid PHP version: {php_version}")
 
+        # Auto-detectar webserver si no se especifica
+        if webserver is None:
+            from scripts.webserver_config import supports_nginx, supports_apache
+            # Si soporta apache, crear vhost Apache; si no, nginx
+            if supports_apache():
+                webserver = "apache"
+            else:
+                webserver = "nginx"
+
         domain_root = get_domain_root(username, domain_name)
         public_html = get_public_html(username, domain_name)
         logs_dir = get_domain_logs(username, domain_name)
         private_dir = get_domain_private(username, domain_name)
-        nginx_config = get_nginx_config_path(domain_name)
 
         try:
             logger.info(f"Creating domain: {domain_name} for user: {username}")
@@ -157,26 +167,53 @@ class DomainManager(SystemManager):
                 raise RuntimeError(f"No se pudo crear el pool PHP-FPM: {msg}")
             php_socket = phpini.pool_socket_path(domain_name)
 
-            # Crear configuración Nginx (apuntando al socket dedicado)
-            config_content = generate_nginx_config(
-                domain_name,
-                username,
-                php_version,
-                ssl_enabled=False,
-                php_socket_override=php_socket,
-            )
+            # Crear configuración según webserver
+            if webserver == "apache":
+                from scripts.apache_vhost_generator import generate_apache_vhost
+                from scripts.webserver_config import get_apache_vhost_path
+                config_path = get_apache_vhost_path(domain_name)
+                config_content = generate_apache_vhost(
+                    domain_name,
+                    username,
+                    php_version,
+                    ssl_enabled=False,
+                )
+                with open(config_path, "w") as f:
+                    f.write(config_content)
+                logger.info(f"Created Apache vhost: {config_path}")
 
-            with open(nginx_config, "w") as f:
-                f.write(config_content)
-            logger.info(f"Created Nginx config: {nginx_config}")
+                # Habilitar sitio
+                self.execute_command(
+                    ["a2ensite", domain_name],
+                    check=False  # No fallar si ya está habilitado
+                )
+                # Reload Apache
+                try:
+                    self.execute_command(["systemctl", "reload", "apache2"])
+                except:
+                    raise RuntimeError("Apache reload failed")
 
-            # Activar site (symlink a sites-enabled)
-            enabled_link = f"/etc/nginx/sites-enabled/{domain_name}"
-            self.execute_command(["ln", "-sf", nginx_config, enabled_link])
+            else:  # nginx
+                config_path = get_nginx_config_path(domain_name)
+                config_content = generate_nginx_config(
+                    domain_name,
+                    username,
+                    php_version,
+                    ssl_enabled=False,
+                    php_socket_override=php_socket,
+                )
 
-            # Test y reload Nginx
-            if not reload_nginx():
-                raise RuntimeError("Nginx configuration test failed")
+                with open(config_path, "w") as f:
+                    f.write(config_content)
+                logger.info(f"Created Nginx config: {config_path}")
+
+                # Activar site (symlink a sites-enabled)
+                enabled_link = f"/etc/nginx/sites-enabled/{domain_name}"
+                self.execute_command(["ln", "-sf", config_path, enabled_link])
+
+                # Test y reload Nginx
+                if not reload_nginx():
+                    raise RuntimeError("Nginx configuration test failed")
 
             logger.info(f"Domain created: {domain_name}")
             return {
@@ -333,55 +370,97 @@ class DomainManager(SystemManager):
         readonly_mode_enabled: bool = False,
         allowed_mutation_ips: str = None,
         blocked_user_agents: list = None,
+        webserver: str = None,
     ) -> dict:
         """
         Regenera la vhost completa del dominio con TODO el estado actual
         (SSL, IPv6, cache, socket PHP dedicado, rate limit, docroot_subdir).
         Punto único de verdad para no perder ajustes al tocar una feature.
+
+        Args:
+            webserver: "nginx" o "apache". Si None, auto-detecta.
         """
         if not validate_domain(domain_name):
             raise ValueError(f"Invalid domain: {domain_name}")
 
-        nginx_config = get_nginx_config_path(domain_name)
+        # Auto-detectar webserver
+        if webserver is None:
+            from scripts.webserver_config import supports_apache
+            if supports_apache():
+                webserver = "apache"
+            else:
+                webserver = "nginx"
 
-        if fastcgi_cache_enabled:
-            write_fastcgi_cache_zone(domain_name)
-        else:
-            remove_fastcgi_cache_zone(domain_name)
+        if webserver == "apache":
+            from scripts.apache_vhost_generator import generate_apache_vhost
+            from scripts.webserver_config import get_apache_vhost_path
 
-        # Zona de rate limit (nivel http) debe existir antes que el vhost
-        if rate_limit_enabled:
-            write_ratelimit_zone(domain_name, rate_limit_rps)
-        else:
-            remove_ratelimit_zone(domain_name)
+            config_path = get_apache_vhost_path(domain_name)
+            config_content = generate_apache_vhost(
+                domain_name,
+                username,
+                php_version,
+                ssl_enabled=ssl_enabled,
+                ipv6=ipv6,
+                ipv4=ipv4,
+                force_https=force_https,
+                hsts=hsts,
+                redirect_to=redirect_to,
+                custom_docroot=custom_docroot,
+                docroot_subdir=docroot_subdir,
+                blocked_user_agents=blocked_user_agents or [],
+                readonly_mode_enabled=readonly_mode_enabled,
+                allowed_mutation_ips=allowed_mutation_ips,
+            )
+            with open(config_path, "w") as f:
+                f.write(config_content)
 
-        config_content = generate_nginx_config(
-            domain_name,
-            username,
-            php_version,
-            ssl_enabled=ssl_enabled,
-            ipv6=ipv6,
-            fastcgi_cache_enabled=fastcgi_cache_enabled,
-            fastcgi_cache_ttl_minutes=fastcgi_cache_ttl_minutes,
-            php_socket_override=php_socket_override,
-            template_nginx_extra=template_nginx_extra,
-            redirect_to=redirect_to,
-            custom_docroot=custom_docroot,
-            ipv4=ipv4,
-            force_https=force_https,
-            hsts=hsts,
-            rate_limit_enabled=rate_limit_enabled,
-            rate_limit_burst=rate_limit_burst,
-            docroot_subdir=docroot_subdir,
-            readonly_mode_enabled=readonly_mode_enabled,
-            allowed_mutation_ips=allowed_mutation_ips,
-            blocked_user_agents=blocked_user_agents or [],
-        )
-        with open(nginx_config, "w") as f:
-            f.write(config_content)
+            # Reload Apache
+            try:
+                self.execute_command(["systemctl", "reload", "apache2"])
+            except:
+                raise RuntimeError("Apache reload failed tras regenerar vhost")
 
-        if not reload_nginx():
-            raise RuntimeError("Nginx reload failed tras regenerar vhost")
+        else:  # nginx
+            if fastcgi_cache_enabled:
+                write_fastcgi_cache_zone(domain_name)
+            else:
+                remove_fastcgi_cache_zone(domain_name)
+
+            # Zona de rate limit (nivel http) debe existir antes que el vhost
+            if rate_limit_enabled:
+                write_ratelimit_zone(domain_name, rate_limit_rps)
+            else:
+                remove_ratelimit_zone(domain_name)
+
+            config_path = get_nginx_config_path(domain_name)
+            config_content = generate_nginx_config(
+                domain_name,
+                username,
+                php_version,
+                ssl_enabled=ssl_enabled,
+                ipv6=ipv6,
+                fastcgi_cache_enabled=fastcgi_cache_enabled,
+                fastcgi_cache_ttl_minutes=fastcgi_cache_ttl_minutes,
+                php_socket_override=php_socket_override,
+                template_nginx_extra=template_nginx_extra,
+                redirect_to=redirect_to,
+                custom_docroot=custom_docroot,
+                ipv4=ipv4,
+                force_https=force_https,
+                hsts=hsts,
+                rate_limit_enabled=rate_limit_enabled,
+                rate_limit_burst=rate_limit_burst,
+                docroot_subdir=docroot_subdir,
+                readonly_mode_enabled=readonly_mode_enabled,
+                allowed_mutation_ips=allowed_mutation_ips,
+                blocked_user_agents=blocked_user_agents or [],
+            )
+            with open(config_path, "w") as f:
+                f.write(config_content)
+
+            if not reload_nginx():
+                raise RuntimeError("Nginx reload failed tras regenerar vhost")
 
         return {"success": True, "domain": domain_name}
 
