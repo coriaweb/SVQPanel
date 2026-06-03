@@ -262,17 +262,28 @@ echo -e "${GREEN}✓ Dependencias instaladas${NC}\n"
 ###############################################################################
 # 4b. INSTALAR CERTBOT (vía snap — versión oficial siempre actualizada)
 ###############################################################################
-# El certbot de Debian apt está muy desactualizado (2.1.x vs 5.x actual).
-# El método recomendado por EFF/Let's Encrypt es instalarlo via snap.
+# El certbot de Debian apt está MUY desactualizado (2.1.x) y SUFRE un bug con
+# Python 3.11: "AttributeError: can't set attribute" al pedir CUALQUIER cert
+# (josepy 1.13 + acme 2.1.0) → rompía TODO el SSL. El método recomendado por
+# EFF/Let's Encrypt es snap (5.x). Lo instalamos de forma robusta: saltarse
+# cualquier paso (snapd, seed, core) deja certbot a medias.
 echo -e "${YELLOW}Instalando Certbot vía snap...${NC}"
-# Asegurarse de que snapd está activo
+# snapd instalado y activo (no asumir que ya está)
+apt-get install -y -qq snapd 2>/dev/null || true
 systemctl enable --now snapd.socket 2>/dev/null || true
-# Eliminar versión apt si existía
+# Esperar a que snapd inicialice (seed) — si no, los snap install fallan
+snap wait system seed.loaded 2>/dev/null || true
+snap install core 2>/dev/null || true
+snap refresh core 2>/dev/null || true
+# Eliminar versión apt si existía (saca el bug del PATH)
 apt-get remove -y -qq certbot python3-certbot-nginx 2>/dev/null || true
 # Instalar certbot snap
 snap install --classic certbot 2>/dev/null || true
+# Permitir que los plugins (nginx, dns) corran con root
+snap set certbot trust-plugin-with-root=ok 2>/dev/null || true
 # Symlink para que esté en PATH
 ln -sf /snap/bin/certbot /usr/bin/certbot 2>/dev/null || true
+hash -r 2>/dev/null || true
 echo -e "${GREEN}✓ Certbot $(certbot --version 2>&1) instalado${NC}\n"
 
 ###############################################################################

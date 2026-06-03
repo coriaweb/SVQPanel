@@ -36,13 +36,29 @@ def mail_host(domain: str) -> str:
 
 
 def cert_paths(domain: str) -> Tuple[str, str]:
-    """Rutas del fullchain y la key del cert Let's Encrypt del dominio."""
+    """
+    Rutas del fullchain y la key del cert para mail.{dominio}.
+    Prefiere el cert PROPIO de mail.{dominio} (emitido con --webroot
+    independiente); si no existe, cae al cert del dominio padre (legacy --expand).
+    """
+    host = mail_host(domain)
+    own = f"/etc/letsencrypt/live/{host}"
+    if os.path.exists(f"{own}/fullchain.pem"):
+        return f"{own}/fullchain.pem", f"{own}/privkey.pem"
     base = f"/etc/letsencrypt/live/{domain}"
     return f"{base}/fullchain.pem", f"{base}/privkey.pem"
 
 
 def cert_includes_mail(domain: str) -> bool:
-    """¿El certificado del dominio cubre mail.{dominio} como SAN?"""
+    """
+    ¿Hay un cert SSL válido para mail.{dominio}?
+    Comprueba el cert propio de mail.{dominio} o un SAN en el cert del padre.
+    """
+    host = mail_host(domain)
+    # 1. Cert propio de mail.{dominio}
+    if os.path.exists(f"/etc/letsencrypt/live/{host}/cert.pem"):
+        return True
+    # 2. SAN en el cert del dominio padre
     cert = f"/etc/letsencrypt/live/{domain}/cert.pem"
     if not os.path.exists(cert):
         return False
@@ -52,7 +68,7 @@ def cert_includes_mail(domain: str) -> bool:
             ["/usr/bin/openssl", "x509", "-noout", "-text", "-in", cert],
             capture_output=True, text=True, timeout=10,
         )
-        return f"DNS:{mail_host(domain)}" in r.stdout
+        return f"DNS:{host}" in r.stdout
     except Exception:
         return False
 
