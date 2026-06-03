@@ -225,7 +225,7 @@ def _generate_redirect_config(
     ipv4_listen_http  = f"{ipv4}:80" if ipv4 else "80"
     ipv4_listen_https = f"{ipv4}:443" if ipv4 else "443"
     ipv6_listen_http  = f"listen [{ipv6}]:80 default_server;" if ipv6 else "listen [::]:80;"
-    ipv6_listen_https = f"listen [{ipv6}]:443 ssl http2 default_server;" if ipv6 else "listen [::]:443 ssl http2;"
+    ipv6_listen_https = f"listen [{ipv6}]:443 ssl default_server;" if ipv6 else "listen [::]:443 ssl;"
 
     # Asegurarse de que redirect_to no termina en /
     destination = redirect_to.rstrip("/")
@@ -350,7 +350,7 @@ def generate_nginx_config(
     ipv4_listen_http  = f"{ipv4}:80" if ipv4 else "80"
     ipv4_listen_https = f"{ipv4}:443" if ipv4 else "443"
     ipv6_listen_http  = f"listen [{ipv6}]:80 default_server;" if ipv6 else "listen [::]:80;"
-    ipv6_listen_https = f"listen [{ipv6}]:443 ssl http2 default_server;" if ipv6 else "listen [::]:443 ssl http2;"
+    ipv6_listen_https = f"listen [{ipv6}]:443 ssl default_server;" if ipv6 else "listen [::]:443 ssl;"
 
     hsts_header = (
         '    add_header Strict-Transport-Security "max-age=31536000; includeSubDomains; preload" always;'
@@ -458,7 +458,8 @@ def generate_nginx_config(
     if ssl_enabled:
         server_block += f"""
 server {{
-    listen {ipv4_listen_https} ssl http2;
+    listen {ipv4_listen_https} ssl;
+    http2 on;
     {ipv6_listen_https}{http3_listen}
     server_name {server_names};
     root {public_html};

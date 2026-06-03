@@ -307,6 +307,13 @@ PINEOF
     apt-get install -y -qq nginx
     systemctl enable nginx
 
+    # El nginx del repo oficial NO incluye sites-enabled por defecto.
+    # Lo añadimos para mantener la estructura Debian (sites-available/sites-enabled).
+    if ! grep -q "sites-enabled" /etc/nginx/nginx.conf; then
+        sed -i 's|include /etc/nginx/conf.d/\*.conf;|include /etc/nginx/conf.d/*.conf;\n    include /etc/nginx/sites-enabled/*;|' /etc/nginx/nginx.conf
+    fi
+    mkdir -p /etc/nginx/sites-available /etc/nginx/sites-enabled
+
     # Endurecimiento global: ocultar la versión de nginx (server_tokens off)
     cat > /etc/nginx/conf.d/svqpanel-hardening.conf << 'NGINXHARDEOF'
 # SVQPanel — endurecimiento global de nginx
