@@ -843,51 +843,20 @@ RCCONFEOF
     fi
 
     # ── 7. Instalar plugin svqpanel_autologin ──────────────────────────────
+    # SIEMPRE desde scripts/svqpanel_autologin.php (fuente de verdad). NO se
+    # duplica el código aquí: un fallback hardcodeado se desincroniza del repo
+    # y ya rompió el autologin una vez (versión vieja sin set_auth_cookie() →
+    # "Su sesión no es válida"). Si el fichero no existe, es un error fatal.
     echo -e "  ${YELLOW}→ Instalando plugin de autologin...${NC}"
     RC_PLUGIN_DIR="${RC_APP_DIR}/plugins/svqpanel_autologin"
     mkdir -p "$RC_PLUGIN_DIR"
 
-    if [[ -f /opt/svqpanel/scripts/svqpanel_autologin.php ]]; then
-        cp /opt/svqpanel/scripts/svqpanel_autologin.php \
-           "${RC_PLUGIN_DIR}/svqpanel_autologin.php"
-    else
-        cat > "${RC_PLUGIN_DIR}/svqpanel_autologin.php" << 'RCPLUGEOF'
-<?php
-class svqpanel_autologin extends rcube_plugin
-{
-    public $task = '.*';
-    public $noframe = true;
-    private const PANEL_PORT    = 8001;
-    private const FETCH_TIMEOUT = 5;
-    public function init(): void { $this->add_hook('startup', [$this, 'startup']); }
-    public function startup(array $args): array
-    {
-        $raw = $_GET['svqtoken'] ?? $_POST['svqtoken'] ?? null;
-        if (!$raw) return $args;
-        $token = preg_replace('/[^a-f0-9]/', '', strtolower($raw));
-        if (strlen($token) !== 32) return $args;
-        $data = $this->fetch_credentials($token);
-        if (!$data || empty($data['username']) || empty($data['password'])) return $args;
-        $rcmail = rcube::get_instance();
-        if ($rcmail->login($data['username'], $data['password'], $data['imap_host'] ?? 'localhost', false)) {
-            $rcmail->session->remove('user_lang');
-            $rcmail->output->redirect(['_task' => 'mail']);
-            exit;
-        }
-        return $args;
-    }
-    private function fetch_credentials(string $token): ?array
-    {
-        $url = sprintf('http://127.0.0.1:%d/api/internal/webmail-token/%s', self::PANEL_PORT, rawurlencode($token));
-        $ctx = stream_context_create(['http' => ['timeout' => self::FETCH_TIMEOUT, 'ignore_errors' => true]]);
-        $resp = @file_get_contents($url, false, $ctx);
-        if (!$resp) return null;
-        $data = json_decode($resp, true);
-        return isset($data['detail']) ? null : $data;
-    }
-}
-RCPLUGEOF
+    if [[ ! -f /opt/svqpanel/scripts/svqpanel_autologin.php ]]; then
+        echo -e "  ${RED}✗ Falta /opt/svqpanel/scripts/svqpanel_autologin.php — repo incompleto${NC}"
+        exit 1
     fi
+    cp /opt/svqpanel/scripts/svqpanel_autologin.php \
+       "${RC_PLUGIN_DIR}/svqpanel_autologin.php"
     echo -e "  ${GREEN}✓ Plugin svqpanel_autologin instalado${NC}"
 
     # ── 8. Permisos finales ────────────────────────────────────────────────
