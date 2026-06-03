@@ -32,17 +32,22 @@ class SSLManager(SystemManager):
         try:
             logger.info(f"Creating SSL cert for: {domain_name}")
 
+            # Verificar si www.dominio resuelve en DNS antes de añadirlo
+            import socket
+            domains = [domain_name]
+            try:
+                socket.getaddrinfo(f"www.{domain_name}", None)
+                domains.append(f"www.{domain_name}")
+            except socket.gaierror:
+                logger.info(f"www.{domain_name} no resuelve en DNS, omitiendo SAN")
+
+            cmd = ["certbot", "certonly", "--nginx", "--non-interactive", "--agree-tos",
+                   "-m", "admin@example.com"]  # TODO: from config
+            for d in domains:
+                cmd += ["-d", d]
+
             # Run certbot
-            self.execute_command([
-                "certbot",
-                "certonly",
-                "--nginx",
-                "-d", domain_name,
-                "-d", f"www.{domain_name}",
-                "--non-interactive",
-                "--agree-tos",
-                "-m", "admin@example.com"  # TODO: from config
-            ])
+            self.execute_command(cmd)
 
             # Set up auto-renewal
             self.execute_command([
@@ -70,10 +75,16 @@ class SSLManager(SystemManager):
         """
         if not validate_domain(domain_name):
             raise ValueError(f"Invalid domain: {domain_name}")
-        cmd = [
-            "certbot", "certonly", "--nginx",
-            "-d", domain_name, "-d", f"www.{domain_name}",
-        ]
+        import socket
+        domains = [domain_name]
+        try:
+            socket.getaddrinfo(f"www.{domain_name}", None)
+            domains.append(f"www.{domain_name}")
+        except socket.gaierror:
+            logger.info(f"www.{domain_name} no resuelve en DNS, omitiendo SAN")
+        cmd = ["certbot", "certonly", "--nginx"]
+        for d in domains:
+            cmd += ["-d", d]
         for d in (extra_domains or []):
             if validate_domain(d):
                 cmd += ["-d", d]
