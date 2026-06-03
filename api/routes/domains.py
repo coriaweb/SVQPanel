@@ -140,11 +140,23 @@ async def create_domain(
             domain.php_version or "8.2"
         )
 
+        # Autorellenar IPv4 con la IP principal del servidor si no se especificó
+        ipv4_assigned = getattr(domain, 'ipv4', None)
+        if not ipv4_assigned:
+            try:
+                from api.models.models_settings import Settings as _Settings
+                _s = db.query(_Settings).filter(_Settings.id == 1).first()
+                ipv4_assigned = (_s.server_ipv4 or None) if _s else None
+            except Exception:
+                ipv4_assigned = None
+
         db_domain = Domain(
             user_id=domain.user_id,
             domain_name=domain.domain_name,
             php_version=domain.php_version or "8.2",
-            public_html=f"/home/{user.username}/web/{domain.domain_name}/public_html"
+            public_html=f"/home/{user.username}/web/{domain.domain_name}/public_html",
+            ipv4=ipv4_assigned,
+            ipv6=getattr(domain, 'ipv6', None) or None,
         )
         db.add(db_domain)
         db.commit()

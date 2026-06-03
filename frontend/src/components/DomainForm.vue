@@ -45,27 +45,39 @@
       <label for="is_active" class="form-check-label">Dominio activo</label>
     </div>
 
-    <!-- IPv4 del servidor (solo al editar) -->
-    <template v-if="isEditing">
-      <hr class="my-3" />
-      <p class="fw-semibold mb-2 text-muted small text-uppercase">
-        <i class="bi bi-hdd-network me-1"></i> IP del servidor (IPv4)
-      </p>
-      <div class="mb-3">
-        <select v-model="form.ipv4" class="form-select">
-          <option :value="null">— IP compartida (cualquier interfaz) —</option>
-          <option
-            v-for="ip in serverIps"
-            :key="ip.address"
-            :value="ip.address"
-          >{{ ip.address }}{{ ip.note ? ' — ' + ip.note : '' }}</option>
-        </select>
-        <div class="form-text">
-          Nginx escuchará en esta IP para el dominio.
-          Útil para hosting multisitio con IPs dedicadas.
-        </div>
+    <!-- IPs del servidor (creación y edición) -->
+    <hr class="my-3" />
+    <p class="fw-semibold mb-2 text-muted small text-uppercase">
+      <i class="bi bi-hdd-network me-1"></i> Direcciones IP
+    </p>
+    <div class="mb-3">
+      <label class="form-label small mb-1">IPv4</label>
+      <select v-model="form.ipv4" class="form-select">
+        <option :value="null">— IP principal del servidor (por defecto) —</option>
+        <option
+          v-for="ip in serverIps"
+          :key="ip.address"
+          :value="ip.address"
+        >{{ ip.address }}{{ ip.note ? ' — ' + ip.note : '' }}</option>
+      </select>
+      <div class="form-text">
+        Nginx escuchará en esta IP. Dejar en blanco para usar la IP principal del servidor.
       </div>
-    </template>
+    </div>
+    <div v-if="ipv6Enabled" class="mb-3">
+      <label class="form-label small mb-1">
+        IPv6 <span class="text-muted fw-normal">(opcional)</span>
+      </label>
+      <input
+        v-model="form.ipv6"
+        type="text"
+        class="form-control font-monospace"
+        placeholder="Se puede asignar después desde la pestaña IPv6"
+      />
+      <div class="form-text">
+        Opcional. Si lo dejas vacío, puedes asignarlo después desde el detalle del dominio.
+      </div>
+    </div>
 
     <!-- Redirección y docroot (solo al editar) -->
     <template v-if="isEditing">
@@ -405,6 +417,8 @@ export default {
       custom_docroot:   props.domain?.custom_docroot || '',
       // IPv4 dedicada
       ipv4: props.domain?.ipv4 || null,
+      // IPv6 (solo en creación, opcional)
+      ipv6: props.domain?.ipv6 || null,
     })
 
     const redirectError = ref('')
@@ -435,13 +449,18 @@ export default {
       } catch { templates.value = [] }
     }
 
+    const ipv6Enabled = ref(false)
+
     const loadServerIps = async () => {
-      if (!isEditing.value) return
       try {
         const data = await api.getServerIps() || []
-        // Solo IPv4 activas
         serverIps.value = data.filter(ip => !ip.is_ipv6 && ip.is_active)
       } catch { serverIps.value = [] }
+      // Comprobar si IPv6 está habilitado en settings
+      try {
+        const s = await api.getSettings()
+        ipv6Enabled.value = !!(s.ipv6_enabled && s.ipv6_range)
+      } catch { ipv6Enabled.value = false }
     }
 
     // ── Usuarios / PHP ─────────────────────────────────────────────────────
@@ -574,6 +593,8 @@ export default {
             is_active:    form.value.is_active,
             dns_enabled:  form.value.dns_enabled,
             mail_enabled: form.value.mail_enabled,
+            ipv4:         form.value.ipv4 || null,
+            ipv6:         form.value.ipv6 || null,
           })
           // Aplicar plantilla tras crear el dominio
           if (form.value.selected_template_id && created?.id) {
@@ -674,7 +695,7 @@ export default {
       isAdminOrReseller, availablePhpVersions,
       templates, templateCategories, templatesByCategory,
       selectedTemplate, parsedPhpOverrides,
-      serverIps,
+      serverIps, ipv6Enabled,
       redirectError, docrootError,
       handleSubmit,
       // SSL

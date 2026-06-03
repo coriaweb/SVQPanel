@@ -14,6 +14,8 @@ class DomainCreate(BaseModel):
     php_version: Optional[str] = Field("8.2", pattern="^(7\\.4|8\\.[0-5])$")
     dns_enabled:  Optional[bool] = False
     mail_enabled: Optional[bool] = False
+    ipv4: Optional[str] = None
+    ipv6: Optional[str] = None
 
 
 class DomainUpdate(BaseModel):
