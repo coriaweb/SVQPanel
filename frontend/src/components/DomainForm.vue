@@ -352,7 +352,9 @@
         </template>
 
         <div class="d-flex gap-2 flex-wrap">
-          <button type="button" class="btn btn-sm btn-success" @click="applySSL" :disabled="sslLoading">
+          <button v-if="ssl.enabled || ssl.cert_info" type="button" class="btn btn-sm"
+            :class="ssl.enabled ? 'btn-success' : 'btn-outline-danger'"
+            @click="applySSL" :disabled="sslLoading">
             <span v-if="sslLoading" class="spinner-border spinner-border-sm me-1"></span>
             <template v-if="ssl.enabled">
               {{ ssl.cert_info ? 'Actualizar SSL' : "Activar SSL (Let's Encrypt)" }}
