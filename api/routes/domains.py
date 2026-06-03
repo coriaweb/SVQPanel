@@ -360,8 +360,13 @@ async def update_domain(
             if new_ipv4 != db_domain.ipv4:
                 db_domain.ipv4 = new_ipv4
                 ipv4_changed = True
-        if domain_update.ipv6 is not None:
-            db_domain.ipv6 = domain_update.ipv6
+
+        ipv6_changed = False
+        if 'ipv6' in domain_update.model_fields_set:
+            new_ipv6 = domain_update.ipv6 or None
+            if new_ipv6 != db_domain.ipv6:
+                db_domain.ipv6 = new_ipv6
+                ipv6_changed = True
 
         # Redirección y docroot personalizado (Fase 16)
         # Se aceptan strings vacíos para "borrar" el valor
@@ -394,7 +399,7 @@ async def update_domain(
         db.refresh(db_domain)
 
         # Regenerar vhost si cambió algún parámetro que afecta a nginx
-        if redir_changed or docroot_changed or ipv4_changed or readonly_changed:
+        if redir_changed or docroot_changed or ipv4_changed or ipv6_changed or readonly_changed:
             owner = db.query(User).filter(User.id == db_domain.user_id).first()
             if owner:
                 try:

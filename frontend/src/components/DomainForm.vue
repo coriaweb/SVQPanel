@@ -562,6 +562,7 @@ export default {
             php_version: form.value.php_version,
             is_active:   form.value.is_active,
             ipv4:        form.value.ipv4 || null,
+            ipv6:        form.value.ipv6 || null,
             redirect_to:    form.value.redirect_enabled ? form.value.redirect_to.trim() : '',
             custom_docroot: !form.value.redirect_enabled ? form.value.custom_docroot.trim() : '',
           })
