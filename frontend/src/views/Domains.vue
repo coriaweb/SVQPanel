@@ -796,7 +796,7 @@ export default {
 .t-domain:hover { color: var(--color-primary); }
 .t-muted { color: var(--text-muted); }
 .t-actions { display: inline-flex; gap: 4px; justify-content: flex-end; }
-.icon-act { width: 30px; height: 30px; border: 1px solid var(--border); background: var(--surface); border-radius: var(--r-sm); color: var(--text-secondary); cursor: pointer; transition: all var(--t-fast); }
+.icon-act { display: inline-flex; align-items: center; justify-content: center; width: 30px; height: 30px; border: 1px solid var(--border); background: var(--surface); border-radius: var(--r-sm); color: var(--text-secondary); cursor: pointer; transition: all var(--t-fast); text-decoration: none; }
 .icon-act:hover { background: var(--surface-inset); color: var(--text); }
 .icon-act.is-danger:hover { background: var(--danger-bg); color: var(--danger); border-color: var(--danger-border); }
 
