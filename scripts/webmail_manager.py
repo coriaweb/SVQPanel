@@ -118,16 +118,32 @@ class WebmailManager(SystemManager):
         webmail_key  = f"/etc/letsencrypt/live/{host}/privkey.pem"
         domain_cert  = f"/etc/letsencrypt/live/{domain}/fullchain.pem"
         domain_key   = f"/etc/letsencrypt/live/{domain}/privkey.pem"
-        import os as _os
+        import os as _os, subprocess as _sp
         if _os.path.exists(webmail_cert):
             ssl_cert, ssl_key = webmail_cert, webmail_key
         else:
             ssl_cert, ssl_key = domain_cert, domain_key
 
+        # IP pública del servidor — necesaria para que el SNI funcione cuando
+        # hay varios vhosts SSL en la misma IP (listen genérico 443 crea
+        # conflictos de orden alfabético entre vhosts).
+        srv_ip = None
+        try:
+            _r = _sp.run(["ip", "-4", "addr", "show", "scope", "global"],
+                         capture_output=True, text=True, timeout=5)
+            for _l in _r.stdout.splitlines():
+                _l = _l.strip()
+                if _l.startswith("inet "):
+                    srv_ip = _l.split()[1].split("/")[0]; break
+        except Exception:
+            pass
+        ip_listen80  = f"    listen {srv_ip}:80;\n" if srv_ip else ""
+        ip_listen443 = f"    listen {srv_ip}:443 ssl;\n" if srv_ip else ""
+
         out = f"""# SVQPanel — Webmail de {domain} (Roundcube compartido)
 server {{
     listen 80;
-    listen [::]:80;
+{ip_listen80}    listen [::]:80;
     server_name {host};
 
     # .well-known con ^~ tiene prioridad sobre regex — necesario para certbot ACME
@@ -143,7 +159,7 @@ server {{
 
 server {{
     listen 443 ssl;
-    listen [::]:443 ssl;
+{ip_listen443}    listen [::]:443 ssl;
     http2 on;
     server_name {host};
 
