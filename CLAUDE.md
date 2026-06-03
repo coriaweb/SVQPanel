@@ -24,6 +24,33 @@ Patrón recomendado: el install **no hardcodea** la lógica, sino que invoca el
 mismo código del panel (p. ej. `python -m api.cli migrate_php_pools --force`),
 de modo que un único cambio en el código se propaga a runtime y a install.
 
+## 🌐 Soporte Dual Apache + Nginx (Fase 15)
+
+El panel soporta dos configuraciones de instalación:
+1. **Nginx solo** — recomendado, mejor rendimiento
+2. **Apache + Nginx** — Apache para dominios legacy, Nginx para velocidad
+
+**Arquitectura:**
+- `scripts/webserver_config.py` — detecta/guarda la opción elegida en `/etc/svqpanel/webserver.conf`
+- `scripts/apache_vhost_generator.py` — genera vhosts Apache con feature parity a Nginx
+  - Headers HTTP de seguridad (X-Frame-Options, X-Content-Type-Options, HSTS, CSP, etc.)
+  - Bloqueo de bots maliciosos (RewriteCond)
+  - SSL/TLS, IPv6, IPv4, redireccionamiento
+  - Modo readonly (PUT/DELETE/POST bloqueados)
+- `scripts/domain_manager.py` — auto-detecta webserver y crea vhost Apache o Nginx
+- `install.sh` — guarda la opción elegida en `/etc/svqpanel/webserver.conf` tras la instalación
+
+**Flujo:**
+1. Durante `install.sh`, user elige "1) Nginx" o "2) Apache+Nginx" → se guarda en `/etc/svqpanel/webserver.conf`
+2. Al crear un dominio, `domain_manager.create_domain()` detecta la opción y crea vhost Apache o Nginx
+3. Features (bad bots, SSL, IPv6, etc.) funcionan igual en ambos
+4. Para Apache+Nginx: nuevos dominios van a Apache; dominios previos quedan donde estén
+
+**Notas técnicas:**
+- Apache usa `ProxyPassMatch` con socket PHP-FPM (mismo que Nginx)
+- Bad bots: Nginx usa `map $http_user_agent` global; Apache usa `RewriteCond` por vhost
+- Headers: inyectados via `Header always set ...` en Apache, directamente en vhost Nginx
+
 ## 🔒 Seguridad — Aislamiento PHP por dominio
 
 Cada dominio tiene un **pool PHP-FPM dedicado** (`/etc/php/{ver}/fpm/pool.d/
