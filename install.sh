@@ -196,6 +196,24 @@ apt-get upgrade -y -qq
 echo -e "${GREEN}✓ Sistema actualizado${NC}\n"
 
 ###############################################################################
+# 3b. SWAP — crear si no existe (evita OOM killer en VPS con poca RAM)
+###############################################################################
+if ! swapon --show | grep -q '/'; then
+    echo -e "${YELLOW}Creando archivo de swap (2 GB)...${NC}"
+    fallocate -l 2G /swapfile 2>/dev/null || dd if=/dev/zero of=/swapfile bs=1M count=2048 status=none
+    chmod 600 /swapfile
+    mkswap /swapfile -q
+    swapon /swapfile
+    grep -q '/swapfile' /etc/fstab || echo '/swapfile none swap sw 0 0' >> /etc/fstab
+    # Usar swap solo cuando RAM > 90% ocupada (menor latencia en producción)
+    grep -q 'vm.swappiness' /etc/sysctl.conf || echo 'vm.swappiness=10' >> /etc/sysctl.conf
+    sysctl -p > /dev/null 2>&1
+    echo -e "${GREEN}✓ Swap de 2 GB creado y activado${NC}\n"
+else
+    echo -e "${GREEN}✓ Swap ya existe, no se recrea${NC}\n"
+fi
+
+###############################################################################
 # 4. INSTALAR DEPENDENCIAS BASE
 ###############################################################################
 echo -e "${YELLOW}Instalando dependencias base...${NC}"
@@ -1430,7 +1448,9 @@ WorkingDirectory=/opt/svqpanel
 # (ssh-keygen/ssh/scp para el cluster DNS, nft, certbot, etc.). Solo con el venv
 # fallaban con FileNotFoundError.
 Environment="PATH=/opt/svqpanel/venv/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
-ExecStart=/opt/svqpanel/venv/bin/uvicorn api.main:app --host 127.0.0.1 --port 8001
+# --limit-max-requests: reinicia el worker cada N peticiones liberando memoria acumulada
+# --timeout-keep-alive: cierra keep-alive rápido para no retener conexiones/memoria
+ExecStart=/opt/svqpanel/venv/bin/uvicorn api.main:app --host 127.0.0.1 --port 8001 --limit-max-requests 500 --timeout-keep-alive 2
 Restart=always
 RestartSec=10
 TimeoutStartSec=30
