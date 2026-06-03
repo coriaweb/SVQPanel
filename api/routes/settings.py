@@ -160,15 +160,16 @@ async def get_next_ipv6(
         except ValueError:
             pass
 
-    # Elegir una IP aleatoria libre dentro del rango (offset 2..min(prefixlen, 64k))
-    max_hosts = min(2 ** (128 - network.prefixlen), 65536)
-    # Generar un orden aleatorio de offsets para no repetir candidatos
-    offsets = list(range(2, max_hosts))
-    random.shuffle(offsets)
+    # Elegir una IP aleatoria libre dentro del rango completo
+    # Para rangos grandes (>/64) el espacio es enorme: basta con intentar
+    # unos pocos offsets aleatorios — la probabilidad de colisión es insignificante
+    total_hosts = 2 ** (128 - network.prefixlen) - 2  # excluir red y broadcast
+    max_attempts = 64
     next_ip = None
-    for offset in offsets:
+    for _ in range(max_attempts):
+        offset = random.randint(2, max(2, total_hosts))
         candidate = ipaddress.IPv6Address(network_int + offset)
-        if candidate not in used:
+        if candidate in network and candidate not in used:
             next_ip = str(candidate)
             break
 
