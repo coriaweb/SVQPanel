@@ -116,6 +116,36 @@
           </div>
         </BaseCard>
 
+        <!-- HTTP/3 (QUIC) -->
+        <BaseCard title="HTTP/3 (QUIC)" icon="lightning-charge">
+          <template #actions>
+            <StatusBadge
+              :status="domain.http3_enabled ? 'active' : 'none'"
+              :label="domain.http3_enabled ? 'Activo' : 'Off'"
+            />
+          </template>
+          <p class="dd-muted">
+            {{ domain.http3_enabled
+              ? 'HTTP/3 activo. El navegador usará QUIC (UDP 443) para conexiones más rápidas.'
+              : 'HTTP/3 usa QUIC (UDP) para cargas más rápidas. Requiere SSL activo y nginx 1.25+.' }}
+          </p>
+          <p v-if="!domain.ssl_enabled" class="dd-muted" style="color:var(--warning)">
+            <i class="bi bi-exclamation-triangle"></i> Requiere SSL activo en este dominio.
+          </p>
+          <div class="dd-actions-row">
+            <BaseButton
+              :variant="domain.http3_enabled ? 'danger' : 'subtle'"
+              size="sm"
+              :icon="domain.http3_enabled ? 'lightning' : 'lightning-charge'"
+              :loading="http3Saving"
+              :disabled="!domain.ssl_enabled && !domain.http3_enabled"
+              @click="toggleHttp3"
+            >
+              {{ domain.http3_enabled ? 'Desactivar' : 'Activar HTTP/3' }}
+            </BaseButton>
+          </div>
+        </BaseCard>
+
         <!-- Headers HTTP de seguridad -->
         <BaseCard title="Headers de seguridad" icon="shield-check">
           <template #actions>
@@ -880,6 +910,26 @@ export default {
       }
     }
 
+    // ── HTTP/3 (QUIC) ───────────────────────────────────────────────────────
+    const http3Saving = ref(false)
+
+    const toggleHttp3 = async () => {
+      http3Saving.value = true
+      try {
+        const enable = !domain.value?.http3_enabled
+        await api.updateDomain(domainId.value, { http3_enabled: enable })
+        await reloadDomain()
+        store.showNotification(
+          enable ? 'HTTP/3 activado — recuerda abrir el puerto UDP 443 en el firewall' : 'HTTP/3 desactivado',
+          enable ? 'success' : 'warning'
+        )
+      } catch (e) {
+        store.showNotification('Error: ' + e.message, 'danger')
+      } finally {
+        http3Saving.value = false
+      }
+    }
+
     // ── Headers HTTP de seguridad ───────────────────────────────────────────
     const secHeadersSaving = ref(false)
 
@@ -922,6 +972,7 @@ export default {
       showReadonlyForm, readonlyIps, readonlySaving, saveReadonlyMode, editReadonlyIps,
       domainKnownBots, domainCustomBots, botsLoading, botsSaving, saveDomainBots,
       secHeadersSaving, toggleSecurityHeaders,
+      http3Saving, toggleHttp3,
     }
   },
 }

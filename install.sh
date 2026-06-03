@@ -251,8 +251,7 @@ apt-get install -y -qq \
     postgresql \
     postgresql-contrib \
     postgresql-server-dev-all \
-    certbot \
-    python3-certbot-nginx \
+    snapd \
     rsyslog \
     rsync \
     zstd \
@@ -261,10 +260,26 @@ apt-get install -y -qq \
 echo -e "${GREEN}✓ Dependencias instaladas${NC}\n"
 
 ###############################################################################
-# 5. INSTALAR NODEJS (desde NodeSource para versión moderna)
+# 4b. INSTALAR CERTBOT (vía snap — versión oficial siempre actualizada)
 ###############################################################################
-echo -e "${YELLOW}Instalando Node.js 20...${NC}"
-curl -fsSL https://deb.nodesource.com/setup_20.x | bash - > /dev/null 2>&1
+# El certbot de Debian apt está muy desactualizado (2.1.x vs 5.x actual).
+# El método recomendado por EFF/Let's Encrypt es instalarlo via snap.
+echo -e "${YELLOW}Instalando Certbot vía snap...${NC}"
+# Asegurarse de que snapd está activo
+systemctl enable --now snapd.socket 2>/dev/null || true
+# Eliminar versión apt si existía
+apt-get remove -y -qq certbot python3-certbot-nginx 2>/dev/null || true
+# Instalar certbot snap
+snap install --classic certbot 2>/dev/null || true
+# Symlink para que esté en PATH
+ln -sf /snap/bin/certbot /usr/bin/certbot 2>/dev/null || true
+echo -e "${GREEN}✓ Certbot $(certbot --version 2>&1) instalado${NC}\n"
+
+###############################################################################
+# 5. INSTALAR NODEJS 22 LTS (desde NodeSource — repo oficial)
+###############################################################################
+echo -e "${YELLOW}Instalando Node.js 22 LTS...${NC}"
+curl -fsSL https://deb.nodesource.com/setup_22.x | bash - > /dev/null 2>&1
 apt-get install -y -qq nodejs
 echo -e "${GREEN}✓ Node.js $(node -v) instalado${NC}\n"
 
@@ -272,19 +287,34 @@ echo -e "${GREEN}✓ Node.js $(node -v) instalado${NC}\n"
 # 6. INSTALAR WEBSERVER
 ###############################################################################
 if [[ "$WEBSERVER" == "nginx" || "$WEBSERVER" == "apache+nginx" ]]; then
-    echo -e "${YELLOW}Instalando Nginx...${NC}"
+    echo -e "${YELLOW}Instalando Nginx (repo oficial nginx.org — versión stable con HTTP/3)...${NC}"
+
+    # Repositorio oficial de nginx.org: versión stable más reciente (1.26+),
+    # con soporte HTTP/3 (QUIC), actualizaciones de seguridad rápidas.
+    # El nginx de Debian apt se queda en 1.22 (antiguo, sin HTTP/3).
+    curl -fsSL https://nginx.org/keys/nginx_signing.key | gpg --dearmor \
+        -o /usr/share/keyrings/nginx-archive-keyring.gpg
+    echo "deb [signed-by=/usr/share/keyrings/nginx-archive-keyring.gpg] \
+http://nginx.org/packages/debian $(lsb_release -cs) nginx" \
+        > /etc/apt/sources.list.d/nginx.list
+    # Pin para preferir nginx.org sobre el de Debian
+    cat > /etc/apt/preferences.d/99nginx << 'PINEOF'
+Package: nginx
+Pin: origin nginx.org
+Pin-Priority: 900
+PINEOF
+    apt-get update -qq
     apt-get install -y -qq nginx
     systemctl enable nginx
 
     # Endurecimiento global: ocultar la versión de nginx (server_tokens off)
-    # para no revelar la versión en cabeceras y páginas de error.
     cat > /etc/nginx/conf.d/svqpanel-hardening.conf << 'NGINXHARDEOF'
 # SVQPanel — endurecimiento global de nginx
 server_tokens off;
 NGINXHARDEOF
 
     systemctl start nginx
-    echo -e "${GREEN}✓ Nginx instalado${NC}\n"
+    echo -e "${GREEN}✓ Nginx $(nginx -v 2>&1) instalado desde repo oficial${NC}\n"
 fi
 
 if [[ "$WEBSERVER" == "apache+nginx" ]]; then

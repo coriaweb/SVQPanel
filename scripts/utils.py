@@ -299,6 +299,7 @@ def generate_nginx_config(
     allowed_mutation_ips: Optional[str] = None,
     blocked_user_agents: Optional[list] = None,
     security_headers_enabled: bool = False,
+    http3_enabled: bool = False,
 ) -> str:
     """Generate Nginx vhost configuration (Hestia-style paths)"""
 
@@ -355,6 +356,16 @@ def generate_nginx_config(
         '    add_header Strict-Transport-Security "max-age=31536000; includeSubDomains; preload" always;'
         if (hsts and ssl_enabled) else ""
     )
+
+    # HTTP/3 (QUIC) — requiere nginx 1.25+ con http_v3_module
+    # Añade listen quic en puerto 443 y el header Alt-Svc para anunciar HTTP/3
+    http3_listen = ""
+    http3_header = ""
+    if http3_enabled and ssl_enabled:
+        http3_listen = f"\n    listen {ipv4 + ':' if ipv4 else ''}443 quic reuseport;"
+        if ipv6:
+            http3_listen += f"\n    listen [{ipv6}]:443 quic reuseport;"
+        http3_header = '\n    add_header Alt-Svc \'h3=":443"; ma=86400\' always;'
 
     # Headers de seguridad HTTP (sin CSP para no romper contenido de clientes)
     sec_headers_http = ""
@@ -448,7 +459,7 @@ def generate_nginx_config(
         server_block += f"""
 server {{
     listen {ipv4_listen_https} ssl http2;
-    {ipv6_listen_https}
+    {ipv6_listen_https}{http3_listen}
     server_name {server_names};
     root {public_html};
 
@@ -456,7 +467,7 @@ server {{
     ssl_certificate_key /etc/letsencrypt/live/{domain}/privkey.pem;
     ssl_protocols TLSv1.2 TLSv1.3;
     ssl_ciphers HIGH:!aNULL:!MD5;
-{hsts_header}{sec_headers_https}
+{hsts_header}{http3_header}{sec_headers_https}
 
     index index.php index.html index.htm;
 {skip_block}    set $phpfpm_backend php_{backend_name};

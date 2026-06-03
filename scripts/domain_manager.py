@@ -371,6 +371,7 @@ class DomainManager(SystemManager):
         allowed_mutation_ips: str = None,
         blocked_user_agents: list = None,
         security_headers_enabled: bool = False,
+        http3_enabled: bool = False,
         webserver: str = None,
     ) -> dict:
         """
@@ -457,6 +458,7 @@ class DomainManager(SystemManager):
                 allowed_mutation_ips=allowed_mutation_ips,
                 blocked_user_agents=blocked_user_agents or [],
                 security_headers_enabled=security_headers_enabled,
+                http3_enabled=http3_enabled,
             )
             with open(config_path, "w") as f:
                 f.write(config_content)

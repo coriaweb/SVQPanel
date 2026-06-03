@@ -69,6 +69,8 @@ class Domain(Base):
 
     # Headers HTTP de seguridad (X-Frame-Options, X-Content-Type-Options, etc.)
     security_headers_enabled = Column(Boolean, default=False, nullable=False)
+    # HTTP/3 (QUIC) — requiere nginx 1.25+ con http_v3_module
+    http3_enabled = Column(Boolean, default=False, nullable=False)
 
     # Bad bots bloqueados a nivel de dominio (JSON array de patrones, ej: ["zgrab","nikto"])
     blocked_user_agents = Column(Text, nullable=True)

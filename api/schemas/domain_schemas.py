@@ -49,6 +49,8 @@ class DomainUpdate(BaseModel):
     allowed_mutation_ips:  Optional[str]  = None  # JSON array de IPs/CIDRs
     # Headers HTTP de seguridad
     security_headers_enabled: Optional[bool] = None
+    # HTTP/3 (QUIC)
+    http3_enabled: Optional[bool] = None
 
     @field_validator('allowed_mutation_ips')
     @classmethod
@@ -101,6 +103,8 @@ class DomainResponse(BaseModel):
     allowed_mutation_ips:  Optional[str]  = None  # JSON array
     # Headers HTTP de seguridad
     security_headers_enabled: Optional[bool] = False
+    # HTTP/3 (QUIC)
+    http3_enabled: Optional[bool] = False
     created_at: Optional[datetime] = None
     updated_at: Optional[datetime] = None
 

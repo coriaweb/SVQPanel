@@ -467,6 +467,8 @@ def _run_migrations():
         "ALTER TABLE domains ADD COLUMN IF NOT EXISTS allowed_mutation_ips TEXT",
         # Headers HTTP de seguridad por dominio
         "ALTER TABLE domains ADD COLUMN IF NOT EXISTS security_headers_enabled BOOLEAN NOT NULL DEFAULT FALSE",
+        # HTTP/3 por dominio
+        "ALTER TABLE domains ADD COLUMN IF NOT EXISTS http3_enabled BOOLEAN NOT NULL DEFAULT FALSE",
         # ─────────────────────────────────────────────────────────────────
         # Fase 18: Notificaciones (avisos de cuota disco/tráfico al usuario)
         # ─────────────────────────────────────────────────────────────────
