@@ -71,6 +71,22 @@
       </div>
     </div>
 
+    <!-- Barra de acciones en lote -->
+    <div v-if="selected.size > 0" class="bulk-bar">
+      <span class="bulk-count">
+        <i class="bi bi-check2-square me-1"></i>
+        {{ selected.size }} seleccionado{{ selected.size !== 1 ? 's' : '' }}
+      </span>
+      <button class="btn btn-sm btn-outline-danger" @click="deleteSelected" :disabled="bulkDeleting">
+        <span v-if="bulkDeleting" class="spinner-border spinner-border-sm me-1"></span>
+        <i v-else class="bi bi-trash me-1"></i>
+        Eliminar seleccionados
+      </button>
+      <button class="btn btn-sm btn-outline-secondary" @click="clearSelection">
+        Cancelar
+      </button>
+    </div>
+
     <div class="card">
       <div class="card-body p-0">
         <div v-if="loading" class="text-center py-5">
@@ -86,6 +102,16 @@
           <table class="table table-hover align-middle mb-0">
             <thead class="table-light">
               <tr>
+                <th style="width:36px">
+                  <input
+                    type="checkbox"
+                    class="form-check-input"
+                    :checked="allSelected"
+                    :indeterminate.prop="someSelected"
+                    @change="toggleAll"
+                    title="Seleccionar todo"
+                  >
+                </th>
                 <th>Nombre</th>
                 <th>Tamaño</th>
                 <th>Modificado</th>
@@ -94,7 +120,15 @@
               </tr>
             </thead>
             <tbody>
-              <tr v-for="entry in entries" :key="entry.path">
+              <tr v-for="entry in entries" :key="entry.path" :class="{ 'table-active': selected.has(entry.path) }">
+                <td>
+                  <input
+                    type="checkbox"
+                    class="form-check-input"
+                    :checked="selected.has(entry.path)"
+                    @change="toggleSelect(entry)"
+                  >
+                </td>
                 <td>
                   <button
                     v-if="entry.type === 'directory'"
@@ -158,7 +192,6 @@
 
     <Modal :isOpen="showEditor" :title="editingPath" size="lg" @close="closeEditor">
       <div>
-        <!-- Barra de herramientas del editor -->
         <div class="d-flex justify-content-between align-items-center mb-2">
           <div class="d-flex gap-2 align-items-center">
             <span class="badge bg-secondary font-monospace">{{ editingLang }}</span>
@@ -178,7 +211,6 @@
           @keydown="handleEditorKeydown"
         ></textarea>
 
-        <!-- Barra de estado -->
         <div class="d-flex justify-content-between align-items-center mt-1 px-1">
           <small class="text-muted">
             {{ editorStats.lines }} líneas · {{ editorStats.chars }} caracteres · {{ editorStats.sizeLabel }}
@@ -267,10 +299,63 @@ export default {
     const editingPath = ref('')
     const editorContent = ref('')
     const saving = ref(false)
-    const uploadProgress = ref(null)   // null = idle, 0-100 = subiendo
-    const uploadFileNames = ref('')    // nombres de los archivos en subida
-    const uploadOverwrite = ref(true)  // sobreescribir archivos existentes
-    const extracting = ref(null)       // path del ZIP que se está extrayendo
+    const uploadProgress = ref(null)
+    const uploadFileNames = ref('')
+    const uploadOverwrite = ref(true)
+    const extracting = ref(null)
+
+    // — Selección múltiple —
+    const selected = ref(new Set())
+    const bulkDeleting = ref(false)
+
+    const allSelected = computed(() =>
+      entries.value.length > 0 && entries.value.every(e => selected.value.has(e.path))
+    )
+    const someSelected = computed(() =>
+      selected.value.size > 0 && !allSelected.value
+    )
+
+    const toggleSelect = (entry) => {
+      const s = new Set(selected.value)
+      if (s.has(entry.path)) s.delete(entry.path)
+      else s.add(entry.path)
+      selected.value = s
+    }
+
+    const toggleAll = () => {
+      if (allSelected.value) {
+        selected.value = new Set()
+      } else {
+        selected.value = new Set(entries.value.map(e => e.path))
+      }
+    }
+
+    const clearSelection = () => { selected.value = new Set() }
+
+    const deleteSelected = async () => {
+      const paths = [...selected.value]
+      const names = entries.value
+        .filter(e => selected.value.has(e.path))
+        .map(e => e.name)
+      if (!confirm(`¿Eliminar ${paths.length} elemento${paths.length !== 1 ? 's' : ''}?\n\n${names.join('\n')}`)) return
+      bulkDeleting.value = true
+      let errors = 0
+      for (const path of paths) {
+        try {
+          await api.deleteDomainEntry(selectedDomainId.value, path)
+        } catch {
+          errors++
+        }
+      }
+      bulkDeleting.value = false
+      selected.value = new Set()
+      if (errors === 0) {
+        store.showNotification(`${paths.length} elemento${paths.length !== 1 ? 's' : ''} eliminado${paths.length !== 1 ? 's' : ''}`, 'success')
+      } else {
+        store.showNotification(`Eliminados con ${errors} error${errors !== 1 ? 'es' : ''}`, 'warning')
+      }
+      await loadFiles()
+    }
 
     // — Editor —
     const editorWrap = ref(false)
@@ -329,6 +414,7 @@ export default {
     const loadFiles = async () => {
       if (!selectedDomainId.value) return
       loading.value = true
+      selected.value = new Set()
       try {
         entries.value = await api.listDomainFiles(selectedDomainId.value, currentPath.value)
       } catch (error) {
@@ -370,19 +456,12 @@ export default {
     const uploadFiles = async (event) => {
       const files = event.target.files
       if (!files?.length) return
-
-      // Resumen de nombres para mostrar en la barra
       const names = Array.from(files).map(f => f.name)
-      uploadFileNames.value = names.length <= 2
-        ? names.join(', ')
-        : `${names[0]} y ${names.length - 1} más`
-
+      uploadFileNames.value = names.length <= 2 ? names.join(', ') : `${names[0]} y ${names.length - 1} más`
       uploadProgress.value = 0
       try {
         const result = await api.uploadDomainFiles(
-          selectedDomainId.value,
-          currentPath.value,
-          files,
+          selectedDomainId.value, currentPath.value, files,
           (pct) => { uploadProgress.value = pct },
           uploadOverwrite.value
         )
@@ -407,10 +486,7 @@ export default {
       extracting.value = entry.path
       try {
         const result = await api.extractDomainZip(selectedDomainId.value, entry.path)
-        store.showNotification(
-          `ZIP extraído correctamente (${result.files_extracted} elementos)`,
-          'success'
-        )
+        store.showNotification(`ZIP extraído correctamente (${result.files_extracted} elementos)`, 'success')
         await loadFiles()
       } catch (error) {
         store.showNotification(`Error extrayendo ZIP: ${error.message}`, 'danger')
@@ -419,15 +495,12 @@ export default {
       }
     }
 
-    // — Editor: teclado —
     const handleEditorKeydown = (event) => {
-      // Ctrl/Cmd+S → guardar
       if ((event.ctrlKey || event.metaKey) && event.key === 's') {
         event.preventDefault()
         if (!saving.value) saveFile()
         return
       }
-      // Tab → 2 espacios en lugar de cambiar el foco
       if (event.key === 'Tab') {
         event.preventDefault()
         const ta = event.target
@@ -440,7 +513,6 @@ export default {
       }
     }
 
-    // — Chmod —
     const openChmod = (entry) => {
       chmodEntry.value = entry
       const digits = (entry.permissions || '644').padStart(3, '0').slice(-3)
@@ -534,66 +606,43 @@ export default {
     const formatSize = (bytes) => {
       if (!bytes) return '0 B'
       const units = ['B', 'KB', 'MB', 'GB']
-      let size = bytes
-      let unit = 0
-      while (size >= 1024 && unit < units.length - 1) {
-        size /= 1024
-        unit += 1
-      }
+      let size = bytes; let unit = 0
+      while (size >= 1024 && unit < units.length - 1) { size /= 1024; unit++ }
       return `${size.toFixed(size >= 10 || unit === 0 ? 0 : 1)} ${units[unit]}`
     }
 
     const formatDate = (date) => date ? new Date(date).toLocaleString() : '-'
-
-    const isEditable = (entry) => {
-      const ext = entry.name.split('.').pop()?.toLowerCase()
-      return editableExtensions.includes(ext)
-    }
-
+    const isEditable = (entry) => editableExtensions.includes(entry.name.split('.').pop()?.toLowerCase())
     const isZip = (entry) => entry.name.toLowerCase().endsWith('.zip')
 
     const fileIcon = (entry) => {
       const ext = entry.name.split('.').pop()?.toLowerCase()
-      if (['zip', 'gz', 'tar', 'rar', '7z', 'bz2', 'xz'].includes(ext))
-        return 'bi bi-file-zip-fill text-warning'
-      if (['jpg', 'jpeg', 'png', 'gif', 'webp', 'svg', 'ico', 'bmp'].includes(ext))
-        return 'bi bi-file-image text-info'
-      if (['mp4', 'avi', 'mov', 'mkv', 'webm'].includes(ext))
-        return 'bi bi-file-play text-danger'
-      if (['mp3', 'ogg', 'wav', 'flac', 'aac'].includes(ext))
-        return 'bi bi-file-music text-danger'
-      if (['pdf'].includes(ext))
-        return 'bi bi-file-pdf text-danger'
-      if (['php'].includes(ext))
-        return 'bi bi-file-code text-primary'
-      if (['html', 'htm', 'css', 'js', 'ts', 'vue', 'json', 'xml', 'yml', 'yaml'].includes(ext))
-        return 'bi bi-file-code text-success'
-      if (['txt', 'md', 'log', 'csv'].includes(ext))
-        return 'bi bi-file-text text-secondary'
-      if (['sql'].includes(ext))
-        return 'bi bi-file-earmark-data text-warning'
+      if (['zip', 'gz', 'tar', 'rar', '7z', 'bz2', 'xz'].includes(ext)) return 'bi bi-file-zip-fill text-warning'
+      if (['jpg', 'jpeg', 'png', 'gif', 'webp', 'svg', 'ico', 'bmp'].includes(ext)) return 'bi bi-file-image text-info'
+      if (['mp4', 'avi', 'mov', 'mkv', 'webm'].includes(ext)) return 'bi bi-file-play text-danger'
+      if (['mp3', 'ogg', 'wav', 'flac', 'aac'].includes(ext)) return 'bi bi-file-music text-danger'
+      if (['pdf'].includes(ext)) return 'bi bi-file-pdf text-danger'
+      if (['php'].includes(ext)) return 'bi bi-file-code text-primary'
+      if (['html', 'htm', 'css', 'js', 'ts', 'vue', 'json', 'xml', 'yml', 'yaml'].includes(ext)) return 'bi bi-file-code text-success'
+      if (['txt', 'md', 'log', 'csv'].includes(ext)) return 'bi bi-file-text text-secondary'
+      if (['sql'].includes(ext)) return 'bi bi-file-earmark-data text-warning'
       return 'bi bi-file-earmark text-secondary'
     }
 
     onMounted(loadDomains)
 
     return {
-      // lista de archivos
       domains, entries, selectedDomainId, currentPath, breadcrumb, loading, disabled,
       loadFiles, changeDomain, openDirectory, goUp, createFolder,
-      // upload
       uploadProgress, uploadFileNames, uploadOverwrite, uploadFiles,
-      // editor
       showEditor, editingPath, editorContent, saving,
       editorWrap, editingLang, editorStats,
       handleEditorKeydown, editFile, saveFile, closeEditor,
-      // descarga / rename / delete
       downloadFile, renameEntry, deleteEntry,
-      // zip
       extracting, extractZip,
-      // chmod
       showChmod, savingChmod, chmodEntry, chmodBits, chmodOctal, openChmod, applyChmod,
-      // helpers
+      selected, bulkDeleting, allSelected, someSelected,
+      toggleSelect, toggleAll, clearSelection, deleteSelected,
       formatSize, formatDate, isEditable, isZip, fileIcon,
     }
   },
@@ -610,10 +659,26 @@ export default {
   white-space: pre-wrap;
   overflow-wrap: break-word;
 }
-
 .file-editor.file-editor-nowrap {
   white-space: pre;
   overflow-wrap: normal;
   overflow-x: auto;
+}
+
+.bulk-bar {
+  display: flex;
+  align-items: center;
+  gap: .75rem;
+  padding: .6rem 1rem;
+  margin-bottom: .75rem;
+  background: color-mix(in srgb, var(--accent) 8%, var(--surface-2));
+  border: 1px solid color-mix(in srgb, var(--accent) 20%, transparent);
+  border-radius: var(--radius-md);
+}
+.bulk-count {
+  font-size: .875rem;
+  font-weight: 500;
+  color: var(--accent);
+  margin-right: auto;
 }
 </style>
