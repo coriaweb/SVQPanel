@@ -137,6 +137,11 @@
           <i class="bi bi-journal-text me-1"></i> Auditoría
         </a>
       </li>
+      <li class="nav-item">
+        <a class="nav-link" :class="{active: tab==='badbots'}" href="#" @click.prevent="changeTab('badbots')">
+          <i class="bi bi-robot me-1"></i> Bad Bots
+        </a>
+      </li>
     </ul>
 
     <!-- ═══════════════════════════ Firewall ═══════════════════════════ -->
@@ -852,6 +857,65 @@
       </form>
     </Modal>
 
+    <!-- ═══════════════════════════ Bad Bots ═══════════════════════════ -->
+    <div v-if="tab === 'badbots'">
+      <div class="card mb-3">
+        <div class="card-header d-flex justify-content-between align-items-center">
+          <span><i class="bi bi-robot me-2"></i>Bloqueo de User-Agents maliciosos</span>
+          <button class="btn btn-primary btn-sm" @click="saveBadBots" :disabled="botsSaving">
+            <span v-if="botsSaving" class="spinner-border spinner-border-sm me-1"></span>
+            <i v-else class="bi bi-save me-1"></i>Guardar y recargar nginx
+          </button>
+        </div>
+        <div class="card-body">
+          <p class="text-muted small mb-3">
+            Los user-agents activados serán bloqueados en nginx con HTTP 444 (cierra conexión sin respuesta).
+            Los cambios se aplican inmediatamente recargando nginx.
+          </p>
+
+          <div v-if="botsLoading" class="text-center py-4">
+            <div class="spinner-border spinner-border-sm"></div>
+          </div>
+          <div v-else>
+            <!-- Catálogo de bots conocidos -->
+            <h6 class="fw-semibold mb-2">Bots conocidos</h6>
+            <div class="row g-2 mb-4">
+              <div v-for="bot in knownBots" :key="bot.id" class="col-md-6 col-lg-4">
+                <div class="border rounded p-2 d-flex align-items-start gap-2"
+                     :class="bot.enabled ? 'border-danger bg-danger bg-opacity-10' : ''">
+                  <div class="form-check mb-0 flex-shrink-0">
+                    <input class="form-check-input" type="checkbox" :id="'bot-'+bot.id"
+                           v-model="bot.enabled" />
+                  </div>
+                  <label :for="'bot-'+bot.id" class="form-check-label small cursor-pointer flex-fill">
+                    <span class="fw-semibold">{{ bot.label }}</span>
+                    <span class="text-muted d-block" style="font-size:0.78rem">{{ bot.description }}</span>
+                    <code style="font-size:0.72rem">~*{{ bot.pattern }}</code>
+                  </label>
+                </div>
+              </div>
+            </div>
+
+            <!-- Patrones custom -->
+            <h6 class="fw-semibold mb-2">Patrones personalizados</h6>
+            <div class="mb-2">
+              <div v-for="(p, i) in customPatterns" :key="i" class="input-group input-group-sm mb-1" style="max-width:400px">
+                <span class="input-group-text font-monospace">~*</span>
+                <input v-model="customPatterns[i]" type="text" class="form-control font-monospace"
+                       placeholder="patron-del-bot" />
+                <button class="btn btn-outline-danger" type="button" @click="customPatterns.splice(i,1)">
+                  <i class="bi bi-trash"></i>
+                </button>
+              </div>
+              <button class="btn btn-outline-secondary btn-sm mt-1" @click="customPatterns.push('')">
+                <i class="bi bi-plus me-1"></i>Añadir patrón
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
   </div>
 </template>
 
@@ -1040,6 +1104,44 @@ function changeTab(t) {
   if (t === 'connections') loadConnections()
   if (t === 'audit')       loadAudit()
   if (t === 'crowdsec')    loadCrowdsec()
+  if (t === 'badbots')     loadBadBots()
+}
+
+// ─── Bad Bots ─────────────────────────────────────────────────────────────────
+const knownBots     = ref([])
+const customPatterns = ref([])
+const botsLoading   = ref(false)
+const botsSaving    = ref(false)
+
+async function loadBadBots() {
+  botsLoading.value = true
+  try {
+    const data = await api.get('/api/security/bad-bots')
+    knownBots.value      = data.known_bots || []
+    customPatterns.value = data.custom_patterns || []
+  } catch (e) {
+    console.error('Error cargando bad bots:', e)
+  } finally {
+    botsLoading.value = false
+  }
+}
+
+async function saveBadBots() {
+  botsSaving.value = true
+  try {
+    const enabledIds = knownBots.value.filter(b => b.enabled).map(b => b.id)
+    const custom = customPatterns.value.filter(p => p.trim())
+    await api.put('/api/security/bad-bots', { enabled_ids: enabledIds, custom_patterns: custom })
+    api.showNotification?.('Bad bots actualizados y nginx recargado', 'success')
+    // Notificación via store
+    const { useMainStore } = await import('../stores/useMainStore')
+    useMainStore().showNotification('Bad bots actualizados y nginx recargado', 'success')
+  } catch (e) {
+    const { useMainStore } = await import('../stores/useMainStore')
+    useMainStore().showNotification('Error: ' + e.message, 'danger')
+  } finally {
+    botsSaving.value = false
+  }
 }
 
 // ─── CrowdSec ────────────────────────────────────────────────────────────────

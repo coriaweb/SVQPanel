@@ -187,3 +187,36 @@ def _split_addr_port(s: str):
         return addr, int(port)
     except (ValueError, TypeError):
         return addr, None
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Bad Bots Blocker
+# ─────────────────────────────────────────────────────────────────────────────
+
+from pydantic import BaseModel
+
+class BadBotsUpdate(BaseModel):
+    enabled_ids: List[str] = []
+    custom_patterns: List[str] = []
+
+
+@router.get("/security/bad-bots")
+async def get_bad_bots(current_user=Depends(require_admin)):
+    """Lista el catálogo de bots con su estado activo/inactivo y los patrones custom."""
+    from scripts.bad_bots_manager import get_known_bots, get_custom_bots
+    return {
+        "known_bots": get_known_bots(),
+        "custom_patterns": get_custom_bots(),
+    }
+
+
+@router.put("/security/bad-bots")
+async def update_bad_bots(data: BadBotsUpdate, current_user=Depends(require_admin)):
+    """Actualiza el bloqueo de user-agents y recarga nginx."""
+    from scripts.bad_bots_manager import update_bad_bots
+    try:
+        result = update_bad_bots(data.enabled_ids, data.custom_patterns)
+        return {"status": "ok", **result}
+    except Exception as e:
+        from fastapi import HTTPException
+        raise HTTPException(status_code=500, detail=str(e))
