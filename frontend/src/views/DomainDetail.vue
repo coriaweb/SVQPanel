@@ -42,8 +42,8 @@
         </BaseCard>
 
         <BaseCard title="SSL" icon="shield-lock">
-          <template #actions><StatusBadge :status="domain.ssl_enabled ? 'valid' : 'none'" :label="domain.ssl_enabled ? 'Activo' : 'Sin SSL'" /></template>
-          <p class="dd-muted">{{ domain.ssl_enabled ? 'Certificado activo para este dominio.' : 'Este dominio no tiene certificado SSL.' }}</p>
+          <template #actions><StatusBadge :status="sslActive ? 'valid' : 'none'" :label="sslActive ? 'Activo' : 'Sin SSL'" /></template>
+          <p class="dd-muted">{{ sslActive ? 'Certificado activo para este dominio.' : 'Este dominio no tiene certificado SSL.' }}</p>
           <BaseButton variant="subtle" size="sm" icon="shield-check" @click="tab = 'ssl'">Gestionar SSL</BaseButton>
         </BaseCard>
 
@@ -453,7 +453,19 @@ export default {
         domain.value = null
       } finally { loading.value = false }
     }
-    const reloadDomain = async () => { domain.value = await api.getDomain(domainId.value) }
+    const reloadDomain = async () => {
+      domain.value = await api.getDomain(domainId.value)
+      loadSslState()
+    }
+
+    // ── SSL real (puede diferir de domain.ssl_enabled si se activó fuera del panel) ──
+    const sslActive = ref(null)  // null = no cargado, true/false = estado real
+    const loadSslState = async () => {
+      try {
+        const data = await api.getDomainSSL(domainId.value)
+        sslActive.value = !!(data.ssl_enabled || data.cert_info)
+      } catch { sslActive.value = false }
+    }
 
     // ── Disco ──
     const disk = ref(null)
@@ -723,11 +735,12 @@ export default {
       await loadDomain()
       try { const d = await api.getPHPVersions(); phpVersions.value = d?.versions?.length ? d.versions : ['8.2'] }
       catch { phpVersions.value = ['7.4', '8.0', '8.1', '8.2', '8.3', '8.4'] }
-      if (domain.value) { loadDisk(); loadPhp(); loadLogs() }
+      if (domain.value) { loadDisk(); loadPhp(); loadLogs(); loadSslState() }
     })
 
     return {
       domain, loading, tab, tabList, phpVersions, reloadDomain,
+      sslActive,
       formatMB, formatDate,
       disk, diskLoading, loadDisk,
       cacheSaving, toggleCache, purgeCache,
