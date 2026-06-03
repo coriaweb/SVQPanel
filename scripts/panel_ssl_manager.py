@@ -501,29 +501,33 @@ def _service_locations() -> str:
         # root /var/www: la petición /webmail/ mapea a /var/www/webmail/ que es
         # un symlink a roundcube/public_html. (Con root al public_html directo,
         # nginx buscaría .../public_html/webmail/index.php → 404.)
+        # Roundcube 1.7+ sirve desde public_html/ — usamos alias para que
+        # la URL /webmail/ mapee a /var/www/webmail/public_html/ sin que nginx
+        # busque .../public_html/webmail/index.php (que no existe).
         blocks.append(
             "    # Roundcube Webmail — autologin desde SVQPanel\n"
             "    location = /webmail { return 301 /webmail/; }\n"
             "    location /webmail/ {\n"
-            "        root /var/www;\n"
+            "        alias /var/www/webmail/public_html/;\n"
             "        index index.php;\n"
             "        location ~ ^/webmail/static\\.php {\n"
             "            fastcgi_split_path_info ^(/webmail/static\\.php)(/.+)$;\n"
             f"            fastcgi_pass unix:{sock};\n"
             "            include fastcgi_params;\n"
-            "            fastcgi_param SCRIPT_FILENAME /var/www/webmail/static.php;\n"
+            "            fastcgi_param SCRIPT_FILENAME /var/www/webmail/public_html/static.php;\n"
             "            fastcgi_param PATH_INFO $fastcgi_path_info;\n"
             "            fastcgi_param SCRIPT_NAME /webmail/static.php;\n"
             "        }\n"
             "        location ~ \\.php$ {\n"
             "            include snippets/fastcgi-php.conf;\n"
             f"            fastcgi_pass unix:{sock};\n"
-            "            fastcgi_param SCRIPT_FILENAME $document_root$fastcgi_script_name;\n"
+            "            fastcgi_param SCRIPT_FILENAME /var/www/webmail/public_html$fastcgi_script_name;\n"
             "            include fastcgi_params;\n"
             "        }\n"
             "        location ~ ^/webmail/(config|logs|temp|vendor/bin)/ {\n"
             "            deny all;\n"
             "        }\n"
+            "        try_files $uri $uri/ /webmail/index.php?$query_string;\n"
             "    }\n"
         )
     return ("\n" + "\n".join(blocks)) if blocks else ""

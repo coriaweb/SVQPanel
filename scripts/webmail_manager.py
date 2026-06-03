@@ -70,9 +70,10 @@ class WebmailManager(SystemManager):
         host = webmail_host(domain)
         sock = _find_php_sock()
 
-        # Bloques location de Roundcube (root = /var/www/webmail, servido en /).
-        # Roundcube 1.7+: assets vía static.php con PATH_INFO.
-        rc_locations = f"""    root {WEBMAIL_ROOT};
+        # Roundcube 1.7+ sirve desde public_html/ como docroot público.
+        # Los directorios internos (config, logs, etc.) quedan fuera del docroot.
+        WEBMAIL_DOCROOT = f"{WEBMAIL_ROOT}/public_html"
+        rc_locations = f"""    root {WEBMAIL_DOCROOT};
     index index.php;
 
     location / {{
@@ -83,7 +84,7 @@ class WebmailManager(SystemManager):
         fastcgi_split_path_info ^(/static\\.php)(/.+)$;
         fastcgi_pass unix:{sock};
         include fastcgi_params;
-        fastcgi_param SCRIPT_FILENAME {WEBMAIL_ROOT}/static.php;
+        fastcgi_param SCRIPT_FILENAME {WEBMAIL_DOCROOT}/static.php;
         fastcgi_param PATH_INFO $fastcgi_path_info;
         fastcgi_param SCRIPT_NAME /static.php;
     }}
@@ -95,10 +96,10 @@ class WebmailManager(SystemManager):
         include fastcgi_params;
     }}
 
-    # Rutas internas de Roundcube que no deben servirse
-    location ~ ^/(config|temp|logs|SQL|bin|vendor)/ {{ deny all; }}
+    # Rutas internas de Roundcube fuera del docroot — denegadas por seguridad
+    location ~ ^/(config|temp|logs|SQL|bin|vendor|program)/ {{ deny all; }}
     location ~ /\\.  {{ deny all; }}
-    location ~ ^/(README|INSTALL|LICENSE|CHANGELOG|UPGRADING)$ {{ deny all; }}
+    location ~ ^/(README|INSTALL|LICENSE|CHANGELOG|UPGRADING|composer\\.(json|lock)|Makefile)$ {{ deny all; }}
 """
 
         # El cert puede ser propio del webmail o del dominio padre (expand legacy)
@@ -120,6 +121,7 @@ server {{
 
     # .well-known con ^~ tiene prioridad sobre regex — necesario para certbot ACME
     location ^~ /.well-known {{
+        root {WEBMAIL_ROOT};
         allow all;
     }}
 """
