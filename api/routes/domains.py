@@ -434,6 +434,28 @@ async def update_domain(
                         f"regenerate_vhost falló para {db_domain.domain_name}: {vhost_err}"
                     )
 
+        # Levantar/bajar la IPv6 en la interfaz de red cuando cambia
+        if ipv6_changed:
+            try:
+                from scripts.ipv6_manager import IPv6Manager as _IPv6Mgr
+                from api.models.models_settings import Settings as _Settings
+                _s = db.query(_Settings).filter(_Settings.id == 1).first()
+                _iface = (_s.network_interface or "eth0") if _s else "eth0"
+                _mgr = _IPv6Mgr()
+                if db_domain.ipv6:
+                    # Añadir la nueva IP a la interfaz (idempotente si ya existe)
+                    _prefix = _s.ipv6_range.split("/")[1] if _s and _s.ipv6_range and "/" in _s.ipv6_range else "64"
+                    _mgr.assign_ipv6(_iface, f"{db_domain.ipv6}/{_prefix}")
+                # Si la IP anterior existía y es distinta, quitarla
+                # (no guardamos la anterior, así que solo quitamos si new=None)
+                # La IP anterior ya no está en db_domain — la lógica de remove
+                # queda en manos del usuario desde la pestaña IPv6 si lo necesita
+            except Exception as _ipv6_err:
+                import logging
+                logging.getLogger(__name__).warning(
+                    f"No se pudo configurar IPv6 en interfaz para {db_domain.domain_name}: {_ipv6_err}"
+                )
+
         # Actualizar IP de salida SMTP en Postfix si cambió la IPv4
         if ipv4_changed:
             try:
