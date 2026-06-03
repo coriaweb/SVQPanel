@@ -8,9 +8,13 @@ from datetime import datetime
 
 
 class SSLCreate(BaseModel):
-    certificate: str
-    key: str
-    expires: Optional[datetime] = None
+    # Para Let's Encrypt: solo domain_name y auto_renewal (certbot genera el cert)
+    # Para cert manual: pasar certificate y key
+    certificate:  Optional[str] = None
+    key:          Optional[str] = None
+    expires:      Optional[datetime] = None
+    domain_name:  Optional[str] = None
+    auto_renewal: Optional[bool] = True
 
 
 class SSLUpdate(BaseModel):
