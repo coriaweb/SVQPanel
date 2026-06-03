@@ -46,8 +46,33 @@ def _get_all_active_zones(db: Session) -> list:
 
 
 def _get_server_ipv4(db: Session) -> str:
+    """
+    Obtiene la IP pública del servidor.
+    1. Si está guardada en Settings.server_ipv4, la devuelve.
+    2. Si no, la detecta automáticamente con `ip -4 addr show scope global`.
+    3. Si todo falla, devuelve vacío.
+    """
     s = db.query(Settings).filter(Settings.id == 1).first()
-    return s.server_ipv4 if s and s.server_ipv4 else ""
+    if s and s.server_ipv4:
+        return s.server_ipv4
+
+    # Detectar automáticamente si no está guardada
+    try:
+        import subprocess
+        r = subprocess.run(
+            ["ip", "-4", "addr", "show", "scope", "global"],
+            capture_output=True, text=True, timeout=5,
+        )
+        for line in r.stdout.splitlines():
+            line = line.strip()
+            if line.startswith("inet "):
+                ip = line.split()[1].split("/")[0]
+                if ip and not ip.startswith("127."):
+                    return ip
+    except Exception:
+        pass
+
+    return ""
 
 
 def _sync_zone_to_bind(zone: DnsZone, db: Session):
