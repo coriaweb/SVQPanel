@@ -6,10 +6,10 @@
         <strong>Certificado Activo</strong>
         <div class="mt-2 small">
           <p>
-            <strong>Dominio:</strong> {{ ssl.domain_name }}<br>
-            <strong>Emisor:</strong> Let's Encrypt<br>
-            <strong>Válido hasta:</strong> {{ formatDate(ssl.expiry_date) }}<br>
-            <strong>Auto-renovación:</strong> {{ ssl.auto_renewal ? 'Habilitada' : 'Deshabilitada' }}
+            <strong>Dominio:</strong> {{ domain.domain_name }}<br>
+            <strong>Emisor:</strong> {{ ssl.cert_info?.issuer || "Let's Encrypt" }}<br>
+            <strong>Válido hasta:</strong> {{ formatDate(ssl.ssl_expires || ssl.cert_info?.not_after) }}<br>
+            <strong>Auto-renovación:</strong> Habilitada (certbot.timer)
           </p>
         </div>
         <div class="mt-3 d-flex gap-2">
