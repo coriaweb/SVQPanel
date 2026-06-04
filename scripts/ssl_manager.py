@@ -22,14 +22,18 @@ class SSLManager(SystemManager):
         Valida que el dominio resuelve en DNS.
         Si no resuelve, raise ValueError con mensaje claro.
         """
+        old_timeout = socket.getdefaulttimeout()
         try:
-            socket.getaddrinfo(domain, None, timeout=timeout)
+            socket.setdefaulttimeout(timeout)
+            socket.getaddrinfo(domain, None)
             logger.info(f"DNS validation passed for {domain}")
             return True
         except socket.gaierror as e:
             msg = f"DNS validation failed for {domain}: {e}. Asegúrate de que apunta a la IP correcta."
             logger.error(msg)
             raise ValueError(msg) from e
+        finally:
+            socket.setdefaulttimeout(old_timeout)
 
     def _get_certbot_path(self) -> str:
         """
