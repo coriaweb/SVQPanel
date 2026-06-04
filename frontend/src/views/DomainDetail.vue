@@ -942,6 +942,7 @@ export default {
         await api.setDomainBadBots(domainId.value, patterns)
         store.showNotification('Bots actualizados y nginx recargado', 'success')
         await reloadDomain()
+        await loadDomainBots()
       } catch (e) {
         store.showNotification('Error: ' + e.message, 'danger')
       } finally {
