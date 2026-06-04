@@ -186,7 +186,7 @@ done
 
 if [[ ${#INVALID_VERSIONS[@]} -gt 0 ]]; then
     echo -e "${RED}Error: Versiones PHP inválidas: ${INVALID_VERSIONS[*]}${NC}"
-    echo -e "${YELLOW}Solo están disponibles: 7.4, 8.0, 8.1, 8.2, 8.3, 8.5${NC}"
+    echo -e "${YELLOW}Solo están disponibles: 7.4, 8.0, 8.1, 8.2, 8.3, 8.4, 8.5${NC}"
     exit 1
 fi
 
@@ -239,7 +239,6 @@ apt-get install -y -qq \
     unzip \
     zip \
     acl \
-    openssh-client \
     sshpass \
     dnsutils \
     openssl \
@@ -340,10 +339,13 @@ fi
 
 if [[ "$WEBSERVER" == "apache+nginx" ]]; then
     echo -e "${YELLOW}Instalando Apache...${NC}"
-    apt-get install -y -qq apache2 libapache2-mod-php
+    apt-get install -y -qq apache2
     a2enmod rewrite
     a2enmod headers
     a2enmod ssl
+    a2enmod proxy
+    a2enmod proxy_fcgi
+    a2enmod setenvif
     systemctl enable apache2
     systemctl start apache2
     echo -e "${GREEN}✓ Apache instalado${NC}\n"
@@ -1035,7 +1037,6 @@ CREATE DATABASE panel_db;
 CREATE USER panel_user WITH PASSWORD 'panel_password_123';
 ALTER ROLE panel_user SET client_encoding TO 'utf8';
 ALTER ROLE panel_user SET default_transaction_isolation TO 'read committed';
-ALTER ROLE panel_user SET default_transaction_deferrable TO on;
 ALTER ROLE panel_user SET default_transaction_deferrable TO off;
 ALTER ROLE panel_user SET timezone TO 'UTC';
 GRANT ALL PRIVILEGES ON DATABASE panel_db TO panel_user;
@@ -1186,8 +1187,12 @@ MDBCREDEOF
         mkdir -p /tmp/pma_tokens && chmod 711 /tmp/pma_tokens
 
         # Generar clave Fernet (se añade al .env más abajo, en sección env)
+        # Generamos la clave con stdlib pura (base64+os.urandom) para no depender
+        # de 'cryptography', que aún no está instalada en este punto del install
+        # (el venv se crea más adelante en el paso 8). Una clave Fernet válida es
+        # exactamente 32 bytes aleatorios en base64-url-safe (44 chars con '=').
         PANEL_ENCRYPTION_KEY=$(python3 -c \
-            "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())")
+            "import base64, os; print(base64.urlsafe_b64encode(os.urandom(32)).decode())")
 
         PMA_BLOWFISH_SECRET=$(python3 -c \
             "import secrets, string; \
