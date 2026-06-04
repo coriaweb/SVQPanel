@@ -12,6 +12,17 @@ admin del panel, rutas, comandos de despliegue) están en **`SERVER_CREDENTIALS.
 un servidor real, usa ese archivo. Flujo: subir archivos por scp/sshpass →
 `systemctl restart svqpanel` (backend) y/o `npm run build` en `frontend/` (UI).
 
+## 🔢 REGLA IMPORTANTE: actualizar VERSION en cada cambio
+
+El archivo `VERSION` (raíz del repo) es la fuente de verdad de la versión del panel.
+**Cada vez que hagas cualquier cambio al código, debes actualizar VERSION siguiendo semver:**
+
+- **PATCH** (`0.2.0 → 0.2.1`): fix de bug, corrección en install, parche de seguridad
+- **MINOR** (`0.2.0 → 0.3.0`): nueva feature, update de componente (nginx, PostgreSQL, PHP...)
+- **MAJOR** (`0.2.0 → 1.0.0`): cambio que rompe compatibilidad o rediseño importante
+
+Esto es obligatorio en **cada commit**, sin excepciones. Si el cambio es trivial (typo, comentario), sube PATCH.
+
 ## ⚠️ REGLA IMPORTANTE: install.sh es la fuente de verdad del sistema
 
 Todo cambio que afecte a la configuración del servidor (pools PHP-FPM, nginx,
