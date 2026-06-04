@@ -198,8 +198,11 @@ export default {
         .filter((g) => g.items.length > 0)
     )
 
-    const isActive = (to) =>
-      to === '/dashboard' ? route.path === to : route.path.startsWith(to)
+    const isActive = (to) => {
+      if (to === '/dashboard') return route.path === to
+      if (to === '/system/updates') return route.path === to
+      return route.path.startsWith(to) && (route.path[to.length] === '/' || route.path[to.length] === undefined)
+    }
 
     // ===== Breadcrumbs =====
     const titleByPath = {}
