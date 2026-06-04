@@ -594,18 +594,33 @@ def purge_fastcgi_cache(domain: str) -> int:
 
 
 def reload_nginx() -> bool:
-    """Test and reload nginx configuration"""
+    """
+    Valida la config y recarga nginx en background para no bloquear
+    el request HTTP (el panel está detrás de nginx, esperar el reload
+    causa timeout en el cliente).
+    """
     import subprocess
     import os
+    import threading
 
     env = os.environ.copy()
     env["PATH"] = "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
 
+    # Validar config de forma síncrona — si hay error de sintaxis, no recargar
     try:
         subprocess.run(["nginx", "-t"], check=True, capture_output=True, env=env)
-        subprocess.run(["systemctl", "reload", "nginx"], check=True, capture_output=True, env=env)
-        logger.info("Nginx reloaded successfully")
-        return True
     except subprocess.CalledProcessError as e:
-        logger.error(f"Failed to reload nginx: {e.stderr}")
+        logger.error(f"Nginx config test failed: {e.stderr.decode() if e.stderr else e}")
         return False
+
+    # Recargar en background — el cliente recibe respuesta inmediata
+    def _do_reload():
+        try:
+            subprocess.run(["systemctl", "reload", "nginx"], check=True,
+                           capture_output=True, env=env)
+            logger.info("Nginx reloaded successfully (background)")
+        except subprocess.CalledProcessError as e:
+            logger.error(f"Failed to reload nginx: {e.stderr.decode() if e.stderr else e}")
+
+    threading.Thread(target=_do_reload, daemon=True).start()
+    return True
