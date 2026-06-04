@@ -102,7 +102,13 @@ async def scan_system_ips(
     Excluye loopback y link-local.
     """
     result: List[SystemIPInfo] = []
+    # IPs registradas en ServerIP
     registered_addrs = {r.address for r in db.query(ServerIP.address).all()}
+    # IPs ya asignadas a dominios (IPv4 e IPv6)
+    domain_ipv4 = {r.ipv4 for r in db.query(Domain.ipv4).filter(Domain.ipv4.isnot(None)).all()}
+    domain_ipv6 = {r.ipv6 for r in db.query(Domain.ipv6).filter(Domain.ipv6.isnot(None)).all()}
+    registered_addrs.update(domain_ipv4)
+    registered_addrs.update(domain_ipv6)
 
     # Excluir la IPv6 reservada para el panel (no es una IP de hosting)
     from api.models.models_settings import Settings
