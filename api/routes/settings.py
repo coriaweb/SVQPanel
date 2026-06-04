@@ -125,10 +125,7 @@ async def get_next_ipv6(
     settings = get_or_create_settings(db)
 
     if not settings.ipv6_enabled or not settings.ipv6_range:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="IPv6 no está configurado en el panel"
-        )
+        return {"not_configured": True}
 
     try:
         network = ipaddress.IPv6Network(settings.ipv6_range, strict=False)

@@ -440,14 +440,9 @@ class APIClient {
     if (exclude) params.set('exclude', exclude)
     if (count > 1) params.set('count', count)
     const qs = params.toString() ? '?' + params.toString() : ''
-    try {
-      return await this.request(`/api/settings/next-ipv6${qs}`, { method: 'GET', silent: true })
-    } catch (e) {
-      if (e.message?.includes('no está configurado') || e.message?.includes('configurado en el panel')) {
-        return { notConfigured: true }
-      }
-      throw e
-    }
+    const data = await this.request(`/api/settings/next-ipv6${qs}`, { method: 'GET', silent: true })
+    if (data?.not_configured) return { notConfigured: true }
+    return data
   }
 
   assignPanelIpv6() {
