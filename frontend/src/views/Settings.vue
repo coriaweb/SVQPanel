@@ -1,23 +1,28 @@
 <template>
-  <div>
-    <h2 class="mb-4"><i class="bi bi-gear"></i> Configuración del Panel</h2>
+  <div class="sv-view">
+    <div class="sv-head">
+      <div>
+        <h1 class="sv-title"><i class="bi bi-gear"></i> Configuración</h1>
+        <p class="sv-sub">Ajustes generales del panel SVQPanel</p>
+      </div>
+    </div>
 
-    <div v-if="loading" class="text-center py-5">
+    <div v-if="loading" style="text-align:center;padding:48px">
       <div class="spinner-border"></div>
     </div>
 
-    <div v-else class="row g-4">
+    <div v-else class="sv-grid">
 
-      <!-- IPv6 -->
-      <div class="col-12">
-        <div class="card border-primary">
-          <div class="card-header bg-primary text-white">
+      <!-- IPv6 - ancho completo -->
+      <div class="sv-full">
+        <div class="card" style="border-color:var(--ac)">
+          <div class="card-header" style="background:var(--ac);color:#fff">
             <i class="bi bi-diagram-3 me-2"></i> Red IPv6
           </div>
           <div class="card-body">
             <div class="row g-3">
 
-              <div class="col-md-6">
+              <div class="sv-half">
                 <div class="form-check form-switch mb-3">
                   <input
                     id="ipv6_enabled"
@@ -111,7 +116,7 @@
               </div>
 
               <!-- Preview del rango -->
-              <div class="col-md-6">
+              <div class="sv-half">
                 <div v-if="form.ipv6_enabled && parsedRange" class="bg-dark text-success rounded p-3 font-monospace small h-100">
                   <div class="text-white mb-2 fw-bold"><i class="bi bi-broadcast me-1"></i> Rango configurado</div>
                   <div>Prefijo: <span class="text-info">{{ parsedRange.prefix }}</span></div>
@@ -145,7 +150,7 @@
       </div>
 
       <!-- Red IPv4 -->
-      <div class="col-md-6">
+      <div class="sv-half">
         <div class="card">
           <div class="card-header"><i class="bi bi-hdd-network me-1"></i> Red IPv4</div>
           <div class="card-body">
@@ -205,7 +210,7 @@
       </div>
 
       <!-- PHP Default -->
-      <div class="col-md-6">
+      <div class="sv-half">
         <div class="card">
           <div class="card-header"><i class="bi bi-filetype-php me-1"></i> PHP por defecto</div>
           <div class="card-body">
@@ -225,7 +230,7 @@
       </div>
 
       <!-- File Manager - Límites de upload -->
-      <div class="col-12">
+      <div class="sv-full">
         <div class="card">
           <div class="card-header"><i class="bi bi-file-arrow-up me-2"></i> Gestor de Archivos - Límites</div>
           <div class="card-body">
@@ -278,7 +283,7 @@
       </div>
 
       <!-- PHP Versions Management -->
-      <div class="col-12">
+      <div class="sv-full">
         <div class="card">
           <div class="card-header d-flex justify-content-between align-items-center">
             <span><i class="bi bi-filetype-php me-2"></i> Versiones PHP instaladas</span>
@@ -405,7 +410,7 @@
       </div>
 
       <!-- SSL del Panel -->
-      <div class="col-12">
+      <div class="sv-full">
         <div class="card border-success">
           <div class="card-header bg-success text-white d-flex justify-content-between align-items-center">
             <span><i class="bi bi-shield-lock me-2"></i> SSL del Panel</span>
@@ -418,7 +423,7 @@
           </div>
           <div class="card-body">
             <div class="row g-3">
-              <div class="col-md-6">
+              <div class="sv-half">
                 <label class="form-label fw-bold">Hostname del panel</label>
                 <input
                   v-model="sslForm.hostname"
@@ -459,7 +464,7 @@
               </div>
 
               <!-- Estado SSL -->
-              <div class="col-md-6">
+              <div class="sv-half">
                 <div v-if="settings?.ssl_panel_enabled" class="bg-success bg-opacity-10 border border-success rounded p-3 h-100">
                   <div class="fw-bold text-success mb-2">
                     <i class="bi bi-shield-check me-1"></i> Certificado activo
@@ -520,7 +525,7 @@
       </div>
 
       <!-- Zona Horaria del Servidor -->
-      <div class="col-md-6">
+      <div class="sv-half">
         <div class="card">
           <div class="card-header d-flex justify-content-between align-items-center">
             <span><i class="bi bi-clock-history me-1"></i> Zona Horaria del Servidor</span>
@@ -554,7 +559,7 @@
       </div>
 
       <!-- Panel info -->
-      <div class="col-md-6">
+      <div class="sv-half">
         <div class="card">
           <div class="card-header"><i class="bi bi-info-circle me-1"></i> Información del panel</div>
           <div class="card-body p-0">
@@ -581,7 +586,7 @@
       </div>
 
       <!-- Guardar configuración general -->
-      <div class="col-12">
+      <div class="sv-full">
         <button class="btn btn-primary px-4" @click="saveSettings" :disabled="saving">
           <span v-if="saving" class="spinner-border spinner-border-sm me-2"></span>
           <i v-else class="bi bi-floppy me-2"></i>
@@ -1011,3 +1016,13 @@ export default {
   }
 }
 </script>
+
+<style scoped>
+.sv-view { display: flex; flex-direction: column; gap: 20px; }
+.sv-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; flex-wrap: wrap; }
+.sv-title { margin: 0 0 4px; font-size: 20px; font-weight: 700; letter-spacing: -.01em; }
+.sv-sub { margin: 0; font-size: 13px; color: var(--text-muted); }
+.sv-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
+.sv-full { grid-column: 1 / -1; }
+@media (max-width: 768px) { .sv-grid { grid-template-columns: 1fr; } .sv-half { grid-column: 1 / -1; } }
+</style>

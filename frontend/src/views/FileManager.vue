@@ -1,5 +1,5 @@
 <template>
-  <div>
+  <div class="sv-view">
     <div class="page-head-row" style="align-items:center">
       <h2 style="margin:0"><i class="bi bi-folder2-open"></i> Archivos</h2>
       <div class="d-flex align-items-center gap-2">
@@ -49,25 +49,19 @@
       </div>
     </div>
 
-    <div class="row g-3 mb-3">
-      <div class="col-md-5">
-        <select v-model="selectedDomainId" class="form-select" @change="changeDomain">
-          <option value="">Selecciona un dominio</option>
-          <option v-for="domain in domains" :key="domain.id" :value="domain.id">
-            {{ domain.domain_name }}
-          </option>
-        </select>
-      </div>
-      <div class="col-md-7">
-        <div class="input-group">
-          <button class="btn btn-outline-secondary" @click="goUp" :disabled="!currentPath">
-            <i class="bi bi-arrow-up"></i>
-          </button>
-          <span class="form-control font-monospace bg-light">{{ breadcrumb }}</span>
-          <button class="btn btn-outline-primary" @click="createFolder" :disabled="!selectedDomainId">
-            <i class="bi bi-folder-plus"></i>
-          </button>
-        </div>
+    <div class="fm-toolbar">
+      <select v-model="selectedDomainId" class="form-select" @change="changeDomain" style="max-width:220px">
+        <option value="">Selecciona un dominio</option>
+        <option v-for="domain in domains" :key="domain.id" :value="domain.id">{{ domain.domain_name }}</option>
+      </select>
+      <div class="input-group" style="flex:1">
+        <button class="btn btn-outline-secondary" @click="goUp" :disabled="!currentPath">
+          <i class="bi bi-arrow-up"></i>
+        </button>
+        <span class="form-control font-monospace" style="background:var(--surface-inset)">{{ breadcrumb }}</span>
+        <button class="btn btn-outline-primary" @click="createFolder" :disabled="!selectedDomainId">
+          <i class="bi bi-folder-plus"></i>
+        </button>
       </div>
     </div>
 
@@ -650,6 +644,8 @@ export default {
 </script>
 
 <style scoped>
+.sv-view { display: flex; flex-direction: column; gap: 16px; }
+.fm-toolbar { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
 .file-editor {
   min-height: 60vh;
   resize: vertical;

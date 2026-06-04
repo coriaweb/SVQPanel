@@ -1,5 +1,5 @@
 <template>
-  <div class="container-fluid py-4">
+  <div class="sv-view">
 
     <!-- Cabecera -->
     <div class="d-flex justify-content-between align-items-center mb-3">
@@ -34,23 +34,23 @@
     </div>
 
     <!-- Resumen -->
-    <div class="row g-3 mb-4" v-if="fwStatus">
-      <div class="col-md-3"><div class="card text-center shadow-sm"><div class="card-body">
+    <div class="sv-counters" v-if="fwStatus">
+      <div class="card text-center"><div class="card-body">
         <div class="text-muted small">Reglas activas</div>
-        <div class="display-6">{{ fwStatus.rule_count }}</div>
-      </div></div></div>
-      <div class="col-md-3"><div class="card text-center shadow-sm"><div class="card-body">
+        <div class="sv-stat-num">{{ fwStatus.rule_count }}</div>
+      </div></div>
+      <div class="card text-center"><div class="card-body">
         <div class="text-muted small">Whitelist</div>
-        <div class="display-6">{{ fwStatus.whitelist_count }}</div>
-      </div></div></div>
-      <div class="col-md-3"><div class="card text-center shadow-sm"><div class="card-body">
+        <div class="sv-stat-num">{{ fwStatus.whitelist_count }}</div>
+      </div></div>
+      <div class="card text-center"><div class="card-body">
         <div class="text-muted small">IPs baneadas</div>
-        <div class="display-6">{{ fwStatus.banned_count }}</div>
-      </div></div></div>
-      <div class="col-md-3"><div class="card text-center shadow-sm"><div class="card-body">
+        <div class="sv-stat-num">{{ fwStatus.banned_count }}</div>
+      </div></div>
+      <div class="card text-center"><div class="card-body">
         <div class="text-muted small">Jails fail2ban</div>
-        <div class="display-6">{{ f2bStatus?.jails?.length || 0 }}</div>
-      </div></div></div>
+        <div class="sv-stat-num">{{ f2bStatus?.jails?.length || 0 }}</div>
+      </div></div>
     </div>
 
     <!-- ── Aislamiento PHP (open_basedir por dominio) ── -->
@@ -1313,6 +1313,10 @@ onMounted(async () => {
 </script>
 
 <style scoped>
+.sv-view { display: flex; flex-direction: column; gap: 20px; }
+.sv-counters { display: grid; grid-template-columns: repeat(4, 1fr); gap: 16px; }
+.sv-stat-num { font-size: 2rem; font-weight: 700; color: var(--text); }
+@media (max-width: 768px) { .sv-counters { grid-template-columns: repeat(2, 1fr); } }
 .nav-tabs .nav-link { cursor: pointer; }
 
 .sec-head-right { display: flex; align-items: center; gap: var(--sp-5); flex-wrap: wrap; }

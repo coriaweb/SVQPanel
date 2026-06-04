@@ -1,5 +1,5 @@
 <template>
-  <div class="container-fluid py-4">
+  <div class="sv-view">
 
     <!-- Cabecera -->
     <div class="page-head-row">
@@ -1285,6 +1285,7 @@ export default {
 </script>
 
 <style scoped>
+.sv-view { display: flex; flex-direction: column; gap: 20px; }
 /* Badges de tipo de registro DNS — colores semánticos legibles en light/dark */
 .dns-type {
   display: inline-block;
