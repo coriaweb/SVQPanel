@@ -312,7 +312,7 @@ export default {
 .svc-state { font-size: var(--fs-sm); color: var(--text-muted); text-transform: capitalize; }
 
 /* Acciones rápidas */
-.quick-actions { display: grid; grid-template-columns: repeat(6, 1fr); gap: var(--sp-3); }
+.quick-actions { display: grid; grid-template-columns: repeat(3, 1fr); gap: var(--sp-3); }
 .quick-action-btn {
   display: flex; align-items: center; gap: 14px;
   padding: var(--sp-4); border-radius: var(--r-lg);
