@@ -44,36 +44,16 @@
             <tr>
               <th>Componente</th>
               <th>Versión instalada</th>
-              <th>Última disponible</th>
-              <th class="text-center">Estado</th>
               <th class="text-end">Documentación</th>
             </tr>
           </thead>
           <tbody>
-            <tr v-for="(info, key) in versions.components" :key="key"
-                :class="{ 'table-warning': info.status === 'outdated' }">
+            <tr v-for="(info, key) in versions.components" :key="key">
               <td>
                 <strong>{{ info.name }}</strong>
               </td>
               <td class="font-monospace small">
                 <code>{{ info.version }}</code>
-              </td>
-              <td class="font-monospace small">
-                <code v-if="info.latest && info.latest !== 'desconocida'" class="text-success">
-                  {{ info.latest }}
-                </code>
-                <span v-else class="text-muted">—</span>
-              </td>
-              <td class="text-center">
-                <span v-if="info.status === 'updated'" class="badge bg-success">
-                  <i class="bi bi-check-circle me-1"></i>Actualizado
-                </span>
-                <span v-else-if="info.status === 'outdated'" class="badge bg-warning text-dark">
-                  <i class="bi bi-exclamation-circle me-1"></i>Desactualizado
-                </span>
-                <span v-else class="badge bg-secondary">
-                  <i class="bi bi-question-circle me-1"></i>Desconocido
-                </span>
               </td>
               <td class="text-end">
                 <a :href="info.docs" target="_blank" class="btn btn-outline-secondary btn-sm">

@@ -475,122 +475,49 @@ def _compare_versions(current: str, latest: str) -> str:
 @router.get("/system/versions")
 async def get_system_versions(current_user=Depends(require_admin)):
     """
-    Devuelve las versiones de componentes instalados + versiones disponibles.
-    Detecta si hay actualizaciones consultando APIs oficiales (npm, GitHub, etc).
+    Devuelve versiones instaladas de los componentes principales.
     """
-    components_config = [
-        {
-            "key": "Node.js",
-            "name": "Node.js",
-            "command": ["node", "--version"],
-            "pattern": None,
-            "docs": "https://nodejs.org/en/download/package-manager",
-            "latest_source": "npm:nodejs",
-        },
-        {
-            "key": "Nginx",
-            "name": "Nginx",
-            "command": ["nginx", "-v"],
-            "pattern": r"nginx/(\S+)",
-            "docs": "https://nginx.org/download/",
-            "latest_source": None,  # Detectar manualmente en el frontend
-        },
-        {
-            "key": "Python",
-            "name": "Python",
-            "command": ["python3", "--version"],
-            "pattern": r"Python (\S+)",
-            "docs": "https://www.python.org/downloads/",
-            "latest_source": None,
-        },
-        {
-            "key": "PostgreSQL",
-            "name": "PostgreSQL",
-            "command": ["psql", "--version"],
-            "pattern": r"psql \(PostgreSQL\) (\S+)",
-            "docs": "https://www.postgresql.org/download/",
-            "latest_source": "postgresql.org",
-        },
-        {
-            "key": "Redis",
-            "name": "Redis",
-            "command": ["redis-server", "--version"],
-            "pattern": r"v=(\S+)",
-            "docs": "https://redis.io/download/",
-            "latest_source": None,
-        },
-        {
-            "key": "Postfix",
-            "name": "Postfix",
-            "command": None,  # Usar función especial
-            "pattern": None,
-            "docs": "http://www.postfix.org/download.html",
-            "latest_source": None,
-        },
-        {
-            "key": "Dovecot",
-            "name": "Dovecot",
-            "command": ["dovecot", "--version"],
-            "pattern": None,
-            "docs": "https://www.dovecot.org/download/",
-            "latest_source": "github:dovecotorg/core",
-        },
-        {
-            "key": "Rspamd",
-            "name": "Rspamd",
-            "command": ["rspamd", "--version"],
-            "pattern": r"Rspamd daemon version (\S+)",
-            "docs": "https://rspamd.com/",
-            "latest_source": "github:rspamd/rspamd",
-        },
+    components = [
+        ("Node.js", ["node", "--version"], None, "https://nodejs.org"),
+        ("Nginx", ["nginx", "-v"], r"nginx/(\S+)", "https://nginx.org"),
+        ("Python", ["python3", "--version"], r"Python (\S+)", "https://python.org"),
+        ("PostgreSQL", ["psql", "--version"], r"psql \(PostgreSQL\) (\S+)", "https://postgresql.org"),
+        ("Redis", ["redis-server", "--version"], r"v=(\S+)", "https://redis.io"),
+        ("Dovecot", ["dovecot", "--version"], None, "https://dovecot.org"),
+        ("Rspamd", ["rspamd", "--version"], r"Rspamd daemon version (\S+)", "https://rspamd.com"),
     ]
 
     versions = {"components": {}}
 
-    # Construir tabla de componentes
-    for cfg in components_config:
-        if cfg["key"] == "Postfix":
-            current_ver = _get_postfix_version()
+    for name, cmd, pattern, docs in components:
+        if name == "Postfix":
+            version = _get_postfix_version()
         else:
-            current_ver = _get_version(cfg["command"], cfg["pattern"])
+            version = _get_version(cmd, pattern)
 
-        latest_ver = _get_latest_version(cfg["latest_source"]) if cfg["latest_source"] else "desconocida"
-        status = _compare_versions(current_ver, latest_ver)
-
-        versions["components"][cfg["key"]] = {
-            "name": cfg["name"],
-            "version": current_ver,
-            "latest": latest_ver,
-            "status": status,  # "updated", "outdated", "unknown"
-            "docs": cfg["docs"],
+        versions["components"][name] = {
+            "name": name,
+            "version": version,
+            "docs": docs,
         }
 
-    # Intentar obtener MariaDB si está instalada
+    # Postfix (sin command, obtener de dpkg)
+    versions["components"]["Postfix"] = {
+        "name": "Postfix",
+        "version": _get_postfix_version(),
+        "docs": "http://postfix.org",
+    }
+
+    # MariaDB (si está instalada)
     try:
-        mariadb_ver = _get_mariadb_version()
-        if mariadb_ver != "no disponible":
+        mb_ver = _get_mariadb_version()
+        if mb_ver != "no disponible":
             versions["components"]["MariaDB"] = {
                 "name": "MariaDB",
-                "version": mariadb_ver,
-                "latest": "desconocida",
-                "status": "unknown",
-                "docs": "https://mariadb.org/download/",
+                "version": mb_ver,
+                "docs": "https://mariadb.org",
             }
-    except Exception:
-        pass
-
-    # Intentar obtener Apache si está instalada
-    try:
-        apache_ver = _get_version(["apache2", "-v"], r"Apache/(\S+)")
-        if apache_ver != "no disponible":
-            versions["components"]["Apache"] = {
-                "name": "Apache",
-                "version": apache_ver,
-                "latest": "desconocida",
-                "status": "unknown",
-                "docs": "https://httpd.apache.org/download.cgi",
-            }
-    except Exception:
+    except:
         pass
 
     return versions
