@@ -15,6 +15,7 @@ class SSLCreate(BaseModel):
     expires:      Optional[datetime] = None
     domain_name:  Optional[str] = None
     auto_renewal: Optional[bool] = True
+    email:        Optional[str] = None
 
 
 class SSLUpdate(BaseModel):

@@ -154,7 +154,12 @@ export default {
     const createSSL = async () => {
       loading.value = true
       try {
-        await api.createSSL(props.domain.id, { domain_name: props.domain.domain_name, email: email.value, auto_renewal: true })
+        await api.toggleDomainSSL(props.domain.id, {
+          enabled: true,
+          force_https: forceHttps.value,
+          hsts_enabled: hsts.value,
+          email: email.value,
+        })
         store.showNotification('Certificado SSL emitido correctamente', 'success')
         showForm.value = false
         await loadSSL()
@@ -169,7 +174,12 @@ export default {
     const renewSSL = async () => {
       loading.value = true
       try {
-        await api.createSSL(props.domain.id, { domain_name: props.domain.domain_name, email: email.value, auto_renewal: true })
+        await api.toggleDomainSSL(props.domain.id, {
+          enabled: true,
+          force_https: forceHttps.value,
+          hsts_enabled: hsts.value,
+          email: email.value,
+        })
         store.showNotification('Certificado renovado correctamente', 'success')
         await loadSSL()
       } catch (e) {
