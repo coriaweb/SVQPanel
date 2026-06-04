@@ -319,9 +319,15 @@
 
           <!-- Email para certbot si no hay certificado aún -->
           <div class="mb-3" v-if="!ssl.cert_info">
-            <label class="form-label small">Email para Let's Encrypt <span class="text-danger">*</span></label>
+            <label class="form-label small fw-semibold">
+              Email para Let's Encrypt <span class="text-danger">*</span>
+            </label>
             <input v-model="ssl.email" type="email" class="form-control form-control-sm"
-              placeholder="admin@ejemplo.com" />
+              placeholder="admin@tudominio.com" required />
+            <div class="form-text text-warning" style="font-size:11px">
+              <i class="bi bi-exclamation-triangle me-1"></i>
+              Debe ser un email real (no @localhost ni @example.com). Let's Encrypt lo usa para notificaciones de renovación.
+            </div>
           </div>
 
           <!-- Info del certificado existente -->
@@ -354,7 +360,9 @@
         <div class="d-flex gap-2 flex-wrap">
           <button v-if="ssl.enabled || ssl.cert_info" type="button" class="btn btn-sm"
             :class="ssl.enabled ? 'btn-success' : 'btn-outline-danger'"
-            @click="applySSL" :disabled="sslLoading">
+            @click="applySSL"
+            :disabled="sslLoading || (ssl.enabled && !ssl.cert_info && !ssl.email)"
+            :title="(ssl.enabled && !ssl.cert_info && !ssl.email) ? 'Introduce un email válido para continuar' : ''">
             <span v-if="sslLoading" class="spinner-border spinner-border-sm me-1"></span>
             <template v-if="ssl.enabled">
               {{ ssl.cert_info ? 'Actualizar SSL' : "Activar SSL (Let's Encrypt)" }}

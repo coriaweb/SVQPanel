@@ -15,6 +15,29 @@ from scripts.domain_manager import DomainManager
 
 router = APIRouter()
 
+_INVALID_EMAIL_DOMAINS = {"example.com", "example.org", "example.net", "localhost",
+                          "invalid", "test", "local", "localdomain"}
+
+
+def _validate_acme_email(email: str) -> str:
+    """
+    Valida que el email sea aceptable por Let's Encrypt ACME.
+    Devuelve el email limpio o lanza ValueError con mensaje descriptivo.
+    """
+    email = (email or "").strip().lower()
+    if not email or "@" not in email:
+        raise ValueError(
+            "Se necesita un email válido para Let's Encrypt. "
+            "Introdúcelo en el campo Email del formulario SSL."
+        )
+    domain_part = email.split("@", 1)[1]
+    if domain_part in _INVALID_EMAIL_DOMAINS or "." not in domain_part:
+        raise ValueError(
+            f"El email '{email}' no es válido para Let's Encrypt (dominio local o de ejemplo). "
+            "Usa tu email real, p.ej. admin@tudominio.com"
+        )
+    return email
+
 
 def _domain_ssl_response(domain: Domain, ssl_manager: SSLManager) -> SSLResponse:
     # Leer cert del disco siempre — ssl_enabled en BD puede quedar desincronizado
@@ -73,7 +96,9 @@ async def toggle_ssl(
     try:
         if body.enabled and not domain.ssl_enabled:
             # Activar: lanzar certbot
-            email = body.email or "admin@example.com"
+            # Prioridad: email del body → email del usuario en BD → error
+            raw_email = (body.email or "").strip() or (current_user.email or "").strip()
+            email = _validate_acme_email(raw_email)
             ssl_manager.create_ssl_with_email(domain.domain_name, email)
             expiry = datetime.utcnow() + timedelta(days=90)
             domain.ssl_enabled    = True
@@ -148,7 +173,9 @@ async def create_ssl(
         if not domain:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Dominio no encontrado")
 
-        ssl_manager.create_ssl(domain.domain_name)
+        raw_email = (getattr(ssl, 'email', None) or "").strip() or (current_user.email or "").strip()
+        email = _validate_acme_email(raw_email)
+        ssl_manager.create_ssl_with_email(domain.domain_name, email)
 
         expiry_date = datetime.utcnow() + timedelta(days=90)
         domain.ssl_enabled     = True
@@ -255,8 +282,10 @@ async def create_ssl(
                 detail="Dominio no encontrado"
             )
 
-        # Create SSL certificate using certbot
-        ssl_manager.create_ssl(ssl.domain_name)
+        email = (getattr(ssl, 'email', None) or "").strip() or (current_user.email or "").strip()
+        if not email or "@" not in email or email.endswith("@example.com"):
+            raise ValueError("Se necesita un email válido para Let's Encrypt.")
+        ssl_manager.create_ssl_with_email(ssl.domain_name, email)
 
         # Set expiry date (Let's Encrypt certs expire in 90 days)
         expiry_date = datetime.utcnow() + timedelta(days=90)

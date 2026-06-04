@@ -79,7 +79,7 @@ class SSLManager(SystemManager):
 
             certbot_path = self._get_certbot_path()
             cmd = [certbot_path, "certonly", "--nginx", "--non-interactive", "--agree-tos",
-                   "-m", "admin@example.com"]  # TODO: from config
+                   "-m", "admin@svqpanel.local"]  # fallback — usar create_ssl_with_email siempre
             for d in domains:
                 cmd += ["-d", d]
 
