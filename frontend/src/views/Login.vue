@@ -1,100 +1,119 @@
 <template>
-  <div class="login-container">
-    <div class="login-card">
-      <div class="login-header">
-        <div class="login-mark"><i class="bi bi-hexagon-fill"></i></div>
-        <h1>SVQPanel</h1>
-        <p class="version">Panel de control · v0.1.0</p>
+  <div class="login-page">
+    <!-- Fondo decorativo con gradientes -->
+    <div class="login-bg"></div>
+
+    <div class="login-container">
+      <!-- Card principal -->
+      <div class="login-card">
+        <!-- Cabecera: logo + título -->
+        <div class="login-header">
+          <div class="login-logo">
+            <span class="login-logo__svq">SVQ</span><span class="login-logo__panel">Panel</span>
+          </div>
+          <h1 class="login-title">Bienvenido</h1>
+          <p class="login-subtitle">Panel de control de servidores</p>
+        </div>
+
+        <!-- Paso 1: credenciales -->
+        <form v-if="!twoFARequired" @submit.prevent="handleLogin" class="login-form">
+          <div class="form-group">
+            <label for="username">Usuario</label>
+            <input
+              id="username"
+              v-model="credentials.username"
+              type="text"
+              class="form-control"
+              placeholder="Tu usuario"
+              required
+              autofocus
+            />
+          </div>
+
+          <div class="form-group">
+            <label for="password">Contraseña</label>
+            <input
+              id="password"
+              v-model="credentials.password"
+              type="password"
+              class="form-control"
+              placeholder="Tu contraseña"
+              required
+            />
+          </div>
+
+          <div v-if="error" class="login-alert login-alert--error">
+            <i class="bi bi-exclamation-circle-fill"></i>
+            {{ error }}
+          </div>
+
+          <button
+            type="submit"
+            class="btn btn-primary login-btn"
+            :disabled="loading"
+          >
+            <span v-if="loading" class="spinner-border spinner-border-sm me-2"></span>
+            {{ loading ? 'Autenticando…' : 'Iniciar sesión' }}
+          </button>
+        </form>
+
+        <!-- Paso 2: 2FA -->
+        <form v-else @submit.prevent="handleVerify2FA" class="login-form">
+          <div class="login-2fa-icon">
+            <i class="bi bi-shield-lock"></i>
+          </div>
+          <p class="login-2fa-text">
+            Introduce el código de 6 dígitos de tu aplicación autenticadora.
+          </p>
+
+          <div class="form-group">
+            <label for="totpCode">Código de verificación</label>
+            <input
+              id="totpCode"
+              v-model="totpCode"
+              type="text"
+              inputmode="numeric"
+              pattern="[0-9]{6}"
+              maxlength="6"
+              class="form-control login-totp-input"
+              placeholder="000000"
+              required
+              autocomplete="one-time-code"
+              ref="totpInput"
+            />
+          </div>
+
+          <div v-if="error" class="login-alert login-alert--error">
+            <i class="bi bi-exclamation-circle-fill"></i>
+            {{ error }}
+          </div>
+
+          <button
+            type="submit"
+            class="btn btn-primary login-btn"
+            :disabled="loading || totpCode.length !== 6"
+          >
+            <span v-if="loading" class="spinner-border spinner-border-sm me-2"></span>
+            {{ loading ? 'Verificando…' : 'Verificar código' }}
+          </button>
+
+          <button
+            type="button"
+            class="btn btn-link login-back"
+            @click="cancelTwoFA"
+          >
+            <i class="bi bi-arrow-left me-1"></i> Volver al login
+          </button>
+        </form>
+
+        <!-- Footer -->
+        <div class="login-footer">
+          <p>SVQPanel © 2026</p>
+        </div>
       </div>
 
-      <!-- ── Paso 1: usuario + contraseña ── -->
-      <form v-if="!twoFARequired" @submit.prevent="handleLogin" class="login-form">
-        <div class="form-group">
-          <label for="username">Usuario</label>
-          <input
-            id="username"
-            v-model="credentials.username"
-            type="text"
-            class="form-control"
-            placeholder="Ingresa tu usuario"
-            required
-          />
-        </div>
-
-        <div class="form-group">
-          <label for="password">Contraseña</label>
-          <input
-            id="password"
-            v-model="credentials.password"
-            type="password"
-            class="form-control"
-            placeholder="Ingresa tu contraseña"
-            required
-          />
-        </div>
-
-        <div v-if="error" class="alert alert-danger">
-          <i class="bi bi-exclamation-circle"></i> {{ error }}
-        </div>
-
-        <button
-          type="submit"
-          class="btn btn-primary btn-login"
-          :disabled="loading"
-        >
-          <span v-if="loading" class="spinner-border spinner-border-sm me-2" role="status" aria-hidden="true"></span>
-          {{ loading ? 'Autenticando...' : 'Iniciar Sesión' }}
-        </button>
-      </form>
-
-      <!-- ── Paso 2: código TOTP ── -->
-      <form v-else @submit.prevent="handleVerify2FA" class="login-form">
-        <div class="twofa-icon text-center mb-3">
-          <i class="bi bi-shield-lock-fill text-primary" style="font-size:2.5rem"></i>
-        </div>
-        <p class="text-center text-muted mb-3">
-          Introduce el código de 6 dígitos de tu aplicación autenticadora.
-        </p>
-
-        <div class="form-group">
-          <label for="totpCode">Código de verificación</label>
-          <input
-            id="totpCode"
-            v-model="totpCode"
-            type="text"
-            inputmode="numeric"
-            pattern="[0-9]{6}"
-            maxlength="6"
-            class="form-control text-center"
-            style="font-size:1.4rem; letter-spacing:0.3rem"
-            placeholder="000000"
-            required
-            autocomplete="one-time-code"
-            ref="totpInput"
-          />
-        </div>
-
-        <div v-if="error" class="alert alert-danger">
-          <i class="bi bi-exclamation-circle"></i> {{ error }}
-        </div>
-
-        <button
-          type="submit"
-          class="btn btn-primary btn-login"
-          :disabled="loading || totpCode.length !== 6"
-        >
-          <span v-if="loading" class="spinner-border spinner-border-sm me-2" role="status" aria-hidden="true"></span>
-          {{ loading ? 'Verificando...' : 'Verificar código' }}
-        </button>
-
-        <button type="button" class="btn btn-link w-100 mt-2 text-muted" @click="cancelTwoFA">
-          <i class="bi bi-arrow-left me-1"></i> Volver al login
-        </button>
-      </form>
-
-      <div class="login-footer">
-        <p class="text-muted">SVQPanel © 2026 - Panel de Control de Servidores</p>
-      </div>
+      <!-- Marca derecha (decorativa) -->
+      <div class="login-mark-right"></div>
     </div>
   </div>
 </template>
@@ -142,9 +161,7 @@ export default {
       loading.value = true
       try {
         const response = await api.login(credentials.value)
-
         if (response.requires_2fa) {
-          // Guardar token temporal y mostrar paso 2FA
           tempToken.value     = response.temp_token
           twoFARequired.value = true
           totpCode.value      = ''
@@ -205,84 +222,244 @@ export default {
 </script>
 
 <style scoped>
-.login-container {
+.login-page {
   display: flex;
   justify-content: center;
   align-items: center;
   min-height: 100vh;
-  padding: var(--sp-4);
-  font-family: var(--font-sans);
   position: relative;
   overflow: hidden;
-  background:
-    radial-gradient(900px circle at 15% 20%, rgba(99,102,241,.18), transparent 45%),
-    radial-gradient(800px circle at 85% 80%, rgba(67,56,202,.20), transparent 45%),
-    var(--bg);
+  background: var(--bg);
 }
-/* malla sutil de fondo */
-.login-container::before {
-  content: '';
-  position: absolute; inset: 0;
-  background-image:
-    linear-gradient(var(--border) 1px, transparent 1px),
-    linear-gradient(90deg, var(--border) 1px, transparent 1px);
-  background-size: 48px 48px;
-  opacity: .35;
-  mask-image: radial-gradient(ellipse at center, black, transparent 75%);
+
+.login-bg {
+  position: absolute;
+  inset: 0;
+  background:
+    radial-gradient(900px at 15% 20%, rgba(240,138,42,.08), transparent 45%),
+    radial-gradient(800px at 85% 80%, rgba(26,37,71,.12), transparent 45%);
+  pointer-events: none;
+  z-index: 0;
+}
+
+.login-container {
+  position: relative;
+  z-index: 10;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  width: 100%;
+  max-width: 450px;
+  padding: 20px;
 }
 
 .login-card {
-  position: relative;
   background: var(--surface);
   border: 1px solid var(--border);
-  border-radius: var(--r-xl);
+  border-radius: 12px;
   box-shadow: var(--shadow-lg);
   width: 100%;
-  max-width: 410px;
-  padding: var(--sp-10) var(--sp-8);
+  padding: 40px 36px;
 }
 
-.login-header { text-align: center; margin-bottom: var(--sp-8); }
-.login-mark {
-  width: 54px; height: 54px; margin: 0 auto var(--sp-4);
-  display: grid; place-items: center;
-  border-radius: var(--r-lg);
-  background: linear-gradient(135deg, var(--brand-500), var(--brand-700));
-  color: #fff; font-size: 26px;
-  box-shadow: 0 8px 24px rgba(79,70,229,.35);
+.login-header {
+  text-align: center;
+  margin-bottom: 32px;
 }
-.login-header h1 {
-  margin: 0; font-size: var(--fs-2xl); font-weight: var(--fw-bold);
-  letter-spacing: -.02em; color: var(--text);
-}
-.login-header .version { margin: var(--sp-1) 0 0; color: var(--text-muted); font-size: var(--fs-sm); }
 
-.login-form { margin-bottom: var(--sp-4); }
-.form-group { margin-bottom: var(--sp-4); }
-.form-group label { display: block; margin-bottom: 6px; font-weight: var(--fw-medium); color: var(--text-secondary); font-size: var(--fs-sm); }
+.login-logo {
+  font-size: 24px;
+  font-weight: 800;
+  letter-spacing: -.01em;
+  margin-bottom: 12px;
+  display: inline-block;
+}
+
+.login-logo__svq {
+  color: var(--svq-navy);
+}
+
+.login-logo__panel {
+  color: var(--svq-orange);
+}
+
+.login-title {
+  margin: 0 0 4px;
+  font-size: 26px;
+  font-weight: 700;
+  letter-spacing: -.01em;
+  color: var(--text);
+}
+
+.login-subtitle {
+  margin: 0;
+  font-size: 13px;
+  color: var(--text-muted);
+}
+
+.login-form {
+  margin-bottom: 16px;
+}
+
+.form-group {
+  margin-bottom: 16px;
+}
+
+.form-group label {
+  display: block;
+  margin-bottom: 6px;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text-secondary);
+}
 
 .form-control {
-  width: 100%; padding: 11px var(--sp-3);
-  border: 1px solid var(--border-strong); border-radius: var(--r-md);
-  font-size: var(--fs-base); background: var(--surface); color: var(--text);
-  transition: border-color var(--t-fast), box-shadow var(--t-fast);
+  width: 100%;
+  padding: 10px 12px;
+  border: 1px solid var(--border-strong);
+  border-radius: 6px;
+  font-family: var(--font-sans);
+  font-size: 14px;
+  color: var(--text);
+  background: var(--surface);
+  transition: border-color .15s, box-shadow .15s;
 }
-.form-control::placeholder { color: var(--text-muted); }
-.form-control:focus { outline: none; border-color: var(--color-primary); box-shadow: var(--shadow-focus); }
 
-.btn-login {
-  width: 100%; padding: 12px; font-size: var(--fs-md); font-weight: var(--fw-semibold);
-  border: none; border-radius: var(--r-md);
-  background: var(--color-primary); color: #fff; cursor: pointer;
-  transition: transform var(--t-fast), background var(--t-fast), box-shadow var(--t-fast);
+.form-control::placeholder {
+  color: var(--text-muted);
 }
-.btn-login:hover:not(:disabled) { background: var(--color-primary-hover); transform: translateY(-1px); box-shadow: var(--shadow-md); }
-.btn-login:disabled { opacity: .6; cursor: not-allowed; }
 
-.alert { margin-bottom: var(--sp-4); padding: var(--sp-3); border-radius: var(--r-md); font-size: var(--fs-sm); }
-.alert-danger { background: var(--danger-bg); color: var(--danger); border: 1px solid var(--danger-border); }
+.form-control:focus {
+  outline: none;
+  border-color: var(--ac);
+  box-shadow: 0 0 0 3px rgba(240,138,42,.25);
+}
 
-.login-footer { text-align: center; border-top: 1px solid var(--border); padding-top: var(--sp-5); margin-top: var(--sp-5); }
-.login-footer .text-muted { margin: 0; font-size: var(--fs-sm); color: var(--text-muted); }
-.twofa-icon .bi { color: var(--color-primary); }
+.login-totp-input {
+  text-align: center;
+  font-size: 18px;
+  letter-spacing: 4px;
+  font-family: var(--font-mono);
+  font-weight: 600;
+}
+
+.login-btn {
+  width: 100%;
+  padding: 12px;
+  font-size: 14px;
+  font-weight: 600;
+  background: var(--ac);
+  color: #fff;
+  border: none;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: all .15s;
+}
+
+.login-btn:hover:not(:disabled) {
+  background: #d97418;
+  transform: translateY(-1px);
+  box-shadow: var(--shadow-md);
+}
+
+.login-btn:disabled {
+  opacity: .6;
+  cursor: not-allowed;
+}
+
+.login-alert {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px;
+  border-radius: 6px;
+  font-size: 13px;
+  margin-bottom: 16px;
+}
+
+.login-alert--error {
+  background: var(--danger-bg);
+  color: var(--danger);
+  border: 1px solid var(--danger-border);
+}
+
+.login-alert i {
+  flex-shrink: 0;
+  font-size: 16px;
+}
+
+.login-2fa-icon {
+  text-align: center;
+  margin-bottom: 16px;
+}
+
+.login-2fa-icon i {
+  font-size: 40px;
+  color: var(--ac);
+}
+
+.login-2fa-text {
+  text-align: center;
+  margin: 0 0 20px;
+  font-size: 13px;
+  color: var(--text-secondary);
+  line-height: 1.5;
+}
+
+.login-back {
+  width: 100%;
+  padding: 10px;
+  margin-top: 12px;
+  color: var(--text-secondary) !important;
+  font-size: 13px;
+  text-decoration: none;
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  cursor: pointer;
+  transition: all .15s;
+}
+
+.login-back:hover {
+  background: var(--surface-inset);
+  color: var(--text) !important;
+  border-color: var(--border-strong);
+}
+
+.login-footer {
+  margin-top: 24px;
+  padding-top: 16px;
+  border-top: 1px solid var(--border);
+  text-align: center;
+}
+
+.login-footer p {
+  margin: 0;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.login-mark-right {
+  position: absolute;
+  right: -120px;
+  top: -80px;
+  width: 400px;
+  height: 400px;
+  border-radius: 50%;
+  background: radial-gradient(circle, rgba(240,138,42,.06), transparent 70%);
+  pointer-events: none;
+  z-index: 0;
+}
+
+@media (max-width: 480px) {
+  .login-card {
+    padding: 28px 20px;
+  }
+  .login-header {
+    margin-bottom: 24px;
+  }
+  .login-title {
+    font-size: 22px;
+  }
+}
 </style>
