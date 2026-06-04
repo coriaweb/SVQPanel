@@ -200,8 +200,12 @@ export default {
 
     const isActive = (to) => {
       if (to === '/dashboard') return route.path === to
-      if (to === '/system/updates') return route.path === to
-      return route.path.startsWith(to) && (route.path[to.length] === '/' || route.path[to.length] === undefined)
+      // Exact match for subroutes
+      if (to === '/system/updates' || to === '/security') return route.path === to
+      // For parent routes, check exact boundary
+      if (route.path === to) return true
+      if (route.path.startsWith(to + '/')) return true
+      return false
     }
 
     // ===== Breadcrumbs =====
