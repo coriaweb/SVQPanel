@@ -244,7 +244,7 @@ export default {
     const openPalette = () => window.dispatchEvent(new CustomEvent('svq:open-command-palette'))
 
     return {
-      store, route, notification, isAuthenticated, currentUser, theme,
+      store, route, router, notification, isAuthenticated, currentUser, theme,
       sidebarCollapsed, dropdownOpen, visibleGroups, isActive, breadcrumbs,
       userInitials, toastIcon, logout, openPalette,
     }

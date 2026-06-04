@@ -302,7 +302,7 @@ if [[ "$WEBSERVER" == "nginx" || "$WEBSERVER" == "apache+nginx" ]]; then
     # Repositorio oficial de nginx.org: versión stable más reciente (1.26+),
     # con soporte HTTP/3 (QUIC), actualizaciones de seguridad rápidas.
     # El nginx de Debian apt se queda en 1.22 (antiguo, sin HTTP/3).
-    curl -fsSL https://nginx.org/keys/nginx_signing.key | gpg --dearmor \
+    curl -fsSL https://nginx.org/keys/nginx_signing.key | gpg --yes --dearmor \
         -o /usr/share/keyrings/nginx-archive-keyring.gpg
     echo "deb [signed-by=/usr/share/keyrings/nginx-archive-keyring.gpg] \
 http://nginx.org/packages/debian $(lsb_release -cs) nginx" \
@@ -609,7 +609,7 @@ DOVESASLEOF
     fi
 
     curl -fsSL https://rspamd.com/apt-stable/gpg.key 2>/dev/null \
-        | gpg --dearmor > /usr/share/keyrings/rspamd-archive-keyring.gpg
+        | gpg --yes --dearmor > /usr/share/keyrings/rspamd-archive-keyring.gpg
     echo "deb [signed-by=/usr/share/keyrings/rspamd-archive-keyring.gpg] https://rspamd.com/apt-stable/ ${RSPAMD_CODENAME} main" \
         > /etc/apt/sources.list.d/rspamd.list
     apt-get update -qq
@@ -921,7 +921,7 @@ echo -e "${YELLOW}Instalando PHP y extensiones...${NC}"
 
 # Agregar repo de Sury para soportar múltiples versiones PHP
 echo -e "${YELLOW}  → Agregando repositorio de Sury para PHP múltiple...${NC}"
-curl -sSL https://packages.sury.org/php/apt.gpg | gpg --dearmor -o /usr/share/keyrings/deb.sury.org-php.gpg 2>/dev/null || true
+curl -sSL https://packages.sury.org/php/apt.gpg | gpg --yes --dearmor -o /usr/share/keyrings/deb.sury.org-php.gpg 2>/dev/null || true
 
 if [[ "$OS_VERSION" == "13" ]]; then
     echo "deb [signed-by=/usr/share/keyrings/deb.sury.org-php.gpg] https://packages.sury.org/php/ trixie main" | tee /etc/apt/sources.list.d/sury-php.list > /dev/null
