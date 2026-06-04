@@ -174,12 +174,7 @@ export default {
     const renewSSL = async () => {
       loading.value = true
       try {
-        await api.toggleDomainSSL(props.domain.id, {
-          enabled: true,
-          force_https: forceHttps.value,
-          hsts_enabled: hsts.value,
-          email: email.value,
-        })
+        await api.post(`/api/domains/${props.domain.id}/ssl/renew`, {})
         store.showNotification('Certificado renovado correctamente', 'success')
         await loadSSL()
       } catch (e) {

@@ -165,6 +165,36 @@ async def toggle_ssl(
         )
 
 
+@router.post("/domains/{domain_id}/ssl/renew", response_model=SSLResponse)
+async def renew_ssl(
+    domain_id: int,
+    current_user: User = Depends(require_auth),
+    db: Session = Depends(get_db)
+):
+    """Renueva el certificado SSL existente con certbot --force-renew"""
+    domain = db.query(Domain).filter(Domain.id == domain_id).first()
+    if not domain:
+        raise HTTPException(status_code=404, detail="Dominio no encontrado")
+    if not domain.ssl_enabled:
+        raise HTTPException(status_code=400, detail="El dominio no tiene SSL activo")
+
+    ssl_manager = SSLManager()
+    try:
+        ssl_manager.renew_ssl(domain.domain_name)
+        domain.ssl_renewed_at = datetime.utcnow()
+        db.commit()
+        db.refresh(domain)
+        return _domain_ssl_response(domain, ssl_manager)
+    except HTTPException:
+        raise
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error al renovar SSL: {str(e)}"
+        )
+
+
 @router.post("/domains/{domain_id}/ssl", response_model=SSLResponse, status_code=status.HTTP_201_CREATED)
 async def create_ssl(
     domain_id: int,
