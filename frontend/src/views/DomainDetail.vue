@@ -306,12 +306,12 @@
               <div v-for="bot in domainKnownBots" :key="bot.id"
                    style="padding:1rem;border-radius:var(--radius-md);border:1px solid var(--border);background:var(--surface-2);transition:all .15s;cursor:pointer"
                    :class="{ 'bot-card-active': bot.enabled && !bot.globalBlocked, 'bot-card-global': bot.globalBlocked }"
-                   @click="if(!bot.globalBlocked) bot.enabled = !bot.enabled">
+                   @click="toggleBotEnabled(bot)">
                 <div style="display:flex;align-items:flex-start;gap:.75rem">
                   <input class="form-check-input" type="checkbox" style="margin-top:.2rem;flex-shrink:0"
                          :id="'dbot-'+domain.id+'-'+bot.id"
                          :checked="bot.enabled"
-                         @click.stop="if(!bot.globalBlocked) bot.enabled = !bot.enabled"
+                         @click.stop="toggleBotEnabled(bot)"
                          :disabled="bot.globalBlocked" />
                   <div style="flex:1;min-width:0">
                     <div style="display:flex;align-items:center;gap:.5rem;margin-bottom:.25rem">
@@ -926,6 +926,12 @@ export default {
       domainCustomBots.value = active.filter(p => !knownPatterns.has(p.toLowerCase()))
     }
 
+    const toggleBotEnabled = (bot) => {
+      if (!bot.globalBlocked) {
+        bot.enabled = !bot.enabled
+      }
+    }
+
     const saveDomainBots = async () => {
       botsSaving.value = true
       try {
@@ -1045,7 +1051,7 @@ export default {
       git, gitDeployments, gitLoading, gitSaving, gitDeploying, gitKeyGen, gitRolling, gitForm,
       loadGit, genKey, doSetup, doDeploy, doRollback, doDisableGit, copyText,
       showReadonlyForm, readonlyIps, readonlySaving, saveReadonlyMode, editReadonlyIps,
-      domainKnownBots, domainCustomBots, botsLoading, botsSaving, saveDomainBots,
+      domainKnownBots, domainCustomBots, botsLoading, botsSaving, saveDomainBots, toggleBotEnabled,
       secHeadersSaving, toggleSecurityHeaders,
       http3Saving, toggleHttp3,
     }
