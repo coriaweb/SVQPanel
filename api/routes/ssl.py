@@ -95,7 +95,7 @@ async def toggle_ssl(
 
     try:
         if body.enabled and not domain.ssl_enabled:
-            # Activar: lanzar certbot
+            # Activar: lanzar certbot (primera emisión)
             # Prioridad: email del body → email del usuario en BD → error
             raw_email = (body.email or "").strip() or (current_user.email or "").strip()
             email = _validate_acme_email(raw_email)
@@ -107,6 +107,26 @@ async def toggle_ssl(
             # Auto-activar force_https al emitir cert por primera vez
             if not body.force_https:
                 domain.force_https = True
+        elif body.enabled and domain.ssl_enabled:
+            # Renovar cert existente — usar email del body si viene, sino omitir validación
+            # (el cert ya tiene uno válido de la emisión anterior)
+            raw_email = (body.email or "").strip()
+            if raw_email:
+                email = _validate_acme_email(raw_email)
+            else:
+                # Sin email en el request, usar el del usuario o dejar que certbot lo haga
+                email = (current_user.email or "").strip()
+                if email and not email.endswith("@localhost") and "@" in email:
+                    pass  # email válido
+                else:
+                    # Sin email válido, renovar sin especificar -m (certbot usará el anterior)
+                    email = None
+            if email:
+                ssl_manager.create_ssl_with_email(domain.domain_name, email)
+            else:
+                # Renovar sin especificar email — certbot mantiene el anterior
+                ssl_manager.create_ssl(domain.domain_name)
+            domain.ssl_renewed_at = datetime.utcnow()
         elif not body.enabled and domain.ssl_enabled:
             # Desactivar: revocar cert
             try:
