@@ -331,6 +331,44 @@ async def run_system_upgrade(
 # Versiones de componentes instalados
 # ─────────────────────────────────────────────────────────────────────────────
 
+def _get_postfix_version() -> str:
+    """
+    Postfix no tiene -v, obtener versión de dpkg.
+    Salida: ii  postfix    3.7.11-0+deb12u1    amd64
+    """
+    try:
+        import subprocess
+        r = subprocess.run(
+            ["dpkg", "-l"], capture_output=True, text=True, timeout=5,
+        )
+        for line in r.stdout.splitlines():
+            if line.startswith("ii") and "postfix" in line:
+                parts = line.split()
+                if len(parts) >= 3:
+                    return parts[2]
+    except Exception:
+        pass
+    return "no disponible"
+
+
+def _get_mariadb_version() -> str:
+    """
+    MariaDB --version: 'mariadb from 11.4.12-MariaDB'
+    Extraer '11.4.12'
+    """
+    try:
+        import subprocess, re
+        r = subprocess.run(
+            ["mariadb", "--version"], capture_output=True, text=True, timeout=5,
+        )
+        match = re.search(r"from ([\d.]+)", r.stdout)
+        if match:
+            return match.group(1)
+    except Exception:
+        pass
+    return "no disponible"
+
+
 def _get_version(command: list[str], pattern: str = None) -> str:
     """
     Ejecuta un comando y extrae la versión del output.
@@ -394,17 +432,17 @@ async def get_system_versions(current_user=Depends(require_admin)):
             },
             "Postfix": {
                 "name": "Postfix",
-                "version": _get_version(["postfix", "-v"], r"postfix/(\S+)"),
+                "version": _get_postfix_version(),
                 "docs": "http://www.postfix.org/download.html",
             },
             "Dovecot": {
                 "name": "Dovecot",
-                "version": _get_version(["dovecot", "--version"], r"(\S+)"),
+                "version": _get_version(["dovecot", "--version"]),
                 "docs": "https://www.dovecot.org/download/",
             },
             "Rspamd": {
                 "name": "Rspamd",
-                "version": _get_version(["rspamd", "--version"], r"rspamd (\S+)"),
+                "version": _get_version(["rspamd", "--version"], r"Rspamd daemon version (\S+)"),
                 "docs": "https://rspamd.com/",
             },
         }
@@ -412,7 +450,7 @@ async def get_system_versions(current_user=Depends(require_admin)):
 
     # Intentar obtener MariaDB si está instalada
     try:
-        mariadb_ver = _get_version(["mariadb", "--version"], r"MariaDB ([\d.]+)")
+        mariadb_ver = _get_mariadb_version()
         if mariadb_ver != "no disponible":
             versions["components"]["MariaDB"] = {
                 "name": "MariaDB",
