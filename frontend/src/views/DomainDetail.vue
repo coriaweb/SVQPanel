@@ -291,53 +291,72 @@
 
       <!-- ===== Bots ===== -->
       <BaseCard v-show="tab === 'bots'" title="Bloqueo de Bots" icon="robot">
-        <p class="text-muted small mb-3">
+        <p class="text-muted small mb-4">
           Bloquea user-agents maliciosos específicamente para este dominio (HTTP 444).
           Los bots bloqueados globalmente en Seguridad → Bad Bots también aplican.
         </p>
         <div v-if="botsLoading" class="text-center py-3">
           <span class="spinner-border spinner-border-sm"></span>
         </div>
-        <div v-else>
-          <h6 class="fw-semibold mb-2">Bots conocidos</h6>
-          <div class="row g-2 mb-3">
-            <div v-for="bot in domainKnownBots" :key="bot.id" class="col-md-6">
-              <div class="border rounded p-2 d-flex align-items-start gap-2"
-                   :class="bot.globalBlocked ? 'border-secondary opacity-60' : (bot.enabled ? 'border-danger bg-danger bg-opacity-10' : '')">
-                <input class="form-check-input mt-0 flex-shrink-0" type="checkbox"
-                       :id="'dbot-'+domain.id+'-'+bot.id"
-                       v-model="bot.enabled"
-                       :disabled="bot.globalBlocked" />
-                <label :for="'dbot-'+domain.id+'-'+bot.id"
-                       class="small flex-fill"
-                       :class="bot.globalBlocked ? 'text-muted' : 'cursor-pointer'">
-                  <span class="fw-semibold">{{ bot.label }}</span>
-                  <span v-if="bot.globalBlocked" class="badge bg-secondary ms-1" style="font-size:.65rem">global</span>
-                  <span class="text-muted d-block" style="font-size:.75rem">{{ bot.description }}</span>
-                  <code style="font-size:.72rem">~*{{ bot.pattern }}</code>
-                </label>
+        <div v-else style="display:flex;flex-direction:column;gap:1.5rem">
+          <!-- Bots conocidos -->
+          <div>
+            <h6 style="font-size:.95rem;font-weight:600;margin-bottom:1rem;color:var(--text-secondary)">Bots conocidos</h6>
+            <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(320px,1fr));gap:1rem">
+              <div v-for="bot in domainKnownBots" :key="bot.id"
+                   style="padding:1rem;border-radius:var(--radius-md);border:1px solid var(--border);background:var(--surface-2);transition:all .15s;cursor:pointer"
+                   :class="{ 'bot-card-active': bot.enabled && !bot.globalBlocked, 'bot-card-global': bot.globalBlocked }"
+                   @click="if(!bot.globalBlocked) bot.enabled = !bot.enabled">
+                <div style="display:flex;align-items:flex-start;gap:.75rem">
+                  <input class="form-check-input" type="checkbox" style="margin-top:.2rem;flex-shrink:0"
+                         :id="'dbot-'+domain.id+'-'+bot.id"
+                         :checked="bot.enabled"
+                         @click.stop="if(!bot.globalBlocked) bot.enabled = !bot.enabled"
+                         :disabled="bot.globalBlocked" />
+                  <div style="flex:1;min-width:0">
+                    <div style="display:flex;align-items:center;gap:.5rem;margin-bottom:.25rem">
+                      <label :for="'dbot-'+domain.id+'-'+bot.id"
+                             style="font-weight:600;font-size:.95rem;cursor:pointer;margin:0"
+                             :class="bot.globalBlocked ? 'text-muted' : ''">
+                        {{ bot.label }}
+                      </label>
+                      <span v-if="bot.globalBlocked" style="font-size:.7rem;padding:.2rem .4rem;border-radius:var(--radius-sm);background:var(--text-muted);color:var(--surface);font-weight:500">global</span>
+                      <span v-else-if="bot.enabled" style="font-size:.7rem;padding:.2rem .4rem;border-radius:var(--radius-sm);background:var(--danger);color:#fff;font-weight:500">bloqueado</span>
+                    </div>
+                    <p style="font-size:.8rem;color:var(--text-muted);margin:0 0 .5rem 0">{{ bot.description }}</p>
+                    <code style="font-size:.75rem;color:var(--text-muted);background:var(--surface-3);padding:.25rem .4rem;border-radius:.25rem;display:block;word-break:break-all">~*{{ bot.pattern }}</code>
+                  </div>
+                </div>
               </div>
             </div>
           </div>
-          <h6 class="fw-semibold mb-2">Patrones personalizados</h6>
-          <div class="mb-3">
-            <div v-for="(p, i) in domainCustomBots" :key="i"
-                 class="input-group input-group-sm mb-1" style="max-width:380px">
-              <span class="input-group-text font-monospace">~*</span>
-              <input v-model="domainCustomBots[i]" type="text"
-                     class="form-control font-monospace" placeholder="patron-bot" />
-              <button class="btn btn-outline-danger" type="button"
-                      @click="domainCustomBots.splice(i, 1)">
-                <i class="bi bi-trash"></i>
+
+          <!-- Patrones personalizados -->
+          <div>
+            <h6 style="font-size:.95rem;font-weight:600;margin-bottom:1rem;color:var(--text-secondary)">Patrones personalizados</h6>
+            <div style="display:flex;flex-direction:column;gap:.5rem;max-width:100%">
+              <div v-for="(p, i) in domainCustomBots" :key="i"
+                   style="display:flex;gap:.5rem;align-items:center">
+                <span style="font-family:var(--font-mono);font-size:.85rem;color:var(--text-muted);flex-shrink:0">~*</span>
+                <input v-model="domainCustomBots[i]" type="text"
+                       style="flex:1;padding:.5rem .75rem;border:1px solid var(--border);border-radius:var(--radius-sm);font-family:var(--font-mono);font-size:.85rem;background:var(--surface);color:var(--text)"
+                       placeholder="patron-bot" />
+                <button type="button" class="bot-btn-delete"
+                        @click="domainCustomBots.splice(i, 1)">
+                  <i class="bi bi-trash" style="font-size:.9rem"></i>
+                </button>
+              </div>
+              <button type="button" class="bot-btn-add"
+                      @click="domainCustomBots.push('')">
+                <i class="bi bi-plus" style="margin-right:.3rem"></i>Añadir patrón
               </button>
             </div>
-            <button class="btn btn-outline-secondary btn-sm mt-1"
-                    @click="domainCustomBots.push('')">
-              <i class="bi bi-plus me-1"></i>Añadir patrón
-            </button>
           </div>
+
+          <!-- Botón guardar -->
           <BaseButton variant="primary" size="sm" icon="save" :loading="botsSaving"
-                      @click="saveDomainBots">
+                      @click="saveDomainBots"
+                      style="align-self:flex-start">
             Guardar y aplicar
           </BaseButton>
         </div>
@@ -1147,4 +1166,19 @@ export default {
 
 @media (max-width: 1000px) { .dd-grid { grid-template-columns: 1fr 1fr; } .dd-span2 { grid-column: span 2; } }
 @media (max-width: 680px) { .dd-grid { grid-template-columns: 1fr; } .dd-span2 { grid-column: auto; } .disk-grid { grid-template-columns: 1fr; } }
+
+/* Bot cards styling */
+.bot-card-active { border-color: var(--danger); background: color-mix(in srgb, var(--danger) 8%, var(--surface-2)); }
+.bot-card-global { opacity: 0.6; }
+.bot-btn-delete {
+  padding: .5rem; border: 1px solid var(--border); border-radius: var(--radius-sm);
+  background: var(--surface); color: var(--danger); cursor: pointer; transition: all .15s;
+}
+.bot-btn-delete:hover { background: var(--danger); color: #fff; }
+.bot-btn-add {
+  align-self: flex-start; padding: .5rem 1rem; border: 1px solid var(--border);
+  border-radius: var(--radius-sm); background: var(--surface); color: var(--text);
+  cursor: pointer; font-size: .85rem; font-weight: 500; transition: all .15s;
+}
+.bot-btn-add:hover { background: var(--accent); color: #fff; border-color: var(--accent); }
 </style>
