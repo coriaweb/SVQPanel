@@ -97,23 +97,53 @@
       <!-- Acciones rápidas (todos) -->
       <BaseCard title="Acciones rápidas" icon="lightning-charge" class="dash-actions">
         <div class="quick-actions">
-          <router-link to="/domains" class="quick-action">
-            <i class="bi bi-globe2"></i><span>Mis dominios</span>
+          <router-link to="/domains" class="quick-action-btn">
+            <span class="qa-icon"><i class="bi bi-plus-network-outline"></i></span>
+            <span class="qa-text">
+              <span class="qa-label">Añadir dominio</span>
+              <span class="qa-hint">Dominio o subdominio</span>
+            </span>
+            <i class="bi bi-chevron-right qa-chevron"></i>
           </router-link>
-          <router-link to="/databases" class="quick-action">
-            <i class="bi bi-database"></i><span>Bases de datos</span>
+          <router-link to="/databases" class="quick-action-btn">
+            <span class="qa-icon"><i class="bi bi-database-plus-outline"></i></span>
+            <span class="qa-text">
+              <span class="qa-label">Nueva base de datos</span>
+              <span class="qa-hint">MySQL 8.0</span>
+            </span>
+            <i class="bi bi-chevron-right qa-chevron"></i>
           </router-link>
-          <router-link to="/mail" class="quick-action">
-            <i class="bi bi-envelope"></i><span>Correo</span>
+          <router-link to="/mail" class="quick-action-btn">
+            <span class="qa-icon"><i class="bi bi-email-plus-outline"></i></span>
+            <span class="qa-text">
+              <span class="qa-label">Cuenta de correo</span>
+              <span class="qa-hint">Buzón nuevo</span>
+            </span>
+            <i class="bi bi-chevron-right qa-chevron"></i>
           </router-link>
-          <router-link to="/files" class="quick-action">
-            <i class="bi bi-folder2-open"></i><span>Archivos</span>
+          <router-link to="/files" class="quick-action-btn">
+            <span class="qa-icon"><i class="bi bi-folder2"></i></span>
+            <span class="qa-text">
+              <span class="qa-label">Gestor de archivos</span>
+              <span class="qa-hint">Subir y editar</span>
+            </span>
+            <i class="bi bi-chevron-right qa-chevron"></i>
           </router-link>
-          <router-link v-if="isAdminOrReseller" to="/users" class="quick-action">
-            <i class="bi bi-person-plus"></i><span>{{ isReseller ? 'Clientes' : 'Usuarios' }}</span>
+          <router-link v-if="isAdminOrReseller" :to="isReseller ? '/users' : '/users'" class="quick-action-btn">
+            <span class="qa-icon"><i class="bi bi-person-plus-outline"></i></span>
+            <span class="qa-text">
+              <span class="qa-label">{{ isReseller ? 'Nuevo cliente' : 'Nuevo usuario' }}</span>
+              <span class="qa-hint">{{ isReseller ? 'Cuenta de cliente' : 'Cuenta de hosting' }}</span>
+            </span>
+            <i class="bi bi-chevron-right qa-chevron"></i>
           </router-link>
-          <router-link v-if="isAdmin" to="/security" class="quick-action">
-            <i class="bi bi-shield-lock"></i><span>Seguridad</span>
+          <router-link v-if="isAdmin" to="/security" class="quick-action-btn">
+            <span class="qa-icon"><i class="bi bi-lock-check-outline"></i></span>
+            <span class="qa-text">
+              <span class="qa-label">Certificados SSL</span>
+              <span class="qa-hint">Let's Encrypt gratis</span>
+            </span>
+            <i class="bi bi-chevron-right qa-chevron"></i>
           </router-link>
         </div>
       </BaseCard>
@@ -281,17 +311,31 @@ export default {
 .svc-state { font-size: var(--fs-sm); color: var(--text-muted); text-transform: capitalize; }
 
 /* Acciones rápidas */
-.quick-actions { display: grid; grid-template-columns: repeat(2, 1fr); gap: var(--sp-2); }
-.quick-action {
-  display: flex; align-items: center; gap: var(--sp-2);
-  padding: var(--sp-3); border-radius: var(--r-md);
+.quick-actions { display: grid; grid-template-columns: repeat(2, 1fr); gap: var(--sp-3); }
+.quick-action-btn {
+  display: flex; align-items: center; gap: 14px;
+  padding: var(--sp-4); border-radius: var(--r-lg);
+  background: var(--surface);
   border: 1px solid var(--border);
   color: var(--text-secondary); text-decoration: none;
-  font-size: var(--fs-sm); font-weight: var(--fw-medium);
+  font-size: var(--fs-base); font-weight: var(--fw-medium);
+  cursor: pointer; font-family: var(--font-sans);
   transition: all var(--t-fast) var(--ease);
+  min-height: 80px;
 }
-.quick-action .bi { font-size: 16px; color: var(--color-primary); }
-.quick-action:hover { background: var(--surface-inset); color: var(--text); border-color: var(--border-strong); transform: translateY(-1px); }
+.quick-action-btn:hover { border-color: var(--border-strong); transform: translateY(-2px); box-shadow: var(--shadow-md); }
+.qa-icon {
+  width: 42px; height: 42px; flex-shrink: 0;
+  display: flex; align-items: center; justify-content: center;
+  border-radius: var(--r-md);
+  background: var(--ac-soft); color: var(--ac);
+  font-size: 20px;
+}
+.qa-text { display: flex; flex-direction: column; gap: 3px; min-width: 0; flex: 1; }
+.qa-label { display: block; color: var(--svq-navy); font-weight: 600; font-size: var(--fs-base); }
+[data-theme="dark"] .qa-label { color: var(--text); }
+.qa-hint { display: block; color: var(--text-muted); font-size: var(--fs-sm); font-weight: 400; }
+.qa-chevron { margin-left: auto; color: var(--border-strong); font-size: 18px; flex-shrink: 0; }
 
 /* Dominios */
 .link-more { font-size: var(--fs-sm); color: var(--color-primary); text-decoration: none; font-weight: var(--fw-medium); display: inline-flex; align-items: center; gap: 4px; }
@@ -313,6 +357,8 @@ export default {
 @media (max-width: 760px) {
   .metrics-grid { grid-template-columns: repeat(2, 1fr); }
   .dash-row { grid-template-columns: 1fr; }
-  .quick-actions { grid-template-columns: repeat(2, 1fr); }
+  .quick-actions { grid-template-columns: 1fr; }
+  .quick-action-btn { gap: 12px; padding: 12px; min-height: auto; }
+  .qa-icon { width: 38px; height: 38px; font-size: 18px; }
 }
 </style>
