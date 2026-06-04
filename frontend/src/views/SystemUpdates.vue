@@ -1,14 +1,80 @@
 <template>
   <div class="container-fluid py-3">
+    <!-- Cabecera -->
     <div class="d-flex align-items-center justify-content-between mb-3">
       <h4 class="mb-0">
-        <i class="bi bi-arrow-repeat me-2"></i>Actualizaciones del sistema
+        <i class="bi bi-gear me-2"></i>Sistema
       </h4>
-      <button class="btn btn-outline-primary btn-sm" @click="checkUpdates" :disabled="checking">
-        <span v-if="checking" class="spinner-border spinner-border-sm me-1"></span>
-        Comprobar actualizaciones
-      </button>
     </div>
+
+    <!-- Tabs -->
+    <ul class="nav nav-tabs mb-3">
+      <li class="nav-item">
+        <button class="nav-link" :class="{ active: activeTab === 'versions' }"
+                @click="activeTab = 'versions'">
+          <i class="bi bi-tag me-1"></i>Versiones
+        </button>
+      </li>
+      <li class="nav-item">
+        <button class="nav-link" :class="{ active: activeTab === 'updates' }"
+                @click="activeTab = 'updates'">
+          <i class="bi bi-arrow-repeat me-1"></i>Actualizaciones
+        </button>
+      </li>
+    </ul>
+
+    <!-- TAB: Versiones -->
+    <div v-if="activeTab === 'versions'" class="tab-content">
+      <div class="d-flex align-items-center justify-content-between mb-3">
+        <h6 class="mb-0">Componentes instalados</h6>
+        <button class="btn btn-outline-secondary btn-sm" @click="loadVersions" :disabled="loadingVersions">
+          <span v-if="loadingVersions" class="spinner-border spinner-border-sm me-1"></span>
+          <i v-else class="bi bi-arrow-repeat me-1"></i>Actualizar
+        </button>
+      </div>
+
+      <div v-if="loadingVersions" class="text-center py-5">
+        <div class="spinner-border text-primary me-2"></div>
+        <span>Obteniendo versiones...</span>
+      </div>
+
+      <div v-else-if="versions && versions.components" class="table-responsive">
+        <table class="table table-sm table-hover align-middle">
+          <thead class="table-light">
+            <tr>
+              <th>Componente</th>
+              <th>Versión instalada</th>
+              <th class="text-end">Documentación</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr v-for="(info, key) in versions.components" :key="key">
+              <td>
+                <strong>{{ info.name }}</strong>
+              </td>
+              <td class="font-monospace">
+                <code>{{ info.version }}</code>
+              </td>
+              <td class="text-end">
+                <a :href="info.docs" target="_blank" class="btn btn-outline-secondary btn-sm">
+                  <i class="bi bi-box-arrow-up-right me-1"></i>Ver
+                </a>
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- TAB: Actualizaciones -->
+    <div v-if="activeTab === 'updates'" class="tab-content">
+      <div class="d-flex align-items-center justify-content-between mb-3">
+        <h6 class="mb-0">Paquetes disponibles</h6>
+        <button class="btn btn-outline-primary btn-sm" @click="checkUpdates" :disabled="checking">
+          <span v-if="checking" class="spinner-border spinner-border-sm me-1"></span>
+          Comprobar actualizaciones
+        </button>
+      </div>
 
     <!-- Mensaje de estado -->
     <div v-if="statusMsg" class="alert" :class="statusError ? 'alert-danger' : 'alert-success'" role="alert">
@@ -77,22 +143,31 @@
       </div>
     </template>
 
-    <!-- Log de salida del upgrade -->
-    <div v-if="upgradeLog" class="mt-3">
-      <h6 class="text-muted">Salida del proceso</h6>
-      <pre class="bg-dark text-light p-3 rounded small"
-        style="max-height:400px;overflow:auto;white-space:pre-wrap;">{{ upgradeLog }}</pre>
+      <!-- Log de salida del upgrade -->
+      <div v-if="upgradeLog" class="mt-3">
+        <h6 class="text-muted">Salida del proceso</h6>
+        <pre class="bg-dark text-light p-3 rounded small"
+          style="max-height:400px;overflow:auto;white-space:pre-wrap;">{{ upgradeLog }}</pre>
+      </div>
     </div>
   </div>
 </template>
 
 <script>
-import { ref } from 'vue'
+import { ref, onMounted } from 'vue'
 import api from '../services/api'
 
 export default {
   name: 'SystemUpdates',
   setup() {
+    // Tabs
+    const activeTab = ref('versions')
+
+    // Versiones
+    const versions = ref(null)
+    const loadingVersions = ref(false)
+
+    // Actualizaciones
     const checking   = ref(false)
     const checked    = ref(false)
     const checkedAt  = ref('')
@@ -102,6 +177,21 @@ export default {
     const upgradeLog = ref('')
     const statusMsg  = ref('')
     const statusError = ref(false)
+
+    const loadVersions = async () => {
+      loadingVersions.value = true
+      try {
+        versions.value = await api.get('/api/system/versions')
+      } catch (e) {
+        console.error('Error cargando versiones:', e)
+      } finally {
+        loadingVersions.value = false
+      }
+    }
+
+    onMounted(() => {
+      loadVersions()
+    })
 
     const checkUpdates = async () => {
       checking.value  = true
@@ -153,6 +243,8 @@ export default {
     }
 
     return {
+      activeTab,
+      versions, loadingVersions, loadVersions,
       checking, checked, checkedAt, packages,
       upgrading, upgradingPkg, upgradeLog,
       statusMsg, statusError,

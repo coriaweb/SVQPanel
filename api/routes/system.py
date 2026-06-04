@@ -326,3 +326,113 @@ async def run_system_upgrade(
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error actualizando: {str(e)}")
 
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Versiones de componentes instalados
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _get_version(command: list[str], pattern: str = None) -> str:
+    """
+    Ejecuta un comando y extrae la versión del output.
+    Si pattern es None, devuelve la segunda línea (ej: "node -v" → "v24.16.0").
+    Si pattern es string, extrae lo que coincida con el patrón regex.
+    """
+    try:
+        import subprocess, re
+        result = subprocess.run(command, capture_output=True, text=True, timeout=5)
+        output = result.stdout.strip() + result.stderr.strip()
+        if not output:
+            return "desconocida"
+
+        if pattern:
+            match = re.search(pattern, output)
+            return match.group(1) if match else "desconocida"
+        else:
+            # Devolver la primera línea que tenga contenido
+            lines = [l.strip() for l in output.splitlines() if l.strip()]
+            return lines[0] if lines else "desconocida"
+    except Exception:
+        return "no disponible"
+
+
+@router.get("/system/versions")
+async def get_system_versions(current_user=Depends(require_admin)):
+    """
+    Devuelve las versiones de todos los componentes instalados.
+    """
+    versions = {
+        "components": {
+            "Panel": {
+                "name": "SVQPanel",
+                "version": "1.0.0",  # TODO: leer de config/version.py
+                "docs": "https://github.com/coriaweb/SVQPanel",
+            },
+            "Node.js": {
+                "name": "Node.js",
+                "version": _get_version(["node", "--version"]),
+                "docs": "https://nodejs.org/en/download/package-manager",
+            },
+            "Nginx": {
+                "name": "Nginx",
+                "version": _get_version(["nginx", "-v"], r"nginx/(\S+)"),
+                "docs": "https://nginx.org/download/",
+            },
+            "Python": {
+                "name": "Python",
+                "version": _get_version(["python3", "--version"], r"Python (\S+)"),
+                "docs": "https://www.python.org/downloads/",
+            },
+            "PostgreSQL": {
+                "name": "PostgreSQL",
+                "version": _get_version(["psql", "--version"], r"psql \(PostgreSQL\) (\S+)"),
+                "docs": "https://www.postgresql.org/download/",
+            },
+            "Redis": {
+                "name": "Redis",
+                "version": _get_version(["redis-server", "--version"], r"v=(\S+)"),
+                "docs": "https://redis.io/download/",
+            },
+            "Postfix": {
+                "name": "Postfix",
+                "version": _get_version(["postfix", "-v"], r"postfix/(\S+)"),
+                "docs": "http://www.postfix.org/download.html",
+            },
+            "Dovecot": {
+                "name": "Dovecot",
+                "version": _get_version(["dovecot", "--version"], r"(\S+)"),
+                "docs": "https://www.dovecot.org/download/",
+            },
+            "Rspamd": {
+                "name": "Rspamd",
+                "version": _get_version(["rspamd", "--version"], r"rspamd (\S+)"),
+                "docs": "https://rspamd.com/",
+            },
+        }
+    }
+
+    # Intentar obtener MariaDB si está instalada
+    try:
+        mariadb_ver = _get_version(["mariadb", "--version"], r"MariaDB ([\d.]+)")
+        if mariadb_ver != "no disponible":
+            versions["components"]["MariaDB"] = {
+                "name": "MariaDB",
+                "version": mariadb_ver,
+                "docs": "https://mariadb.org/download/",
+            }
+    except Exception:
+        pass
+
+    # Intentar obtener Apache si está instalada
+    try:
+        apache_ver = _get_version(["apache2", "-v"], r"Apache/(\S+)")
+        if apache_ver != "no disponible":
+            versions["components"]["Apache"] = {
+                "name": "Apache",
+                "version": apache_ver,
+                "docs": "https://httpd.apache.org/download.cgi",
+            }
+    except Exception:
+        pass
+
+    return versions
+
