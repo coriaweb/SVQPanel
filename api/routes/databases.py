@@ -228,6 +228,32 @@ def _assert_can_manage(current_user: User, owner_id: int, db: Session):
 
 # ── Endpoints ─────────────────────────────────────────────────────────────────
 
+@router.get("/databases/info", tags=["Databases"])
+async def get_databases_info():
+    """Obtiene información sobre MariaDB (versión, estado)"""
+    if not MARIADB_ENABLED:
+        return {"enabled": False, "version": None}
+
+    try:
+        import pymysql
+        conn = pymysql.connect(
+            host=MARIADB_HOST,
+            user=MARIADB_PANEL_USER,
+            password=MARIADB_PANEL_PASSWORD,
+            database="mysql",
+        )
+        cursor = conn.cursor()
+        cursor.execute("SELECT VERSION()")
+        version = cursor.fetchone()[0]
+        cursor.close()
+        conn.close()
+        return {"enabled": True, "version": version}
+    except Exception as e:
+        import logging
+        logging.error(f"Failed to get MariaDB version: {e}")
+        return {"enabled": True, "version": "Unknown", "error": str(e)}
+
+
 @router.get("/databases/charsets", tags=["Databases"])
 def list_charsets():
     """Lista charsets y collations disponibles para crear BDs MariaDB."""

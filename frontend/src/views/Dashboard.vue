@@ -109,7 +109,7 @@
             <span class="qa-icon"><i class="bi bi-database"></i></span>
             <span class="qa-text">
               <span class="qa-label">Nueva base de datos</span>
-              <span class="qa-hint">MySQL 8.0</span>
+              <span class="qa-hint">{{ dbVersion || 'MariaDB' }}</span>
             </span>
             <i class="bi bi-chevron-right qa-chevron"></i>
           </router-link>
@@ -212,6 +212,7 @@ export default {
     const recentDomains = ref([])
     const stats = ref(null)
     const services = ref([])
+    const dbVersion = ref(null)
     const loadingDomains = ref(true)
     const loadingStats = ref(false)
     const loadingServices = ref(false)
@@ -268,12 +269,23 @@ export default {
       } catch {} finally { loadingServices.value = false }
     }
 
-    const reload = async () => { await Promise.all([loadDomains(), loadAdminData()]) }
+    const loadDbVersion = async () => {
+      try {
+        const info = await api.get('/api/databases/info')
+        if (info?.version) {
+          dbVersion.value = info.version.split(' ')[0]  // "MariaDB 11.4.2" → "MariaDB"
+        }
+      } catch {}
+    }
+
+    const reload = async () => {
+      await Promise.all([loadDomains(), loadAdminData(), loadDbVersion()])
+    }
 
     onMounted(reload)
 
     return {
-      currentUser, isAdmin, isReseller, isAdminOrReseller, roleShort,
+      currentUser, isAdmin, isReseller, isAdminOrReseller, roleShort, dbVersion,
       totalUsers, totalDomains, activeDomains, totalSSL, recentDomains,
       stats, topServices, loadingDomains, loadingStats, loadingServices,
       sslPct, loadPct, loadTone, loadLabel, reload, fmtGB,
