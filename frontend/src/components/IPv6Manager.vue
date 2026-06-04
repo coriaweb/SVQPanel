@@ -164,6 +164,12 @@ export default {
       try {
         const exclude = generatedIP.value ? composedIPv6.value : null
         const data = await api.getNextIPv6(exclude)
+
+        if (data.notConfigured) {
+          ipv6NotConfigured.value = true
+          return
+        }
+
         const expanded = expandIPv6(data.next_ipv6)
         groups.value = expanded
         form.value.network_interface = data.network_interface || 'eth0'
@@ -176,11 +182,7 @@ export default {
 
         generatedIP.value = true
       } catch (e) {
-        if (e.message?.includes('no está configurado') || e.message?.includes('configurado en el panel')) {
-          ipv6NotConfigured.value = true
-        } else {
-          store.showNotification('Error al generar IPv6: ' + e.message, 'danger')
-        }
+        store.showNotification('Error al generar IPv6: ' + e.message, 'danger')
       } finally {
         generating.value = false
       }

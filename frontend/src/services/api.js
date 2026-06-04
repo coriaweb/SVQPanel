@@ -435,12 +435,20 @@ class APIClient {
     return this.post('/api/settings/revoke-ssl', {})
   }
 
-  getNextIPv6(exclude = null, count = 1) {
+  async getNextIPv6(exclude = null, count = 1) {
     const params = new URLSearchParams()
     if (exclude) params.set('exclude', exclude)
     if (count > 1) params.set('count', count)
     const qs = params.toString() ? '?' + params.toString() : ''
-    return this.get(`/api/settings/next-ipv6${qs}`)
+    try {
+      return await this.get(`/api/settings/next-ipv6${qs}`)
+    } catch (e) {
+      // Si IPv6 no está configurado, devolver un estado especial en lugar de lanzar
+      if (e.message?.includes('no está configurado') || e.message?.includes('configurado en el panel')) {
+        return { notConfigured: true }
+      }
+      throw e
+    }
   }
 
   assignPanelIpv6() {
