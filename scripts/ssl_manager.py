@@ -204,76 +204,75 @@ class SSLManager(SystemManager):
         mail_host = f"mail.{domain_name}"
         acme_root = "/var/www/svqpanel-acme"
 
+        logger.info(f"Creating mail SSL cert for: {mail_host}")
+
+        # Validar DNS
+        self._validate_dns(mail_host)
+
+        os.makedirs(f"{acme_root}/.well-known/acme-challenge", exist_ok=True)
+
+        # Detectar IP pública del servidor
+        srv_ip = None
         try:
-            logger.info(f"Creating mail SSL cert for: {mail_host}")
-
-            # Validar DNS
-            self._validate_dns(mail_host)
-
-            os.makedirs(f"{acme_root}/.well-known/acme-challenge", exist_ok=True)
-
-            # Detectar IP pública del servidor
-            srv_ip = None
-            try:
-                r = subprocess.run(
-                    ["ip", "-4", "addr", "show", "scope", "global"],
-                    capture_output=True, text=True, timeout=5,
-                )
-                for line in r.stdout.splitlines():
-                    line = line.strip()
-                    if line.startswith("inet "):
-                        srv_ip = line.split()[1].split("/")[0]
-                        break
-            except Exception as e:
-                logger.warning(f"Could not detect server IP: {e}")
-
-            # Vhost temporal solo para el challenge ACME
-            tmp_vhost_path = f"/etc/nginx/sites-available/svqpanel-acme-{domain_name}"
-            tmp_link_path  = f"/etc/nginx/sites-enabled/svqpanel-acme-{domain_name}"
-            ip_listen = f"    listen {srv_ip}:80;\n" if srv_ip else ""
-            tmp_conf = (
-                f"server {{\n"
-                f"    listen 80;\n"
-                f"{ip_listen}"
-                f"    listen [::]:80;\n"
-                f"    server_name {mail_host};\n"
-                f"    location ^~ /.well-known {{\n"
-                f"        root {acme_root};\n"
-                f"        allow all;\n"
-                f"    }}\n"
-                f"    location / {{ return 444; }}\n"
-                f"}}\n"
+            r = subprocess.run(
+                ["ip", "-4", "addr", "show", "scope", "global"],
+                capture_output=True, text=True, timeout=5,
             )
-            Path(tmp_vhost_path).write_text(tmp_conf)
-            try:
-                self.execute_command(["ln", "-sf", tmp_vhost_path, tmp_link_path], check=False)
-                self.execute_command(["nginx", "-s", "reload"], check=False)
+            for line in r.stdout.splitlines():
+                line = line.strip()
+                if line.startswith("inet "):
+                    srv_ip = line.split()[1].split("/")[0]
+                    break
+        except Exception as e:
+            logger.warning(f"Could not detect server IP: {e}")
 
-                certbot_path = self._get_certbot_path()
-                cmd = [
-                    certbot_path, "certonly", "--webroot",
-                    "-w", acme_root,
-                    "-d", mail_host,
-                    "--non-interactive", "--agree-tos", "-m", email,
-                ]
+        # Vhost temporal solo para el challenge ACME
+        tmp_vhost_path = f"/etc/nginx/sites-available/svqpanel-acme-{domain_name}"
+        tmp_link_path  = f"/etc/nginx/sites-enabled/svqpanel-acme-{domain_name}"
+        ip_listen = f"    listen {srv_ip}:80;\n" if srv_ip else ""
+        tmp_conf = (
+            f"server {{\n"
+            f"    listen 80;\n"
+            f"{ip_listen}"
+            f"    listen [::]:80;\n"
+            f"    server_name {mail_host};\n"
+            f"    location ^~ /.well-known {{\n"
+            f"        root {acme_root};\n"
+            f"        allow all;\n"
+            f"    }}\n"
+            f"    location / {{ return 444; }}\n"
+            f"}}\n"
+        )
+        Path(tmp_vhost_path).write_text(tmp_conf)
+        try:
+            self.execute_command(["ln", "-sf", tmp_vhost_path, tmp_link_path], check=False)
+            self.execute_command(["nginx", "-s", "reload"], check=False)
 
-                rc, stdout, stderr = self.execute_command(cmd, check=False)
-                if rc != 0:
-                    error_msg = stderr.strip() if stderr else f"certbot exit code {rc}"
-                    logger.error(f"certbot failed for mail: {error_msg}")
-                    raise RuntimeError(f"certbot failed: {error_msg}")
+            certbot_path = self._get_certbot_path()
+            cmd = [
+                certbot_path, "certonly", "--webroot",
+                "-w", acme_root,
+                "-d", mail_host,
+                "--non-interactive", "--agree-tos", "-m", email,
+            ]
 
-                logger.info(f"Mail TLS cert issued: {mail_host}")
-                return {"success": True, "domain": mail_host,
-                        "cert": f"/etc/letsencrypt/live/{mail_host}/fullchain.pem"}
-            except Exception as e:
-                logger.error(f"Failed to issue mail TLS cert: {e}")
-                raise
-            finally:
-                # Limpiar vhost temporal siempre
-                Path(tmp_link_path).unlink(missing_ok=True)
-                Path(tmp_vhost_path).unlink(missing_ok=True)
-                self.execute_command(["nginx", "-s", "reload"], check=False)
+            rc, stdout, stderr = self.execute_command(cmd, check=False)
+            if rc != 0:
+                error_msg = stderr.strip() if stderr else f"certbot exit code {rc}"
+                logger.error(f"certbot failed for mail: {error_msg}")
+                raise RuntimeError(f"certbot failed: {error_msg}")
+
+            logger.info(f"Mail TLS cert issued: {mail_host}")
+            return {"success": True, "domain": mail_host,
+                    "cert": f"/etc/letsencrypt/live/{mail_host}/fullchain.pem"}
+        except Exception as e:
+            logger.error(f"Failed to issue mail TLS cert: {e}")
+            raise
+        finally:
+            # Limpiar vhost temporal siempre
+            Path(tmp_link_path).unlink(missing_ok=True)
+            Path(tmp_vhost_path).unlink(missing_ok=True)
+            self.execute_command(["nginx", "-s", "reload"], check=False)
 
     def revoke_ssl(self, domain_name: str) -> dict:
         """
