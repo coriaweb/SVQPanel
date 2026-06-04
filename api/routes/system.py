@@ -331,6 +331,61 @@ async def run_system_upgrade(
 # Versiones de componentes instalados
 # ─────────────────────────────────────────────────────────────────────────────
 
+def _get_latest_version(source: str) -> str:
+    """
+    Consulta la versión más reciente de un software desde su fuente oficial.
+    Soporta: npm, github, postgresql.org
+    Devuelve "desconocida" si no se puede obtener.
+    """
+    try:
+        import subprocess, json, re
+
+        if source == "npm:nodejs":
+            # Node.js: npm registry API
+            r = subprocess.run(
+                ["curl", "-s", "https://registry.npmjs.org/node"],
+                capture_output=True, text=True, timeout=10,
+            )
+            data = json.loads(r.stdout)
+            return data.get("dist-tags", {}).get("latest", "desconocida")
+
+        elif source == "github:rspamd/rspamd":
+            # Rspamd: GitHub releases API
+            r = subprocess.run(
+                ["curl", "-s", "https://api.github.com/repos/rspamd/rspamd/releases/latest"],
+                capture_output=True, text=True, timeout=10,
+            )
+            data = json.loads(r.stdout)
+            tag = data.get("tag_name", "")
+            return tag.lstrip("v") if tag else "desconocida"
+
+        elif source == "github:dovecotorg/core":
+            # Dovecot: GitHub releases
+            r = subprocess.run(
+                ["curl", "-s", "https://api.github.com/repos/dovecotorg/core/releases/latest"],
+                capture_output=True, text=True, timeout=10,
+            )
+            data = json.loads(r.stdout)
+            tag = data.get("tag_name", "")
+            return tag.lstrip("v") if tag else "desconocida"
+
+        elif source == "postgresql.org":
+            # PostgreSQL: wget página de descargas y extraer versión actual
+            r = subprocess.run(
+                ["curl", "-s", "https://www.postgresql.org/ftp/source/"],
+                capture_output=True, text=True, timeout=10,
+            )
+            # Buscar la versión más alta en los directorios
+            matches = re.findall(r"v(\d+\.\d+)", r.stdout)
+            if matches:
+                # Devolver la más reciente (última en la lista)
+                return max(matches, key=lambda x: tuple(map(int, x.split("."))))
+            return "desconocida"
+
+    except Exception:
+        return "desconocida"
+
+
 def _get_postfix_version() -> str:
     """
     Postfix no tiene -v, obtener versión de dpkg.
@@ -393,60 +448,119 @@ def _get_version(command: list[str], pattern: str = None) -> str:
         return "no disponible"
 
 
+def _compare_versions(current: str, latest: str) -> str:
+    """
+    Compara dos versiones y devuelve:
+    - "updated": igual o más reciente
+    - "outdated": hay versión más nueva
+    - "unknown": no se pudo determinar
+    """
+    if current == "desconocida" or latest == "desconocida" or current == "no disponible":
+        return "unknown"
+    try:
+        from packaging import version
+        curr_ver = version.parse(current)
+        latest_ver = version.parse(latest)
+        if curr_ver >= latest_ver:
+            return "updated"
+        else:
+            return "outdated"
+    except Exception:
+        return "unknown"
+
+
 @router.get("/system/versions")
 async def get_system_versions(current_user=Depends(require_admin)):
     """
-    Devuelve las versiones de todos los componentes instalados.
+    Devuelve las versiones de componentes instalados + versiones disponibles.
+    Detecta si hay actualizaciones consultando APIs oficiales (npm, GitHub, etc).
     """
-    versions = {
-        "components": {
-            "Panel": {
-                "name": "SVQPanel",
-                "version": "1.0.0",  # TODO: leer de config/version.py
-                "docs": "https://github.com/coriaweb/SVQPanel",
-            },
-            "Node.js": {
-                "name": "Node.js",
-                "version": _get_version(["node", "--version"]),
-                "docs": "https://nodejs.org/en/download/package-manager",
-            },
-            "Nginx": {
-                "name": "Nginx",
-                "version": _get_version(["nginx", "-v"], r"nginx/(\S+)"),
-                "docs": "https://nginx.org/download/",
-            },
-            "Python": {
-                "name": "Python",
-                "version": _get_version(["python3", "--version"], r"Python (\S+)"),
-                "docs": "https://www.python.org/downloads/",
-            },
-            "PostgreSQL": {
-                "name": "PostgreSQL",
-                "version": _get_version(["psql", "--version"], r"psql \(PostgreSQL\) (\S+)"),
-                "docs": "https://www.postgresql.org/download/",
-            },
-            "Redis": {
-                "name": "Redis",
-                "version": _get_version(["redis-server", "--version"], r"v=(\S+)"),
-                "docs": "https://redis.io/download/",
-            },
-            "Postfix": {
-                "name": "Postfix",
-                "version": _get_postfix_version(),
-                "docs": "http://www.postfix.org/download.html",
-            },
-            "Dovecot": {
-                "name": "Dovecot",
-                "version": _get_version(["dovecot", "--version"]),
-                "docs": "https://www.dovecot.org/download/",
-            },
-            "Rspamd": {
-                "name": "Rspamd",
-                "version": _get_version(["rspamd", "--version"], r"Rspamd daemon version (\S+)"),
-                "docs": "https://rspamd.com/",
-            },
+    components_config = [
+        {
+            "key": "Node.js",
+            "name": "Node.js",
+            "command": ["node", "--version"],
+            "pattern": None,
+            "docs": "https://nodejs.org/en/download/package-manager",
+            "latest_source": "npm:nodejs",
+        },
+        {
+            "key": "Nginx",
+            "name": "Nginx",
+            "command": ["nginx", "-v"],
+            "pattern": r"nginx/(\S+)",
+            "docs": "https://nginx.org/download/",
+            "latest_source": None,  # Detectar manualmente en el frontend
+        },
+        {
+            "key": "Python",
+            "name": "Python",
+            "command": ["python3", "--version"],
+            "pattern": r"Python (\S+)",
+            "docs": "https://www.python.org/downloads/",
+            "latest_source": None,
+        },
+        {
+            "key": "PostgreSQL",
+            "name": "PostgreSQL",
+            "command": ["psql", "--version"],
+            "pattern": r"psql \(PostgreSQL\) (\S+)",
+            "docs": "https://www.postgresql.org/download/",
+            "latest_source": "postgresql.org",
+        },
+        {
+            "key": "Redis",
+            "name": "Redis",
+            "command": ["redis-server", "--version"],
+            "pattern": r"v=(\S+)",
+            "docs": "https://redis.io/download/",
+            "latest_source": None,
+        },
+        {
+            "key": "Postfix",
+            "name": "Postfix",
+            "command": None,  # Usar función especial
+            "pattern": None,
+            "docs": "http://www.postfix.org/download.html",
+            "latest_source": None,
+        },
+        {
+            "key": "Dovecot",
+            "name": "Dovecot",
+            "command": ["dovecot", "--version"],
+            "pattern": None,
+            "docs": "https://www.dovecot.org/download/",
+            "latest_source": "github:dovecotorg/core",
+        },
+        {
+            "key": "Rspamd",
+            "name": "Rspamd",
+            "command": ["rspamd", "--version"],
+            "pattern": r"Rspamd daemon version (\S+)",
+            "docs": "https://rspamd.com/",
+            "latest_source": "github:rspamd/rspamd",
+        },
+    ]
+
+    versions = {"components": {}}
+
+    # Construir tabla de componentes
+    for cfg in components_config:
+        if cfg["key"] == "Postfix":
+            current_ver = _get_postfix_version()
+        else:
+            current_ver = _get_version(cfg["command"], cfg["pattern"])
+
+        latest_ver = _get_latest_version(cfg["latest_source"]) if cfg["latest_source"] else "desconocida"
+        status = _compare_versions(current_ver, latest_ver)
+
+        versions["components"][cfg["key"]] = {
+            "name": cfg["name"],
+            "version": current_ver,
+            "latest": latest_ver,
+            "status": status,  # "updated", "outdated", "unknown"
+            "docs": cfg["docs"],
         }
-    }
 
     # Intentar obtener MariaDB si está instalada
     try:
@@ -455,6 +569,8 @@ async def get_system_versions(current_user=Depends(require_admin)):
             versions["components"]["MariaDB"] = {
                 "name": "MariaDB",
                 "version": mariadb_ver,
+                "latest": "desconocida",
+                "status": "unknown",
                 "docs": "https://mariadb.org/download/",
             }
     except Exception:
@@ -467,6 +583,8 @@ async def get_system_versions(current_user=Depends(require_admin)):
             versions["components"]["Apache"] = {
                 "name": "Apache",
                 "version": apache_ver,
+                "latest": "desconocida",
+                "status": "unknown",
                 "docs": "https://httpd.apache.org/download.cgi",
             }
     except Exception:
