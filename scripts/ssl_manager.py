@@ -2,6 +2,7 @@
 
 import logging
 import os
+import socket
 import subprocess
 from datetime import datetime, timezone
 from .base import SystemManager
@@ -15,6 +16,38 @@ class SSLManager(SystemManager):
 
     def __init__(self):
         super().__init__(require_root=True)
+
+    def _validate_dns(self, domain: str, timeout: int = 5) -> bool:
+        """
+        Valida que el dominio resuelve en DNS.
+        Si no resuelve, raise ValueError con mensaje claro.
+        """
+        try:
+            socket.getaddrinfo(domain, None, timeout=timeout)
+            logger.info(f"DNS validation passed for {domain}")
+            return True
+        except socket.gaierror as e:
+            msg = f"DNS validation failed for {domain}: {e}. Asegúrate de que apunta a la IP correcta."
+            logger.error(msg)
+            raise ValueError(msg) from e
+
+    def _get_certbot_path(self) -> str:
+        """
+        Retorna la ruta a certbot snap. Si no existe, intenta apt.
+        IMPORTANTE: certbot 2.1.0 (apt) rompe TODO con Python 3.11+.
+        Solo usar snap (5.x+) o más nueva.
+        """
+        # Preferir snap
+        snap_certbot = "/snap/bin/certbot"
+        if os.path.isfile(snap_certbot):
+            logger.info("Using certbot from snap")
+            return snap_certbot
+        # Fallback a apt, pero avisar si es <2.1.0
+        apt_certbot = "/usr/bin/certbot"
+        if os.path.isfile(apt_certbot):
+            logger.warning("Using certbot from apt (NOT snap). If version <2.1.0, SSL will fail!")
+            return apt_certbot
+        raise RuntimeError("certbot not found. Install with: snap install certbot --classic")
 
     def create_ssl(self, domain_name: str) -> dict:
         """
@@ -32,22 +65,33 @@ class SSLManager(SystemManager):
         try:
             logger.info(f"Creating SSL cert for: {domain_name}")
 
-            # Verificar si www.dominio resuelve en DNS antes de añadirlo
-            import socket
+            # Validar DNS antes de intentar certbot
+            self._validate_dns(domain_name)
+
+            # Construir lista de dominios: principal + www si resuelve
             domains = [domain_name]
             try:
-                socket.getaddrinfo(f"www.{domain_name}", None)
+                self._validate_dns(f"www.{domain_name}", timeout=3)
                 domains.append(f"www.{domain_name}")
-            except socket.gaierror:
-                logger.info(f"www.{domain_name} no resuelve en DNS, omitiendo SAN")
+                logger.info(f"www.{domain_name} resuelve, añadiendo al certificado")
+            except ValueError:
+                logger.info(f"www.{domain_name} no resuelve, omitiendo SAN")
 
-            cmd = ["certbot", "certonly", "--nginx", "--non-interactive", "--agree-tos",
+            certbot_path = self._get_certbot_path()
+            cmd = [certbot_path, "certonly", "--nginx", "--non-interactive", "--agree-tos",
                    "-m", "admin@example.com"]  # TODO: from config
             for d in domains:
                 cmd += ["-d", d]
 
-            # Run certbot
-            self.execute_command(cmd)
+            # Run certbot con captura de stderr para debugging
+            rc, stdout, stderr = self.execute_command(cmd, check=False)
+
+            if rc != 0:
+                error_msg = stderr.strip() if stderr else f"certbot exit code {rc}"
+                logger.error(f"certbot failed: {error_msg}")
+                logger.error(f"stdout: {stdout}")
+                # Propagar el error real de certbot
+                raise RuntimeError(f"certbot failed: {error_msg}")
 
             # Set up auto-renewal
             self.execute_command([
@@ -56,11 +100,11 @@ class SSLManager(SystemManager):
                 "certbot.timer"
             ])
 
-            logger.info(f"SSL cert created: {domain_name}")
+            logger.info(f"SSL cert created successfully: {domain_name} + {domains[1:]}")
             return {
                 "success": True,
                 "domain": domain_name,
-                "status": "Certificate created and renewal enabled"
+                "status": f"Certificate created for {', '.join(domains)}"
             }
 
         except Exception as e:
@@ -70,29 +114,45 @@ class SSLManager(SystemManager):
     def create_ssl_with_email(self, domain_name: str, email: str,
                               extra_domains: list = None) -> dict:
         """
-        Igual que create_ssl pero con email configurable y SANs extra opcionales
-        (p. ej. webmail.{dominio} para el webmail por dominio).
+        Igual que create_ssl pero con email configurable y SANs extra opcionales.
         """
         if not validate_domain(domain_name):
             raise ValueError(f"Invalid domain: {domain_name}")
-        import socket
-        domains = [domain_name]
+
         try:
-            socket.getaddrinfo(f"www.{domain_name}", None)
-            domains.append(f"www.{domain_name}")
-        except socket.gaierror:
-            logger.info(f"www.{domain_name} no resuelve en DNS, omitiendo SAN")
-        cmd = ["certbot", "certonly", "--nginx"]
-        for d in domains:
-            cmd += ["-d", d]
-        for d in (extra_domains or []):
-            if validate_domain(d):
+            logger.info(f"Creating SSL cert (with email) for: {domain_name}")
+
+            # Validar DNS
+            self._validate_dns(domain_name)
+
+            domains = [domain_name]
+            try:
+                self._validate_dns(f"www.{domain_name}", timeout=3)
+                domains.append(f"www.{domain_name}")
+            except ValueError:
+                logger.info(f"www.{domain_name} no resuelve, omitiendo SAN")
+
+            certbot_path = self._get_certbot_path()
+            cmd = [certbot_path, "certonly", "--nginx"]
+            for d in domains:
                 cmd += ["-d", d]
-        cmd += ["--non-interactive", "--agree-tos", "-m", email, "--expand"]
-        try:
-            self.execute_command(cmd)
+            for d in (extra_domains or []):
+                if validate_domain(d):
+                    try:
+                        self._validate_dns(d, timeout=3)
+                        cmd += ["-d", d]
+                    except ValueError:
+                        logger.warning(f"Skipping extra domain {d} (DNS validation failed)")
+            cmd += ["--non-interactive", "--agree-tos", "-m", email, "--expand"]
+
+            rc, stdout, stderr = self.execute_command(cmd, check=False)
+            if rc != 0:
+                error_msg = stderr.strip() if stderr else f"certbot exit code {rc}"
+                logger.error(f"certbot failed: {error_msg}")
+                raise RuntimeError(f"certbot failed: {error_msg}")
+
             self.execute_command(["systemctl", "enable", "certbot.timer"])
-            logger.info(f"SSL cert (with email) created: {domain_name} +{extra_domains or []}")
+            logger.info(f"SSL cert created: {domain_name} + {domains[1:]} + {extra_domains or []}")
             return {"success": True, "domain": domain_name}
         except Exception as e:
             logger.error(f"Failed to create SSL: {str(e)}")
@@ -100,23 +160,34 @@ class SSLManager(SystemManager):
 
     def expand_for_webmail(self, domain_name: str, email: str) -> dict:
         """
-        Emite un certificado independiente para webmail.{dominio} usando --webroot
-        con /var/www/webmail. No toca el cert del dominio principal.
-        El vhost del webmail debe tener location ^~ /.well-known accesible en HTTP.
+        Emite un certificado independiente para webmail.{dominio} usando --webroot.
         """
         webmail_host = f"webmail.{domain_name}"
         webroot = "/var/www/webmail"
-        import os
-        os.makedirs(f"{webroot}/.well-known/acme-challenge", exist_ok=True)
-        cmd = [
-            "certbot", "certonly", "--webroot",
-            "-w", webroot,
-            "-d", webmail_host,
-            "--non-interactive", "--agree-tos", "-m", email,
-        ]
+
         try:
-            self.execute_command(cmd)
-            logger.info(f"Webmail SSL cert emitido para {webmail_host}")
+            logger.info(f"Creating webmail SSL cert for: {webmail_host}")
+
+            # Validar DNS
+            self._validate_dns(webmail_host)
+
+            os.makedirs(f"{webroot}/.well-known/acme-challenge", exist_ok=True)
+
+            certbot_path = self._get_certbot_path()
+            cmd = [
+                certbot_path, "certonly", "--webroot",
+                "-w", webroot,
+                "-d", webmail_host,
+                "--non-interactive", "--agree-tos", "-m", email,
+            ]
+
+            rc, stdout, stderr = self.execute_command(cmd, check=False)
+            if rc != 0:
+                error_msg = stderr.strip() if stderr else f"certbot exit code {rc}"
+                logger.error(f"certbot failed for webmail: {error_msg}")
+                raise RuntimeError(f"certbot failed: {error_msg}")
+
+            logger.info(f"Webmail SSL cert issued: {webmail_host}")
             return {"success": True, "domain": webmail_host,
                     "cert": f"/etc/letsencrypt/live/{webmail_host}/fullchain.pem"}
         except Exception as e:
@@ -126,74 +197,83 @@ class SSLManager(SystemManager):
     def expand_for_mail(self, domain_name: str, email: str) -> dict:
         """
         Emite un certificado independiente para mail.{dominio} usando --webroot.
-        Crea un vhost nginx temporal para que el challenge ACME pueda resolverse
-        en mail.{dominio}:80 (el vhost del dominio principal no incluye ese server_name).
         """
         import os
         from pathlib import Path
 
         mail_host = f"mail.{domain_name}"
         acme_root = "/var/www/svqpanel-acme"
-        os.makedirs(f"{acme_root}/.well-known/acme-challenge", exist_ok=True)
 
-        # Detectar la IP pública del servidor para el listen con IP específica.
-        # gethostbyname(gethostname()) puede devolver 127.0.1.1 — usamos
-        # `ip addr` para obtener la IP global real de la interfaz de red.
-        import subprocess as _sp
-        srv_ip = None
         try:
-            r = _sp.run(
-                ["ip", "-4", "addr", "show", "scope", "global"],
-                capture_output=True, text=True, timeout=5,
+            logger.info(f"Creating mail SSL cert for: {mail_host}")
+
+            # Validar DNS
+            self._validate_dns(mail_host)
+
+            os.makedirs(f"{acme_root}/.well-known/acme-challenge", exist_ok=True)
+
+            # Detectar IP pública del servidor
+            srv_ip = None
+            try:
+                r = subprocess.run(
+                    ["ip", "-4", "addr", "show", "scope", "global"],
+                    capture_output=True, text=True, timeout=5,
+                )
+                for line in r.stdout.splitlines():
+                    line = line.strip()
+                    if line.startswith("inet "):
+                        srv_ip = line.split()[1].split("/")[0]
+                        break
+            except Exception as e:
+                logger.warning(f"Could not detect server IP: {e}")
+
+            # Vhost temporal solo para el challenge ACME
+            tmp_vhost_path = f"/etc/nginx/sites-available/svqpanel-acme-{domain_name}"
+            tmp_link_path  = f"/etc/nginx/sites-enabled/svqpanel-acme-{domain_name}"
+            ip_listen = f"    listen {srv_ip}:80;\n" if srv_ip else ""
+            tmp_conf = (
+                f"server {{\n"
+                f"    listen 80;\n"
+                f"{ip_listen}"
+                f"    listen [::]:80;\n"
+                f"    server_name {mail_host};\n"
+                f"    location ^~ /.well-known {{\n"
+                f"        root {acme_root};\n"
+                f"        allow all;\n"
+                f"    }}\n"
+                f"    location / {{ return 444; }}\n"
+                f"}}\n"
             )
-            for line in r.stdout.splitlines():
-                line = line.strip()
-                if line.startswith("inet "):
-                    srv_ip = line.split()[1].split("/")[0]
-                    break
-        except Exception:
-            pass
+            Path(tmp_vhost_path).write_text(tmp_conf)
+            try:
+                self.execute_command(["ln", "-sf", tmp_vhost_path, tmp_link_path], check=False)
+                self.execute_command(["nginx", "-s", "reload"], check=False)
 
-        # Vhost temporal solo para el challenge ACME
-        tmp_vhost_path = f"/etc/nginx/sites-available/svqpanel-acme-{domain_name}"
-        tmp_link_path  = f"/etc/nginx/sites-enabled/svqpanel-acme-{domain_name}"
-        ip_listen = f"    listen {srv_ip}:80;\n" if srv_ip else ""
-        tmp_conf = (
-            f"server {{\n"
-            f"    listen 80;\n"
-            f"{ip_listen}"
-            f"    listen [::]:80;\n"
-            f"    server_name {mail_host};\n"
-            f"    location ^~ /.well-known {{\n"
-            f"        root {acme_root};\n"
-            f"        allow all;\n"
-            f"    }}\n"
-            f"    location / {{ return 444; }}\n"
-            f"}}\n"
-        )
-        Path(tmp_vhost_path).write_text(tmp_conf)
-        try:
-            self.execute_command(["ln", "-sf", tmp_vhost_path, tmp_link_path], check=False)
-            self.execute_command(["nginx", "-s", "reload"], check=False)
+                certbot_path = self._get_certbot_path()
+                cmd = [
+                    certbot_path, "certonly", "--webroot",
+                    "-w", acme_root,
+                    "-d", mail_host,
+                    "--non-interactive", "--agree-tos", "-m", email,
+                ]
 
-            cmd = [
-                "certbot", "certonly", "--webroot",
-                "-w", acme_root,
-                "-d", mail_host,
-                "--non-interactive", "--agree-tos", "-m", email,
-            ]
-            self.execute_command(cmd)
-            logger.info(f"Mail TLS cert emitido para {mail_host}")
-            return {"success": True, "domain": mail_host,
-                    "cert": f"/etc/letsencrypt/live/{mail_host}/fullchain.pem"}
-        except Exception as e:
-            logger.error(f"Failed to issue mail TLS cert: {e}")
-            raise
-        finally:
-            # Limpiar vhost temporal siempre
-            Path(tmp_link_path).unlink(missing_ok=True)
-            Path(tmp_vhost_path).unlink(missing_ok=True)
-            self.execute_command(["nginx", "-s", "reload"], check=False)
+                rc, stdout, stderr = self.execute_command(cmd, check=False)
+                if rc != 0:
+                    error_msg = stderr.strip() if stderr else f"certbot exit code {rc}"
+                    logger.error(f"certbot failed for mail: {error_msg}")
+                    raise RuntimeError(f"certbot failed: {error_msg}")
+
+                logger.info(f"Mail TLS cert issued: {mail_host}")
+                return {"success": True, "domain": mail_host,
+                        "cert": f"/etc/letsencrypt/live/{mail_host}/fullchain.pem"}
+            except Exception as e:
+                logger.error(f"Failed to issue mail TLS cert: {e}")
+                raise
+            finally:
+                # Limpiar vhost temporal siempre
+                Path(tmp_link_path).unlink(missing_ok=True)
+                Path(tmp_vhost_path).unlink(missing_ok=True)
+                self.execute_command(["nginx", "-s", "reload"], check=False)
 
     def revoke_ssl(self, domain_name: str) -> dict:
         """
@@ -211,8 +291,9 @@ class SSLManager(SystemManager):
         try:
             logger.info(f"Revoking SSL: {domain_name}")
 
+            certbot_path = self._get_certbot_path()
             self.execute_command([
-                "certbot",
+                certbot_path,
                 "revoke",
                 "--cert-name", domain_name,
                 "--non-interactive"
