@@ -871,12 +871,14 @@ RCCONFEOF
     RC_PLUGIN_DIR="${RC_APP_DIR}/plugins/svqpanel_autologin"
     mkdir -p "$RC_PLUGIN_DIR"
 
-    if [[ ! -f /opt/svqpanel/scripts/svqpanel_autologin.php ]]; then
-        echo -e "  ${RED}✗ Falta /opt/svqpanel/scripts/svqpanel_autologin.php — repo incompleto${NC}"
-        exit 1
+    if [[ -f /opt/svqpanel/scripts/svqpanel_autologin.php ]]; then
+        cp /opt/svqpanel/scripts/svqpanel_autologin.php \
+           "${RC_PLUGIN_DIR}/svqpanel_autologin.php"
+    else
+        # El repo aún no está clonado — descargarlo directamente desde GitHub
+        curl -fsSL "https://raw.githubusercontent.com/coriaweb/SVQPanel/main/scripts/svqpanel_autologin.php" \
+            -o "${RC_PLUGIN_DIR}/svqpanel_autologin.php"
     fi
-    cp /opt/svqpanel/scripts/svqpanel_autologin.php \
-       "${RC_PLUGIN_DIR}/svqpanel_autologin.php"
     echo -e "  ${GREEN}✓ Plugin svqpanel_autologin instalado${NC}"
 
     # ── 8. Permisos finales ────────────────────────────────────────────────
