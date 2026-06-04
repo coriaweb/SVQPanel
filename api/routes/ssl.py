@@ -108,9 +108,9 @@ async def toggle_ssl(
             if not body.force_https:
                 domain.force_https = True
         elif body.enabled and domain.ssl_enabled:
-            # Renovar cert existente — certbot ya tiene el email de la emisión anterior
-            ssl_manager.renew_ssl(domain.domain_name)
-            domain.ssl_renewed_at = datetime.utcnow()
+            # Cert ya existe — solo actualizar opciones y regenerar vhost
+            # El botón "Renovar" explícito es el único que debe llamar a certbot
+            pass
         elif not body.enabled and domain.ssl_enabled:
             # Desactivar: revocar cert
             try:
