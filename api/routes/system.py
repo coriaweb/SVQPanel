@@ -356,20 +356,22 @@ def _get_latest_version(source: str) -> str:
             tag = data.get("tag_name", "")
             return tag.lstrip("v") if tag else "desconocida"
 
-        elif source == "github:dovecotorg/core":
-            # Dovecot: GitHub tags (releases está vacío en este repo)
+        elif source == "dovecot.org":
+            # Dovecot: GitHub releases de dovecot/core (repo público de mirrors)
             r = subprocess.run(
-                ["curl", "-s", "https://api.github.com/repos/dovecotorg/core/tags?per_page=1"],
+                ["curl", "-s", "https://api.github.com/repos/dovecot/core/releases?per_page=5"],
                 capture_output=True, text=True, timeout=10,
             )
             try:
                 data = json.loads(r.stdout)
-                if isinstance(data, list) and len(data) > 0:
-                    tag = data[0].get("name", "")
-                    # Format: dovecot-2.3.21 or core-2.4.0
-                    match = re.search(r"(\d+\.\d+\.\d+)", tag)
-                    if match:
-                        return match.group(1)
+                if isinstance(data, list):
+                    for release in data:
+                        if not release.get("prerelease", False):  # Solo releases estables
+                            tag = release.get("tag_name", "")
+                            # Format: v2.3.21
+                            match = re.search(r"(\d+\.\d+\.\d+)", tag)
+                            if match:
+                                return match.group(1)
             except Exception:
                 pass
             return "desconocida"
@@ -603,7 +605,7 @@ async def get_system_versions(current_user=Depends(require_admin)):
             "command": ["dovecot", "--version"],
             "pattern": None,
             "docs": "https://www.dovecot.org/download/",
-            "latest_source": "github:dovecotorg/core",
+            "latest_source": "dovecot.org",
         },
         {
             "key": "Rspamd",
