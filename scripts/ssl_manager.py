@@ -155,7 +155,7 @@ class SSLManager(SystemManager):
                 logger.error(f"certbot failed: {error_msg}")
                 raise RuntimeError(f"certbot failed: {error_msg}")
 
-            self.execute_command(["systemctl", "enable", "certbot.timer"])
+            self.execute_command(["systemctl", "enable", "certbot.timer"], check=False)
             logger.info(f"SSL cert created: {domain_name} + {domains[1:]} + {extra_domains or []}")
             return {"success": True, "domain": domain_name}
         except Exception as e:
