@@ -333,52 +333,55 @@ async def run_system_upgrade(
 
 def _get_latest_version(source: str) -> str:
     """
-    Consulta la versión más reciente de un software desde su fuente oficial.
-    Soporta: npm, github, postgresql.org
-    Devuelve "desconocida" si no se puede obtener.
+    Consulta la versión más reciente. Solo APIs confiables.
     """
+    if not source:
+        return "desconocida"
+
     try:
         import subprocess, json, re
 
         if source == "npm:nodejs":
             # Node.js: npm registry API
             r = subprocess.run(
-                ["curl", "-s", "https://registry.npmjs.org/node"],
+                ["curl", "-s", "-m", "5", "https://registry.npmjs.org/node"],
                 capture_output=True, text=True, timeout=10,
             )
+            if r.returncode != 0:
+                return "desconocida"
             data = json.loads(r.stdout)
-            return data.get("dist-tags", {}).get("latest", "desconocida")
+            ver = data.get("dist-tags", {}).get("latest", "")
+            return ver if ver else "desconocida"
 
         elif source == "github:rspamd/rspamd":
             # Rspamd: GitHub releases API
             r = subprocess.run(
-                ["curl", "-s", "https://api.github.com/repos/rspamd/rspamd/releases/latest"],
+                ["curl", "-s", "-m", "5", "https://api.github.com/repos/rspamd/rspamd/releases/latest"],
                 capture_output=True, text=True, timeout=10,
             )
-            data = json.loads(r.stdout)
-            tag = data.get("tag_name", "")
-            return tag.lstrip("v") if tag else "desconocida"
+            if r.returncode != 0 or not r.stdout or "message" in r.stdout.lower():
+                return "desconocida"
+            try:
+                data = json.loads(r.stdout)
+                tag = data.get("tag_name", "")
+                return tag.lstrip("v") if tag else "desconocida"
+            except:
+                return "desconocida"
 
         elif source == "github:dovecotorg/core":
-            # Dovecot: GitHub releases
-            r = subprocess.run(
-                ["curl", "-s", "https://api.github.com/repos/dovecotorg/core/releases/latest"],
-                capture_output=True, text=True, timeout=10,
-            )
-            data = json.loads(r.stdout)
-            tag = data.get("tag_name", "")
-            return tag.lstrip("v") if tag else "desconocida"
+            # Dovecot: repo está privado, no accesible
+            return "desconocida"
 
         elif source == "postgresql.org":
-            # PostgreSQL: wget página de descargas y extraer versión actual
+            # PostgreSQL: directorio de fuentes
             r = subprocess.run(
-                ["curl", "-s", "https://www.postgresql.org/ftp/source/"],
+                ["curl", "-s", "-m", "5", "https://www.postgresql.org/ftp/source/"],
                 capture_output=True, text=True, timeout=10,
             )
-            # Buscar la versión más alta en los directorios
+            if r.returncode != 0 or not r.stdout:
+                return "desconocida"
             matches = re.findall(r"v(\d+\.\d+)", r.stdout)
             if matches:
-                # Devolver la más reciente (última en la lista)
                 return max(matches, key=lambda x: tuple(map(int, x.split("."))))
             return "desconocida"
 
