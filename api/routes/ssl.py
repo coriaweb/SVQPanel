@@ -104,6 +104,9 @@ async def toggle_ssl(
             domain.ssl_enabled    = True
             domain.ssl_expires    = expiry
             domain.ssl_renewed_at = datetime.utcnow()
+            # Auto-activar force_https al emitir cert por primera vez
+            if not body.force_https:
+                domain.force_https = True
         elif not body.enabled and domain.ssl_enabled:
             # Desactivar: revocar cert
             try:
