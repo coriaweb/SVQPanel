@@ -327,9 +327,9 @@ PINEOF
     sed -i 's/^user  nginx;/user www-data;/' /etc/nginx/nginx.conf
     mkdir -p /etc/nginx/sites-available /etc/nginx/sites-enabled /etc/nginx/snippets
 
-    # fastcgi-php.conf — incluido por nginx-full en Debian pero no por nginx básico
-    if [[ ! -f /etc/nginx/snippets/fastcgi-php.conf ]]; then
-        cat > /etc/nginx/snippets/fastcgi-php.conf << 'FCGIEOF'
+    # fastcgi-php.conf — incluido por nginx-full en Debian pero no por nginx básico.
+    # Siempre se sobreescribe para garantizar que la versión instalada es la correcta.
+    cat > /etc/nginx/snippets/fastcgi-php.conf << 'FCGIEOF'
 # Sets $path_info from the $fastcgi_path_info variable
 fastcgi_split_path_info ^(.+?\.php)(/.*)$;
 # Check that the PHP script exists before passing it
@@ -341,7 +341,6 @@ fastcgi_index index.php;
 include fastcgi_params;
 fastcgi_param SCRIPT_FILENAME $document_root$fastcgi_script_name;
 FCGIEOF
-    fi
 
     # Endurecimiento global: ocultar la versión de nginx (server_tokens off)
     cat > /etc/nginx/conf.d/svqpanel-hardening.conf << 'NGINXHARDEOF'
