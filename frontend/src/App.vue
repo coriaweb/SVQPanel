@@ -14,17 +14,18 @@
         <div class="nav-group" v-for="group in visibleGroups" :key="group.label">
           <p class="nav-group__label" v-if="!sidebarCollapsed">{{ group.label }}</p>
           <div class="nav-group__sep" v-else></div>
-          <router-link
+          <a
             v-for="item in group.items"
             :key="item.to"
-            :to="item.to"
+            :href="item.to"
             class="nav-item"
             :class="{ active: isActive(item.to) }"
             :title="sidebarCollapsed ? item.label : ''"
+            @click.prevent="router.push(item.to)"
           >
             <i class="bi" :class="item.icon"></i>
             <span class="nav-item__label" v-if="!sidebarCollapsed">{{ item.label }}</span>
-          </router-link>
+          </a>
         </div>
       </nav>
 

@@ -151,7 +151,9 @@ const routes = [
 
 const router = createRouter({
   history: createWebHistory(),
-  routes
+  routes,
+  linkActiveClass: 'is-active-exact',
+  linkExactActiveClass: 'is-active-exact'
 })
 
 router.beforeEach((to, from, next) => {
