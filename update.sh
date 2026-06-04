@@ -76,7 +76,8 @@ if [[ ! -d "$PANEL_DIR" ]]; then
     exit 1
 fi
 
-log "${BLUE}=== SVQPanel Update — $(date '+%Y-%m-%d %H:%M:%S') ===${NC}"
+VERSION_BEFORE=$(cat "$PANEL_DIR/VERSION" 2>/dev/null || echo "desconocida")
+log "${BLUE}=== SVQPanel Update — v${VERSION_BEFORE} — $(date '+%Y-%m-%d %H:%M:%S') ===${NC}"
 
 ###############################################################################
 # 1. Descargar últimos cambios del repo
@@ -87,6 +88,7 @@ git fetch origin main --quiet
 BEFORE=$(git rev-parse HEAD)
 git pull origin main --quiet
 AFTER=$(git rev-parse HEAD)
+VERSION_AFTER=$(cat "$PANEL_DIR/VERSION" 2>/dev/null || echo "desconocida")
 
 if [[ "$BEFORE" == "$AFTER" ]]; then
     log "  Sin cambios en el repo."
@@ -183,4 +185,8 @@ if [[ "$BACKEND_CHANGED" -gt 0 || "$APPLIED" -gt 0 ]]; then
     fi
 fi
 
-log "${GREEN}=== Update completado ===${NC}"
+if [[ "$VERSION_BEFORE" != "$VERSION_AFTER" ]]; then
+    log "${GREEN}=== Update completado: v${VERSION_BEFORE} → v${VERSION_AFTER} ===${NC}"
+else
+    log "${GREEN}=== Update completado: v${VERSION_AFTER} (sin cambio de versión) ===${NC}"
+fi
