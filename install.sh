@@ -45,7 +45,7 @@ echo -e "${GREEN}✓ Debian $OS_VERSION detectado${NC}\n"
 echo -e "${YELLOW}¿Qué webserver necesitas?${NC}"
 echo "1) Nginx solo"
 echo "2) Apache + Nginx (Apache para legacy, Nginx para velocidad)"
-read -p "Elige (1 o 2): " WEBSERVER_CHOICE </dev/tty
+printf "Elige (1 o 2): "; read WEBSERVER_CHOICE </dev/tty
 
 case $WEBSERVER_CHOICE in
     1)
@@ -75,7 +75,7 @@ chmod 644 /etc/svqpanel/webserver.conf
 # libres para los sitios web de los clientes.
 echo -e "${YELLOW}¿En qué puerto quieres servir el panel de control?${NC}"
 echo "  Recomendado: 8083 (cierra solo este puerto en tu firewall para máxima seguridad)"
-read -p "Puerto del panel [8083]: " _PANEL_PORT_INPUT </dev/tty
+printf "Puerto del panel [8083]: "; read _PANEL_PORT_INPUT </dev/tty
 PANEL_WEB_PORT="${_PANEL_PORT_INPUT:-8083}"
 # Validar: número 1-65535 y no chocar con puertos comunes de servicios
 if ! [[ "$PANEL_WEB_PORT" =~ ^[0-9]+$ ]] || (( PANEL_WEB_PORT < 1 || PANEL_WEB_PORT > 65535 )); then
@@ -95,7 +95,7 @@ echo -e "${GREEN}✓ El panel se servirá en el puerto $PANEL_WEB_PORT${NC}\n"
 echo -e "${YELLOW}¿Instalar servidor de correo electrónico?${NC}"
 echo "  Stack: Postfix (SMTP) + Dovecot (IMAP/POP3) + Rspamd (antispam/DKIM) + Redis"
 echo -e "  ${YELLOW}Requisitos: IP con rDNS configurado, puerto 25 desbloqueado, registro MX${NC}"
-read -p "¿Instalar correo? (s/N): " _MAIL_INPUT </dev/tty
+printf "¿Instalar correo? (s/N): "; read _MAIL_INPUT </dev/tty
 INSTALL_MAIL=false
 if [[ "${_MAIL_INPUT,,}" =~ ^(s|si|y|yes)$ ]]; then
     INSTALL_MAIL=true
@@ -111,7 +111,7 @@ INSTALL_ROUNDCUBE=false
 if [[ "$INSTALL_MAIL" == true ]]; then
     echo -e "${YELLOW}¿Instalar Roundcube Webmail?${NC}"
     echo "  Webmail en /webmail — autologin desde el panel (1 clic por buzón)"
-    read -p "¿Instalar Roundcube? (s/N): " _RC_INPUT </dev/tty
+    printf "¿Instalar Roundcube? (s/N): "; read _RC_INPUT </dev/tty
     if [[ "${_RC_INPUT,,}" =~ ^(s|si|y|yes)$ ]]; then
         INSTALL_ROUNDCUBE=true
         echo -e "${GREEN}✓ Roundcube seleccionado${NC}\n"
@@ -127,7 +127,7 @@ echo -e "${YELLOW}¿Instalar MariaDB para bases de datos de clientes?${NC}"
 echo "  Los clientes podrán crear BDs MySQL/MariaDB para sus aplicaciones"
 echo "  (WordPress, Joomla, PrestaShop, Laravel, etc.)"
 echo -e "  Se instala MariaDB ${YELLOW}11.4 LTS${NC} desde el repositorio oficial."
-read -p "¿Instalar MariaDB? (s/N): " _MARIADB_INPUT </dev/tty
+printf "¿Instalar MariaDB? (s/N): "; read _MARIADB_INPUT </dev/tty
 INSTALL_MARIADB=false
 if [[ "${_MARIADB_INPUT,,}" =~ ^(s|si|y|yes)$ ]]; then
     INSTALL_MARIADB=true
@@ -143,7 +143,7 @@ echo -e "${YELLOW}¿Instalar CrowdSec?${NC} ${GREEN}(recomendado)${NC}"
 echo "  IPS colaborativo: detecta ataques desde logs (sshd, nginx, postfix...)"
 echo "  y aplica bans via bouncer de nftables. Complementa a fail2ban con una"
 echo "  blocklist comunitaria opcional. Footprint: ~80 MB RAM."
-read -p "¿Instalar CrowdSec? (S/n): " _CS_INPUT </dev/tty
+printf "¿Instalar CrowdSec? (S/n): "; read _CS_INPUT </dev/tty
 INSTALL_CROWDSEC=true
 if [[ "${_CS_INPUT,,}" =~ ^(n|no)$ ]]; then
     INSTALL_CROWDSEC=false
@@ -158,7 +158,7 @@ fi
 echo -e "${YELLOW}¿Qué versiones PHP necesitas?${NC}"
 echo "Disponibles: 7.4, 8.0, 8.1, 8.2, 8.3, 8.4, 8.5"
 echo "Ejemplos: '8.1 8.2' o '8.5' (mínimo 1, máximo 6)"
-read -p "Versiones PHP (separadas por espacio): " PHP_VERSIONS </dev/tty
+printf "Versiones PHP (separadas por espacio): "; read PHP_VERSIONS </dev/tty
 
 # Validar que haya al menos una versión
 if [[ -z "$PHP_VERSIONS" ]]; then
@@ -2385,7 +2385,7 @@ source venv/bin/activate
 echo ""
 echo -e "${YELLOW}Nombre de usuario administrador del panel:${NC}"
 echo -e "  Deja en blanco para generar uno aleatorio (recomendado por seguridad)"
-read -p "  Usuario admin (Enter = aleatorio): " _ADMIN_USER_INPUT </dev/tty
+printf "  Usuario admin (Enter = aleatorio): "; read _ADMIN_USER_INPUT </dev/tty
 if [[ -z "$_ADMIN_USER_INPUT" ]]; then
     ADMIN_USER="svq_$(python3 -c 'import secrets,string; print(secrets.token_hex(3))')"
     echo -e "  ${GREEN}✓ Usuario generado: ${YELLOW}${ADMIN_USER}${NC}"
