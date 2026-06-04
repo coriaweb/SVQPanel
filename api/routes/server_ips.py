@@ -148,6 +148,10 @@ async def scan_system_ips(
         if addr.lower().startswith("fe80"):
             continue
 
+        # Saltar IPv6 SLAAC (prefijo /64) — autoconfiguradas por el kernel, no son IPs de hosting
+        if family == "inet6" and prefix == "64":
+            continue
+
         # Saltar la IPv6 reservada para el panel
         if panel_ipv6 and addr == panel_ipv6:
             continue
