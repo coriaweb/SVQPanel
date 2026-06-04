@@ -64,13 +64,14 @@ code { font-family: var(--font-mono); color: var(--danger); background: var(--su
 /* ── Cabecera de página ── */
 .page-head-row {
   display: flex; align-items: flex-start; justify-content: space-between;
-  gap: var(--sp-4); margin-bottom: var(--sp-5); flex-wrap: wrap;
+  gap: var(--sp-4); margin-bottom: 20px; flex-wrap: wrap;
 }
-.page-head-row h2 { margin: 0 0 2px; font-size: var(--fs-3xl); }
+.page-head-row h2 { margin: 0 0 4px; font-size: 20px; font-weight: 700; letter-spacing: -.01em; }
 .app-content h2, .main-content h2 {
-  font-size: var(--fs-3xl); font-weight: var(--fw-bold); letter-spacing: -.01em;
+  font-size: 20px; font-weight: 700; letter-spacing: -.01em;
 }
-.container-fluid { padding-left: 0; padding-right: 0; }
+.page-head-row p, .page-head-row .text-muted { font-size: 13px; color: var(--text-muted); }
+.container, .container-fluid { width: 100%; margin-left: auto; margin-right: auto; padding-left: var(--sp-4); padding-right: var(--sp-4); }
 
 /* ── Botones ── */
 .btn {

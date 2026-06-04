@@ -180,7 +180,6 @@ export default {
           { to: '/databases', label: 'Bases de datos', icon: 'bi-database' },
           { to: '/mail',      label: 'Correo',     icon: 'bi-envelope' },
           { to: '/dns',       label: 'DNS',        icon: 'bi-diagram-3' },
-          { to: '/ssl',       label: 'SSL / TLS',  icon: 'bi-lock' },
         ],
       },
       {
@@ -286,7 +285,7 @@ export default {
 }
 .app-content {
   flex: 1; overflow-y: auto;
-  padding: 18px 20px;
+  padding: 20px 24px;
   background: var(--bg);
 }
 
