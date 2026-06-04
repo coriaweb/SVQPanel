@@ -105,6 +105,8 @@ class DomainResponse(BaseModel):
     security_headers_enabled: Optional[bool] = False
     # HTTP/3 (QUIC)
     http3_enabled: Optional[bool] = False
+    # Bots bloqueados por dominio (JSON array)
+    blocked_user_agents: Optional[str] = None
     created_at: Optional[datetime] = None
     updated_at: Optional[datetime] = None
 
