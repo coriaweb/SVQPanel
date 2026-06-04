@@ -194,9 +194,10 @@ echo -e "${GREEN}✓ PHP versions: ${PHP_ARRAY[*]}${NC}\n"
 ###############################################################################
 # 3. ACTUALIZAR SISTEMA
 ###############################################################################
+export DEBIAN_FRONTEND=noninteractive
 echo -e "${YELLOW}Actualizando sistema...${NC}"
 apt-get update -qq
-apt-get upgrade -y -qq
+apt-get upgrade -y -qq -o Dpkg::Options::="--force-confold"
 echo -e "${GREEN}✓ Sistema actualizado${NC}\n"
 
 ###############################################################################
@@ -222,7 +223,7 @@ fi
 ###############################################################################
 echo -e "${YELLOW}Instalando dependencias base...${NC}"
 
-apt-get install -y -qq \
+apt-get install -y -qq -o Dpkg::Options::="--force-confold" \
     curl \
     wget \
     git \
