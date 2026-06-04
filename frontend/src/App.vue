@@ -199,10 +199,11 @@ export default {
     )
 
     const isActive = (to) => {
-      if (to === '/dashboard') return route.path === to
-      // Exact match for subroutes
-      if (to === '/system/updates' || to === '/security') return route.path === to
-      // For parent routes, check exact boundary
+      // Exact match for routes that have subroutes
+      if (to === '/dashboard' || to === '/system' || to === '/system/updates' || to === '/security') {
+        return route.path === to
+      }
+      // For other routes, allow prefix matching with boundary
       if (route.path === to) return true
       if (route.path.startsWith(to + '/')) return true
       return false
