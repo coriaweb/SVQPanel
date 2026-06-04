@@ -1,167 +1,165 @@
 /* ============================================================
    SVQPanel — Design Tokens
-   Sistema de diseño 2026. Cargar en main.js ANTES de cualquier
-   estilo de Bootstrap. Todo cascadea por variables: cambiar
-   data-theme en <html> conmuta light/dark sin tocar componentes.
+   Basado en SVQ HOST Design System. Fuente: Outfit.
+   Acento: naranja SVQ (#f08a2a). Sidebar: navy profundo (#0d1424).
    ============================================================ */
+
+@import url('https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap');
 
 :root {
-  /* ===== Brand / Primary (índigo "control") ===== */
-  --brand-50:  #eef2ff;
-  --brand-100: #e0e7ff;
-  --brand-200: #c7d2fe;
-  --brand-300: #a5b4fc;
-  --brand-400: #818cf8;
-  --brand-500: #6366f1;
-  --brand-600: #4f46e5;
-  --brand-700: #4338ca;
-  --brand-800: #3730a3;
-  --brand-900: #312e81;
+  /* ── Brand ── */
+  --svq-navy:    #1a2547;
+  --svq-orange:  #f08a2a;
+  --svq-sidebar: #0d1424;
 
-  /* ===== Semantic surfaces (LIGHT) ===== */
-  --bg:            #f7f8fa;
-  --bg-subtle:     #f1f3f7;
+  /* ── Acento ── */
+  --ac:          #f08a2a;
+  --ac-soft:     rgba(240,138,42,.13);
+  --ac-link:     #cf7416;
+
+  /* ── Semánticos ── */
+  --success:         #0bb383;
+  --success-bg:      #d3f6ec;
+  --success-border:  #a0e8d4;
+  --warning:         #f6b749;
+  --warning-bg:      #fdf1da;
+  --warning-border:  #f6d88a;
+  --danger:          #ef7a4b;
+  --danger-bg:       #fce4d8;
+  --danger-border:   #f6bba0;
+  --info:            #3ec1d3;
+  --info-bg:         #d8f2f6;
+  --info-border:     #a0dde6;
+
+  /* ── Superficies (modo claro) ── */
+  --bg:            #f5f6f7;
   --surface:       #ffffff;
-  --surface-2:     #fbfcfe;
-  --surface-inset: #f3f5f9;
-  --border:        #e6e8ee;
-  --border-strong: #d3d7e0;
+  --surface-2:     #f3f6f9;
+  --surface-inset: #eef0f7;
+  --bg-subtle:     #eef0f7;
 
-  /* ===== Text ===== */
-  --text:           #1a1d27;
-  --text-secondary: #565c6e;
-  --text-muted:     #8b91a3;
-  --text-inverse:   #ffffff;
-  --text-on-brand:  #ffffff;
+  /* ── Texto (modo claro) ── */
+  --text:           #1b212b;
+  --text-secondary: #2b313e;
+  --text-muted:     #878a99;
 
-  /* ===== Estados semánticos ===== */
-  --color-primary:       var(--brand-600);
-  --color-primary-hover: var(--brand-700);
+  /* ── Bordes ── */
+  --border:        #dadbdd;
+  --border-strong: #ced4da;
 
-  --success: #16a34a;  --success-bg: #e9f7ef;  --success-border: #bbe7cb;
-  --warning: #d97706;  --warning-bg: #fdf3e3;  --warning-border: #f5dca8;
-  --danger:  #dc2626;  --danger-bg:  #fdecec;  --danger-border:  #f6c7c7;
-  --info:    #0891b2;  --info-bg:    #e6f6fb;  --info-border:    #b8e6f2;
+  /* ── Sombras ── */
+  --shadow-sm:    0 .125rem .25rem rgba(0,0,0,.075);
+  --shadow-md:    rgba(0,0,0,.05) 0 1px 3px, rgba(0,0,0,.09) 0 1px 2px;
+  --shadow-lg:    0 5px 10px rgba(30,32,37,.12);
+  --shadow-focus: 0 0 0 3px rgba(240,138,42,.28);
 
-  /* ===== Radios ===== */
-  --r-sm: 8px;
-  --r-md: 12px;
-  --r-lg: 16px;
-  --r-xl: 20px;
-  --r-pill: 999px;
+  /* ── Tipografía ── */
+  --font-sans:  'Outfit', system-ui, -apple-system, 'Segoe UI', sans-serif;
+  --font-mono:  'JetBrains Mono', monospace;
 
-  /* ===== Sombras (sutiles, por capas) ===== */
-  --shadow-xs: 0 1px 2px rgba(16,20,35,.04);
-  --shadow-sm: 0 1px 3px rgba(16,20,35,.06), 0 1px 2px rgba(16,20,35,.04);
-  --shadow-md: 0 4px 12px rgba(16,20,35,.07), 0 2px 4px rgba(16,20,35,.04);
-  --shadow-lg: 0 12px 32px rgba(16,20,35,.10), 0 4px 8px rgba(16,20,35,.05);
-  --shadow-focus: 0 0 0 3px rgba(79,70,229,.18);
+  --fs-xs:   11px;
+  --fs-sm:   12px;
+  --fs-md:   13px;
+  --fs-base: 14px;
+  --fs-lg:   15px;
+  --fs-xl:   16px;
+  --fs-2xl:  18px;
+  --fs-3xl:  20px;
+  --fs-4xl:  24px;
 
-  /* ===== Espaciado (escala 4px) ===== */
-  --sp-1: 4px;  --sp-2: 8px;  --sp-3: 12px;  --sp-4: 16px;
-  --sp-5: 20px; --sp-6: 24px; --sp-8: 32px;  --sp-10: 40px; --sp-12: 48px;
+  --fw-light:    300;
+  --fw-regular:  400;
+  --fw-medium:   500;
+  --fw-semibold: 600;
+  --fw-bold:     700;
 
-  /* ===== Tipografía ===== */
-  --font-sans: "Inter", "Inter var", -apple-system, BlinkMacSystemFont,
-               "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
-  --font-mono: "JetBrains Mono", "SF Mono", "Cascadia Code", Consolas,
-               "Liberation Mono", monospace;
+  /* ── Espaciado ── */
+  --sp-1: .25rem;
+  --sp-2: .5rem;
+  --sp-3: .75rem;
+  --sp-4: 1rem;
+  --sp-5: 1.25rem;
+  --sp-6: 1.5rem;
+  --sp-8: 2rem;
 
-  --fs-xs: 12px;  --fs-sm: 13px;  --fs-base: 14px; --fs-md: 15px;
-  --fs-lg: 18px;  --fs-xl: 22px;  --fs-2xl: 28px;  --fs-3xl: 34px;
-  --lh-tight: 1.2; --lh-normal: 1.5; --lh-relaxed: 1.7;
-  --fw-regular: 400; --fw-medium: 500; --fw-semibold: 600; --fw-bold: 700;
+  /* ── Radios ── */
+  --r-sm:   3px;
+  --r-md:   4px;
+  --r-lg:   6px;
+  --r-xl:   10px;
+  --r-pill: 50rem;
 
-  /* ===== Layout ===== */
-  --sidebar-w: 248px;
-  --sidebar-w-collapsed: 64px;
-  --topbar-h: 60px;
-  --content-max: 1280px;
+  /* ── Layout ── */
+  --sidebar-w:           260px;
+  --sidebar-collapsed-w:  72px;
+  --topbar-h:             66px;
 
-  /* ===== Motion ===== */
-  --ease: cubic-bezier(.4,0,.2,1);
-  --ease-out: cubic-bezier(.16,1,.3,1);
-  --t-fast: 120ms; --t-base: 180ms; --t-slow: 260ms;
+  /* ── Transiciones ── */
+  --t-fast: .15s;
+  --t-base: .22s;
+  --ease:   ease-in-out;
 
-  color-scheme: light;
+  /* ── Sidebar dark ── */
+  --sb-bg:        #0d1424;
+  --sb-text:      rgba(255,255,255,.78);
+  --sb-muted:     rgba(255,255,255,.42);
+  --sb-hover:     rgba(255,255,255,.055);
+  --sb-border:    rgba(255,255,255,.07);
+  --sb-active-bg: rgba(255,255,255,.06);
+
+  /* ── Compat con código existente ── */
+  --color-primary:       #f08a2a;
+  --color-primary-hover: #d97418;
+  --brand-50:            #fef3e8;
+  --brand-400:           #f6b449;
 }
 
-/* ===================== DARK ===================== */
+/* ── Modo oscuro ── */
 [data-theme="dark"] {
-  --bg:            #0c0e14;
-  --bg-subtle:     #0a0c11;
-  --surface:       #14171f;
-  --surface-2:     #1a1e28;
-  --surface-inset: #0f1218;
-  --border:        #242936;
-  --border-strong: #323847;
+  --bg:            #0f1117;
+  --surface:       #1a1f2e;
+  --surface-2:     #232837;
+  --surface-inset: #141824;
+  --bg-subtle:     #141824;
 
-  --text:           #f0f2f6;
-  --text-secondary: #aab1c2;
-  --text-muted:     #6b7385;
-  --text-inverse:   #14171f;
+  --text:           #e8eaf0;
+  --text-secondary: #b0b8cc;
+  --text-muted:     #6b7280;
 
-  --color-primary:       var(--brand-500);
-  --color-primary-hover: var(--brand-400);
+  --border:        #2a3045;
+  --border-strong: #3a4060;
 
-  --success: #34d399;  --success-bg: #0e2a20;  --success-border: #1d5a43;
-  --warning: #fbbf24;  --warning-bg: #2c220c;  --warning-border: #5a4717;
-  --danger:  #f87171;  --danger-bg:  #2c1414;  --danger-border:  #5a2626;
-  --info:    #38bdf8;  --info-bg:    #0a2530;  --info-border:    #16586e;
-
-  --shadow-xs: 0 1px 2px rgba(0,0,0,.3);
-  --shadow-sm: 0 1px 3px rgba(0,0,0,.4);
-  --shadow-md: 0 4px 12px rgba(0,0,0,.45);
-  --shadow-lg: 0 16px 40px rgba(0,0,0,.55);
-  --shadow-focus: 0 0 0 3px rgba(99,102,241,.30);
-
-  color-scheme: dark;
+  --shadow-sm:  0 .125rem .25rem rgba(0,0,0,.3);
+  --shadow-md:  0 1px 3px rgba(0,0,0,.4);
+  --shadow-lg:  0 5px 10px rgba(0,0,0,.5);
 }
 
-/* ============================================================
-   Base / reset mínimo
-   ============================================================ */
-* { box-sizing: border-box; }
-html, body, #app { height: 100%; margin: 0; }
+/* ── Base global ── */
+*, *::before, *::after { box-sizing: border-box; }
+
+html { font-size: 15px; }
 
 body {
+  margin: 0;
   font-family: var(--font-sans);
   font-size: var(--fs-base);
-  line-height: var(--lh-normal);
+  font-weight: var(--fw-regular);
+  line-height: 1.5;
   color: var(--text);
   background: var(--bg);
   -webkit-font-smoothing: antialiased;
-  -moz-osx-font-smoothing: grayscale;
-  text-rendering: optimizeLegibility;
-  transition: background var(--t-base) var(--ease), color var(--t-base) var(--ease);
 }
 
-a { color: var(--color-primary); }
-
-::-webkit-scrollbar { width: 10px; height: 10px; }
-::-webkit-scrollbar-track { background: transparent; }
-::-webkit-scrollbar-thumb {
-  background: var(--border-strong);
-  border-radius: var(--r-pill);
-  border: 2px solid var(--bg);
-}
-::-webkit-scrollbar-thumb:hover { background: var(--text-muted); }
-
-/* ============================================================
-   Animaciones reutilizables
-   ============================================================ */
-@keyframes svq-spin   { to { transform: rotate(360deg); } }
-@keyframes svq-shimmer { 0% { background-position: 100% 0; } 100% { background-position: -100% 0; } }
-@keyframes svq-pulse  { 0%,100% { opacity: 1; } 50% { opacity: .4; } }
-
-.svq-skeleton {
-  background: linear-gradient(90deg, var(--surface-inset) 25%,
-              var(--surface-2) 37%, var(--surface-inset) 63%);
-  background-size: 400% 100%;
-  animation: svq-shimmer 1.4s ease infinite;
-  border-radius: var(--r-sm);
+h1,h2,h3,h4,h5,h6 {
+  margin: 0 0 .5rem;
+  font-family: var(--font-sans);
+  font-weight: var(--fw-semibold);
+  line-height: 1.2;
+  color: var(--text);
 }
 
-@media (prefers-reduced-motion: reduce) {
-  *, *::before, *::after { animation-duration: .01ms !important; transition-duration: .01ms !important; }
-}
+a { color: var(--ac-link); text-decoration: none; }
+a:hover { text-decoration: underline; }
+
+/* Spinner animation */
+@keyframes svq-spin { to { transform: rotate(360deg); } }

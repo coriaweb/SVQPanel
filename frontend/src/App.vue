@@ -1,92 +1,113 @@
 <template>
-  <div class="app-shell" v-if="isAuthenticated">
-    <!-- ===== Sidebar ===== -->
-    <aside class="sidebar" :class="{ 'is-collapsed': sidebarCollapsed }">
-      <div class="sidebar__brand">
-        <div class="brand-mark"><i class="bi bi-hexagon-fill"></i></div>
-        <span class="brand-name" v-if="!sidebarCollapsed">SVQPanel</span>
-        <button class="sidebar__toggle" @click="store.toggleSidebar()" :title="sidebarCollapsed ? 'Expandir' : 'Colapsar'">
+  <div class="app-shell" v-if="isAuthenticated" :data-collapsed="sidebarCollapsed">
+    <!-- ===== Sidebar SVQ ===== -->
+    <aside class="sb" :class="{ 'sb--collapsed': sidebarCollapsed }">
+
+      <!-- Wordmark -->
+      <div class="sb-brand">
+        <span class="sb-brand__wordmark">
+          SVQ<span class="sb-brand__accent">{{ sidebarCollapsed ? '' : 'Panel' }}</span>
+        </span>
+        <button class="sb-brand__toggle" @click="store.toggleSidebar()"
+          :title="sidebarCollapsed ? 'Expandir menú' : 'Colapsar menú'">
           <i class="bi" :class="sidebarCollapsed ? 'bi-chevron-right' : 'bi-chevron-left'"></i>
         </button>
       </div>
 
-      <nav class="sidebar__nav">
-        <div class="nav-group" v-for="group in visibleGroups" :key="group.label">
-          <p class="nav-group__label" v-if="!sidebarCollapsed">{{ group.label }}</p>
-          <div class="nav-group__sep" v-else></div>
-          <a
-            v-for="item in group.items"
-            :key="item.to"
+      <!-- Nav -->
+      <nav class="sb-nav sb-scroll">
+        <div v-for="group in visibleGroups" :key="group.label" class="sb-group">
+          <!-- Separador colapsado / etiqueta expandido -->
+          <div class="sb-sep" v-if="sidebarCollapsed"></div>
+          <p class="sb-group-label" v-else>{{ group.label }}</p>
+
+          <a v-for="item in group.items" :key="item.to"
             :href="item.to"
-            class="nav-item"
-            :class="{ active: isActive(item.to) }"
+            class="sb-item"
+            :class="{ 'sb-item--active': isActive(item.to) }"
             :title="sidebarCollapsed ? item.label : ''"
-            @click.prevent="router.push(item.to)"
-          >
+            @click.prevent="router.push(item.to)">
             <i class="bi" :class="item.icon"></i>
-            <span class="nav-item__label" v-if="!sidebarCollapsed">{{ item.label }}</span>
+            <span class="sb-item__label">{{ item.label }}</span>
+            <span v-if="item.badge != null && !sidebarCollapsed" class="sb-badge">{{ item.badge }}</span>
           </a>
         </div>
       </nav>
 
-      <div class="sidebar__footer">
-        <button class="nav-item nav-item--btn" @click="store.toggleTheme()" :title="sidebarCollapsed ? 'Cambiar tema' : ''">
+      <!-- Footer: estado del nodo + tema -->
+      <div class="sb-footer">
+        <div class="sb-node" v-if="!sidebarCollapsed">
+          <span class="sb-node__dot"></span>
+          <span class="sb-node__text">{{ serverHostname }} · <span class="sb-node__status">operativo</span></span>
+        </div>
+        <div class="sb-node sb-node--collapsed" v-else>
+          <span class="sb-node__dot"></span>
+        </div>
+        <button class="sb-theme-btn" @click="store.toggleTheme()"
+          :title="theme === 'dark' ? 'Cambiar a modo claro' : 'Cambiar a modo oscuro'">
           <i class="bi" :class="theme === 'dark' ? 'bi-sun' : 'bi-moon-stars'"></i>
-          <span class="nav-item__label" v-if="!sidebarCollapsed">{{ theme === 'dark' ? 'Modo claro' : 'Modo oscuro' }}</span>
+          <span v-if="!sidebarCollapsed">{{ theme === 'dark' ? 'Modo claro' : 'Modo oscuro' }}</span>
         </button>
       </div>
     </aside>
 
     <!-- ===== Main ===== -->
     <div class="app-main">
+
+      <!-- Topbar -->
       <header class="topbar">
-        <div class="topbar__left">
-          <button class="icon-btn topbar__menu" @click="store.toggleSidebar()" title="Menú">
+        <div class="topbar-left">
+          <button class="tb-icon-btn" @click="store.toggleSidebar()" title="Menú">
             <i class="bi bi-list"></i>
           </button>
-          <nav class="breadcrumb">
-            <i class="bi bi-house-door breadcrumb__home"></i>
-            <span class="breadcrumb__crumb" v-for="(crumb, i) in breadcrumbs" :key="i">
-              <span class="breadcrumb__sep">/</span>
-              <span class="breadcrumb__item" :class="{ 'is-current': i === breadcrumbs.length - 1 }">{{ crumb }}</span>
-            </span>
+          <!-- Breadcrumb -->
+          <nav class="tb-crumb">
+            <span class="tb-crumb__sep"><i class="bi bi-chevron-right"></i></span>
+            <span class="tb-crumb__group">{{ currentBreadcrumb.group }}</span>
+            <span class="tb-crumb__sep"><i class="bi bi-chevron-right"></i></span>
+            <span class="tb-crumb__page">{{ currentBreadcrumb.label }}</span>
           </nav>
         </div>
 
-        <div class="topbar__right">
-          <button class="search-trigger" @click="openPalette" title="Búsqueda global (Ctrl/⌘ + K)">
+        <div class="topbar-right">
+          <!-- Búsqueda -->
+          <button class="tb-search" @click="openPalette" title="Buscar (Ctrl+K)">
             <i class="bi bi-search"></i>
-            <span class="search-trigger__hint">Buscar</span>
-            <kbd>⌘K</kbd>
+            <span class="tb-search__hint">Buscar en el panel…</span>
+            <kbd>/</kbd>
           </button>
 
-          <div class="user-menu" @mouseenter="dropdownOpen = true" @mouseleave="dropdownOpen = false">
-            <button class="user-menu__trigger">
-              <span class="avatar">{{ userInitials }}</span>
-              <span class="user-menu__name">{{ currentUser?.username }}</span>
-              <i class="bi bi-chevron-down"></i>
+          <!-- Notificaciones (placeholder) -->
+          <button class="tb-icon-btn tb-icon-btn--rel" title="Notificaciones">
+            <i class="bi bi-bell"></i>
+          </button>
+
+          <!-- Usuario -->
+          <div class="tb-user" @mouseenter="dropdownOpen = true" @mouseleave="dropdownOpen = false">
+            <button class="tb-user__btn">
+              <span class="tb-avatar">{{ userInitials }}</span>
+              <span class="tb-user__name">{{ currentUser?.username }}</span>
+              <i class="bi bi-chevron-down tb-user__caret"></i>
             </button>
-            <transition name="dropdown">
-              <div class="user-menu__panel" v-show="dropdownOpen">
-                <div class="user-menu__head">
-                  <span class="avatar avatar--lg">{{ userInitials }}</span>
+            <transition name="tb-drop">
+              <div class="tb-user__menu" v-show="dropdownOpen">
+                <div class="tb-user__head">
+                  <span class="tb-avatar tb-avatar--lg">{{ userInitials }}</span>
                   <div>
-                    <p class="user-menu__head-name">{{ currentUser?.username }}</p>
-                    <p class="user-menu__head-role">{{ currentUser?.role || (currentUser?.is_admin ? 'admin' : 'usuario') }}</p>
+                    <p class="tb-user__head-name">{{ currentUser?.username }}</p>
+                    <p class="tb-user__head-role">{{ currentUser?.is_admin ? 'Administrador' : 'Usuario' }}</p>
                   </div>
                 </div>
-                <router-link :to="`/users/${currentUser.id}/account`" class="dropdown-item" @click="dropdownOpen = false">
+                <div class="tb-menu-sep"></div>
+                <router-link :to="`/users/${currentUser?.id}/account`" class="tb-menu-item" @click="dropdownOpen = false">
                   <i class="bi bi-person"></i> Mi cuenta
                 </router-link>
-                <router-link :to="`/users/${currentUser.id}/account`" class="dropdown-item" @click="dropdownOpen = false">
-                  <i class="bi bi-shield-lock"></i> Doble factor (2FA)
-                </router-link>
-                <button class="dropdown-item" @click="store.toggleTheme()">
+                <button class="tb-menu-item" @click="store.toggleTheme(); dropdownOpen = false">
                   <i class="bi" :class="theme === 'dark' ? 'bi-sun' : 'bi-moon-stars'"></i>
                   {{ theme === 'dark' ? 'Modo claro' : 'Modo oscuro' }}
                 </button>
-                <div class="dropdown-sep"></div>
-                <button class="dropdown-item dropdown-item--danger" @click="logout">
+                <div class="tb-menu-sep"></div>
+                <button class="tb-menu-item tb-menu-item--danger" @click="logout">
                   <i class="bi bi-box-arrow-right"></i> Cerrar sesión
                 </button>
               </div>
@@ -95,9 +116,10 @@
         </div>
       </header>
 
-      <!-- Backdrop móvil cuando el sidebar está abierto -->
+      <!-- Backdrop móvil -->
       <div class="app-backdrop" @click="store.toggleSidebar()"></div>
 
+      <!-- Contenido -->
       <main class="app-content">
         <router-view></router-view>
       </main>
@@ -117,7 +139,7 @@
     </div>
   </div>
 
-  <!-- Sin autenticar -->
+  <!-- Sin autenticar: login u otras rutas públicas -->
   <router-view v-else></router-view>
 </template>
 
@@ -132,44 +154,50 @@ export default {
   name: 'App',
   components: { CommandPalette },
   setup() {
-    const route = useRoute()
+    const route  = useRoute()
     const router = useRouter()
-    const store = useMainStore()
+    const store  = useMainStore()
 
-    const notification = computed(() => store.notification)
+    const notification    = computed(() => store.notification)
     const isAuthenticated = computed(() => store.isAuthenticated)
-    const currentUser = computed(() => store.currentUser)
-    const theme = computed(() => store.theme)
+    const currentUser     = computed(() => store.currentUser)
+    const theme           = computed(() => store.theme)
     const sidebarCollapsed = computed(() => store.sidebarCollapsed)
-    const dropdownOpen = ref(false)
+    const dropdownOpen    = ref(false)
 
-    // ===== Definición de navegación agrupada =====
+    // ── Hostname del servidor (mostrado en footer del sidebar) ──
+    const serverHostname = computed(() => {
+      return store.serverHostname || window.location.hostname || 'SVQ-PROD-01'
+    })
+
+    // ── Navegación agrupada ──
     const navGroups = [
       {
-        label: 'Hosting',
+        label: 'General',
         items: [
-          { to: '/dashboard', label: 'Dashboard',      icon: 'bi-speedometer2' },
-          { to: '/domains',   label: 'Dominios',        icon: 'bi-globe2' },
-          { to: '/databases', label: 'Bases de datos',  icon: 'bi-database' },
-          { to: '/mail',      label: 'Correo',          icon: 'bi-envelope' },
-          { to: '/dns',       label: 'DNS',             icon: 'bi-diagram-3' },
+          { to: '/dashboard', label: 'Inicio',     icon: 'bi-speedometer2' },
+          { to: '/domains',   label: 'Dominios',   icon: 'bi-globe2' },
+          { to: '/databases', label: 'Bases de datos', icon: 'bi-database' },
+          { to: '/mail',      label: 'Correo',     icon: 'bi-envelope' },
+          { to: '/dns',       label: 'DNS',        icon: 'bi-diagram-3' },
+          { to: '/ssl',       label: 'SSL / TLS',  icon: 'bi-lock' },
         ],
       },
       {
         label: 'Archivos',
         items: [
-          { to: '/files',   label: 'Archivos',     icon: 'bi-folder2-open' },
-          { to: '/sftp',    label: 'Acceso SFTP',  icon: 'bi-folder-symlink', roles: ['notAdmin'] },
-          { to: '/crons',   label: 'Tareas Cron',  icon: 'bi-clock-history' },
-          { to: '/backups', label: 'Copias',       icon: 'bi-hdd-stack' },
+          { to: '/files',   label: 'Gestor de archivos', icon: 'bi-folder2-open' },
+          { to: '/sftp',    label: 'Acceso SFTP',        icon: 'bi-folder-symlink', roles: ['notAdmin'] },
+          { to: '/crons',   label: 'Cron Jobs',          icon: 'bi-clock-history' },
+          { to: '/backups', label: 'Copias de seguridad',icon: 'bi-hdd-stack' },
         ],
       },
       {
         label: 'Administración',
         items: [
-          { to: '/users',      label: 'Usuarios',  icon: 'bi-people',       roles: ['admin'] },
-          { to: '/plans',      label: 'Planes',    icon: 'bi-stack',        roles: ['admin', 'reseller'] },
-          { to: '/server-ips', label: 'IPs',       icon: 'bi-hdd-network',  roles: ['admin'] },
+          { to: '/users',      label: 'Usuarios', icon: 'bi-people',      roles: ['admin'] },
+          { to: '/plans',      label: 'Planes',   icon: 'bi-stack',       roles: ['admin', 'reseller'] },
+          { to: '/server-ips', label: 'IPs',      icon: 'bi-hdd-network', roles: ['admin'] },
         ],
       },
       {
@@ -187,43 +215,32 @@ export default {
       if (!item.roles) return true
       const u = currentUser.value || {}
       return item.roles.some((r) => {
-        if (r === 'admin') return u.is_admin
+        if (r === 'admin')    return u.is_admin
         if (r === 'notAdmin') return !u.is_admin
         return u.role === r
       })
     }
 
     const visibleGroups = computed(() =>
-      navGroups
-        .map((g) => ({ ...g, items: g.items.filter(canSee) }))
-        .filter((g) => g.items.length > 0)
+      navGroups.map((g) => ({ ...g, items: g.items.filter(canSee) })).filter((g) => g.items.length > 0)
     )
 
     const isActive = (to) => {
-      // Exact match for routes that have subroutes
-      if (to === '/dashboard' || to === '/system' || to === '/system/updates' || to === '/security') {
-        return route.path === to
-      }
-      // For other routes, allow prefix matching with boundary
       if (route.path === to) return true
-      if (route.path.startsWith(to + '/')) return true
+      if (to !== '/dashboard' && route.path.startsWith(to + '/')) return true
       return false
     }
 
-    // ===== Breadcrumbs =====
-    const titleByPath = {}
-    navGroups.forEach((g) => g.items.forEach((it) => { titleByPath[it.to] = it.label }))
-    const breadcrumbs = computed(() => {
-      const match = Object.keys(titleByPath)
-        .filter((p) => isActive(p))
-        .sort((a, b) => b.length - a.length)[0]
-      return match ? [titleByPath[match]] : [route.name || 'Inicio']
+    // ── Breadcrumb ──
+    const allItems = navGroups.flatMap((g) => g.items.map((it) => ({ ...it, group: g.label })))
+    const currentBreadcrumb = computed(() => {
+      const match = allItems
+        .filter((it) => isActive(it.to))
+        .sort((a, b) => b.to.length - a.to.length)[0]
+      return match || { label: 'Panel', group: 'SVQPanel' }
     })
 
-    const userInitials = computed(() => {
-      const n = currentUser.value?.username || '?'
-      return n.slice(0, 2).toUpperCase()
-    })
+    const userInitials = computed(() => (currentUser.value?.username || '?').slice(0, 2).toUpperCase())
 
     const toastIcon = (type) => ({
       success: 'bi-check-circle-fill',
@@ -235,7 +252,7 @@ export default {
 
     const logout = async () => {
       dropdownOpen.value = false
-      try { await api.logout() } catch (e) { console.error('Error en logout:', e) }
+      try { await api.logout() } catch (e) { /* ignorar */ }
       store.logout()
       store.showNotification('Sesión cerrada correctamente', 'success')
       await router.push('/login')
@@ -245,15 +262,17 @@ export default {
 
     return {
       store, route, router, notification, isAuthenticated, currentUser, theme,
-      sidebarCollapsed, dropdownOpen, visibleGroups, isActive, breadcrumbs,
-      userInitials, toastIcon, logout, openPalette,
+      sidebarCollapsed, dropdownOpen, visibleGroups, isActive, currentBreadcrumb,
+      userInitials, toastIcon, logout, openPalette, serverHostname,
     }
   },
 }
 </script>
 
 <style scoped>
-/* ===================== Shell ===================== */
+/* ══════════════════════════════════════════════════
+   Shell
+══════════════════════════════════════════════════ */
 .app-shell {
   display: flex;
   height: 100vh;
@@ -261,265 +280,276 @@ export default {
   background: var(--bg);
 }
 .app-main {
-  flex: 1;
-  display: flex;
-  flex-direction: column;
-  min-width: 0;
+  flex: 1; min-width: 0;
+  display: flex; flex-direction: column;
+  overflow: hidden;
 }
 .app-content {
-  flex: 1;
-  overflow-y: auto;
-  padding: var(--sp-6);
+  flex: 1; overflow-y: auto;
+  padding: 18px 20px;
+  background: var(--bg);
 }
 
-/* ===================== Sidebar ===================== */
-.sidebar {
-  width: var(--sidebar-w);
-  flex-shrink: 0;
-  background: var(--surface);
-  border-right: 1px solid var(--border);
-  display: flex;
-  flex-direction: column;
-  transition: width var(--t-base) var(--ease);
+/* ══════════════════════════════════════════════════
+   Sidebar
+══════════════════════════════════════════════════ */
+.sb {
+  width: 260px; flex-shrink: 0;
+  background: var(--sb-bg);
+  color: var(--sb-text);
+  display: flex; flex-direction: column;
+  height: 100vh; position: sticky; top: 0;
+  transition: width .22s ease;
+  overflow: hidden;
 }
-.sidebar.is-collapsed { width: var(--sidebar-w-collapsed); }
+.sb--collapsed { width: 72px; }
 
-.sidebar__brand {
-  height: var(--topbar-h);
-  display: flex;
-  align-items: center;
-  gap: var(--sp-3);
-  padding: 0 var(--sp-4);
-  border-bottom: 1px solid var(--border);
-  position: relative;
-}
-.brand-mark {
-  width: 32px; height: 32px;
-  display: grid; place-items: center;
-  border-radius: var(--r-md);
-  background: linear-gradient(135deg, var(--brand-500), var(--brand-700));
-  color: #fff;
-  font-size: 16px;
+/* Scrollbar fino */
+.sb-scroll::-webkit-scrollbar { width: 5px; }
+.sb-scroll::-webkit-scrollbar-thumb { background: rgba(255,255,255,.12); border-radius: 10px; }
+.sb-scroll::-webkit-scrollbar-track { background: transparent; }
+
+/* Wordmark */
+.sb-brand {
+  min-height: 66px;
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 0 18px;
+  border-bottom: 1px solid var(--sb-border);
   flex-shrink: 0;
 }
-.brand-name {
-  font-weight: var(--fw-bold);
-  font-size: var(--fs-md);
-  letter-spacing: -.01em;
-  color: var(--text);
+.sb--collapsed .sb-brand { justify-content: center; padding: 0; }
+.sb-brand__wordmark {
+  font-size: 20px; font-weight: 800; letter-spacing: -.01em;
+  color: #fff; white-space: nowrap;
 }
-.sidebar__toggle {
-  margin-left: auto;
-  width: 26px; height: 26px;
-  border: none; background: transparent;
-  color: var(--text-muted);
-  border-radius: var(--r-sm);
-  cursor: pointer;
-  display: grid; place-items: center;
-  transition: background var(--t-fast), color var(--t-fast);
+.sb-brand__accent { color: var(--svq-orange); }
+.sb-brand__toggle {
+  width: 28px; height: 28px; border: none; background: transparent;
+  color: var(--sb-muted); border-radius: 4px; cursor: pointer;
+  display: grid; place-items: center; font-size: 14px;
+  transition: background .15s, color .15s; flex-shrink: 0;
 }
-.sidebar__toggle:hover { background: var(--surface-inset); color: var(--text); }
-.sidebar.is-collapsed .sidebar__toggle {
-  position: absolute; right: -13px; top: 50%; transform: translateY(-50%);
-  background: var(--surface); border: 1px solid var(--border);
-  box-shadow: var(--shadow-sm); z-index: 5;
+.sb-brand__toggle:hover { background: var(--sb-hover); color: #fff; }
+.sb--collapsed .sb-brand__toggle { display: none; }
+
+/* Nav */
+.sb-nav { flex: 1; overflow-y: auto; overflow-x: hidden; padding-bottom: 8px; }
+.sb-group-label {
+  margin: 0; padding: 14px 22px 5px;
+  font-size: 11px; font-weight: 600; text-transform: uppercase;
+  letter-spacing: .1em; color: var(--sb-muted);
+}
+.sb-sep { height: 1px; background: var(--sb-border); margin: 8px 14px; }
+
+/* Items */
+.sb-item {
+  display: flex; align-items: center; gap: 11px;
+  padding: 10px 22px; text-decoration: none;
+  font-size: 13.5px; font-weight: 400;
+  color: var(--sb-text);
+  border-left: 3px solid transparent;
+  transition: background .15s, color .15s;
+  position: relative; white-space: nowrap;
+}
+.sb-item .bi { font-size: 18px; flex-shrink: 0; }
+.sb-item__label { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.sb-item:hover { background: var(--sb-hover); }
+.sb-item--active {
+  color: var(--svq-orange) !important;
+  font-weight: 600;
+  background: var(--sb-active-bg);
+  border-left-color: var(--svq-orange);
+}
+.sb--collapsed .sb-item { padding: 11px 0; justify-content: center; }
+.sb--collapsed .sb-item__label { display: none; }
+.sb--collapsed .sb-item--active { border-left-color: transparent; border-right: 3px solid var(--svq-orange); }
+
+.sb-badge {
+  margin-left: auto; font-size: 11px; font-weight: 600;
+  color: var(--sb-muted); background: rgba(255,255,255,.08);
+  border-radius: 50rem; padding: 1px 8px;
 }
 
-.sidebar__nav {
-  flex: 1;
-  overflow-y: auto;
-  padding: var(--sp-3) var(--sp-3);
+/* Footer */
+.sb-footer {
+  padding: 10px 14px;
+  border-top: 1px solid var(--sb-border);
+  display: flex; flex-direction: column; gap: 4px;
+  flex-shrink: 0;
 }
-.nav-group__label {
-  font-size: var(--fs-xs);
-  font-weight: var(--fw-semibold);
-  text-transform: uppercase;
-  letter-spacing: .06em;
-  color: var(--text-muted);
-  margin: var(--sp-4) var(--sp-3) var(--sp-2);
-}
-.nav-group__sep { height: 1px; background: var(--border); margin: var(--sp-3) var(--sp-2); }
+.sb--collapsed .sb-footer { align-items: center; padding: 12px 0; }
 
-.nav-item {
-  display: flex;
-  align-items: center;
-  gap: var(--sp-3);
-  padding: 9px var(--sp-3);
-  margin: 2px 0;
-  border-radius: var(--r-md);
-  color: var(--text-secondary);
-  text-decoration: none;
-  font-size: var(--fs-base);
-  font-weight: var(--fw-medium);
-  position: relative;
-  transition: background var(--t-fast), color var(--t-fast);
-  white-space: nowrap;
+.sb-node {
+  display: flex; align-items: center; gap: 9px;
+  font-size: 12px; color: var(--sb-muted); padding: 4px 8px;
 }
-.nav-item .bi { font-size: 17px; width: 20px; text-align: center; flex-shrink: 0; }
-.nav-item:hover { background: var(--surface-inset); color: var(--text); }
-.nav-item.active { background: var(--brand-50); color: var(--color-primary); font-weight: var(--fw-semibold); }
-[data-theme="dark"] .nav-item.active { background: var(--surface-2); color: var(--brand-400); }
-.nav-item.active::before {
-  content: ''; position: absolute; left: -1px; top: 8px; bottom: 8px;
-  width: 3px; border-radius: var(--r-pill); background: var(--color-primary);
+.sb-node--collapsed { justify-content: center; padding: 0; }
+.sb-node__dot {
+  width: 9px; height: 9px; border-radius: 50%;
+  background: var(--success); flex-shrink: 0;
+  box-shadow: 0 0 0 3px rgba(11,179,131,.18);
 }
-.sidebar.is-collapsed .nav-item { justify-content: center; padding: 9px 0; }
-.sidebar.is-collapsed .nav-item.active::before { left: 0; top: 6px; bottom: 6px; }
+.sb-node__status { color: rgba(255,255,255,.85); }
 
-.sidebar__footer { padding: var(--sp-3); border-top: 1px solid var(--border); }
-.nav-item--btn { width: 100%; border: none; background: transparent; cursor: pointer; text-align: left; }
+.sb-theme-btn {
+  display: flex; align-items: center; gap: 11px;
+  width: 100%; padding: 9px 8px;
+  border: none; background: transparent; cursor: pointer;
+  color: var(--sb-muted); font-size: 13px; font-family: var(--font-sans);
+  border-radius: 4px; text-align: left;
+  transition: background .15s, color .15s;
+}
+.sb-theme-btn:hover { background: var(--sb-hover); color: var(--sb-text); }
+.sb-theme-btn .bi { font-size: 17px; }
+.sb--collapsed .sb-theme-btn { justify-content: center; padding: 9px 0; }
+.sb--collapsed .sb-theme-btn span { display: none; }
 
-/* ===================== Topbar ===================== */
+/* ══════════════════════════════════════════════════
+   Topbar
+══════════════════════════════════════════════════ */
 .topbar {
-  height: var(--topbar-h);
-  flex-shrink: 0;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 0 var(--sp-6);
+  height: 66px; flex-shrink: 0;
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 0 24px;
   background: var(--surface);
   border-bottom: 1px solid var(--border);
+  position: sticky; top: 0; z-index: 100;
 }
-.topbar__left, .topbar__right { display: flex; align-items: center; gap: var(--sp-3); }
-.topbar__menu { display: none; }
+.topbar-left, .topbar-right { display: flex; align-items: center; gap: 12px; }
 
-.icon-btn {
-  width: 36px; height: 36px;
-  border: none; background: transparent;
-  color: var(--text-secondary);
-  border-radius: var(--r-md);
-  cursor: pointer; display: grid; place-items: center;
-  font-size: 18px;
-  transition: background var(--t-fast);
+.tb-icon-btn {
+  width: 38px; height: 38px; border: none; background: transparent;
+  color: var(--text-secondary); border-radius: var(--r-md); cursor: pointer;
+  display: grid; place-items: center; font-size: 20px;
+  transition: background .15s;
 }
-.icon-btn:hover { background: var(--surface-inset); color: var(--text); }
+.tb-icon-btn:hover { background: var(--surface-inset); color: var(--text); }
+.tb-icon-btn--rel { position: relative; }
 
-.breadcrumb { display: flex; align-items: center; gap: var(--sp-2); font-size: var(--fs-base); }
-.breadcrumb__crumb { display: flex; align-items: center; gap: var(--sp-2); }
-.breadcrumb__home { color: var(--text-muted); }
-.breadcrumb__sep { color: var(--text-muted); }
-.breadcrumb__item { color: var(--text-secondary); }
-.breadcrumb__item.is-current { color: var(--text); font-weight: var(--fw-semibold); }
-
-.search-trigger {
-  display: flex; align-items: center; gap: var(--sp-2);
-  padding: 7px var(--sp-3);
-  background: var(--surface-inset);
-  border: 1px solid var(--border);
-  border-radius: var(--r-md);
-  color: var(--text-muted);
-  font-size: var(--fs-sm);
-  cursor: pointer;
-  transition: background var(--t-fast), border-color var(--t-fast);
+.tb-crumb {
+  display: flex; align-items: center; gap: 7px;
+  font-size: 13px; color: var(--text-muted);
 }
-.search-trigger:hover { background: var(--surface); border-color: var(--border-strong); }
-.search-trigger__hint { min-width: 90px; text-align: left; }
-.search-trigger kbd {
-  font-family: var(--font-sans); font-size: 11px;
+.tb-crumb__sep { font-size: 16px; opacity: .5; }
+.tb-crumb__group { color: var(--text-muted); }
+.tb-crumb__page  { color: var(--svq-navy); font-weight: 600; }
+[data-theme="dark"] .tb-crumb__page { color: var(--text); }
+
+.tb-search {
+  display: flex; align-items: center; gap: 9px;
+  padding: 7px 13px;
+  background: var(--surface-inset); border: 1px solid var(--border);
+  border-radius: var(--r-md); color: var(--text-muted);
+  font-size: 13px; cursor: pointer; font-family: var(--font-sans);
+  transition: background .15s, border-color .15s; min-width: 220px;
+}
+.tb-search:hover { background: var(--surface); border-color: var(--border-strong); }
+.tb-search__hint { flex: 1; text-align: left; }
+.tb-search kbd {
+  font-size: 10px; font-weight: 600; color: var(--text-muted);
   background: var(--surface); border: 1px solid var(--border);
-  border-radius: 6px; padding: 1px 6px; color: var(--text-secondary);
+  border-radius: 3px; padding: 1px 5px; font-family: var(--font-sans);
 }
 
-/* ===== User menu ===== */
-.user-menu { position: relative; }
-.user-menu__trigger {
-  display: flex; align-items: center; gap: var(--sp-2);
-  padding: 5px var(--sp-2) 5px 5px;
-  border: 1px solid var(--border);
-  background: var(--surface);
-  border-radius: var(--r-pill);
-  cursor: pointer;
-  color: var(--text);
-  font-size: var(--fs-sm);
-  font-weight: var(--fw-medium);
-  transition: background var(--t-fast), border-color var(--t-fast);
+/* Usuario */
+.tb-user { position: relative; }
+.tb-user__btn {
+  display: flex; align-items: center; gap: 9px;
+  padding: 5px 10px 5px 5px;
+  border: 1px solid var(--border); background: var(--surface);
+  border-radius: 50rem; cursor: pointer; color: var(--text);
+  font-family: var(--font-sans); font-size: 13px; font-weight: 500;
+  transition: background .15s, border-color .15s;
 }
-.user-menu__trigger:hover { background: var(--surface-inset); border-color: var(--border-strong); }
-.user-menu__trigger .bi { font-size: 11px; color: var(--text-muted); }
-.avatar {
+.tb-user__btn:hover { background: var(--surface-inset); border-color: var(--border-strong); }
+.tb-user__name { font-weight: 600; color: var(--svq-navy); }
+[data-theme="dark"] .tb-user__name { color: var(--text); }
+.tb-user__caret { font-size: 11px; color: var(--text-muted); }
+
+.tb-avatar {
   width: 28px; height: 28px; border-radius: 50%;
   display: grid; place-items: center;
-  background: linear-gradient(135deg, var(--brand-400), var(--brand-600));
-  color: #fff; font-size: 11px; font-weight: var(--fw-bold);
-  flex-shrink: 0;
+  background: var(--svq-navy); color: #fff;
+  font-size: 11px; font-weight: 700; flex-shrink: 0;
 }
-.avatar--lg { width: 40px; height: 40px; font-size: 14px; }
+.tb-avatar--lg { width: 38px; height: 38px; font-size: 13px; }
 
-.user-menu__panel {
+.tb-user__menu {
   position: absolute; right: 0; top: calc(100% + 8px);
   min-width: 240px;
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: var(--r-lg);
-  box-shadow: var(--shadow-lg);
-  padding: var(--sp-2);
-  z-index: 1000;
+  background: var(--surface); border: 1px solid var(--border);
+  border-radius: var(--r-lg); box-shadow: var(--shadow-lg);
+  padding: 4px; z-index: 1000; overflow: hidden;
 }
-.user-menu__head { display: flex; align-items: center; gap: var(--sp-3); padding: var(--sp-3); }
-.user-menu__head-name { margin: 0; font-weight: var(--fw-semibold); color: var(--text); }
-.user-menu__head-role { margin: 0; font-size: var(--fs-sm); color: var(--text-muted); text-transform: capitalize; }
-.dropdown-item {
-  display: flex; align-items: center; gap: var(--sp-3);
-  width: 100%; padding: 9px var(--sp-3);
+.tb-user__head {
+  display: flex; align-items: center; gap: 12px;
+  padding: 12px 14px 10px;
+}
+.tb-user__head-name { margin: 0; font-weight: 600; color: var(--text); font-size: 14px; }
+.tb-user__head-role { margin: 0; font-size: 12px; color: var(--text-muted); text-transform: capitalize; }
+.tb-menu-sep { height: 1px; background: var(--border); margin: 3px 0; }
+.tb-menu-item {
+  display: flex; align-items: center; gap: 10px;
+  width: 100%; padding: 9px 14px;
   border: none; background: transparent; cursor: pointer;
   color: var(--text-secondary); text-decoration: none;
-  font-size: var(--fs-base); border-radius: var(--r-md);
-  text-align: left; transition: background var(--t-fast), color var(--t-fast);
+  font-size: 13.5px; border-radius: var(--r-md);
+  text-align: left; font-family: var(--font-sans);
+  transition: background .15s, color .15s;
 }
-.dropdown-item .bi { width: 18px; }
-.dropdown-item:hover { background: var(--surface-inset); color: var(--text); }
-.dropdown-item--danger { color: var(--danger); }
-.dropdown-item--danger:hover { background: var(--danger-bg); color: var(--danger); }
-.dropdown-sep { height: 1px; background: var(--border); margin: var(--sp-2) 0; }
+.tb-menu-item:hover { background: var(--surface-inset); color: var(--text); }
+.tb-menu-item--danger { color: var(--danger); }
+.tb-menu-item--danger:hover { background: var(--danger-bg); color: var(--danger); }
 
-.dropdown-enter-active, .dropdown-leave-active { transition: opacity var(--t-fast) var(--ease), transform var(--t-fast) var(--ease); }
-.dropdown-enter-from, .dropdown-leave-to { opacity: 0; transform: translateY(-6px); }
+.tb-drop-enter-active, .tb-drop-leave-active { transition: opacity .15s ease, transform .15s ease; }
+.tb-drop-enter-from, .tb-drop-leave-to { opacity: 0; transform: translateY(-6px); }
 
-/* ===================== Toast ===================== */
-.toast-stack { position: fixed; bottom: var(--sp-6); right: var(--sp-6); z-index: 9999; }
+/* ══════════════════════════════════════════════════
+   Toast
+══════════════════════════════════════════════════ */
+.toast-stack { position: fixed; bottom: 24px; right: 24px; z-index: 9999; }
 .toast {
-  display: flex; align-items: center; gap: var(--sp-3);
-  min-width: 280px; max-width: 400px;
-  padding: var(--sp-3) var(--sp-4);
-  background: var(--surface);
-  border: 1px solid var(--border);
+  display: flex; align-items: center; gap: 12px;
+  min-width: 280px; max-width: 420px;
+  padding: 13px 16px;
+  background: var(--surface); border: 1px solid var(--border);
   border-left: 3px solid var(--text-muted);
-  border-radius: var(--r-md);
-  box-shadow: var(--shadow-lg);
-  color: var(--text);
-  font-size: var(--fs-base);
+  border-radius: var(--r-md); box-shadow: var(--shadow-lg);
+  color: var(--text); font-size: 14px;
 }
 .toast .bi { font-size: 18px; }
 .toast--success { border-left-color: var(--success); } .toast--success .bi { color: var(--success); }
 .toast--danger, .toast--error { border-left-color: var(--danger); } .toast--danger .bi, .toast--error .bi { color: var(--danger); }
 .toast--warning { border-left-color: var(--warning); } .toast--warning .bi { color: var(--warning); }
-.toast--info { border-left-color: var(--info); } .toast--info .bi { color: var(--info); }
-.toast-enter-active, .toast-leave-active { transition: opacity var(--t-base) var(--ease), transform var(--t-base) var(--ease-out); }
-.toast-enter-from, .toast-leave-to { opacity: 0; transform: translateX(20px); }
+.toast--info    { border-left-color: var(--info); }    .toast--info .bi    { color: var(--info); }
+.toast-enter-active, .toast-leave-active { transition: opacity .2s ease, transform .2s ease; }
+.toast-enter-from, .toast-leave-to { opacity: 0; transform: translateX(16px); }
 
-/* ===================== Backdrop (móvil) ===================== */
+/* ══════════════════════════════════════════════════
+   Backdrop móvil
+══════════════════════════════════════════════════ */
 .app-backdrop { display: none; }
 
-/* ===================== Responsive ===================== */
+/* ══════════════════════════════════════════════════
+   Responsive
+══════════════════════════════════════════════════ */
 @media (max-width: 768px) {
-  .sidebar {
+  .sb {
     position: fixed; top: 0; bottom: 0; left: 0; z-index: 1100;
-    transform: translateX(-100%);
-    box-shadow: var(--shadow-lg);
-    width: var(--sidebar-w) !important;
+    transform: translateX(-100%); width: 260px !important;
+    box-shadow: var(--shadow-lg); transition: transform .22s ease;
   }
-  .sidebar:not(.is-collapsed) { transform: translateX(0); }
-  .sidebar.is-collapsed { transform: translateX(-100%); }
-  .sidebar__toggle { display: none; }
-  .topbar__menu { display: grid; }
-  .search-trigger__hint, .search-trigger kbd { display: none; }
-  .user-menu__name { display: none; }
-  .app-content { padding: var(--sp-4); }
+  .sb:not(.sb--collapsed) { transform: translateX(0); }
+  .sb--collapsed { transform: translateX(-100%); }
+  .app-content { padding: 14px 16px; }
+  .tb-search { display: none; }
+  .tb-user__name { display: none; }
+  .tb-crumb { display: none; }
   .app-backdrop {
     display: block; position: fixed; inset: 0; z-index: 1050;
-    background: rgba(0,0,0,.4); opacity: 0; pointer-events: none;
-    transition: opacity var(--t-base);
+    background: rgba(0,0,0,.45); opacity: 0; pointer-events: none;
+    transition: opacity .22s ease;
   }
-  .sidebar:not(.is-collapsed) ~ .app-main .app-backdrop { opacity: 1; pointer-events: auto; }
+  .sb:not(.sb--collapsed) ~ .app-main .app-backdrop { opacity: 1; pointer-events: auto; }
 }
 </style>
