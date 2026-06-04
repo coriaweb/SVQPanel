@@ -333,15 +333,13 @@ async def run_system_upgrade(
 
 def _get_latest_version(source: str) -> str:
     """
-    Consulta la versión más reciente de un software desde su fuente oficial.
-    Soporta: npm, github, postgresql.org
-    Devuelve "desconocida" si no se puede obtener.
+    Consulta la versión más reciente desde múltiples fuentes.
+    Soporta: npm, github, postgresql, nginx, redis, mariadb, postfix, dovecot
     """
     try:
         import subprocess, json, re
 
         if source == "npm:nodejs":
-            # Node.js: npm registry API
             r = subprocess.run(
                 ["curl", "-s", "https://registry.npmjs.org/node"],
                 capture_output=True, text=True, timeout=10,
@@ -350,7 +348,6 @@ def _get_latest_version(source: str) -> str:
             return data.get("dist-tags", {}).get("latest", "desconocida")
 
         elif source == "github:rspamd/rspamd":
-            # Rspamd: GitHub releases API
             r = subprocess.run(
                 ["curl", "-s", "https://api.github.com/repos/rspamd/rspamd/releases/latest"],
                 capture_output=True, text=True, timeout=10,
@@ -360,7 +357,6 @@ def _get_latest_version(source: str) -> str:
             return tag.lstrip("v") if tag else "desconocida"
 
         elif source == "github:dovecotorg/core":
-            # Dovecot: GitHub releases
             r = subprocess.run(
                 ["curl", "-s", "https://api.github.com/repos/dovecotorg/core/releases/latest"],
                 capture_output=True, text=True, timeout=10,
@@ -370,20 +366,74 @@ def _get_latest_version(source: str) -> str:
             return tag.lstrip("v") if tag else "desconocida"
 
         elif source == "postgresql.org":
-            # PostgreSQL: wget página de descargas y extraer versión actual
             r = subprocess.run(
                 ["curl", "-s", "https://www.postgresql.org/ftp/source/"],
                 capture_output=True, text=True, timeout=10,
             )
-            # Buscar la versión más alta en los directorios
             matches = re.findall(r"v(\d+\.\d+)", r.stdout)
             if matches:
-                # Devolver la más reciente (última en la lista)
                 return max(matches, key=lambda x: tuple(map(int, x.split("."))))
             return "desconocida"
 
+        elif source == "nginx.org":
+            # Nginx: parsear download page
+            r = subprocess.run(
+                ["curl", "-s", "https://nginx.org/download/"],
+                capture_output=True, text=True, timeout=10,
+            )
+            # Buscar nginx-X.Y.Z.tar.gz
+            matches = re.findall(r"nginx-(\d+\.\d+\.\d+)\.tar\.gz", r.stdout)
+            if matches:
+                return max(matches, key=lambda x: tuple(map(int, x.split("."))))
+            return "desconocida"
+
+        elif source == "redis.io":
+            # Redis: GitHub releases
+            r = subprocess.run(
+                ["curl", "-s", "https://api.github.com/repos/redis/redis/releases/latest"],
+                capture_output=True, text=True, timeout=10,
+            )
+            data = json.loads(r.stdout)
+            tag = data.get("tag_name", "")
+            return tag.lstrip("v") if tag else "desconocida"
+
+        elif source == "mariadb.org":
+            # MariaDB: parsear releases page
+            r = subprocess.run(
+                ["curl", "-s", "https://mariadb.org/download/"],
+                capture_output=True, text=True, timeout=10,
+            )
+            # Buscar versiones LTS (ej: 11.4, 11.8, 12.3)
+            matches = re.findall(r"(1[0-2]\.\d+\.\d+)", r.stdout)
+            if matches:
+                return max(matches, key=lambda x: tuple(map(int, x.split("."))))
+            return "desconocida"
+
+        elif source == "postfix.org":
+            # Postfix: GitHub releases
+            r = subprocess.run(
+                ["curl", "-s", "https://api.github.com/repos/vdukhovni/postfix/releases/latest"],
+                capture_output=True, text=True, timeout=10,
+            )
+            data = json.loads(r.stdout)
+            tag = data.get("tag_name", "")
+            return tag.lstrip("v") if tag else "desconocida"
+
+        elif source == "python.org":
+            # Python: GitHub CPython releases
+            r = subprocess.run(
+                ["curl", "-s", "https://api.github.com/repos/python/cpython/releases/latest"],
+                capture_output=True, text=True, timeout=10,
+            )
+            data = json.loads(r.stdout)
+            tag = data.get("tag_name", "")
+            # Tag format: v3.11.2 or v3.12.0
+            return tag.lstrip("v") if tag else "desconocida"
+
     except Exception:
-        return "desconocida"
+        pass
+
+    return "desconocida"
 
 
 def _get_postfix_version() -> str:
@@ -490,7 +540,7 @@ async def get_system_versions(current_user=Depends(require_admin)):
             "command": ["nginx", "-v"],
             "pattern": r"nginx/(\S+)",
             "docs": "https://nginx.org/download/",
-            "latest_source": None,  # Detectar manualmente en el frontend
+            "latest_source": "nginx.org",
         },
         {
             "key": "Python",
@@ -498,7 +548,7 @@ async def get_system_versions(current_user=Depends(require_admin)):
             "command": ["python3", "--version"],
             "pattern": r"Python (\S+)",
             "docs": "https://www.python.org/downloads/",
-            "latest_source": None,
+            "latest_source": "python.org",
         },
         {
             "key": "PostgreSQL",
@@ -514,7 +564,7 @@ async def get_system_versions(current_user=Depends(require_admin)):
             "command": ["redis-server", "--version"],
             "pattern": r"v=(\S+)",
             "docs": "https://redis.io/download/",
-            "latest_source": None,
+            "latest_source": "redis.io",
         },
         {
             "key": "Postfix",
@@ -522,7 +572,7 @@ async def get_system_versions(current_user=Depends(require_admin)):
             "command": None,  # Usar función especial
             "pattern": None,
             "docs": "http://www.postfix.org/download.html",
-            "latest_source": None,
+            "latest_source": "postfix.org",
         },
         {
             "key": "Dovecot",
@@ -566,11 +616,13 @@ async def get_system_versions(current_user=Depends(require_admin)):
     try:
         mariadb_ver = _get_mariadb_version()
         if mariadb_ver != "no disponible":
+            mariadb_latest = _get_latest_version("mariadb.org")
+            mariadb_status = _compare_versions(mariadb_ver, mariadb_latest)
             versions["components"]["MariaDB"] = {
                 "name": "MariaDB",
                 "version": mariadb_ver,
-                "latest": "desconocida",
-                "status": "unknown",
+                "latest": mariadb_latest,
+                "status": mariadb_status,
                 "docs": "https://mariadb.org/download/",
             }
     except Exception:
