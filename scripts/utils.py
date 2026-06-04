@@ -595,13 +595,12 @@ def purge_fastcgi_cache(domain: str) -> int:
 
 def reload_nginx() -> bool:
     """
-    Valida la config y recarga nginx en background para no bloquear
-    el request HTTP (el panel está detrás de nginx, esperar el reload
-    causa timeout en el cliente).
+    Valida la config y recarga nginx con un delay de 1s mediante un proceso
+    completamente desacoplado (doble fork). Así el request HTTP termina y
+    llega al cliente antes de que nginx recargue y corte la conexión.
     """
     import subprocess
     import os
-    import threading
 
     env = os.environ.copy()
     env["PATH"] = "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
@@ -613,15 +612,21 @@ def reload_nginx() -> bool:
         logger.error(f"Nginx config test failed: {e.stderr.decode() if e.stderr else e}")
         return False
 
-    # Recargar en background — el cliente recibe respuesta inmediata
-    def _do_reload():
-        try:
-            # nginx -s reload hace graceful reload sin interrumpir conexiones activas
-            subprocess.run(["nginx", "-s", "reload"], check=True,
-                           capture_output=True, env=env)
-            logger.info("Nginx reloaded successfully (background)")
-        except subprocess.CalledProcessError as e:
-            logger.error(f"Failed to reload nginx: {e.stderr.decode() if e.stderr else e}")
+    # Lanzar reload con 1s de delay como proceso totalmente independiente
+    # (doble fork vía shell: el hijo se desacopla del proceso uvicorn)
+    try:
+        subprocess.Popen(
+            "sleep 1 && nginx -s reload",
+            shell=True,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            stdin=subprocess.DEVNULL,
+            start_new_session=True,  # desacopla del grupo de procesos de uvicorn
+            env=env,
+        )
+        logger.info("Nginx reload scheduled (1s delay, detached)")
+    except Exception as e:
+        logger.error(f"Failed to schedule nginx reload: {e}")
+        return False
 
-    threading.Thread(target=_do_reload, daemon=True).start()
     return True
