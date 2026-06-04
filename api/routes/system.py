@@ -357,19 +357,15 @@ def _get_latest_version(source: str) -> str:
             return tag.lstrip("v") if tag else "desconocida"
 
         elif source == "github:dovecotorg/core":
-            # Dovecot: GitHub tags (releases está vacío en este repo)
             r = subprocess.run(
-                ["curl", "-s", "https://api.github.com/repos/dovecotorg/core/tags?per_page=1"],
+                ["curl", "-s", "https://api.github.com/repos/dovecotorg/core/releases"],
                 capture_output=True, text=True, timeout=10,
             )
             try:
                 data = json.loads(r.stdout)
                 if isinstance(data, list) and len(data) > 0:
-                    tag = data[0].get("name", "")
-                    # Format: dovecot-2.3.21 or core-2.4.0
-                    match = re.search(r"(\d+\.\d+\.\d+)", tag)
-                    if match:
-                        return match.group(1)
+                    tag = data[0].get("tag_name", "")
+                    return tag.lstrip("v") if tag else "desconocida"
             except Exception:
                 pass
             return "desconocida"
@@ -407,22 +403,19 @@ def _get_latest_version(source: str) -> str:
             return tag.lstrip("v") if tag else "desconocida"
 
         elif source == "mariadb.org":
-            # MariaDB: GitHub releases API
+            # MariaDB: consultar repositorio oficial
             r = subprocess.run(
-                ["curl", "-s", "https://api.github.com/repos/mariadb/server/releases?per_page=10"],
+                ["curl", "-s", "https://mariadb.org/download/"],
                 capture_output=True, text=True, timeout=10,
             )
-            try:
-                data = json.loads(r.stdout)
-                if isinstance(data, list):
-                    for release in data:
-                        tag = release.get("tag_name", "")
-                        # Format: mariadb-11.4.12 or mariadb-12.3.0
-                        match = re.search(r"(\d+\.\d+\.\d+)", tag)
-                        if match:
-                            return match.group(1)
-            except Exception:
-                pass
+            # Buscar versión más reciente en formato X.Y.Z
+            matches = re.findall(r"((?:11|12)\.\d+\.\d+)", r.stdout)
+            if matches:
+                return max(matches, key=lambda x: tuple(map(int, x.split("."))))
+            # Fallback: buscar en el contenido
+            matches = re.findall(r"Version[:\s]+(\d+\.\d+\.\d+)", r.stdout)
+            if matches:
+                return max(matches, key=lambda x: tuple(map(int, x.split("."))))
             return "desconocida"
 
         elif source == "postfix.org":
@@ -438,19 +431,15 @@ def _get_latest_version(source: str) -> str:
             return "desconocida"
 
         elif source == "python.org":
-            # Python: GitHub CPython tags (buscar directamente en lista de tags)
+            # Python: parsear python.org/downloads
             r = subprocess.run(
-                ["curl", "-s", "https://api.github.com/repos/python/cpython/tags?per_page=1"],
+                ["curl", "-s", "https://www.python.org/downloads/"],
                 capture_output=True, text=True, timeout=10,
             )
-            try:
-                data = json.loads(r.stdout)
-                if isinstance(data, list) and len(data) > 0:
-                    tag = data[0].get("name", "")
-                    # Format: v3.11.2 or v3.12.0
-                    return tag.lstrip("v") if tag else "desconocida"
-            except Exception:
-                pass
+            # Buscar "Python 3.X.Y" (la versión más reciente de stable)
+            matches = re.findall(r"Python (3\.\d+\.\d+)", r.stdout)
+            if matches:
+                return matches[-1]  # Última encontrada (generalmente la más reciente)
             return "desconocida"
 
     except Exception:
