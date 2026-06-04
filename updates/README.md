@@ -38,3 +38,4 @@ exit 0
 | ID   | Descripción                          | Fecha      |
 |------|--------------------------------------|------------|
 | 0001 | Nginx desde repo oficial + HTTP/3    | 2026-06-04 |
+| 0002 | PostgreSQL PGDG (PG15 → PG18)        | 2026-06-04 |

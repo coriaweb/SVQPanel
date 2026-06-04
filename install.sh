@@ -219,7 +219,23 @@ else
 fi
 
 ###############################################################################
-# 4. INSTALAR DEPENDENCIAS BASE
+# 4. REPO PGDG — PostgreSQL oficial (versión más reciente estable)
+###############################################################################
+echo -e "${YELLOW}Añadiendo repo PostgreSQL oficial (PGDG)...${NC}"
+curl -fsSL https://www.postgresql.org/media/keys/ACCC4CF8.asc \
+    | gpg --yes --dearmor -o /usr/share/keyrings/postgresql-archive-keyring.gpg
+case "$OS_VERSION" in
+    12) _PG_CODENAME="bookworm-pgdg" ;;
+    13) _PG_CODENAME="trixie-pgdg" ;;
+esac
+echo "deb [signed-by=/usr/share/keyrings/postgresql-archive-keyring.gpg] \
+https://apt.postgresql.org/pub/repos/apt ${_PG_CODENAME} main" \
+    > /etc/apt/sources.list.d/pgdg.list
+apt-get update -qq
+echo -e "${GREEN}✓ Repo PGDG añadido${NC}\n"
+
+###############################################################################
+# 5. INSTALAR DEPENDENCIAS BASE
 ###############################################################################
 echo -e "${YELLOW}Instalando dependencias base...${NC}"
 
