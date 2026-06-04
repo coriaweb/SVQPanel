@@ -1,205 +1,186 @@
 #!/bin/bash
 
 ###############################################################################
-# SVQPanel - Update Script
-# Actualiza SVQPanel en un servidor existente
-# Uso: sudo bash update.sh
+# SVQPanel — Update Script
+#
+# ARQUITECTURA DE ACTUALIZACIONES
+# ─────────────────────────────────────────────────────────────────────────────
+# Cada cambio al sistema (nginx, PHP, seguridad, BD, etc.) se convierte en un
+# archivo numerado en updates/NNNN-descripcion.sh. Este script:
+#
+#   1. Descarga el repo (git pull)
+#   2. Lee /etc/svqpanel/applied_updates (lista de IDs ya aplicados)
+#   3. Ejecuta en orden los updates que faltan
+#   4. Registra cada ID aplicado en /etc/svqpanel/applied_updates
+#   5. Loguea todo en /var/log/svqpanel-update.log
+#
+# CÓMO AÑADIR UN NUEVO UPDATE
+# ─────────────────────────────────────────────────────────────────────────────
+# 1. Crea updates/NNNN-descripcion.sh (NNNN = siguiente número libre, 4 dígitos)
+# 2. El script debe ser idempotente (seguro de re-ejecutar si falla a mitad)
+# 3. Usa exit 0 al final si todo fue bien; cualquier otro exit code = fallo
+# 4. El sistema NO aplica el siguiente update si uno falla (se detiene)
+# 5. Haz commit + push — los servidores lo descargan en la próxima ejecución
+#
+# USO MANUAL
+# ─────────────────────────────────────────────────────────────────────────────
+#   curl -fsSL https://raw.githubusercontent.com/coriaweb/SVQPanel/main/update.sh | bash
+#   — o —
+#   bash /opt/svqpanel/update.sh
+#
+# CRON AUTOMÁTICO (instalado por install.sh)
+# ─────────────────────────────────────────────────────────────────────────────
+#   0 3 * * * root bash /opt/svqpanel/update.sh >> /var/log/svqpanel-update.log 2>&1
 ###############################################################################
 
-set -e  # Salir si hay error
+set -euo pipefail
 
-# Colores para output
 RED='\033[0;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
 BLUE='\033[0;34m'
 NC='\033[0m'
 
-# Verificar que somos root
-if [[ $EUID -ne 0 ]]; then
-   echo -e "${RED}Este script debe ser ejecutado como root (usa sudo)${NC}"
-   exit 1
-fi
-
-echo -e "${BLUE}╔════════════════════════════════════╗${NC}"
-echo -e "${BLUE}║  SVQPanel - Script de Actualización║${NC}"
-echo -e "${BLUE}╚════════════════════════════════════╝${NC}\n"
-
 PANEL_DIR="/opt/svqpanel"
 VENV_DIR="$PANEL_DIR/venv"
+UPDATES_DIR="$PANEL_DIR/updates"
+APPLIED_FILE="/etc/svqpanel/applied_updates"
+LOG_FILE="/var/log/svqpanel-update.log"
+LOCK_FILE="/var/run/svqpanel-update.lock"
 
-# Verificar que existe la instalación
-if [[ ! -d "$PANEL_DIR" ]]; then
-    echo -e "${RED}✗ SVQPanel no encontrado en $PANEL_DIR${NC}"
-    echo "Por favor, instala primero con: sudo bash install.sh"
+log() { echo -e "[$(date '+%Y-%m-%d %H:%M:%S')] $*"; }
+
+###############################################################################
+# Guardia: solo root
+###############################################################################
+if [[ $EUID -ne 0 ]]; then
+    echo -e "${RED}Este script debe ejecutarse como root${NC}"
     exit 1
 fi
 
-echo -e "${YELLOW}1. Deteniendo servicio...${NC}"
-systemctl stop svqpanel || true
-echo -e "${GREEN}✓ Servicio detenido${NC}\n"
+###############################################################################
+# Guardia: evitar ejecuciones simultáneas
+###############################################################################
+if [[ -f "$LOCK_FILE" ]]; then
+    log "${YELLOW}⚠ Otra instancia ya está corriendo (lock: $LOCK_FILE). Saliendo.${NC}"
+    exit 0
+fi
+trap 'rm -f "$LOCK_FILE"' EXIT
+echo $$ > "$LOCK_FILE"
 
-echo -e "${YELLOW}2. Hacer backup de configuración...${NC}"
-mkdir -p "$PANEL_DIR/backups"
-BACKUP_DATE=$(date +%Y%m%d_%H%M%S)
-cp "$PANEL_DIR/.env" "$PANEL_DIR/backups/.env.$BACKUP_DATE" 2>/dev/null || true
-echo -e "${GREEN}✓ Backup en backups/.env.$BACKUP_DATE${NC}\n"
+###############################################################################
+# Verificar instalación existente
+###############################################################################
+if [[ ! -d "$PANEL_DIR" ]]; then
+    log "${RED}✗ SVQPanel no encontrado en $PANEL_DIR. Instala primero con install.sh${NC}"
+    exit 1
+fi
 
-echo -e "${YELLOW}3. Descargando cambios...${NC}"
+log "${BLUE}=== SVQPanel Update — $(date '+%Y-%m-%d %H:%M:%S') ===${NC}"
+
+###############################################################################
+# 1. Descargar últimos cambios del repo
+###############################################################################
+log "${YELLOW}→ Descargando cambios del repositorio...${NC}"
 cd "$PANEL_DIR"
-git fetch origin
-git pull origin main
-echo -e "${GREEN}✓ Cambios descargados${NC}\n"
+git fetch origin main --quiet
+BEFORE=$(git rev-parse HEAD)
+git pull origin main --quiet
+AFTER=$(git rev-parse HEAD)
 
-echo -e "${YELLOW}4. Actualizando dependencias Python...${NC}"
-source "$VENV_DIR/bin/activate"
-pip install --upgrade pip
-pip install -r requirements.txt
-deactivate
-echo -e "${GREEN}✓ Dependencias actualizadas${NC}\n"
-
-echo -e "${YELLOW}5. Actualizando frontend...${NC}"
-if [[ -f "$PANEL_DIR/frontend/package.json" ]]; then
-    cd "$PANEL_DIR/frontend"
-    npm install
-    npm run build
-    echo -e "${GREEN}✓ Frontend compilado${NC}\n"
+if [[ "$BEFORE" == "$AFTER" ]]; then
+    log "  Sin cambios en el repo."
 else
-    echo -e "${YELLOW}⚠ Frontend no encontrado (opcional)${NC}\n"
+    log "${GREEN}  ✓ Repo actualizado: ${BEFORE:0:7} → ${AFTER:0:7}${NC}"
+    git log --oneline "${BEFORE}..${AFTER}" | while read -r line; do
+        log "    • $line"
+    done
 fi
 
-echo -e "${YELLOW}6. Ejecutando migraciones de BD...${NC}"
-cd "$PANEL_DIR"
-source "$VENV_DIR/bin/activate"
+###############################################################################
+# 2. Aplicar migraciones pendientes
+###############################################################################
+mkdir -p /etc/svqpanel
+touch "$APPLIED_FILE"
 
-# Crear/actualizar todas las tablas (SQLAlchemy + migraciones incrementales)
-python3 << 'PYEOF'
-import sys
-sys.path.insert(0, '/opt/svqpanel')
-from api.models.database import Base, engine
-# Importar todos los modelos para que SQLAlchemy los registre
-from api.models.models_user import User
-from api.models.models_domain import Domain
-from api.models.models_settings import Settings
-from api.models.models_dns import DnsZone, DnsRecord
-from api.models.models_mail import MailDomain, Mailbox, MailAlias
-from api.models.models_client_db import ClientDatabase   # ← Fase 10 MariaDB
-from api.models.models_security import (                   # ← Fase 12 Firewall/Fail2ban
-    FirewallRule, BannedIp, IpList, SecurityAuditLog,
-)
-Base.metadata.create_all(bind=engine)
-print("✓ Tablas de BD verificadas/creadas")
+if [[ ! -d "$UPDATES_DIR" ]]; then
+    log "  Sin directorio updates/ — nada que migrar."
+else
+    PENDING=0
+    APPLIED=0
+    FAILED=0
 
-# Migraciones incrementales (ADD COLUMN IF NOT EXISTS)
-from sqlalchemy import text
-migrations = [
-    "ALTER TABLE users ADD COLUMN IF NOT EXISTS parent_id INTEGER REFERENCES users(id) ON DELETE SET NULL",
-    "ALTER TABLE users ADD COLUMN IF NOT EXISTS databases_limit INTEGER DEFAULT 5",
-    "ALTER TABLE settings ADD COLUMN IF NOT EXISTS network_interface VARCHAR(20) DEFAULT 'eth0'",
-    # Fase 10: tabla client_databases (ya la crea create_all, pero por si acaso)
-    """CREATE TABLE IF NOT EXISTS client_databases (
-        id               SERIAL PRIMARY KEY,
-        user_id          INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-        domain_id        INTEGER REFERENCES domains(id) ON DELETE SET NULL,
-        db_name          VARCHAR(64)  UNIQUE NOT NULL,
-        db_name_suffix   VARCHAR(48)  NOT NULL,
-        db_user          VARCHAR(64)  UNIQUE NOT NULL,
-        db_user_suffix   VARCHAR(48)  NOT NULL,
-        db_password_hash VARCHAR(255) NOT NULL,
-        db_charset       VARCHAR(20)  DEFAULT 'utf8mb4',
-        db_collation     VARCHAR(50)  DEFAULT 'utf8mb4_unicode_ci',
-        quota_mb         INTEGER      DEFAULT 1024,
-        size_mb          INTEGER      DEFAULT 0,
-        is_active        BOOLEAN      DEFAULT TRUE,
-        created_at       TIMESTAMP    DEFAULT NOW(),
-        updated_at       TIMESTAMP    DEFAULT NOW()
-    )""",
-    "CREATE INDEX IF NOT EXISTS ix_client_databases_user_id  ON client_databases(user_id)",
-    "CREATE INDEX IF NOT EXISTS ix_client_databases_domain_id ON client_databases(domain_id)",
-]
-with engine.connect() as conn:
-    for sql in migrations:
-        try:
-            conn.execute(text(sql))
-            conn.commit()
-        except Exception as e:
-            print(f"  (migración omitida: {e})")
-print("✓ Migraciones completadas")
-PYEOF
+    # Iterar en orden numérico
+    while IFS= read -r UPDATE_FILE; do
+        UPDATE_ID=$(basename "$UPDATE_FILE" .sh)
 
-deactivate
-echo -e "${GREEN}✓ Base de datos actualizada${NC}\n"
+        # Saltar si ya está aplicado
+        if grep -qF "$UPDATE_ID" "$APPLIED_FILE" 2>/dev/null; then
+            continue
+        fi
 
-echo -e "${YELLOW}6b. Verificaciones de seguridad post-update...${NC}"
+        PENDING=$((PENDING + 1))
+        log "${YELLOW}→ Aplicando update: $UPDATE_ID${NC}"
 
-# Usuario sistema admin (fix para instalaciones anteriores que solo lo creaban en BD)
-if ! id admin >/dev/null 2>&1; then
-    echo "  • Creando usuario del sistema 'admin' que faltaba..."
-    ADMIN_PASS=$(grep -E "^admin:" /opt/svqpanel/.credentials/admin.txt 2>/dev/null | cut -d: -f2)
-    [[ -z "$ADMIN_PASS" ]] && ADMIN_PASS=$(openssl rand -base64 12)
-    useradd -m -s /bin/bash -d /home/admin admin 2>/dev/null || useradd -s /bin/bash -d /home/admin admin
-    echo "admin:$ADMIN_PASS" | chpasswd
-    mkdir -p /home/admin/web /home/admin/tmp
-    chown admin:www-data /home/admin/web && chmod 750 /home/admin/web
-    chown admin:admin /home/admin/tmp     && chmod 750 /home/admin/tmp
-    chown admin:admin /home/admin
-    echo -e "  ${GREEN}✓ Usuario admin creado${NC}"
-fi
+        # Ejecutar en subshell para aislar errores
+        if bash "$UPDATE_FILE" 2>&1; then
+            echo "$UPDATE_ID" >> "$APPLIED_FILE"
+            log "${GREEN}  ✓ $UPDATE_ID aplicado${NC}"
+            APPLIED=$((APPLIED + 1))
+        else
+            log "${RED}  ✗ $UPDATE_ID FALLÓ — deteniendo. Revisa: $LOG_FILE${NC}"
+            FAILED=$((FAILED + 1))
+            # No seguir con el siguiente update si uno falla
+            break
+        fi
+    done < <(find "$UPDATES_DIR" -maxdepth 1 -name '[0-9][0-9][0-9][0-9]-*.sh' | sort)
 
-# nginx default_server (fix para instalaciones donde svqpanel no era default)
-if [[ -f /etc/nginx/sites-available/svqpanel ]] \
-   && ! grep -qE "listen 80 default_server" /etc/nginx/sites-available/svqpanel; then
-    echo "  • Patcheando svqpanel nginx config con default_server..."
-    sed -i 's/^    listen 80;$/    listen 80 default_server;/' /etc/nginx/sites-available/svqpanel
-    if nginx -t 2>/dev/null; then
-        systemctl reload nginx
-        echo -e "  ${GREEN}✓ nginx svqpanel ahora es default_server (panel responde por IP)${NC}"
+    if [[ $PENDING -eq 0 ]]; then
+        log "  Sin updates pendientes."
     else
-        echo -e "  ${RED}✗ nginx -t falló, revierte: nano /etc/nginx/sites-available/svqpanel${NC}"
+        log "  Updates pendientes: $PENDING | Aplicados: $APPLIED | Fallidos: $FAILED"
     fi
 fi
 
-echo -e "${GREEN}✓ Verificaciones de seguridad completadas${NC}\n"
-
-echo -e "${YELLOW}7. Reiniciando servicio...${NC}"
-systemctl start svqpanel
-sleep 2
-
-# Verificar que el servicio está corriendo
-if systemctl is-active --quiet svqpanel; then
-    echo -e "${GREEN}✓ Servicio iniciado correctamente${NC}\n"
-else
-    echo -e "${RED}✗ Error al iniciar el servicio${NC}"
-    echo "Verifica con: sudo journalctl -u svqpanel -f"
-    exit 1
+###############################################################################
+# 3. Actualizar dependencias Python (solo si requirements.txt cambió)
+###############################################################################
+REQS_CHANGED=$(git diff "${BEFORE}..${AFTER}" --name-only 2>/dev/null | grep -c "requirements.txt" || true)
+if [[ "$REQS_CHANGED" -gt 0 ]]; then
+    log "${YELLOW}→ requirements.txt cambió — actualizando dependencias Python...${NC}"
+    # shellcheck source=/dev/null
+    source "$VENV_DIR/bin/activate"
+    pip install -q -r requirements.txt
+    deactivate
+    log "${GREEN}  ✓ Dependencias Python actualizadas${NC}"
 fi
 
-echo -e "${YELLOW}8. Verificando salud de la API...${NC}"
-sleep 1
-HEALTH=$(curl -s http://localhost:8001/api/health || echo "error")
-if [[ "$HEALTH" == *"ok"* ]]; then
-    echo -e "${GREEN}✓ API respondiendo correctamente${NC}\n"
-else
-    echo -e "${YELLOW}⚠ API no responde, espera unos segundos y prueba${NC}\n"
+###############################################################################
+# 4. Rebuild frontend (solo si frontend/ cambió)
+###############################################################################
+FRONTEND_CHANGED=$(git diff "${BEFORE}..${AFTER}" --name-only 2>/dev/null | grep -c "^frontend/" || true)
+if [[ "$FRONTEND_CHANGED" -gt 0 ]]; then
+    log "${YELLOW}→ Frontend cambió — reconstruyendo...${NC}"
+    cd "$PANEL_DIR/frontend"
+    npm install --silent
+    npm run build --silent
+    log "${GREEN}  ✓ Frontend reconstruido${NC}"
+    cd "$PANEL_DIR"
 fi
 
-echo -e "${GREEN}╔═══════════════════════════════════════╗${NC}"
-echo -e "${GREEN}║  Actualización Completada ✓           ║${NC}"
-echo -e "${GREEN}╚═══════════════════════════════════════╝${NC}\n"
+###############################################################################
+# 5. Reiniciar panel si hubo cambios en Python o en migraciones
+###############################################################################
+BACKEND_CHANGED=$(git diff "${BEFORE}..${AFTER}" --name-only 2>/dev/null | grep -cE "^(api/|scripts/|config/)" || true)
+if [[ "$BACKEND_CHANGED" -gt 0 || "$APPLIED" -gt 0 ]]; then
+    log "${YELLOW}→ Reiniciando servicio svqpanel...${NC}"
+    systemctl restart svqpanel
+    sleep 2
+    if systemctl is-active --quiet svqpanel; then
+        log "${GREEN}  ✓ Servicio reiniciado correctamente${NC}"
+    else
+        log "${RED}  ✗ El servicio no arrancó — revisa: journalctl -u svqpanel -n 50${NC}"
+    fi
+fi
 
-echo -e "${BLUE}Resumen de cambios:${NC}"
-cd "$PANEL_DIR"
-git log --oneline -5
-
-echo -e "\n${BLUE}Próximos pasos:${NC}"
-echo "1. Verifica los cambios: curl http://localhost:8001/api/health"
-echo "2. Revisa logs si hay problemas: sudo journalctl -u svqpanel -f"
-echo "3. Frontend (si aplica): http://localhost:5173"
-
-echo -e "\n${YELLOW}Cambios importantes:${NC}"
-echo "- Frontend: Nuevo en Fase 4 (Vue 3, componentes de formularios)"
-echo "- Backend: Sistema de managers integrado (user, domain, ssl, ipv6)"
-echo "- API: 17 endpoints ahora ejecutan comandos del SO"
-echo "- Archivos: TESTING.md, COMPLETION_SUMMARY.md documentan todo"
-
-echo -e "\n${GREEN}¡Actualización lista!${NC}\n"
+log "${GREEN}=== Update completado ===${NC}"

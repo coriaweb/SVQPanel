@@ -2555,6 +2555,25 @@ echo -e "${YELLOW}Aplicando aislamiento PHP por dominio (open_basedir + tmp prop
 echo ""
 
 ###############################################################################
+# CRON DE ACTUALIZACIONES AUTOMÁTICAS — 3:00am diario
+###############################################################################
+echo -e "${YELLOW}Configurando actualización automática diaria...${NC}"
+CRON_LINE="0 3 * * * root bash /opt/svqpanel/update.sh >> /var/log/svqpanel-update.log 2>&1"
+CRON_FILE="/etc/cron.d/svqpanel-update"
+echo "$CRON_LINE" > "$CRON_FILE"
+chmod 644 "$CRON_FILE"
+
+# Marcar todos los updates actuales como ya aplicados (están incluidos en el install)
+mkdir -p /etc/svqpanel
+find /opt/svqpanel/updates -maxdepth 1 -name '[0-9][0-9][0-9][0-9]-*.sh' | sort | while IFS= read -r f; do
+    ID=$(basename "$f" .sh)
+    if ! grep -qF "$ID" /etc/svqpanel/applied_updates 2>/dev/null; then
+        echo "$ID" >> /etc/svqpanel/applied_updates
+    fi
+done
+echo -e "${GREEN}✓ Cron configurado: actualización automática cada día a las 3:00am${NC}\n"
+
+###############################################################################
 # RESUMEN FINAL
 ###############################################################################
 echo -e "${GREEN}════════════════════════════════════════${NC}"
