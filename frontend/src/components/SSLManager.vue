@@ -75,14 +75,22 @@
       <div v-else class="ssl-form">
         <p>Se emitirá un certificado <strong>Let's Encrypt</strong> para:</p>
         <div class="mono mb-3">{{ domain.domain_name }}</div>
+
+        <div class="ssl-field">
+          <label>Email para Let's Encrypt <span class="ssl-required">*</span></label>
+          <input v-model="email" type="email" class="form-control form-control-sm"
+            placeholder="admin@tudominio.com" autocomplete="email" />
+          <span class="ssl-hint">Let's Encrypt lo necesita para notificarte de renovaciones. Debe ser un email real.</span>
+        </div>
+
         <div class="alert alert-info py-2 small">
           <i class="bi bi-info-circle me-1"></i>
-          El dominio debe ser accesible desde Internet en el puerto 80. El proceso tarda ~30 segundos.
+          El dominio debe apuntar a este servidor y ser accesible por el puerto 80. Tarda ~30 segundos.
         </div>
         <div class="d-flex gap-2">
-          <button class="btn btn-success btn-sm" @click="createSSL" :disabled="loading">
+          <button class="btn btn-success btn-sm" @click="createSSL" :disabled="loading || !email">
             <span v-if="loading" class="spinner-border spinner-border-sm me-1"></span>
-            <i v-else class="bi bi-shield-check me-1"></i>Emitir
+            <i v-else class="bi bi-shield-check me-1"></i>Emitir certificado
           </button>
           <button class="btn btn-secondary btn-sm" @click="showForm = false" :disabled="loading">Cancelar</button>
         </div>
@@ -111,6 +119,7 @@ export default {
     const ssl = ref(null)
     const forceHttps = ref(false)
     const hsts = ref(false)
+    const email = ref('')
 
     const loadSSL = async () => {
       try {
@@ -145,7 +154,7 @@ export default {
     const createSSL = async () => {
       loading.value = true
       try {
-        await api.createSSL(props.domain.id, { domain_name: props.domain.domain_name, auto_renewal: true })
+        await api.createSSL(props.domain.id, { domain_name: props.domain.domain_name, email: email.value, auto_renewal: true })
         store.showNotification('Certificado SSL emitido correctamente', 'success')
         showForm.value = false
         await loadSSL()
@@ -160,7 +169,7 @@ export default {
     const renewSSL = async () => {
       loading.value = true
       try {
-        await api.createSSL(props.domain.id, { domain_name: props.domain.domain_name, auto_renewal: true })
+        await api.createSSL(props.domain.id, { domain_name: props.domain.domain_name, email: email.value, auto_renewal: true })
         store.showNotification('Certificado renovado correctamente', 'success')
         await loadSSL()
       } catch (e) {
@@ -194,7 +203,7 @@ export default {
 
     return {
       ssl, loading, toggling, showForm, showRevokeConfirm,
-      forceHttps, hsts,
+      forceHttps, hsts, email,
       createSSL, renewSSL, revokeSSL, saveToggle, formatDate,
     }
   }
@@ -281,4 +290,9 @@ export default {
 .ssl-empty-hint { font-size: .82rem; color: var(--text-muted); max-width: 340px; }
 
 .ssl-form { display: flex; flex-direction: column; gap: .75rem; }
+
+.ssl-field { display: flex; flex-direction: column; gap: .3rem; }
+.ssl-field label { font-size: .82rem; font-weight: 600; color: var(--text-secondary); }
+.ssl-required { color: var(--danger); }
+.ssl-hint { font-size: .75rem; color: var(--text-muted); }
 </style>
