@@ -325,7 +325,22 @@ PINEOF
     fi
     # Worker user -> www-data (todos los permisos de dominios se dan a www-data)
     sed -i 's/^user  nginx;/user www-data;/' /etc/nginx/nginx.conf
-    mkdir -p /etc/nginx/sites-available /etc/nginx/sites-enabled
+    mkdir -p /etc/nginx/sites-available /etc/nginx/sites-enabled /etc/nginx/snippets
+
+    # fastcgi-php.conf — incluido por nginx-full en Debian pero no por nginx básico
+    if [[ ! -f /etc/nginx/snippets/fastcgi-php.conf ]]; then
+        cat > /etc/nginx/snippets/fastcgi-php.conf << 'FCGIEOF'
+# Sets $path_info from the $fastcgi_path_info variable
+fastcgi_split_path_info ^(.+?\.php)(/.*)$;
+# Check that the PHP script exists before passing it
+try_files $fastcgi_script_name =404;
+# Bypass the fact that try_files resets $fastcgi_path_info
+set $path_info $fastcgi_path_info;
+fastcgi_param PATH_INFO $path_info;
+fastcgi_index index.php;
+include fastcgi.conf;
+FCGIEOF
+    fi
 
     # Endurecimiento global: ocultar la versión de nginx (server_tokens off)
     cat > /etc/nginx/conf.d/svqpanel-hardening.conf << 'NGINXHARDEOF'
