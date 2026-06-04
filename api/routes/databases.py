@@ -235,23 +235,27 @@ async def get_databases_info():
         return {"enabled": False, "version": None}
 
     try:
-        import pymysql
-        conn = pymysql.connect(
-            host=MARIADB_HOST,
-            user=MARIADB_PANEL_USER,
-            password=MARIADB_PANEL_PASSWORD,
-            database="mysql",
+        import subprocess
+        result = subprocess.run(
+            [
+                "mysql", "-h", MARIADB_HOST,
+                "-u", MARIADB_PANEL_USER,
+                f"-p{MARIADB_PANEL_PASSWORD}",
+                "-N", "-e", "SELECT VERSION();"
+            ],
+            capture_output=True,
+            text=True,
+            timeout=5
         )
-        cursor = conn.cursor()
-        cursor.execute("SELECT VERSION()")
-        version = cursor.fetchone()[0]
-        cursor.close()
-        conn.close()
-        return {"enabled": True, "version": version}
+        if result.returncode == 0:
+            version = result.stdout.strip()
+            return {"enabled": True, "version": version}
+        else:
+            raise Exception(result.stderr)
     except Exception as e:
         import logging
         logging.error(f"Failed to get MariaDB version: {e}")
-        return {"enabled": True, "version": "Unknown", "error": str(e)}
+        return {"enabled": True, "version": "MariaDB", "error": str(e)}
 
 
 @router.get("/databases/charsets", tags=["Databases"])
