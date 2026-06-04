@@ -287,10 +287,10 @@ hash -r 2>/dev/null || true
 echo -e "${GREEN}✓ Certbot $(certbot --version 2>&1) instalado${NC}\n"
 
 ###############################################################################
-# 5. INSTALAR NODEJS 22 LTS (desde NodeSource — repo oficial)
+# 5. INSTALAR NODEJS 24 LTS (desde NodeSource — repo oficial)
 ###############################################################################
-echo -e "${YELLOW}Instalando Node.js 22 LTS...${NC}"
-curl -fsSL https://deb.nodesource.com/setup_22.x | bash - > /dev/null 2>&1
+echo -e "${YELLOW}Instalando Node.js 24 LTS...${NC}"
+curl -fsSL https://deb.nodesource.com/setup_24.x | bash - > /dev/null 2>&1
 apt-get install -y -qq nodejs
 echo -e "${GREEN}✓ Node.js $(node -v) instalado${NC}\n"
 
