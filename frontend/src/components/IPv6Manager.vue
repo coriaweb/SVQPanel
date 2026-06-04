@@ -227,7 +227,9 @@ export default {
 
     onMounted(async () => {
       if (!currentIPv6.value) {
-        await generateIP()
+        try {
+          await generateIP()
+        } catch {}  // generateIP ya maneja sus propios errores
       }
     })
 
