@@ -71,7 +71,7 @@ class APIClient {
 
       return data
     } catch (error) {
-      console.error('API Error:', error)
+      if (!(options.silent)) console.error('API Error:', error)
       throw error
     }
   }
@@ -441,9 +441,8 @@ class APIClient {
     if (count > 1) params.set('count', count)
     const qs = params.toString() ? '?' + params.toString() : ''
     try {
-      return await this.get(`/api/settings/next-ipv6${qs}`)
+      return await this.request(`/api/settings/next-ipv6${qs}`, { method: 'GET', silent: true })
     } catch (e) {
-      // Si IPv6 no está configurado, devolver un estado especial en lugar de lanzar
       if (e.message?.includes('no está configurado') || e.message?.includes('configurado en el panel')) {
         return { notConfigured: true }
       }
