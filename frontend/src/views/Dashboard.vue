@@ -98,7 +98,7 @@
       <BaseCard title="Acciones rápidas" icon="lightning-charge" class="dash-actions">
         <div class="quick-actions">
           <router-link to="/domains" class="quick-action-btn">
-            <span class="qa-icon"><i class="bi bi-plus-network-outline"></i></span>
+            <span class="qa-icon"><i class="bi bi-globe2"></i></span>
             <span class="qa-text">
               <span class="qa-label">Añadir dominio</span>
               <span class="qa-hint">Dominio o subdominio</span>
@@ -106,7 +106,7 @@
             <i class="bi bi-chevron-right qa-chevron"></i>
           </router-link>
           <router-link to="/databases" class="quick-action-btn">
-            <span class="qa-icon"><i class="bi bi-database-plus-outline"></i></span>
+            <span class="qa-icon"><i class="bi bi-database"></i></span>
             <span class="qa-text">
               <span class="qa-label">Nueva base de datos</span>
               <span class="qa-hint">MySQL 8.0</span>
@@ -114,7 +114,7 @@
             <i class="bi bi-chevron-right qa-chevron"></i>
           </router-link>
           <router-link to="/mail" class="quick-action-btn">
-            <span class="qa-icon"><i class="bi bi-email-plus-outline"></i></span>
+            <span class="qa-icon"><i class="bi bi-envelope"></i></span>
             <span class="qa-text">
               <span class="qa-label">Cuenta de correo</span>
               <span class="qa-hint">Buzón nuevo</span>
@@ -122,7 +122,7 @@
             <i class="bi bi-chevron-right qa-chevron"></i>
           </router-link>
           <router-link to="/files" class="quick-action-btn">
-            <span class="qa-icon"><i class="bi bi-folder2"></i></span>
+            <span class="qa-icon"><i class="bi bi-folder2-open"></i></span>
             <span class="qa-text">
               <span class="qa-label">Gestor de archivos</span>
               <span class="qa-hint">Subir y editar</span>
@@ -130,7 +130,7 @@
             <i class="bi bi-chevron-right qa-chevron"></i>
           </router-link>
           <router-link v-if="isAdminOrReseller" :to="isReseller ? '/users' : '/users'" class="quick-action-btn">
-            <span class="qa-icon"><i class="bi bi-person-plus-outline"></i></span>
+            <span class="qa-icon"><i class="bi bi-person-plus"></i></span>
             <span class="qa-text">
               <span class="qa-label">{{ isReseller ? 'Nuevo cliente' : 'Nuevo usuario' }}</span>
               <span class="qa-hint">{{ isReseller ? 'Cuenta de cliente' : 'Cuenta de hosting' }}</span>
@@ -138,7 +138,7 @@
             <i class="bi bi-chevron-right qa-chevron"></i>
           </router-link>
           <router-link v-if="isAdmin" to="/security" class="quick-action-btn">
-            <span class="qa-icon"><i class="bi bi-lock-check-outline"></i></span>
+            <span class="qa-icon"><i class="bi bi-lock"></i></span>
             <span class="qa-text">
               <span class="qa-label">Certificados SSL</span>
               <span class="qa-hint">Let's Encrypt gratis</span>
@@ -291,7 +291,8 @@ export default {
 
 .metrics-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: var(--sp-4); }
 
-.dash-row { display: grid; grid-template-columns: 1.4fr 1fr 1fr; gap: var(--sp-4); align-items: start; }
+.dash-row { display: grid; grid-template-columns: 1.4fr 1fr; gap: var(--sp-4); align-items: start; }
+.dash-actions { grid-column: 1 / -1; }
 
 /* Servidor */
 .server-gauges { display: grid; grid-template-columns: repeat(4, 1fr); gap: var(--sp-4); }
@@ -311,7 +312,7 @@ export default {
 .svc-state { font-size: var(--fs-sm); color: var(--text-muted); text-transform: capitalize; }
 
 /* Acciones rápidas */
-.quick-actions { display: grid; grid-template-columns: repeat(2, 1fr); gap: var(--sp-3); }
+.quick-actions { display: grid; grid-template-columns: repeat(6, 1fr); gap: var(--sp-3); }
 .quick-action-btn {
   display: flex; align-items: center; gap: 14px;
   padding: var(--sp-4); border-radius: var(--r-lg);
@@ -353,11 +354,12 @@ export default {
 @media (max-width: 1100px) {
   .dash-row { grid-template-columns: 1fr 1fr; }
   .dash-server { grid-column: 1 / -1; }
+  .quick-actions { grid-template-columns: repeat(3, 1fr); }
 }
 @media (max-width: 760px) {
   .metrics-grid { grid-template-columns: repeat(2, 1fr); }
   .dash-row { grid-template-columns: 1fr; }
-  .quick-actions { grid-template-columns: 1fr; }
+  .quick-actions { grid-template-columns: repeat(2, 1fr); }
   .quick-action-btn { gap: 12px; padding: 12px; min-height: auto; }
   .qa-icon { width: 38px; height: 38px; font-size: 18px; }
 }
