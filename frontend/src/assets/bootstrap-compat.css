@@ -163,7 +163,21 @@
 .form-check-label { cursor:pointer; font-size:var(--fs-md); }
 
 /* ── Misc ── */
-.bg-opacity-10{background-color:color-mix(in srgb,currentColor 12%,transparent)!important}
+.bg-opacity-10{opacity:.1;background-color:currentColor!important}
+.rounded-circle{border-radius:50%!important}
 .visually-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);border:0}
 .user-select-none{user-select:none!important} .cursor-pointer{cursor:pointer!important}
 .table-responsive{overflow-x:auto;-webkit-overflow-scrolling:touch}
+.bg-dark{background-color:var(--svq-navy)!important;color:#fff!important}
+.text-white{color:#fff!important}
+.text-white-50{color:rgba(255,255,255,.5)!important}
+.border-0{border:0!important}
+.h-100{height:100%!important}
+.fs-4{font-size:1.5rem!important}
+.fs-5{font-size:1.25rem!important}
+.gap-3{gap:1rem!important}
+.py-3{padding-top:1rem!important;padding-bottom:1rem!important}
+.mb-1{margin-bottom:.25rem!important}
+.mb-4{margin-bottom:1.5rem!important}
+.text-center{text-align:center!important}
+.small{font-size:.875rem!important}

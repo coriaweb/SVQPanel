@@ -28,7 +28,7 @@
 .bg-secondary { background: var(--surface-inset) !important; color: var(--text-secondary) !important; }
 
 /* Bloques código/logs */
-pre.bg-dark, .bg-dark.text-light, pre {
+pre {
   background: var(--surface-inset) !important; color: var(--text-secondary) !important;
   border: 1px solid var(--border); font-family: var(--font-mono); border-radius: var(--r-md);
 }
@@ -120,6 +120,29 @@ code { font-family: var(--font-mono); color: var(--danger); background: var(--su
 .btn-outline-dark:hover    { background: var(--surface-inset) !important; color: var(--text) !important; }
 .btn-link { background: transparent !important; border-color: transparent !important; color: var(--ac-link) !important; padding-left: 0; padding-right: 0; }
 .btn-link:hover { color: var(--ac) !important; text-decoration: underline !important; }
+
+/* Colores de texto */
+.text-primary { color: var(--ac) !important; }
+.text-success { color: var(--success) !important; }
+.text-danger { color: var(--danger) !important; }
+.text-warning { color: var(--warning) !important; }
+.text-info { color: var(--info) !important; }
+
+/* Colores de fondo + texto */
+.bg-primary { background: var(--ac) !important; color: #fff !important; }
+.bg-success { background: var(--success) !important; color: #fff !important; }
+.bg-danger { background: var(--danger) !important; color: #fff !important; }
+.bg-warning { background: var(--warning) !important; color: #fff !important; }
+.bg-info { background: var(--info) !important; color: #fff !important; }
+.bg-dark { background: var(--svq-navy) !important; color: #fff !important; }
+.bg-light { background: var(--surface-inset) !important; color: var(--text) !important; }
+
+/* Opacidades para bg */
+.bg-primary.bg-opacity-10 { background: var(--ac-soft) !important; color: var(--ac) !important; }
+.bg-success.bg-opacity-10 { background: color-mix(in srgb, var(--success) 12%, transparent) !important; color: var(--text) !important; }
+.bg-danger.bg-opacity-10 { background: var(--danger-bg) !important; color: var(--text) !important; }
+.bg-warning.bg-opacity-10 { background: var(--warning-bg) !important; color: var(--text) !important; }
+.bg-info.bg-opacity-10 { background: var(--info-bg) !important; color: var(--text) !important; }
 .btn-close {
   width: 28px; height: 28px; padding: 0; background: transparent; border: 0; cursor: pointer; border-radius: var(--r-sm);
   color: var(--text-muted); font-size: 18px; display: flex; align-items: center; justify-content: center;
