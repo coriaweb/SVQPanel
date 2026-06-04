@@ -22,9 +22,8 @@ if [[ ! -f /etc/os-release ]]; then
     exit 1
 fi
 
-source /etc/os-release
-OS_VERSION=$VERSION_ID
-OS_NAME=$ID
+OS_VERSION=$(grep -oP '(?<=^VERSION_ID=")[^"]+' /etc/os-release)
+OS_NAME=$(grep -oP '(?<=^ID=)[^\n]+' /etc/os-release | tr -d '"')
 
 # Validar que sea Debian 12 o 13
 if [[ "$OS_NAME" != "debian" ]]; then
