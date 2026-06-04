@@ -278,6 +278,25 @@ class SSLManager(SystemManager):
             Path(tmp_vhost_path).unlink(missing_ok=True)
             self.execute_command(["nginx", "-s", "reload"], check=False)
 
+    def renew_ssl(self, domain_name: str) -> dict:
+        """
+        Renueva un certificado existente con certbot --force-renew.
+        No necesita email — certbot lo tiene guardado de la emisión anterior.
+        """
+        if not validate_domain(domain_name):
+            raise ValueError(f"Invalid domain: {domain_name}")
+
+        certbot_path = self._get_certbot_path()
+        cmd = [certbot_path, "renew", "--cert-name", domain_name, "--force-renew", "--non-interactive"]
+        rc, stdout, stderr = self.execute_command(cmd, check=False)
+        if rc != 0:
+            error_msg = stderr.strip() if stderr else f"certbot exit code {rc}"
+            logger.error(f"certbot renew failed: {error_msg}")
+            raise RuntimeError(f"certbot renew failed: {error_msg}")
+
+        logger.info(f"SSL cert renewed: {domain_name}")
+        return {"success": True, "domain": domain_name}
+
     def revoke_ssl(self, domain_name: str) -> dict:
         """
         Revoke SSL certificate
