@@ -616,7 +616,8 @@ def reload_nginx() -> bool:
     # Recargar en background — el cliente recibe respuesta inmediata
     def _do_reload():
         try:
-            subprocess.run(["systemctl", "reload", "nginx"], check=True,
+            # nginx -s reload hace graceful reload sin interrumpir conexiones activas
+            subprocess.run(["nginx", "-s", "reload"], check=True,
                            capture_output=True, env=env)
             logger.info("Nginx reloaded successfully (background)")
         except subprocess.CalledProcessError as e:
