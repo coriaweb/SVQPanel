@@ -1,320 +1,247 @@
 <template>
-  <div>
-    <!-- Back + header -->
-    <div class="d-flex align-items-center gap-3 mb-4">
-      <button class="btn btn-outline-secondary btn-sm" @click="$router.back()">
-        <i class="bi bi-arrow-left"></i> Volver
-      </button>
-      <div v-if="user">
-        <h2 class="mb-0">
-          <i class="bi bi-person-circle me-2"></i>{{ user.username }}
-          <span :class="roleBadgeClass(user.role)" class="badge ms-2 fs-6">{{ roleLabel(user.role) }}</span>
-        </h2>
-        <small class="text-muted">{{ user.email }}</small>
+  <div class="sv-view">
+
+    <!-- Cabecera -->
+    <div class="ua-head">
+      <div style="display:flex;align-items:center;gap:1rem">
+        <button class="ua-back-btn" @click="$router.back()">
+          <i class="bi bi-arrow-left"></i> Volver
+        </button>
+        <div v-if="user">
+          <h2 class="ua-title">
+            <i class="bi bi-person-circle"></i> {{ user.username }}
+            <span class="ua-badge" :class="roleBadgeClass(user.role)" style="font-size:.85rem;margin-left:.5rem">{{ roleLabel(user.role) }}</span>
+          </h2>
+          <p class="ua-subtitle">{{ user.email }}</p>
+        </div>
+        <div v-else-if="loadingUser" class="spinner-border spinner-border-sm"></div>
       </div>
-      <div v-else-if="loadingUser" class="spinner-border spinner-border-sm text-secondary"></div>
+      <button v-if="user" class="ua-btn ua-btn--ghost ua-btn--sm" @click="showEditUser = true">
+        <i class="bi bi-pencil"></i> Editar usuario
+      </button>
     </div>
 
-    <div v-if="user" class="row g-4">
-      <!-- Info card -->
-      <div class="col-md-3">
-        <div class="card">
-          <div class="card-header"><i class="bi bi-info-circle me-1"></i> Información</div>
-          <div class="card-body p-0">
-            <ul class="list-group list-group-flush">
-              <li class="list-group-item d-flex justify-content-between">
-                <span class="text-muted">Rol</span>
-                <span :class="roleBadgeClass(user.role)" class="badge">{{ roleLabel(user.role) }}</span>
-              </li>
-              <li class="list-group-item d-flex justify-content-between">
-                <span class="text-muted">Estado</span>
-                <span :class="user.is_active ? 'badge bg-success' : 'badge bg-danger'">
-                  {{ user.is_active ? 'Activo' : 'Inactivo' }}
-                </span>
-              </li>
-              <li v-if="user.role === 'reseller'" class="list-group-item d-flex justify-content-between">
-                <span class="text-muted">Clientes</span>
-                <strong>{{ clients.length }}</strong>
-              </li>
-              <li v-else class="list-group-item d-flex justify-content-between">
-                <span class="text-muted">Dominios</span>
-                <strong>{{ domains.length }} / {{ user.domains_limit === 0 ? '∞' : user.domains_limit }}</strong>
-              </li>
-              <li class="list-group-item d-flex justify-content-between">
-                <span class="text-muted">Creado</span>
-                <small>{{ formatDate(user.created_at) }}</small>
-              </li>
-            </ul>
-          </div>
-          <div class="card-footer">
-            <button class="btn btn-sm btn-outline-warning w-100" @click="showEditUser = true">
-              <i class="bi bi-pencil me-1"></i> Editar usuario
-            </button>
+    <div v-if="user" class="ua-layout">
+
+      <!-- Sidebar info -->
+      <aside class="ua-sidebar">
+        <div class="ua-card">
+          <div class="ua-card-title"><i class="bi bi-info-circle"></i> Información</div>
+          <div class="ua-info-list">
+            <div class="ua-info-row">
+              <span>Rol</span>
+              <span class="ua-badge" :class="roleBadgeClass(user.role)">{{ roleLabel(user.role) }}</span>
+            </div>
+            <div class="ua-info-row">
+              <span>Estado</span>
+              <span class="ua-badge" :class="user.is_active ? 'ua-badge--on' : 'ua-badge--danger'">
+                {{ user.is_active ? 'Activo' : 'Inactivo' }}
+              </span>
+            </div>
+            <div v-if="user.role === 'reseller'" class="ua-info-row">
+              <span>Clientes</span>
+              <strong>{{ clients.length }}</strong>
+            </div>
+            <div v-else class="ua-info-row">
+              <span>Dominios</span>
+              <strong>{{ domains.length }} / {{ user.domains_limit === 0 ? '∞' : user.domains_limit }}</strong>
+            </div>
+            <div class="ua-info-row">
+              <span>Creado</span>
+              <span style="font-size:.8rem;color:var(--text-muted)">{{ formatDate(user.created_at) }}</span>
+            </div>
           </div>
         </div>
-      </div>
+      </aside>
 
       <!-- Panel principal -->
-      <div class="col-md-9">
+      <main class="ua-main">
 
-        <!-- ═══ RESELLER: lista de clientes ═══ -->
+        <!-- RESELLER: clientes -->
         <template v-if="user.role === 'reseller'">
-          <div class="card">
-            <div class="card-header d-flex justify-content-between align-items-center">
-              <span><i class="bi bi-people me-1"></i> Clientes de {{ user.username }}</span>
-              <button class="btn btn-sm btn-primary" @click="showAddClient = true">
+          <div class="ua-card">
+            <div class="ua-card-head">
+              <span class="ua-card-title"><i class="bi bi-people"></i> Clientes de {{ user.username }}</span>
+              <button class="ua-btn ua-btn--primary ua-btn--sm" @click="showAddClient = true">
                 <i class="bi bi-person-plus"></i> Añadir cliente
               </button>
             </div>
-            <div class="card-body">
-              <div v-if="loadingClients" class="text-center py-3">
-                <div class="spinner-border spinner-border-sm"></div>
-              </div>
-              <div v-else-if="clients.length === 0" class="alert alert-info mb-0">
-                <i class="bi bi-info-circle me-1"></i> Este reseller no tiene clientes aún
-              </div>
-              <div v-else class="table-responsive">
-                <table class="table table-hover align-middle mb-0">
-                  <thead class="table-light">
-                    <tr>
-                      <th>Usuario</th>
-                      <th>Email</th>
-                      <th>Dominios</th>
-                      <th>Estado</th>
-                      <th>Acciones</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    <tr v-for="client in clients" :key="client.id">
-                      <td><i class="bi bi-person-circle text-secondary me-1"></i><strong>{{ client.username }}</strong></td>
-                      <td>{{ client.email }}</td>
-                      <td><i class="bi bi-globe2 me-1 text-muted"></i>{{ client.domains_limit === 0 ? '∞' : client.domains_limit }}</td>
-                      <td>
-                        <span :class="client.is_active ? 'badge bg-success' : 'badge bg-danger'">
-                          {{ client.is_active ? 'Activo' : 'Inactivo' }}
-                        </span>
-                      </td>
-                      <td>
-                        <div class="btn-group btn-group-sm">
-                          <button class="btn btn-outline-primary" @click="$router.push(`/users/${client.id}/account`)">
-                            <i class="bi bi-box-arrow-in-right me-1"></i> Gestionar
-                          </button>
-                          <button class="btn btn-outline-danger" @click="deleteClientConfirm(client)">
-                            <i class="bi bi-trash"></i>
-                          </button>
-                        </div>
-                      </td>
-                    </tr>
-                  </tbody>
-                </table>
-              </div>
+            <div v-if="loadingClients" class="ua-loading"><div class="spinner-border spinner-border-sm"></div></div>
+            <div v-else-if="clients.length === 0" class="ua-empty">
+              <i class="bi bi-people"></i><span>Este reseller no tiene clientes aún</span>
+            </div>
+            <div v-else class="ua-table-wrap">
+              <table class="ua-table">
+                <thead><tr><th>Usuario</th><th>Email</th><th>Dominios</th><th>Estado</th><th style="text-align:right">Acciones</th></tr></thead>
+                <tbody>
+                  <tr v-for="client in clients" :key="client.id">
+                    <td><strong>{{ client.username }}</strong></td>
+                    <td style="color:var(--text-muted)">{{ client.email }}</td>
+                    <td>{{ client.domains_limit === 0 ? '∞' : client.domains_limit }}</td>
+                    <td><span class="ua-badge" :class="client.is_active ? 'ua-badge--on' : 'ua-badge--danger'">{{ client.is_active ? 'Activo' : 'Inactivo' }}</span></td>
+                    <td style="text-align:right">
+                      <div style="display:flex;gap:4px;justify-content:flex-end">
+                        <button class="ua-btn ua-btn--ghost ua-btn--sm" @click="$router.push(`/users/${client.id}/account`)">
+                          <i class="bi bi-box-arrow-in-right"></i> Gestionar
+                        </button>
+                        <button class="ua-icon-btn ua-icon-btn--danger" @click="deleteClientConfirm(client)"><i class="bi bi-trash"></i></button>
+                      </div>
+                    </td>
+                  </tr>
+                </tbody>
+              </table>
             </div>
           </div>
         </template>
 
-        <!-- ═══ USER: SFTP + lista de dominios ═══ -->
+        <!-- USER: SFTP + 2FA + Dominios -->
         <template v-else>
 
-          <!-- SFTP -->
-          <div class="card mb-3">
-            <div class="card-header">
-              <i class="bi bi-folder-symlink me-1"></i> Acceso SFTP
+          <div class="ua-card">
+            <div class="ua-card-head">
+              <span class="ua-card-title"><i class="bi bi-folder-symlink"></i> Acceso SFTP</span>
             </div>
-            <div class="card-body">
+            <div style="padding:1rem">
               <SftpManager :user-id="user.id" />
             </div>
           </div>
 
-          <!-- 2FA — solo visible para el propio usuario o admin -->
-          <div v-if="isOwnAccount" class="card mb-3">
-            <div class="card-header">
-              <i class="bi bi-shield-lock me-1"></i> Autenticación de doble factor (2FA)
+          <div v-if="isOwnAccount" class="ua-card">
+            <div class="ua-card-head">
+              <span class="ua-card-title"><i class="bi bi-shield-lock"></i> Autenticación de doble factor (2FA)</span>
             </div>
-            <div class="card-body">
+            <div style="padding:1rem">
               <TwoFactorManager />
             </div>
           </div>
 
-          <div class="card">
-            <div class="card-header d-flex justify-content-between align-items-center">
-              <span><i class="bi bi-globe2 me-1"></i> Dominios de {{ user.username }}</span>
-              <button class="btn btn-sm btn-primary" @click="showAddDomain = true">
+          <div class="ua-card">
+            <div class="ua-card-head">
+              <span class="ua-card-title"><i class="bi bi-globe2"></i> Dominios de {{ user.username }}</span>
+              <button class="ua-btn ua-btn--primary ua-btn--sm" @click="showAddDomain = true">
                 <i class="bi bi-plus-lg"></i> Añadir dominio
               </button>
             </div>
-            <div class="card-body">
-              <div v-if="loadingDomains" class="text-center py-3">
-                <div class="spinner-border spinner-border-sm"></div>
-              </div>
-              <div v-else-if="domains.length === 0" class="alert alert-info mb-0">
-                <i class="bi bi-info-circle me-1"></i> Este usuario no tiene dominios
-              </div>
-              <div v-else class="table-responsive">
-                <table class="table table-hover align-middle mb-0">
-                  <thead class="table-light">
-                    <tr>
-                      <th>Dominio</th>
-                      <th>PHP</th>
-                      <th>SSL</th>
-                      <th>IPv6</th>
-                      <th>Estado</th>
-                      <th></th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    <tr v-for="domain in domains" :key="domain.id">
-                      <td>
-                        <i class="bi bi-globe text-primary me-1"></i>
-                        <a :href="'http://' + domain.domain_name" target="_blank" class="text-decoration-none fw-semibold">
-                          {{ domain.domain_name }}
-                        </a>
-                      </td>
-                      <td><span class="badge bg-info text-dark">PHP {{ domain.php_version || '8.2' }}</span></td>
-                      <td>
-                        <span v-if="domain.ssl_enabled" class="badge bg-success">
-                          <i class="bi bi-lock-fill me-1"></i>SSL
-                        </span>
-                        <span v-else class="badge bg-light text-secondary border">
-                          <i class="bi bi-unlock me-1"></i>No
-                        </span>
-                      </td>
-                      <td>
-                        <span v-if="domain.ipv6" class="badge bg-primary font-monospace" style="font-size:.7rem" :title="domain.ipv6">
-                          <i class="bi bi-diagram-3 me-1"></i>IPv6
-                        </span>
-                        <span v-else class="badge bg-light text-secondary border">—</span>
-                      </td>
-                      <td>
-                        <span :class="domain.is_active ? 'badge bg-success' : 'badge bg-danger'">
-                          {{ domain.is_active ? 'Activo' : 'Inactivo' }}
-                        </span>
-                      </td>
-                      <td class="text-end">
-                        <button
-                          class="btn btn-sm btn-outline-primary"
-                          @click="openDomainManager(domain)"
-                        >
-                          <i class="bi bi-sliders me-1"></i> Gestionar
-                        </button>
-                      </td>
-                    </tr>
-                  </tbody>
-                </table>
-              </div>
+            <div v-if="loadingDomains" class="ua-loading"><div class="spinner-border spinner-border-sm"></div></div>
+            <div v-else-if="domains.length === 0" class="ua-empty">
+              <i class="bi bi-globe2"></i><span>Este usuario no tiene dominios</span>
+            </div>
+            <div v-else class="ua-table-wrap">
+              <table class="ua-table">
+                <thead><tr><th>Dominio</th><th>PHP</th><th>SSL</th><th>IPv6</th><th>Estado</th><th style="text-align:right">Acciones</th></tr></thead>
+                <tbody>
+                  <tr v-for="domain in domains" :key="domain.id">
+                    <td>
+                      <a :href="'http://' + domain.domain_name" target="_blank" style="font-weight:600;color:var(--ac);text-decoration:none">
+                        {{ domain.domain_name }}
+                      </a>
+                    </td>
+                    <td><span class="ua-badge ua-badge--blue">PHP {{ domain.php_version || '8.2' }}</span></td>
+                    <td>
+                      <span class="ua-badge" :class="domain.ssl_enabled ? 'ua-badge--on' : 'ua-badge--off'">
+                        <i :class="domain.ssl_enabled ? 'bi bi-lock-fill' : 'bi bi-unlock'"></i>
+                        {{ domain.ssl_enabled ? 'SSL' : 'No' }}
+                      </span>
+                    </td>
+                    <td>
+                      <span v-if="domain.ipv6" class="ua-badge ua-badge--blue" :title="domain.ipv6">IPv6</span>
+                      <span v-else class="ua-badge ua-badge--off">—</span>
+                    </td>
+                    <td>
+                      <span class="ua-badge" :class="domain.is_active ? 'ua-badge--on' : 'ua-badge--danger'">
+                        {{ domain.is_active ? 'Activo' : 'Inactivo' }}
+                      </span>
+                    </td>
+                    <td style="text-align:right">
+                      <button class="ua-btn ua-btn--ghost ua-btn--sm" @click="openDomainManager(domain)">
+                        <i class="bi bi-sliders"></i> Gestionar
+                      </button>
+                    </td>
+                  </tr>
+                </tbody>
+              </table>
             </div>
           </div>
         </template>
-      </div>
+      </main>
     </div>
 
-    <!-- ═══════════════════════════════════════════════════════════
-         MODAL: Gestionar Dominio (PHP + SSL + IPv6 + Danger Zone)
-         ═══════════════════════════════════════════════════════════ -->
-    <div v-if="showDomainManager && selectedDomain"
-         class="modal d-block" tabindex="-1"
-         style="background:rgba(0,0,0,.55); overflow-y:auto;">
-      <div class="modal-dialog modal-lg modal-dialog-centered modal-dialog-scrollable">
+    <!-- Modal: Gestionar Dominio -->
+    <div v-if="showDomainManager && selectedDomain" class="modal d-block" tabindex="-1"
+         style="background:rgba(0,0,0,.55)" @click.self="closeDomainManager">
+      <div class="modal-dialog modal-lg modal-dialog-scrollable">
         <div class="modal-content">
-
-          <!-- Header -->
           <div class="modal-header">
-            <h5 class="modal-title">
-              <i class="bi bi-globe text-primary me-2"></i>
-              {{ selectedDomain.domain_name }}
-            </h5>
+            <h5 class="modal-title"><i class="bi bi-globe me-2"></i>{{ selectedDomain.domain_name }}</h5>
             <button type="button" class="btn-close" @click="closeDomainManager"></button>
           </div>
-
-          <!-- Body con secciones -->
           <div class="modal-body p-0">
 
-            <!-- ── Información ── -->
-            <div class="px-4 pt-4 pb-3 border-bottom">
-              <h6 class="text-muted text-uppercase small mb-3"><i class="bi bi-info-circle me-1"></i> Información</h6>
-              <div class="row g-2 small">
-                <div class="col-sm-4 text-muted">Ruta web</div>
-                <div class="col-sm-8 font-monospace">/home/{{ user.username }}/web/{{ selectedDomain.domain_name }}/public_html</div>
-                <div class="col-sm-4 text-muted">Creado</div>
-                <div class="col-sm-8">{{ formatDate(selectedDomain.created_at) }}</div>
-                <div v-if="selectedDomain.ipv6" class="col-sm-4 text-muted">IPv6</div>
-                <div v-if="selectedDomain.ipv6" class="col-sm-8 font-monospace text-primary">{{ selectedDomain.ipv6 }}</div>
+            <div class="ua-modal-section">
+              <div class="ua-modal-section-title"><i class="bi bi-info-circle"></i> Información</div>
+              <div class="ua-meta-grid">
+                <span>Ruta web</span><code style="font-size:.8rem">/home/{{ user.username }}/web/{{ selectedDomain.domain_name }}/public_html</code>
+                <span>Creado</span><span>{{ formatDate(selectedDomain.created_at) }}</span>
+                <template v-if="selectedDomain.ipv6">
+                  <span>IPv6</span><code style="font-size:.8rem;color:var(--ac)">{{ selectedDomain.ipv6 }}</code>
+                </template>
               </div>
             </div>
 
-            <!-- ── PHP ── -->
-            <div class="px-4 py-3 border-bottom">
-              <h6 class="text-muted text-uppercase small mb-3"><i class="bi bi-filetype-php me-1"></i> Versión PHP</h6>
-              <form @submit.prevent="handleChangePHP" class="row g-2 align-items-end">
-                <div class="col">
-                  <select v-model="phpVersion" class="form-select form-select-sm">
-                    <option v-for="v in phpAvailableVersions" :key="v" :value="v">PHP {{ v }}</option>
-                  </select>
-                </div>
-                <div class="col-auto">
-                  <button type="submit" class="btn btn-sm btn-primary" :disabled="changingPHP">
-                    <span v-if="changingPHP" class="spinner-border spinner-border-sm me-1"></span>
-                    <i v-else class="bi bi-check-lg me-1"></i>
-                    Aplicar
-                  </button>
-                </div>
+            <div class="ua-modal-section">
+              <div class="ua-modal-section-title"><i class="bi bi-filetype-php"></i> Versión PHP</div>
+              <form @submit.prevent="handleChangePHP" style="display:flex;gap:.5rem;align-items:flex-end">
+                <select v-model="phpVersion" class="form-select form-select-sm" style="max-width:240px">
+                  <option v-for="v in phpAvailableVersions" :key="v" :value="v">PHP {{ v }}</option>
+                </select>
+                <button type="submit" class="btn btn-sm btn-primary" :disabled="changingPHP">
+                  <span v-if="changingPHP" class="spinner-border spinner-border-sm"></span>
+                  <i v-else class="bi bi-check-lg"></i> Aplicar
+                </button>
               </form>
-              <div class="form-text mt-1">Versión actual: <strong>PHP {{ selectedDomain.php_version || '8.2' }}</strong></div>
+              <small style="color:var(--text-muted);font-size:.78rem;margin-top:.25rem;display:block">Actual: PHP {{ selectedDomain.php_version || '8.2' }}</small>
             </div>
 
-            <!-- ── SSL ── -->
-            <div class="px-4 py-3 border-bottom">
-              <h6 class="text-muted text-uppercase small mb-3"><i class="bi bi-lock me-1"></i> Certificado SSL</h6>
-
-              <div v-if="selectedDomain.ssl_enabled" class="d-flex align-items-center gap-3">
-                <span class="badge bg-success fs-6"><i class="bi bi-lock-fill me-1"></i> SSL activo</span>
-                <div class="text-muted small" v-if="selectedDomain.ssl_expires">
-                  Expira: {{ formatDate(selectedDomain.ssl_expires) }}
-                </div>
-                <button class="btn btn-sm btn-outline-danger ms-auto" @click="handleDeleteSSL" :disabled="sslLoading">
-                  <span v-if="sslLoading" class="spinner-border spinner-border-sm me-1"></span>
-                  <i v-else class="bi bi-x-circle me-1"></i>
-                  Revocar SSL
+            <div class="ua-modal-section">
+              <div class="ua-modal-section-title"><i class="bi bi-lock"></i> Certificado SSL</div>
+              <div v-if="selectedDomain.ssl_enabled" style="display:flex;align-items:center;gap:.75rem;flex-wrap:wrap">
+                <span class="ua-badge ua-badge--on" style="font-size:.85rem"><i class="bi bi-lock-fill"></i> SSL activo</span>
+                <span v-if="selectedDomain.ssl_expires" style="font-size:.82rem;color:var(--text-muted)">Expira: {{ formatDate(selectedDomain.ssl_expires) }}</span>
+                <button class="btn btn-sm btn-outline-danger" style="margin-left:auto" @click="handleDeleteSSL" :disabled="sslLoading">
+                  <span v-if="sslLoading" class="spinner-border spinner-border-sm"></span>
+                  <i v-else class="bi bi-x-circle"></i> Revocar
                 </button>
               </div>
-
               <div v-else>
-                <div class="d-flex align-items-center gap-3 mb-2">
-                  <span class="badge bg-secondary"><i class="bi bi-unlock me-1"></i> Sin SSL</span>
-                </div>
+                <span class="ua-badge ua-badge--off" style="margin-bottom:.75rem;display:inline-flex"><i class="bi bi-unlock"></i> Sin SSL</span>
+                <br>
                 <button class="btn btn-sm btn-success" @click="handleCreateSSL" :disabled="sslLoading">
-                  <span v-if="sslLoading" class="spinner-border spinner-border-sm me-1"></span>
-                  <i v-else class="bi bi-shield-check me-1"></i>
-                  Instalar certificado Let's Encrypt
+                  <span v-if="sslLoading" class="spinner-border spinner-border-sm"></span>
+                  <i v-else class="bi bi-shield-check"></i> Instalar Let's Encrypt
                 </button>
-                <div class="form-text mt-1">
-                  El dominio debe resolver a este servidor para que Let's Encrypt funcione.
-                </div>
+                <small style="display:block;margin-top:.35rem;color:var(--text-muted)">El dominio debe resolver a este servidor.</small>
               </div>
             </div>
 
-            <!-- ── IPv6 ── -->
-            <div class="px-4 py-3 border-bottom">
-              <h6 class="text-muted text-uppercase small mb-3"><i class="bi bi-diagram-3 me-1"></i> IPv6 dedicada</h6>
+            <div class="ua-modal-section">
+              <div class="ua-modal-section-title"><i class="bi bi-diagram-3"></i> IPv6 dedicada</div>
               <IPv6Manager :domain="selectedDomain" @reload="onDomainReload" />
             </div>
 
-            <!-- ── Danger Zone ── -->
-            <div class="px-4 py-3 bg-light">
-              <h6 class="text-danger text-uppercase small mb-3"><i class="bi bi-exclamation-triangle me-1"></i> Zona de peligro</h6>
+            <div class="ua-modal-section ua-modal-section--danger">
+              <div class="ua-modal-section-title" style="color:var(--danger)"><i class="bi bi-exclamation-triangle"></i> Zona de peligro</div>
               <div v-if="!confirmDeleteDomain">
                 <button class="btn btn-sm btn-outline-danger" @click="confirmDeleteDomain = true">
-                  <i class="bi bi-trash me-1"></i> Eliminar dominio
+                  <i class="bi bi-trash"></i> Eliminar dominio
                 </button>
-                <div class="form-text mt-1 text-danger">
-                  Esto eliminará el dominio, todos sus archivos y la configuración nginx.
-                </div>
+                <small style="display:block;margin-top:.35rem;color:var(--danger)">Eliminará el dominio, archivos y configuración nginx.</small>
               </div>
               <div v-else class="alert alert-danger mb-0">
                 <p class="mb-2 fw-bold">¿Confirmar eliminación de <em>{{ selectedDomain.domain_name }}</em>?</p>
                 <p class="small mb-3">Se eliminarán todos los archivos en <code>/home/{{ user.username }}/web/{{ selectedDomain.domain_name }}/</code></p>
-                <div class="d-flex gap-2">
+                <div style="display:flex;gap:.5rem">
                   <button class="btn btn-danger btn-sm" @click="handleDeleteDomain" :disabled="deletingDomain">
-                    <span v-if="deletingDomain" class="spinner-border spinner-border-sm me-1"></span>
+                    <span v-if="deletingDomain" class="spinner-border spinner-border-sm"></span>
                     Sí, eliminar
                   </button>
                   <button class="btn btn-secondary btn-sm" @click="confirmDeleteDomain = false">Cancelar</button>
@@ -322,8 +249,7 @@
               </div>
             </div>
 
-          </div><!-- /modal-body -->
-
+          </div>
           <div class="modal-footer">
             <button type="button" class="btn btn-secondary" @click="closeDomainManager">Cerrar</button>
           </div>
@@ -336,7 +262,7 @@
       <UserForm :user="user" @submit="onUserUpdated" @cancel="showEditUser = false" />
     </Modal>
 
-    <!-- Modal: añadir cliente (reseller) -->
+    <!-- Modal: añadir cliente -->
     <Modal :isOpen="showAddClient" title="Añadir Cliente" @close="showAddClient = false">
       <UserForm :parentId="user?.id" @submit="onClientAdded" @cancel="showAddClient = false" />
     </Modal>
@@ -354,7 +280,7 @@
             <option v-for="v in phpAvailableVersions" :key="v" :value="v">PHP {{ v }}</option>
           </select>
         </div>
-        <div class="d-flex gap-2">
+        <div style="display:flex;gap:.5rem">
           <button type="submit" class="btn btn-primary" :disabled="addingDomain">
             <span v-if="addingDomain" class="spinner-border spinner-border-sm me-1"></span>
             Crear dominio
@@ -597,3 +523,72 @@ export default {
   }
 }
 </script>
+
+<style scoped>
+.sv-view { display:flex; flex-direction:column; gap:20px; }
+
+/* Layout */
+.ua-head { display:flex; justify-content:space-between; align-items:center; gap:1rem; flex-wrap:wrap; }
+.ua-title { font-size:1.4rem; font-weight:700; margin:0 0 .15rem; display:flex; align-items:center; gap:.5rem; flex-wrap:wrap; }
+.ua-subtitle { font-size:.875rem; color:var(--text-muted); margin:0; }
+.ua-layout { display:grid; grid-template-columns:240px 1fr; gap:20px; align-items:start; }
+.ua-sidebar { display:flex; flex-direction:column; gap:16px; }
+.ua-main { display:flex; flex-direction:column; gap:16px; }
+
+/* Back button */
+.ua-back-btn { background:none; border:1px solid var(--border); border-radius:var(--r-sm,6px); padding:.3rem .75rem; font-size:.82rem; cursor:pointer; color:var(--text-secondary); transition:all .15s; white-space:nowrap; }
+.ua-back-btn:hover { background:var(--surface-2); color:var(--text); }
+
+/* Buttons */
+.ua-btn { display:inline-flex; align-items:center; gap:6px; padding:.4rem .9rem; border-radius:var(--r-sm,6px); font-size:.875rem; font-weight:500; cursor:pointer; border:1px solid transparent; transition:all .15s; }
+.ua-btn--primary { background:var(--ac); color:#fff; border-color:var(--ac); }
+.ua-btn--primary:hover { opacity:.9; }
+.ua-btn--ghost { background:var(--surface); color:var(--text-secondary); border-color:var(--border); }
+.ua-btn--ghost:hover { background:var(--surface-2); color:var(--text); }
+.ua-btn--sm { padding:.3rem .65rem; font-size:.82rem; }
+.ua-icon-btn { width:30px; height:30px; display:inline-flex; align-items:center; justify-content:center; border:1px solid var(--border); border-radius:var(--r-sm,6px); background:var(--surface); color:var(--text-secondary); cursor:pointer; transition:all .15s; }
+.ua-icon-btn--danger:hover { background:var(--danger); color:#fff; border-color:var(--danger); }
+
+/* Cards */
+.ua-card { background:var(--surface); border:1px solid var(--border); border-radius:var(--r-md,10px); overflow:hidden; }
+.ua-card-head { display:flex; align-items:center; justify-content:space-between; padding:.875rem 1.25rem; border-bottom:1px solid var(--border); }
+.ua-card-title { font-weight:600; font-size:.95rem; display:flex; align-items:center; gap:.5rem; }
+
+/* Sidebar info */
+.ua-info-list { display:flex; flex-direction:column; }
+.ua-info-row { display:flex; justify-content:space-between; align-items:center; padding:.6rem 1.25rem; border-bottom:1px solid var(--border); font-size:.875rem; }
+.ua-info-row:last-child { border-bottom:none; }
+.ua-info-row span:first-child { color:var(--text-muted); }
+
+/* Badges */
+.ua-badge { display:inline-flex; align-items:center; gap:.25rem; padding:.2rem .55rem; border-radius:999px; font-size:.72rem; font-weight:600; }
+.ua-badge--on { background:color-mix(in srgb,var(--success) 15%,transparent); color:var(--success); }
+.ua-badge--off { background:var(--surface-2); color:var(--text-muted); border:1px solid var(--border); }
+.ua-badge--danger { background:color-mix(in srgb,var(--danger) 15%,transparent); color:var(--danger); }
+.ua-badge--blue { background:color-mix(in srgb,var(--ac) 15%,transparent); color:var(--ac); }
+
+/* Table */
+.ua-table-wrap { overflow-x:auto; }
+.ua-table { width:100%; border-collapse:collapse; font-size:.875rem; }
+.ua-table th { padding:.6rem 1rem; text-align:left; font-size:.75rem; font-weight:600; color:var(--text-muted); text-transform:uppercase; letter-spacing:.04em; border-bottom:1px solid var(--border); background:var(--surface-2); }
+.ua-table td { padding:.65rem 1rem; border-bottom:1px solid var(--border); }
+.ua-table tr:last-child td { border-bottom:none; }
+.ua-table tbody tr:hover { background:var(--surface-2); }
+
+/* Modal sections */
+.ua-modal-section { padding:1rem 1.25rem; border-bottom:1px solid var(--border); }
+.ua-modal-section:last-child { border-bottom:none; }
+.ua-modal-section--danger { background:color-mix(in srgb,var(--danger) 4%,transparent); }
+.ua-modal-section-title { font-size:.75rem; font-weight:700; text-transform:uppercase; letter-spacing:.06em; color:var(--text-muted); margin-bottom:.75rem; display:flex; align-items:center; gap:.4rem; }
+.ua-meta-grid { display:grid; grid-template-columns:120px 1fr; gap:.35rem .75rem; font-size:.85rem; }
+.ua-meta-grid span:nth-child(odd) { color:var(--text-muted); }
+
+/* Empty / loading */
+.ua-empty { display:flex; align-items:center; gap:.75rem; padding:1.5rem; color:var(--text-muted); font-size:.875rem; }
+.ua-empty i { font-size:1.5rem; }
+.ua-loading { display:flex; justify-content:center; padding:1.5rem; }
+
+@media (max-width:768px) {
+  .ua-layout { grid-template-columns:1fr; }
+}
+</style>
