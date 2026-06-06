@@ -164,34 +164,46 @@ class SSLManager(SystemManager):
 
     def expand_for_webmail(self, domain_name: str, email: str) -> dict:
         """
-        Expande el cert del dominio principal para incluir webmail.{dominio} como SAN.
-        Usar --expand evita el problema de SNI con nginx (cert compartido = un solo
-        fichero, nginx no necesita elegir entre varios certs para la misma IP:puerto).
+        Emite o expande el cert para webmail.{dominio}:
+        - Si ya existe cert del dominio principal → --expand añadiendo webmail como SAN
+          (evita conflicto SNI en nginx: un solo cert para la misma IP:443)
+        - Si no existe cert del dominio (solo correo, sin web) → cert independiente
+          para webmail.{dominio} (no hay conflicto porque tampoco hay vhost web con SSL)
         """
         webmail_host = f"webmail.{domain_name}"
-
-        # Validar DNS
         self._validate_dns(webmail_host)
 
         certbot_path = self._get_certbot_path()
-        cmd = [
-            certbot_path, "certonly", "--nginx",
-            "--expand",
-            "-d", domain_name,
-            "-d", webmail_host,
-            "--non-interactive", "--agree-tos", "-m", email,
-        ]
+        domain_cert = f"/etc/letsencrypt/live/{domain_name}/fullchain.pem"
 
-        rc, stdout, stderr = self.execute_command(cmd, check=False)
-        if rc != 0:
-            error_msg = stderr.strip() if stderr else f"certbot exit code {rc}"
-            logger.error(f"certbot expand failed for webmail: {error_msg}")
-            raise RuntimeError(f"certbot failed: {error_msg}")
-
-        logger.info(f"Cert expanded with webmail SAN: {webmail_host}")
-        # El cert expandido vive en el directorio del dominio principal
-        return {"success": True, "domain": webmail_host,
-                "cert": f"/etc/letsencrypt/live/{domain_name}/fullchain.pem"}
+        if os.path.exists(domain_cert):
+            # Dominio tiene cert web → expandir para incluir webmail como SAN
+            cmd = [
+                certbot_path, "certonly", "--nginx", "--expand",
+                "-d", domain_name, "-d", webmail_host,
+                "--non-interactive", "--agree-tos", "-m", email,
+            ]
+            rc, stdout, stderr = self.execute_command(cmd, check=False)
+            if rc != 0:
+                raise RuntimeError(f"certbot expand failed: {(stderr or '').strip()}")
+            logger.info(f"Cert expanded with webmail SAN: {webmail_host}")
+            return {"success": True, "domain": webmail_host,
+                    "cert": domain_cert}
+        else:
+            # Solo correo, sin web → cert independiente para webmail
+            webroot = "/var/www/webmail"
+            os.makedirs(f"{webroot}/.well-known/acme-challenge", exist_ok=True)
+            cmd = [
+                certbot_path, "certonly", "--webroot", "-w", webroot,
+                "-d", webmail_host,
+                "--non-interactive", "--agree-tos", "-m", email,
+            ]
+            rc, stdout, stderr = self.execute_command(cmd, check=False)
+            if rc != 0:
+                raise RuntimeError(f"certbot failed: {(stderr or '').strip()}")
+            logger.info(f"Webmail standalone cert issued: {webmail_host}")
+            return {"success": True, "domain": webmail_host,
+                    "cert": f"/etc/letsencrypt/live/{webmail_host}/fullchain.pem"}
 
     def expand_for_mail(self, domain_name: str, email: str) -> dict:
         """
