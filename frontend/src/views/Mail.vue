@@ -487,9 +487,12 @@
                   <input v-model="relayForm.password" type="password" class="form-control form-control-sm" autocomplete="new-password" :placeholder="relay.username ? '(sin cambios)' : ''">
                 </div>
               </div>
-              <button class="sv-btn sv-btn--primary sv-btn--sm" @click="saveDomainRelay" :disabled="relaySaving">
+              <button v-if="relayForm.enabled || relay.enabled"
+                      class="sv-btn sv-btn--sm" :disabled="relaySaving"
+                      :class="relayForm.enabled ? 'sv-btn--primary' : 'sv-btn--danger'"
+                      @click="saveDomainRelay">
                 <span v-if="relaySaving" class="spinner-border spinner-border-sm"></span>
-                <i v-else class="bi bi-save"></i>
+                <i v-else :class="relayForm.enabled ? 'bi bi-save' : 'bi bi-x-circle'"></i>
                 {{ relayForm.enabled ? 'Guardar relay' : 'Desactivar relay' }}
               </button>
             </template>
