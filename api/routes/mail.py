@@ -133,7 +133,12 @@ def _mailbox_to_dict(mb: Mailbox) -> dict:
         "send_limit_hour": getattr(mb, "send_limit_hour", 200),
         "is_active":      mb.is_active,
         "full_email":     f"{mb.username}@{mb.mail_domain.domain_name}",
-        "disk_usage_mb":  0.0,   # calculado aparte para no ralentizar el listado
+        "disk_usage_mb":  0.0,
+        "forward_to":        getattr(mb, "forward_to", None),
+        "forward_keep_copy": getattr(mb, "forward_keep_copy", True),
+        "autoreply_enabled": getattr(mb, "autoreply_enabled", False),
+        "autoreply_subject": getattr(mb, "autoreply_subject", None),
+        "autoreply_body":    getattr(mb, "autoreply_body", None),
         "created_at":     mb.created_at,
         "updated_at":     mb.updated_at,
     }
@@ -1134,6 +1139,46 @@ async def update_mailbox(
     if getattr(data, "send_limit_hour", None) is not None and data.send_limit_hour != mb.send_limit_hour:
         mb.send_limit_hour = data.send_limit_hour
         send_limit_changed = True
+
+    # ── Reenvío ──────────────────────────────────────────────────────────
+    forward_changed = False
+    if data.forward_to is not None or data.forward_keep_copy is not None:
+        new_forward_to   = data.forward_to   if data.forward_to   is not None else (mb.forward_to or "")
+        new_keep_copy    = data.forward_keep_copy if data.forward_keep_copy is not None else getattr(mb, "forward_keep_copy", True)
+        mb.forward_to        = new_forward_to or None
+        mb.forward_keep_copy = new_keep_copy
+        forward_changed = True
+        try:
+            from scripts.mail_manager import MailManager
+            mgr2 = MailManager()
+            if new_forward_to and new_forward_to.strip():
+                destinations = [e.strip() for e in new_forward_to.split(",") if e.strip()]
+                mgr2.set_forward(md.domain_name, mb.username, destinations, new_keep_copy)
+            else:
+                mgr2.remove_forward(md.domain_name, mb.username)
+        except Exception as e:
+            logger.warning(f"Error configurando forward en Postfix: {e}")
+
+    # ── Auto-respuesta ────────────────────────────────────────────────────
+    if data.autoreply_enabled is not None:
+        mb.autoreply_enabled = data.autoreply_enabled
+        if data.autoreply_subject is not None:
+            mb.autoreply_subject = data.autoreply_subject
+        if data.autoreply_body is not None:
+            mb.autoreply_body = data.autoreply_body
+        try:
+            from scripts.mail_manager import MailManager
+            mgr3 = MailManager()
+            if data.autoreply_enabled:
+                mgr3.set_autoreply(
+                    panel_username, md.domain_name, mb.username,
+                    mb.autoreply_subject or f"Re: (Respuesta automática)",
+                    mb.autoreply_body   or "Estoy fuera de la oficina.",
+                )
+            else:
+                mgr3.remove_autoreply(panel_username, md.domain_name, mb.username)
+        except Exception as e:
+            logger.warning(f"Error configurando autoreply Sieve: {e}")
 
     db.commit()
     db.refresh(mb)

@@ -418,6 +418,92 @@ class MailManager(SystemManager):
         return {"success": True}
 
     # ─────────────────────────────────────────────────────────────────────
+    # Reenvío de buzón (forward)
+    # ─────────────────────────────────────────────────────────────────────
+
+    def set_forward(self, domain_name: str, mailbox_username: str,
+                    forward_to: list, keep_copy: bool = True):
+        """
+        Configura reenvío para un buzón.
+        - forward_to: lista de emails destino
+        - keep_copy: si True, se entrega también en el buzón local
+        Usa virtual_alias de Postfix.
+        """
+        email = f"{mailbox_username}@{domain_name}"
+        if not forward_to:
+            # Sin destinos → eliminar alias de reenvío
+            self._map_remove("virtual_alias", email)
+            self._reload_postfix()
+            return {"success": True}
+
+        destinations = [d.strip() for d in forward_to if d.strip()]
+        if keep_copy:
+            # Incluir el buzón local en la lista de destinos
+            destinations = [email] + [d for d in destinations if d != email]
+
+        self._map_set("virtual_alias", email, ", ".join(destinations))
+        self._reload_postfix()
+        return {"success": True}
+
+    def remove_forward(self, domain_name: str, mailbox_username: str):
+        """Elimina el reenvío de un buzón"""
+        email = f"{mailbox_username}@{domain_name}"
+        self._map_remove("virtual_alias", email)
+        self._reload_postfix()
+        return {"success": True}
+
+    # ─────────────────────────────────────────────────────────────────────
+    # Auto-respuesta (Dovecot Sieve)
+    # ─────────────────────────────────────────────────────────────────────
+
+    def _sieve_path(self, panel_username: str, domain_name: str, mailbox_username: str) -> str:
+        maildir = self.maildir_path(panel_username, domain_name, mailbox_username)
+        return os.path.join(maildir, ".dovecot.sieve")
+
+    def set_autoreply(self, panel_username: str, domain_name: str,
+                      mailbox_username: str, subject: str, body: str):
+        """
+        Activa auto-respuesta creando un script Sieve en el Maildir del buzón.
+        Usa la extensión 'vacation' de Sieve (estándar Dovecot).
+        """
+        email = f"{mailbox_username}@{domain_name}"
+        sieve_path = self._sieve_path(panel_username, domain_name, mailbox_username)
+
+        # Escapar comillas en subject y body para el script Sieve
+        safe_subject = subject.replace('"', '\\"') if subject else f"Re: (Respuesta automática)"
+        safe_body    = body.replace('"', '\\"') if body else "Estoy fuera de la oficina. Te responderé en cuanto pueda."
+
+        sieve_script = f'''require ["vacation"];
+
+vacation
+  :days 1
+  :subject "{safe_subject}"
+  :from "{email}"
+  "{safe_body}";
+'''
+        try:
+            with open(sieve_path, "w") as f:
+                f.write(sieve_script)
+            os.chown(sieve_path, 5000, 5000)  # vmail:vmail
+            # Compilar el script Sieve
+            self.execute_command(["sievec", sieve_path], check=False)
+            logger.info(f"Auto-respuesta activada para {email}")
+        except Exception as e:
+            logger.error(f"Error creando script Sieve para {email}: {e}")
+            raise
+        return {"success": True}
+
+    def remove_autoreply(self, panel_username: str, domain_name: str, mailbox_username: str):
+        """Desactiva la auto-respuesta eliminando el script Sieve"""
+        sieve_path = self._sieve_path(panel_username, domain_name, mailbox_username)
+        sieve_compiled = sieve_path + "c"
+        for path in (sieve_path, sieve_compiled):
+            if os.path.exists(path):
+                os.remove(path)
+        logger.info(f"Auto-respuesta eliminada para {mailbox_username}@{domain_name}")
+        return {"success": True}
+
+    # ─────────────────────────────────────────────────────────────────────
     # IP de salida SMTP por dominio (sender_dependent_default_transport_maps)
     # ─────────────────────────────────────────────────────────────────────
 

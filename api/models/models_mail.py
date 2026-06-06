@@ -108,6 +108,13 @@ class Mailbox(Base):
     # Rate-limit de envío de ESTE buzón (Rspamd): correos/hora. 0 = sin límite.
     send_limit_hour    = Column(Integer, default=200)
     is_active          = Column(Boolean, default=True)
+    # ── Reenvío ───────────────────────────────────────────────────────────
+    forward_to         = Column(Text, nullable=True)        # emails separados por coma
+    forward_keep_copy  = Column(Boolean, default=True)      # guardar copia local
+    # ── Auto-respuesta ────────────────────────────────────────────────────
+    autoreply_enabled  = Column(Boolean, default=False)
+    autoreply_subject  = Column(String(255), nullable=True)
+    autoreply_body     = Column(Text, nullable=True)
     created_at         = Column(DateTime, default=datetime.utcnow)
     updated_at         = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 

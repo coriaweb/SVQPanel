@@ -275,6 +275,12 @@
                     <template v-else><i class="bi bi-envelope-open"></i> Webmail</template>
                   </button>
                   <button class="mbx__btn" @click="openChangePassword(mb)" title="Cambiar contraseña"><i class="bi bi-key"></i></button>
+                  <button class="mbx__btn" :class="{ 'mbx__btn--active': mb.forward_to }" @click="openForwardModal(mb)" title="Reenvío de correo">
+                    <i class="bi bi-forward"></i>
+                  </button>
+                  <button class="mbx__btn" :class="{ 'mbx__btn--active': mb.autoreply_enabled }" @click="openAutoreplyModal(mb)" title="Auto-respuesta">
+                    <i class="bi bi-reply-all"></i>
+                  </button>
                   <button class="mbx__btn" @click="toggleMailbox(mb)" :title="mb.is_active ? 'Suspender' : 'Activar'">
                     <i :class="mb.is_active ? 'bi bi-pause-fill' : 'bi bi-play-fill'"></i>
                   </button>
@@ -1125,6 +1131,85 @@
       </div>
     </div>
 
+    <!-- ══════════ Modal: Reenvío ══════════ -->
+    <div v-if="showForwardModal" class="modal d-block" tabindex="-1"
+         style="background:rgba(0,0,0,.5)" @click.self="showForwardModal = false">
+      <div class="modal-dialog">
+        <div class="modal-content">
+          <div class="modal-header">
+            <h5 class="modal-title"><i class="bi bi-forward me-2"></i>Reenvío — {{ forwardTarget?.full_email }}</h5>
+            <button class="btn-close" @click="showForwardModal = false"></button>
+          </div>
+          <div class="modal-body" style="display:flex;flex-direction:column;gap:1rem">
+            <p class="text-muted small mb-0">Reenvía los correos recibidos a una o más direcciones externas.</p>
+            <div>
+              <label class="form-label fw-semibold">Reenviar a <span class="text-muted fw-normal">(una por línea)</span></label>
+              <textarea v-model="forwardForm.forward_to_text" class="form-control form-control-sm font-monospace"
+                        rows="3" placeholder="otro@ejemplo.com&#10;segundo@ejemplo.com"></textarea>
+            </div>
+            <div class="form-check form-switch">
+              <input class="form-check-input" type="checkbox" id="fwd-keep-copy"
+                     v-model="forwardForm.forward_keep_copy">
+              <label class="form-check-label" for="fwd-keep-copy">
+                Guardar copia en este buzón
+                <span class="text-muted small d-block">Si lo desmarcas, el correo se reenvía y no se almacena aquí.</span>
+              </label>
+            </div>
+          </div>
+          <div class="modal-footer">
+            <button class="btn btn-secondary btn-sm" @click="showForwardModal = false">Cancelar</button>
+            <button class="btn btn-danger btn-sm" v-if="forwardTarget?.forward_to" @click="clearForward">
+              <i class="bi bi-x-circle me-1"></i>Desactivar reenvío
+            </button>
+            <button class="btn btn-primary btn-sm" @click="saveForward" :disabled="saving">
+              <span v-if="saving" class="spinner-border spinner-border-sm me-1"></span>
+              <i v-else class="bi bi-save me-1"></i>Guardar
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ══════════ Modal: Auto-respuesta ══════════ -->
+    <div v-if="showAutoreplyModal" class="modal d-block" tabindex="-1"
+         style="background:rgba(0,0,0,.5)" @click.self="showAutoreplyModal = false">
+      <div class="modal-dialog">
+        <div class="modal-content">
+          <div class="modal-header">
+            <h5 class="modal-title"><i class="bi bi-reply-all me-2"></i>Auto-respuesta — {{ autoreplyTarget?.full_email }}</h5>
+            <button class="btn-close" @click="showAutoreplyModal = false"></button>
+          </div>
+          <div class="modal-body" style="display:flex;flex-direction:column;gap:1rem">
+            <p class="text-muted small mb-0">Responde automáticamente a los correos recibidos (útil para vacaciones o fuera de oficina).</p>
+            <div class="form-check form-switch">
+              <input class="form-check-input" type="checkbox" id="ar-enabled"
+                     v-model="autoreplyForm.autoreply_enabled">
+              <label class="form-check-label fw-semibold" for="ar-enabled">
+                Auto-respuesta activa
+              </label>
+            </div>
+            <div>
+              <label class="form-label fw-semibold">Asunto</label>
+              <input v-model="autoreplyForm.autoreply_subject" type="text" class="form-control form-control-sm"
+                     placeholder="Ej: Fuera de la oficina hasta el 10 de junio">
+            </div>
+            <div>
+              <label class="form-label fw-semibold">Mensaje</label>
+              <textarea v-model="autoreplyForm.autoreply_body" class="form-control form-control-sm"
+                        rows="4" placeholder="Ej: Estoy fuera hasta el 10 de junio. Te responderé en cuanto vuelva."></textarea>
+            </div>
+          </div>
+          <div class="modal-footer">
+            <button class="btn btn-secondary btn-sm" @click="showAutoreplyModal = false">Cancelar</button>
+            <button class="btn btn-primary btn-sm" @click="saveAutoreply" :disabled="saving">
+              <span v-if="saving" class="spinner-border spinner-border-sm me-1"></span>
+              <i v-else class="bi bi-save me-1"></i>Guardar
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+
     <!-- ══════════ Modal: Nuevo alias ══════════ -->
     <div v-if="showNewAlias" class="modal d-block" tabindex="-1"
          style="background:rgba(0,0,0,.5)">
@@ -1253,6 +1338,8 @@ export default {
     const showNewMailbox   = ref(false)
     const showPasswordModal= ref(false)
     const showNewAlias     = ref(false)
+    const showForwardModal  = ref(false)
+    const showAutoreplyModal = ref(false)
     const deleteTarget     = ref(null)
     const saving           = ref(false)
     const showPwd          = ref(false)
@@ -1261,8 +1348,12 @@ export default {
     const newDomainForm  = ref({ domain_name: '', catch_all: '', max_mailboxes: 0 })
     const newMailboxForm = ref({ username: '', password: '', quota_mb: 1024, send_limit_hour: 200 })
     const newAliasForm   = ref({ source: '', destination: '' })
-    const passwordTarget = ref(null)
-    const newPassword    = ref('')
+    const passwordTarget  = ref(null)
+    const newPassword     = ref('')
+    const forwardTarget   = ref(null)
+    const forwardForm     = ref({ forward_to_text: '', forward_keep_copy: true })
+    const autoreplyTarget = ref(null)
+    const autoreplyForm   = ref({ autoreply_enabled: false, autoreply_subject: '', autoreply_body: '' })
 
     // ─────────────────────────────────────────────────────────────────
     // Carga de datos
@@ -1720,6 +1811,93 @@ export default {
     }
 
     // ─────────────────────────────────────────────────────────────────
+    // Reenvío
+    // ─────────────────────────────────────────────────────────────────
+
+    const openForwardModal = (mb) => {
+      forwardTarget.value = mb
+      forwardForm.value = {
+        forward_to_text: (mb.forward_to || '').split(',').map(e => e.trim()).filter(Boolean).join('\n'),
+        forward_keep_copy: mb.forward_keep_copy !== false,
+      }
+      showForwardModal.value = true
+    }
+
+    const saveForward = async () => {
+      saving.value = true
+      try {
+        const emails = forwardForm.value.forward_to_text
+          .split('\n').map(e => e.trim()).filter(Boolean)
+        await api.updateMailbox(selectedDomain.value.id, forwardTarget.value.id, {
+          forward_to: emails.join(','),
+          forward_keep_copy: forwardForm.value.forward_keep_copy,
+        })
+        forwardTarget.value.forward_to = emails.join(',')
+        forwardTarget.value.forward_keep_copy = forwardForm.value.forward_keep_copy
+        showForwardModal.value = false
+        store.showNotification('Reenvío configurado', 'success')
+      } catch (e) {
+        store.showNotification('Error: ' + e.message, 'danger')
+      } finally {
+        saving.value = false
+      }
+    }
+
+    const clearForward = async () => {
+      saving.value = true
+      try {
+        await api.updateMailbox(selectedDomain.value.id, forwardTarget.value.id, {
+          forward_to: '',
+          forward_keep_copy: true,
+        })
+        forwardTarget.value.forward_to = null
+        showForwardModal.value = false
+        store.showNotification('Reenvío desactivado', 'success')
+      } catch (e) {
+        store.showNotification('Error: ' + e.message, 'danger')
+      } finally {
+        saving.value = false
+      }
+    }
+
+    // ─────────────────────────────────────────────────────────────────
+    // Auto-respuesta
+    // ─────────────────────────────────────────────────────────────────
+
+    const openAutoreplyModal = (mb) => {
+      autoreplyTarget.value = mb
+      autoreplyForm.value = {
+        autoreply_enabled: mb.autoreply_enabled || false,
+        autoreply_subject: mb.autoreply_subject || '',
+        autoreply_body:    mb.autoreply_body    || '',
+      }
+      showAutoreplyModal.value = true
+    }
+
+    const saveAutoreply = async () => {
+      saving.value = true
+      try {
+        await api.updateMailbox(selectedDomain.value.id, autoreplyTarget.value.id, {
+          autoreply_enabled: autoreplyForm.value.autoreply_enabled,
+          autoreply_subject: autoreplyForm.value.autoreply_subject,
+          autoreply_body:    autoreplyForm.value.autoreply_body,
+        })
+        autoreplyTarget.value.autoreply_enabled = autoreplyForm.value.autoreply_enabled
+        autoreplyTarget.value.autoreply_subject = autoreplyForm.value.autoreply_subject
+        autoreplyTarget.value.autoreply_body    = autoreplyForm.value.autoreply_body
+        showAutoreplyModal.value = false
+        store.showNotification(
+          autoreplyForm.value.autoreply_enabled ? 'Auto-respuesta activada' : 'Auto-respuesta desactivada',
+          'success'
+        )
+      } catch (e) {
+        store.showNotification('Error: ' + e.message, 'danger')
+      } finally {
+        saving.value = false
+      }
+    }
+
+    // ─────────────────────────────────────────────────────────────────
     // Webmail (Roundcube autologin)
     // ─────────────────────────────────────────────────────────────────
 
@@ -1820,6 +1998,8 @@ export default {
       showNewDomain, showNewMailbox, showPasswordModal, showNewAlias,
       deleteTarget, saving, showPwd,
       newDomainForm, newMailboxForm, newAliasForm, passwordTarget, newPassword,
+      showForwardModal, forwardTarget, forwardForm, openForwardModal, saveForward, clearForward,
+      showAutoreplyModal, autoreplyTarget, autoreplyForm, openAutoreplyModal, saveAutoreply,
       // Roundcube
       roundcubeEnabled, roundcubeUrl, openingWebmail,
       // Webmail por dominio
@@ -1880,4 +2060,5 @@ export default {
 [data-theme="dark"] .mbx__btn--primary { border-color: var(--border-strong); }
 [data-theme="dark"] .mbx__btn--primary:hover { background: var(--surface-2); }
 .mbx__btn--danger:hover { background: var(--danger-bg); color: var(--danger); border-color: var(--danger-border); }
+.mbx__btn--active { background: color-mix(in srgb, var(--accent) 10%, transparent); color: var(--accent); border-color: color-mix(in srgb, var(--accent) 30%, transparent); }
 </style>

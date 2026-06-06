@@ -147,6 +147,13 @@ class MailboxUpdate(BaseModel):
     quota_mb:  Optional[int] = Field(None, ge=0)
     is_active: Optional[bool] = None
     send_limit_hour: Optional[int] = Field(None, ge=0, le=100000)
+    # Reenvío
+    forward_to:        Optional[str]  = None   # emails separados por coma
+    forward_keep_copy: Optional[bool] = None
+    # Auto-respuesta
+    autoreply_enabled: Optional[bool] = None
+    autoreply_subject: Optional[str]  = None
+    autoreply_body:    Optional[str]  = None
 
     @field_validator("password")
     @classmethod
@@ -165,6 +172,11 @@ class MailboxResponse(BaseModel):
     is_active:      bool
     full_email:     str = ""
     disk_usage_mb:  float = 0.0
+    forward_to:        Optional[str]  = None
+    forward_keep_copy: bool = True
+    autoreply_enabled: bool = False
+    autoreply_subject: Optional[str] = None
+    autoreply_body:    Optional[str] = None
     created_at:     Optional[datetime] = None
     updated_at:     Optional[datetime] = None
 
