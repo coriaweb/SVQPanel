@@ -1,127 +1,114 @@
 <template>
-  <div class="container-fluid py-4">
+  <div class="sv-view">
 
     <!-- ── Cabecera ── -->
-    <div class="page-head-row">
+    <div class="sv-page-head">
       <div>
-        <div v-if="selectedDomain" class="d-flex align-items-center gap-2 mb-1">
-          <button class="btn btn-sm btn-outline-secondary" @click="selectedDomain = null">
-            <i class="bi bi-arrow-left me-1"></i>Dominios
+        <div v-if="selectedDomain" class="sv-breadcrumb">
+          <button class="sv-back-btn" @click="selectedDomain = null">
+            <i class="bi bi-arrow-left"></i> Dominios
           </button>
-          <i class="bi bi-chevron-right text-muted small"></i>
-          <span class="fw-semibold">{{ selectedDomain.domain_name }}</span>
-          <span :class="selectedDomain.is_active ? 'badge bg-success' : 'badge bg-secondary'">
+          <i class="bi bi-chevron-right sv-chevron"></i>
+          <span class="sv-domain-name">{{ selectedDomain.domain_name }}</span>
+          <span class="sv-badge" :class="selectedDomain.is_active ? 'sv-badge--on' : 'sv-badge--off'">
             {{ selectedDomain.is_active ? 'Activo' : 'Suspendido' }}
           </span>
         </div>
-        <h2 class="mb-1">
-          <i class="bi bi-envelope me-2"></i>
+        <h2 class="sv-title">
+          <i class="bi bi-envelope"></i>
           {{ selectedDomain ? selectedDomain.domain_name : 'Correo Electrónico' }}
         </h2>
-        <p class="text-muted mb-0">
+        <p class="sv-subtitle">
           {{ selectedDomain
             ? `${selectedDomain.mailbox_count} buzones · ${selectedDomain.alias_count} alias`
             : 'Gestión de dominios de correo, buzones y alias' }}
         </p>
       </div>
-      <div class="d-flex gap-2">
-        <button v-if="!selectedDomain" class="btn btn-outline-secondary btn-sm"
-                @click="loadDomains" :disabled="loading">
-          <span v-if="loading" class="spinner-border spinner-border-sm me-1"></span>
-          <i v-else class="bi bi-arrow-repeat me-1"></i>Actualizar
+      <div class="sv-head-actions">
+        <button v-if="!selectedDomain" class="sv-btn sv-btn--ghost" @click="loadDomains" :disabled="loading">
+          <span v-if="loading" class="spinner-border spinner-border-sm"></span>
+          <i v-else class="bi bi-arrow-repeat"></i> Actualizar
         </button>
-        <button v-if="!selectedDomain && mailEnabled !== false"
-                class="btn btn-primary btn-sm" @click="openNewDomain">
-          <i class="bi bi-plus-lg me-1"></i>Añadir dominio
+        <button v-if="!selectedDomain && mailEnabled !== false" class="sv-btn sv-btn--primary" @click="openNewDomain">
+          <i class="bi bi-plus-lg"></i> Añadir dominio
         </button>
       </div>
     </div>
 
     <!-- ══════════ CORREO NO INSTALADO ══════════ -->
-    <div v-if="mailEnabled === false" class="card border-0 shadow-sm">
-      <div class="card-body text-center py-5">
-        <i class="bi bi-envelope-x display-3 text-muted"></i>
-        <h4 class="mt-3">Servidor de correo no instalado</h4>
-        <p class="text-muted mb-4">
-          Para usar el módulo de correo necesitas reinstalar SVQPanel
-          con la opción de correo activada.
-        </p>
-        <div class="alert alert-info text-start d-inline-block">
-          <strong>Stack necesario:</strong><br>
-          Postfix (SMTP) · Dovecot (IMAP/POP3) · Rspamd (antispam + DKIM) · Redis
-        </div>
+    <div v-if="mailEnabled === false" class="sv-card sv-empty-state">
+      <i class="bi bi-envelope-x sv-empty-icon"></i>
+      <h4>Servidor de correo no instalado</h4>
+      <p>Para usar el módulo de correo necesitas reinstalar SVQPanel con la opción de correo activada.</p>
+      <div class="sv-info-box">
+        <strong>Stack necesario:</strong><br>
+        Postfix (SMTP) · Dovecot (IMAP/POP3) · Rspamd (antispam + DKIM) · Redis
       </div>
     </div>
 
     <!-- ══════════ LISTA DE DOMINIOS ══════════ -->
     <template v-else-if="!selectedDomain">
-
-      <div v-if="loading" class="text-center py-5">
-        <div class="spinner-border text-primary"></div>
+      <div v-if="loading" class="sv-loading">
+        <div class="spinner-border spinner-border-sm"></div>
       </div>
 
-      <div v-else-if="!mailDomains.length" class="card shadow-sm border-0">
-        <div class="card-body text-center py-5 text-muted">
-          <i class="bi bi-envelope display-4"></i>
-          <p class="mt-2 mb-3">No hay dominios de correo configurados</p>
-          <button class="btn btn-primary btn-sm" @click="openNewDomain">
-            <i class="bi bi-plus-lg me-1"></i>Añadir primer dominio
-          </button>
-        </div>
+      <div v-else-if="!mailDomains.length" class="sv-card sv-empty-state">
+        <i class="bi bi-envelope sv-empty-icon"></i>
+        <p>No hay dominios de correo configurados</p>
+        <button class="sv-btn sv-btn--primary" @click="openNewDomain">
+          <i class="bi bi-plus-lg"></i> Añadir primer dominio
+        </button>
       </div>
 
-      <div v-else class="card shadow-sm border-0">
-        <div class="card-header d-flex justify-content-between align-items-center">
-          <h5 class="mb-0"><i class="bi bi-envelope-check me-2"></i>Dominios de correo</h5>
-          <span class="badge bg-secondary">{{ mailDomains.length }}</span>
+      <div v-else class="sv-card">
+        <div class="sv-card-head">
+          <span class="sv-card-title"><i class="bi bi-envelope-check"></i> Dominios de correo</span>
+          <span class="sv-count">{{ mailDomains.length }}</span>
         </div>
-        <div class="card-body p-0">
-          <table class="table table-hover align-middle mb-0">
-            <thead class="table-light">
+        <div class="sv-table-wrap">
+          <table class="sv-table">
+            <thead>
               <tr>
                 <th>Dominio</th>
-                <th class="text-center">Buzones</th>
-                <th class="text-center">Alias</th>
-                <th class="text-center">DKIM</th>
+                <th style="text-align:center">Buzones</th>
+                <th style="text-align:center">Alias</th>
+                <th style="text-align:center">DKIM</th>
                 <th>Catch-all</th>
-                <th class="text-center">Estado</th>
-                <th class="text-end">Acciones</th>
+                <th style="text-align:center">Estado</th>
+                <th style="text-align:right">Acciones</th>
               </tr>
             </thead>
             <tbody>
               <tr v-for="md in mailDomains" :key="md.id">
                 <td>
-                  <div class="fw-semibold">{{ md.domain_name }}</div>
-                  <div v-if="md.max_mailboxes > 0" class="text-muted small">
+                  <div style="font-weight:600">{{ md.domain_name }}</div>
+                  <div v-if="md.max_mailboxes > 0" style="font-size:.8rem;color:var(--text-muted)">
                     Límite: {{ md.mailbox_count }}/{{ md.max_mailboxes }} buzones
                   </div>
                 </td>
-                <td class="text-center">
-                  <span class="badge bg-primary bg-opacity-75">{{ md.mailbox_count }}</span>
+                <td style="text-align:center">
+                  <span class="sv-badge sv-badge--blue">{{ md.mailbox_count }}</span>
                 </td>
-                <td class="text-center">
-                  <span class="badge bg-info bg-opacity-75 text-dark">{{ md.alias_count }}</span>
+                <td style="text-align:center">
+                  <span class="sv-badge sv-badge--teal">{{ md.alias_count }}</span>
                 </td>
-                <td class="text-center">
-                  <i v-if="md.dkim_enabled" class="bi bi-shield-check text-success fs-5"
-                     title="DKIM activo"></i>
-                  <i v-else class="bi bi-shield-x text-muted fs-5" title="DKIM inactivo"></i>
+                <td style="text-align:center">
+                  <i v-if="md.dkim_enabled" class="bi bi-shield-check" style="color:var(--success);font-size:1.1rem" title="DKIM activo"></i>
+                  <i v-else class="bi bi-shield-x" style="color:var(--text-muted);font-size:1.1rem" title="DKIM inactivo"></i>
                 </td>
-                <td class="small text-muted">{{ md.catch_all || '—' }}</td>
-                <td class="text-center">
-                  <span :class="md.is_active ? 'badge bg-success' : 'badge bg-secondary'">
+                <td style="font-size:.85rem;color:var(--text-muted)">{{ md.catch_all || '—' }}</td>
+                <td style="text-align:center">
+                  <span class="sv-badge" :class="md.is_active ? 'sv-badge--on' : 'sv-badge--off'">
                     {{ md.is_active ? 'Activo' : 'Suspendido' }}
                   </span>
                 </td>
-                <td class="text-end">
-                  <div class="d-flex gap-1 justify-content-end">
-                    <button class="btn btn-sm btn-outline-primary"
-                            @click="openDetail(md)" title="Gestionar">
+                <td style="text-align:right">
+                  <div style="display:flex;gap:6px;justify-content:flex-end">
+                    <button class="sv-icon-btn" @click="openDetail(md)" title="Gestionar">
                       <i class="bi bi-gear"></i>
                     </button>
-                    <button v-if="md.can_edit" class="btn btn-sm btn-outline-danger"
-                            @click="confirmDelete('domain', md,
-                              `¿Eliminar el dominio de correo '${md.domain_name}'? Se borrarán todos los buzones y datos.`)"
+                    <button v-if="md.can_edit" class="sv-icon-btn sv-icon-btn--danger"
+                            @click="confirmDelete('domain', md, `¿Eliminar el dominio de correo '${md.domain_name}'? Se borrarán todos los buzones y datos.`)"
                             title="Eliminar">
                       <i class="bi bi-trash"></i>
                     </button>
@@ -137,120 +124,65 @@
     <!-- ══════════ DETALLE DE DOMINIO ══════════ -->
     <template v-else>
 
-      <!-- Info rápida del dominio -->
-      <div class="row g-3 mb-4">
-        <div class="col-md-3">
-          <div class="card shadow-sm border-0 h-100">
-            <div class="card-body text-center py-3">
-              <div class="text-muted small mb-1">BUZONES</div>
-              <div class="fs-3 fw-bold text-primary">{{ mailboxes.length }}</div>
-              <div v-if="selectedDomain.max_mailboxes > 0" class="text-muted small">
-                de {{ selectedDomain.max_mailboxes }} permitidos
-              </div>
-            </div>
-          </div>
+      <!-- Contadores rápidos -->
+      <div class="sv-counters">
+        <div class="sv-counter">
+          <span class="sv-counter-val" style="color:var(--accent)">{{ mailboxes.length }}</span>
+          <span class="sv-counter-lbl">Buzones
+            <span v-if="selectedDomain.max_mailboxes > 0" style="color:var(--text-muted)"> / {{ selectedDomain.max_mailboxes }}</span>
+          </span>
         </div>
-        <div class="col-md-3">
-          <div class="card shadow-sm border-0 h-100">
-            <div class="card-body text-center py-3">
-              <div class="text-muted small mb-1">ALIAS</div>
-              <div class="fs-3 fw-bold text-info">{{ aliases.length }}</div>
-            </div>
-          </div>
+        <div class="sv-counter">
+          <span class="sv-counter-val" style="color:var(--info)">{{ aliases.length }}</span>
+          <span class="sv-counter-lbl">Alias</span>
         </div>
-        <div class="col-md-3">
-          <div class="card shadow-sm border-0 h-100">
-            <div class="card-body text-center py-3">
-              <div class="text-muted small mb-1">DKIM</div>
-              <div class="fs-5 fw-bold" :class="selectedDomain.dkim_enabled ? 'text-success' : 'text-muted'">
-                <i :class="selectedDomain.dkim_enabled ? 'bi bi-shield-check' : 'bi bi-shield-x'"></i>
-                {{ selectedDomain.dkim_enabled ? 'Activo' : 'Inactivo' }}
-              </div>
-            </div>
-          </div>
+        <div class="sv-counter">
+          <span class="sv-counter-val" :style="selectedDomain.dkim_enabled ? 'color:var(--success)' : 'color:var(--text-muted)'">
+            <i :class="selectedDomain.dkim_enabled ? 'bi bi-shield-check' : 'bi bi-shield-x'"></i>
+          </span>
+          <span class="sv-counter-lbl">DKIM</span>
         </div>
-        <div class="col-md-3">
-          <div class="card shadow-sm border-0 h-100">
-            <div class="card-body text-center py-3">
-              <div class="text-muted small mb-1">CATCH-ALL</div>
-              <div class="small fw-semibold text-truncate" :title="selectedDomain.catch_all">
-                {{ selectedDomain.catch_all || '—' }}
-              </div>
-            </div>
-          </div>
+        <div class="sv-counter">
+          <span class="sv-counter-val" style="font-size:1rem;font-weight:500;color:var(--text-secondary)">
+            {{ selectedDomain.catch_all || '—' }}
+          </span>
+          <span class="sv-counter-lbl">Catch-all</span>
         </div>
       </div>
 
       <!-- Tabs -->
-      <div class="card shadow-sm border-0">
-        <div class="card-header p-0">
-          <ul class="nav nav-tabs border-0 px-3 pt-2">
-            <li class="nav-item">
-              <button class="nav-link" :class="{ active: activeTab === 'mailboxes' }"
-                      @click="switchTab('mailboxes')">
-                <i class="bi bi-person-lines-fill me-1"></i>Buzones
-                <span class="badge bg-primary ms-1">{{ mailboxes.length }}</span>
-              </button>
-            </li>
-            <li class="nav-item">
-              <button class="nav-link" :class="{ active: activeTab === 'aliases' }"
-                      @click="switchTab('aliases')">
-                <i class="bi bi-arrow-right-circle me-1"></i>Alias
-                <span class="badge bg-info ms-1">{{ aliases.length }}</span>
-              </button>
-            </li>
-            <li class="nav-item">
-              <button class="nav-link" :class="{ active: activeTab === 'dkim' }"
-                      @click="switchTab('dkim')">
-                <i class="bi bi-shield-lock me-1"></i>DKIM
-              </button>
-            </li>
-            <li class="nav-item">
-              <button class="nav-link" :class="{ active: activeTab === 'webmail' }"
-                      @click="switchTab('webmail')">
-                <i class="bi bi-envelope-at me-1"></i>Webmail
-              </button>
-            </li>
-            <li class="nav-item">
-              <button class="nav-link" :class="{ active: activeTab === 'relay' }"
-                      @click="switchTab('relay')">
-                <i class="bi bi-arrow-up-right-circle me-1"></i>Relay SMTP
-              </button>
-            </li>
-            <li class="nav-item">
-              <button class="nav-link" :class="{ active: activeTab === 'logs' }"
-                      @click="switchTab('logs')">
-                <i class="bi bi-activity me-1"></i>Monitoreo
-              </button>
-            </li>
-            <li class="nav-item">
-              <button class="nav-link" :class="{ active: activeTab === 'settings' }"
-                      @click="switchTab('settings')">
-                <i class="bi bi-sliders me-1"></i>Ajustes
-              </button>
-            </li>
-          </ul>
+      <div class="sv-card">
+        <div class="sv-tabs">
+          <button v-for="t in [
+            { key:'mailboxes', icon:'person-lines-fill', label:'Buzones', count: mailboxes.length },
+            { key:'aliases',   icon:'arrow-right-circle', label:'Alias', count: aliases.length },
+            { key:'dkim',      icon:'shield-lock', label:'DKIM' },
+            { key:'webmail',   icon:'envelope-at', label:'Webmail' },
+            { key:'relay',     icon:'arrow-up-right-circle', label:'Relay SMTP' },
+            { key:'logs',      icon:'activity', label:'Monitoreo' },
+            { key:'settings',  icon:'sliders', label:'Ajustes' },
+          ]" :key="t.key" class="sv-tab" :class="{ 'sv-tab--active': activeTab === t.key }"
+             @click="switchTab(t.key)">
+            <i :class="'bi bi-' + t.icon"></i>
+            {{ t.label }}
+            <span v-if="t.count !== undefined" class="sv-tab-count">{{ t.count }}</span>
+          </button>
         </div>
-        <div class="card-body">
+
+        <div class="sv-tab-body">
 
           <!-- ── TAB: Buzones ── -->
           <div v-if="activeTab === 'mailboxes'">
-            <div class="d-flex justify-content-between align-items-center mb-3">
-              <h6 class="mb-0">Buzones de correo</h6>
-              <button class="btn btn-primary btn-sm" @click="showNewMailbox = true">
-                <i class="bi bi-plus-lg me-1"></i>Nuevo buzón
+            <div class="sv-tab-head">
+              <span class="sv-tab-section-title">Buzones de correo</span>
+              <button class="sv-btn sv-btn--primary sv-btn--sm" @click="showNewMailbox = true">
+                <i class="bi bi-plus-lg"></i> Nuevo buzón
               </button>
             </div>
-
-            <div v-if="loadingMailboxes" class="text-center py-4">
-              <div class="spinner-border spinner-border-sm text-primary"></div>
+            <div v-if="loadingMailboxes" class="sv-loading"><div class="spinner-border spinner-border-sm"></div></div>
+            <div v-else-if="!mailboxes.length" class="sv-empty-inline">
+              <i class="bi bi-inbox"></i><span>No hay buzones. Crea el primero.</span>
             </div>
-
-            <div v-else-if="!mailboxes.length" class="text-center py-4 text-muted">
-              <i class="bi bi-inbox display-6"></i>
-              <p class="mt-2 mb-0">No hay buzones. Crea el primero.</p>
-            </div>
-
             <div v-else class="mbx-grid">
               <article v-for="mb in mailboxes" :key="mb.id" class="mbx" :class="{ 'mbx--off': !mb.is_active }">
                 <div class="mbx__top">
@@ -259,8 +191,8 @@
                     <span class="mbx__email" :title="mb.full_email">{{ mb.full_email }}</span>
                     <span class="mbx__quota">
                       <i class="bi bi-hdd"></i>
-                      {{ mb.quota_mb === 0 ? 'Sin límite de cuota' : 'Cuota ' + mb.quota_mb + ' MB' }}
-                      <span class="ms-2"><i class="bi bi-send"></i>
+                      {{ mb.quota_mb === 0 ? 'Sin límite' : mb.quota_mb + ' MB' }}
+                      <span style="margin-left:8px"><i class="bi bi-send"></i>
                         {{ mb.send_limit_hour === 0 ? 'envío libre' : mb.send_limit_hour + '/h' }}</span>
                     </span>
                   </div>
@@ -270,12 +202,12 @@
                 </div>
                 <div class="mbx__actions">
                   <button v-if="roundcubeEnabled" class="mbx__btn mbx__btn--primary"
-                          @click="openWebmail(mb)" :disabled="openingWebmail === mb.id" title="Abrir Webmail">
+                          @click="openWebmail(mb)" :disabled="openingWebmail === mb.id" title="Webmail">
                     <span v-if="openingWebmail === mb.id" class="spinner-border spinner-border-sm"></span>
                     <template v-else><i class="bi bi-envelope-open"></i> Webmail</template>
                   </button>
                   <button class="mbx__btn" @click="openChangePassword(mb)" title="Cambiar contraseña"><i class="bi bi-key"></i></button>
-                  <button class="mbx__btn" :class="{ 'mbx__btn--active': mb.forward_to }" @click="openForwardModal(mb)" title="Reenvío de correo">
+                  <button class="mbx__btn" :class="{ 'mbx__btn--active': mb.forward_to }" @click="openForwardModal(mb)" title="Reenvío">
                     <i class="bi bi-forward"></i>
                   </button>
                   <button class="mbx__btn" :class="{ 'mbx__btn--active': mb.autoreply_enabled }" @click="openAutoreplyModal(mb)" title="Auto-respuesta">
@@ -294,328 +226,207 @@
 
           <!-- ── TAB: Alias ── -->
           <div v-if="activeTab === 'aliases'">
-            <div class="d-flex justify-content-between align-items-center mb-3">
-              <h6 class="mb-0">Alias y redirecciones</h6>
-              <button class="btn btn-primary btn-sm" @click="showNewAlias = true">
-                <i class="bi bi-plus-lg me-1"></i>Nuevo alias
+            <div class="sv-tab-head">
+              <span class="sv-tab-section-title">Alias y redirecciones</span>
+              <button class="sv-btn sv-btn--primary sv-btn--sm" @click="showNewAlias = true">
+                <i class="bi bi-plus-lg"></i> Nuevo alias
               </button>
             </div>
-
-            <div v-if="loadingAliases" class="text-center py-4">
-              <div class="spinner-border spinner-border-sm text-primary"></div>
+            <div v-if="loadingAliases" class="sv-loading"><div class="spinner-border spinner-border-sm"></div></div>
+            <div v-else-if="!aliases.length" class="sv-empty-inline">
+              <i class="bi bi-arrow-right-circle"></i><span>No hay alias configurados.</span>
             </div>
-
-            <div v-else-if="!aliases.length" class="text-center py-4 text-muted">
-              <i class="bi bi-arrow-right-circle display-6"></i>
-              <p class="mt-2 mb-0">No hay alias configurados.</p>
+            <div v-else class="sv-table-wrap">
+              <table class="sv-table">
+                <thead>
+                  <tr>
+                    <th>Origen</th>
+                    <th></th>
+                    <th>Destino</th>
+                    <th style="text-align:right">Acciones</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr v-for="al in aliases" :key="al.id">
+                    <td>
+                      <code>{{ al.full_source }}</code>
+                      <span v-if="al.source === '@'" class="sv-badge sv-badge--warn" style="margin-left:6px">catch-all</span>
+                    </td>
+                    <td style="color:var(--text-muted);text-align:center">→</td>
+                    <td>{{ al.destination }}</td>
+                    <td style="text-align:right">
+                      <button class="sv-icon-btn sv-icon-btn--danger"
+                              @click="confirmDelete('alias', al, `¿Eliminar el alias '${al.full_source}'?`)">
+                        <i class="bi bi-trash"></i>
+                      </button>
+                    </td>
+                  </tr>
+                </tbody>
+              </table>
             </div>
-
-            <table v-else class="table align-middle mb-0">
-              <thead class="table-light">
-                <tr>
-                  <th>Origen</th>
-                  <th></th>
-                  <th>Destino</th>
-                  <th class="text-end">Acciones</th>
-                </tr>
-              </thead>
-              <tbody>
-                <tr v-for="al in aliases" :key="al.id">
-                  <td>
-                    <code>{{ al.full_source }}</code>
-                    <span v-if="al.source === '@'" class="badge bg-warning text-dark ms-2">
-                      catch-all
-                    </span>
-                  </td>
-                  <td class="text-muted text-center">→</td>
-                  <td>{{ al.destination }}</td>
-                  <td class="text-end">
-                    <button class="btn btn-sm btn-outline-danger"
-                            @click="confirmDelete('alias', al,
-                              `¿Eliminar el alias '${al.full_source}'?`)">
-                      <i class="bi bi-trash"></i>
-                    </button>
-                  </td>
-                </tr>
-              </tbody>
-            </table>
           </div>
 
           <!-- ── TAB: DKIM ── -->
           <div v-if="activeTab === 'dkim'">
-            <div v-if="loadingDkim" class="text-center py-4">
-              <div class="spinner-border spinner-border-sm text-primary"></div>
-            </div>
-
+            <div v-if="loadingDkim" class="sv-loading"><div class="spinner-border spinner-border-sm"></div></div>
             <template v-else>
-
-              <!-- DKIM no configurado -->
-              <div v-if="!dkimInfo || !dkimInfo.enabled" class="text-center py-4">
-                <i class="bi bi-shield-x display-4 text-muted"></i>
-                <h5 class="mt-3">DKIM no configurado</h5>
-                <p class="text-muted mb-4">
-                  DKIM firma criptográficamente tu correo saliente para evitar que se
-                  marque como spam y mejorar la entregabilidad.
+              <div v-if="!dkimInfo || !dkimInfo.enabled" class="sv-empty-inline" style="flex-direction:column;gap:12px;padding:2rem">
+                <i class="bi bi-shield-x" style="font-size:2.5rem;color:var(--text-muted)"></i>
+                <strong>DKIM no configurado</strong>
+                <p style="color:var(--text-muted);font-size:.875rem;margin:0;max-width:400px;text-align:center">
+                  DKIM firma criptográficamente el correo saliente para evitar que se marque como spam.
                 </p>
-                <button class="btn btn-primary" @click="generateDkim" :disabled="generatingDkim">
-                  <span v-if="generatingDkim" class="spinner-border spinner-border-sm me-2"></span>
-                  <i v-else class="bi bi-shield-plus me-2"></i>
-                  Generar clave DKIM
+                <button class="sv-btn sv-btn--primary" @click="generateDkim" :disabled="generatingDkim">
+                  <span v-if="generatingDkim" class="spinner-border spinner-border-sm"></span>
+                  <i v-else class="bi bi-shield-plus"></i> Generar clave DKIM
                 </button>
               </div>
-
-              <!-- DKIM configurado -->
-              <div v-else>
-                <div class="d-flex justify-content-between align-items-center mb-3">
-                  <div class="d-flex align-items-center gap-2">
-                    <i class="bi bi-shield-check text-success fs-4"></i>
+              <div v-else style="display:flex;flex-direction:column;gap:1rem">
+                <div style="display:flex;justify-content:space-between;align-items:center">
+                  <div style="display:flex;align-items:center;gap:.75rem">
+                    <i class="bi bi-shield-check" style="color:var(--success);font-size:1.5rem"></i>
                     <div>
-                      <div class="fw-semibold">DKIM activo</div>
-                      <div class="text-muted small">Selector: <code>{{ dkimInfo.selector }}</code></div>
+                      <div style="font-weight:600">DKIM activo</div>
+                      <div style="font-size:.8rem;color:var(--text-muted)">Selector: <code>{{ dkimInfo.selector }}</code></div>
                     </div>
                   </div>
-                  <div class="d-flex gap-2">
-                    <button class="btn btn-sm btn-outline-warning"
-                            @click="rotateDkim" :disabled="generatingDkim"
-                            title="Generar nueva clave (rota el par actual)">
+                  <div style="display:flex;gap:8px">
+                    <button class="sv-btn sv-btn--ghost sv-btn--sm" @click="rotateDkim" :disabled="generatingDkim">
                       <span v-if="generatingDkim" class="spinner-border spinner-border-sm"></span>
-                      <i v-else class="bi bi-arrow-repeat"></i>
-                      Rotar clave
+                      <i v-else class="bi bi-arrow-repeat"></i> Rotar clave
                     </button>
-                    <button class="btn btn-sm btn-outline-danger"
-                            @click="confirmDelete('dkim', null,
-                              '¿Eliminar la clave DKIM? El correo dejará de estar firmado.')">
-                      <i class="bi bi-shield-x me-1"></i>Eliminar DKIM
+                    <button class="sv-btn sv-btn--danger sv-btn--sm"
+                            @click="confirmDelete('dkim', null, '¿Eliminar la clave DKIM? El correo dejará de estar firmado.')">
+                      <i class="bi bi-shield-x"></i> Eliminar DKIM
                     </button>
                   </div>
                 </div>
-
-                <!-- Alerta si el DNS se añadió automáticamente -->
-                <div v-if="dkimJustGenerated && dkimInfo.dns_auto_added"
-                     class="alert alert-success d-flex align-items-center mb-3">
-                  <i class="bi bi-check-circle-fill me-2"></i>
-                  Registro TXT añadido automáticamente a la zona DNS de SVQPanel.
+                <div v-if="dkimJustGenerated && dkimInfo.dns_auto_added" class="sv-alert sv-alert--success">
+                  <i class="bi bi-check-circle-fill"></i> Registro TXT añadido automáticamente a la zona DNS.
                 </div>
-
-                <!-- Registro DNS -->
-                <div class="mb-3">
-                  <label class="form-label fw-semibold">
-                    Registro DNS TXT a configurar
-                    <span v-if="!dkimInfo.dns_auto_added"
-                          class="badge bg-warning text-dark ms-1">
-                      Añadir manualmente
-                    </span>
+                <div style="display:flex;flex-direction:column;gap:.5rem">
+                  <label style="font-weight:600;font-size:.875rem">Registro DNS TXT
+                    <span v-if="!dkimInfo.dns_auto_added" class="sv-badge sv-badge--warn" style="margin-left:6px">Añadir manualmente</span>
                   </label>
-
-                  <div class="mb-2">
-                    <div class="input-group">
-                      <span class="input-group-text text-muted small">Nombre</span>
-                      <input type="text" class="form-control form-control-sm font-monospace"
-                             :value="dkimInfo.dns_record_name" readonly>
-                      <button class="btn btn-outline-secondary btn-sm"
-                              @click="copyText(dkimInfo.dns_record_name, 'name')">
-                        <i :class="copied === 'name' ? 'bi bi-check text-success' : 'bi bi-clipboard'"></i>
-                      </button>
-                    </div>
+                  <div class="sv-input-copy">
+                    <span class="sv-input-label">Nombre</span>
+                    <input type="text" class="form-control form-control-sm font-monospace" :value="dkimInfo.dns_record_name" readonly>
+                    <button class="sv-icon-btn" @click="copyText(dkimInfo.dns_record_name, 'name')">
+                      <i :class="copied === 'name' ? 'bi bi-check' : 'bi bi-clipboard'"></i>
+                    </button>
                   </div>
-
-                  <div>
-                    <div class="input-group">
-                      <span class="input-group-text text-muted small">Valor</span>
-                      <textarea class="form-control form-control-sm font-monospace"
-                                :value="dkimInfo.dns_record_value" readonly
-                                rows="3" style="font-size:12px; resize:none;"></textarea>
-                      <button class="btn btn-outline-secondary btn-sm"
-                              @click="copyText(dkimInfo.dns_record_value, 'value')">
-                        <i :class="copied === 'value' ? 'bi bi-check text-success' : 'bi bi-clipboard'"></i>
-                      </button>
-                    </div>
+                  <div class="sv-input-copy">
+                    <span class="sv-input-label">Valor</span>
+                    <textarea class="form-control form-control-sm font-monospace" :value="dkimInfo.dns_record_value" readonly rows="3" style="font-size:12px;resize:none"></textarea>
+                    <button class="sv-icon-btn" @click="copyText(dkimInfo.dns_record_value, 'value')">
+                      <i :class="copied === 'value' ? 'bi bi-check' : 'bi bi-clipboard'"></i>
+                    </button>
                   </div>
                 </div>
-
-                <!-- Recordatorio otros registros -->
-                <div class="alert alert-info small mb-0">
-                  <div class="fw-semibold mb-2">
-                    <i class="bi bi-info-circle me-1"></i>
-                    Registros DNS recomendados para {{ selectedDomain.domain_name }}
-                  </div>
-                  <table class="table table-sm table-borderless mb-0 font-monospace"
-                         style="font-size:12px">
-                    <tr>
-                      <td class="text-nowrap pe-3">MX&nbsp;10</td>
-                      <td>mail.{{ selectedDomain.domain_name }}</td>
-                    </tr>
-                    <tr>
-                      <td class="text-nowrap pe-3">A mail</td>
-                      <td>IP_DEL_SERVIDOR</td>
-                    </tr>
-                    <tr>
-                      <td class="text-nowrap pe-3">TXT&nbsp;@</td>
-                      <td>v=spf1 a mx ip4:IP_DEL_SERVIDOR -all</td>
-                    </tr>
-                    <tr>
-                      <td class="text-nowrap pe-3">TXT _dmarc</td>
-                      <td>v=DMARC1; p=none; rua=mailto:dmarc@{{ selectedDomain.domain_name }}</td>
-                    </tr>
+                <div class="sv-info-box">
+                  <div style="font-weight:600;margin-bottom:.5rem"><i class="bi bi-info-circle"></i> Registros DNS recomendados para {{ selectedDomain.domain_name }}</div>
+                  <table style="font-family:var(--font-mono);font-size:.78rem;border-collapse:collapse;width:100%">
+                    <tr><td style="padding-right:1rem;white-space:nowrap;color:var(--text-muted)">MX 10</td><td>mail.{{ selectedDomain.domain_name }}</td></tr>
+                    <tr><td style="padding-right:1rem;white-space:nowrap;color:var(--text-muted)">A mail</td><td>IP_DEL_SERVIDOR</td></tr>
+                    <tr><td style="padding-right:1rem;white-space:nowrap;color:var(--text-muted)">TXT @</td><td>v=spf1 a mx ip4:IP_DEL_SERVIDOR -all</td></tr>
+                    <tr><td style="padding-right:1rem;white-space:nowrap;color:var(--text-muted)">TXT _dmarc</td><td>v=DMARC1; p=none; rua=mailto:dmarc@{{ selectedDomain.domain_name }}</td></tr>
                   </table>
                 </div>
-
               </div>
             </template>
           </div>
 
           <!-- ── TAB: Webmail ── -->
           <div v-if="activeTab === 'webmail'">
-            <div v-if="loadingWebmail" class="text-center py-4">
-              <div class="spinner-border spinner-border-sm text-primary"></div>
-            </div>
+            <div v-if="loadingWebmail" class="sv-loading"><div class="spinner-border spinner-border-sm"></div></div>
             <template v-else-if="webmail">
-              <div v-if="!webmail.roundcube_installed" class="alert alert-warning">
-                <i class="bi bi-exclamation-triangle me-1"></i>
-                Roundcube no está instalado en el servidor. Instálalo para ofrecer webmail por dominio.
+              <div v-if="!webmail.roundcube_installed" class="sv-alert sv-alert--warn">
+                <i class="bi bi-exclamation-triangle"></i> Roundcube no está instalado en el servidor.
               </div>
               <template v-else>
-                <div class="d-flex justify-content-between align-items-center mb-3">
+                <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:1rem">
                   <div>
-                    <h6 class="mb-1"><i class="bi bi-envelope-at me-1"></i>Webmail propio del dominio</h6>
-                    <p class="text-muted small mb-0">
-                      Tus usuarios acceden a su correo desde
-                      <a :href="webmail.url" target="_blank"><code>{{ webmail.host }}</code></a>
-                      (Roundcube compartido).
+                    <div style="font-weight:600;margin-bottom:.25rem"><i class="bi bi-envelope-at"></i> Webmail propio del dominio</div>
+                    <p style="font-size:.85rem;color:var(--text-muted);margin:0">
+                      Acceso desde <a :href="webmail.url" target="_blank"><code>{{ webmail.host }}</code></a> (Roundcube compartido).
                     </p>
                   </div>
-                  <div class="form-check form-switch">
-                    <input class="form-check-input" type="checkbox" role="switch"
-                           :checked="webmail.enabled" :disabled="webmailSaving"
-                           @change="toggleWebmail($event.target.checked)" style="width:3em;height:1.5em">
+                  <label class="form-switch" style="margin:0">
+                    <input class="form-check-input" type="checkbox" :checked="webmail.enabled" :disabled="webmailSaving"
+                           @change="toggleWebmail($event.target.checked)" style="width:3em;height:1.5em;cursor:pointer">
+                  </label>
+                </div>
+                <div v-if="webmail.enabled" class="sv-info-box" style="display:grid;grid-template-columns:1fr auto auto;gap:1rem;align-items:center">
+                  <div>
+                    <div style="font-size:.75rem;color:var(--text-muted)">URL</div>
+                    <a :href="webmail.url" target="_blank" style="font-weight:600">{{ webmail.url }}</a>
+                  </div>
+                  <div>
+                    <div style="font-size:.75rem;color:var(--text-muted)">HTTPS</div>
+                    <span class="sv-badge" :class="webmail.ssl ? 'sv-badge--on' : 'sv-badge--warn'">
+                      {{ webmail.ssl ? 'Activo' : 'Sin SSL' }}
+                    </span>
+                  </div>
+                  <div>
+                    <div style="font-size:.75rem;color:var(--text-muted)">DNS</div>
+                    <span class="sv-badge" :class="webmail.dns_managed ? 'sv-badge--on' : 'sv-badge--off'">
+                      {{ webmail.dns_managed ? 'Gestionado' : 'Externo' }}
+                    </span>
                   </div>
                 </div>
-
-                <div v-if="webmail.enabled" class="border rounded p-3">
-                  <div class="row g-3">
-                    <div class="col-md-6">
-                      <div class="text-muted small">URL del webmail</div>
-                      <a :href="webmail.url" target="_blank" class="fw-semibold">{{ webmail.url }}</a>
-                    </div>
-                    <div class="col-md-3">
-                      <div class="text-muted small">HTTPS</div>
-                      <span v-if="webmail.ssl" class="badge bg-success"><i class="bi bi-lock-fill me-1"></i>Activo</span>
-                      <span v-else class="badge bg-warning text-dark">Sin SSL</span>
-                    </div>
-                    <div class="col-md-3">
-                      <div class="text-muted small">DNS</div>
-                      <span v-if="webmail.dns_managed" class="badge bg-success">Gestionado</span>
-                      <span v-else class="badge bg-secondary" title="Añade webmail.dominio en tu DNS externo">Externo</span>
-                    </div>
-                  </div>
-
-                  <div v-if="!webmail.ssl" class="mt-3">
-                    <button class="btn btn-sm btn-outline-primary" @click="issueWebmailSsl" :disabled="webmailSslIssuing">
-                      <span v-if="webmailSslIssuing" class="spinner-border spinner-border-sm me-1"></span>
-                      <i v-else class="bi bi-lock me-1"></i>
-                      Activar HTTPS (Let's Encrypt)
-                    </button>
-                    <p class="text-muted small mt-2 mb-0">
-                      Requiere que <code>{{ webmail.host }}</code> ya resuelva hacia este servidor.
-                      <span v-if="!webmail.dns_managed">Como tu DNS es externo, crea primero el registro
-                      <code>webmail</code> apuntando a la IP del servidor.</span>
-                    </p>
-                  </div>
+                <div v-if="webmail.enabled && !webmail.ssl" style="margin-top:.75rem">
+                  <button class="sv-btn sv-btn--ghost sv-btn--sm" @click="issueWebmailSsl" :disabled="webmailSslIssuing">
+                    <span v-if="webmailSslIssuing" class="spinner-border spinner-border-sm"></span>
+                    <i v-else class="bi bi-lock"></i> Activar HTTPS (Let's Encrypt)
+                  </button>
                 </div>
-                <p v-else class="text-muted small">
-                  Actívalo para crear <code>{{ webmail.host }}</code> automáticamente
-                  (registro DNS + servidor web). El correo se gestiona en Roundcube.
+                <p v-if="!webmail.enabled" style="font-size:.85rem;color:var(--text-muted);margin-top:.5rem">
+                  Actívalo para crear <code>{{ webmail.host }}</code> automáticamente.
                 </p>
               </template>
             </template>
           </div>
 
-          <!-- ── TAB: Monitoreo de envío ── -->
+          <!-- ── TAB: Monitoreo ── -->
           <div v-if="activeTab === 'logs'">
-            <div class="d-flex justify-content-between align-items-center mb-3">
+            <div class="sv-tab-head">
               <div>
-                <h6 class="mb-1"><i class="bi bi-activity me-1"></i>Monitoreo de envío</h6>
-                <p class="text-muted small mb-0">
-                  Últimos correos enviados y recibidos en <strong>{{ selectedDomain.domain_name }}</strong>
-                </p>
+                <span class="sv-tab-section-title"><i class="bi bi-activity"></i> Monitoreo de envío</span>
+                <p style="font-size:.82rem;color:var(--text-muted);margin:.25rem 0 0">Últimos correos de <strong>{{ selectedDomain.domain_name }}</strong></p>
               </div>
-              <button class="btn btn-outline-secondary btn-sm" @click="loadMailLogs(selectedDomain.id)"
-                      :disabled="loadingLogs">
-                <span v-if="loadingLogs" class="spinner-border spinner-border-sm me-1"></span>
-                <i v-else class="bi bi-arrow-repeat me-1"></i>Actualizar
+              <button class="sv-btn sv-btn--ghost sv-btn--sm" @click="loadMailLogs(selectedDomain.id)" :disabled="loadingLogs">
+                <span v-if="loadingLogs" class="spinner-border spinner-border-sm"></span>
+                <i v-else class="bi bi-arrow-repeat"></i> Actualizar
               </button>
             </div>
-
-            <div v-if="loadingLogs" class="text-center py-5">
-              <div class="spinner-border text-primary"></div>
-              <p class="text-muted mt-2 small">Leyendo logs del servidor…</p>
+            <div v-if="loadingLogs" class="sv-loading"><div class="spinner-border spinner-border-sm"></div></div>
+            <div v-else-if="mailLogs && !mailLogs.available" class="sv-alert sv-alert--warn">
+              <i class="bi bi-exclamation-triangle"></i> {{ mailLogs.message }}
             </div>
-
-            <div v-else-if="mailLogs && !mailLogs.available" class="alert alert-warning">
-              <i class="bi bi-exclamation-triangle me-1"></i>
-              {{ mailLogs.message }}
-            </div>
-
             <template v-else-if="mailLogs">
-              <!-- Contadores -->
-              <div class="row g-2 mb-3">
-                <div class="col-6 col-md">
-                  <div class="card border-0 text-center py-2" style="background:var(--surface-inset)">
-                    <div class="fs-4 fw-bold text-success">{{ mailLogs.counts.sent }}</div>
-                    <div class="small text-muted">Enviados</div>
-                  </div>
-                </div>
-                <div class="col-6 col-md">
-                  <div class="card border-0 text-center py-2" style="background:var(--surface-inset)">
-                    <div class="fs-4 fw-bold text-primary">{{ mailLogs.counts.received }}</div>
-                    <div class="small text-muted">Recibidos</div>
-                  </div>
-                </div>
-                <div class="col-6 col-md">
-                  <div class="card border-0 text-center py-2" style="background:var(--surface-inset)">
-                    <div class="fs-4 fw-bold text-danger">{{ mailLogs.counts.rejected }}</div>
-                    <div class="small text-muted">Rechazados</div>
-                  </div>
-                </div>
-                <div class="col-6 col-md">
-                  <div class="card border-0 text-center py-2" style="background:var(--surface-inset)">
-                    <div class="fs-4 fw-bold text-warning">{{ mailLogs.counts.bounced }}</div>
-                    <div class="small text-muted">Rebotados</div>
-                  </div>
-                </div>
-                <div class="col-6 col-md">
-                  <div class="card border-0 text-center py-2" style="background:var(--surface-inset)">
-                    <div class="fs-4 fw-bold text-secondary">{{ mailLogs.counts.deferred }}</div>
-                    <div class="small text-muted">Diferidos</div>
-                  </div>
+              <div class="sv-counters" style="margin-bottom:1rem">
+                <div class="sv-counter" v-for="(val, key) in {sent:mailLogs.counts.sent, received:mailLogs.counts.received, rejected:mailLogs.counts.rejected, bounced:mailLogs.counts.bounced, deferred:mailLogs.counts.deferred}" :key="key">
+                  <span class="sv-counter-val" style="font-size:1.5rem">{{ val }}</span>
+                  <span class="sv-counter-lbl">{{ {sent:'Enviados',received:'Recibidos',rejected:'Rechazados',bounced:'Rebotados',deferred:'Diferidos'}[key] }}</span>
                 </div>
               </div>
-
-              <!-- Filtro de tipo -->
-              <div class="d-flex gap-2 mb-3 flex-wrap">
+              <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:1rem;align-items:center">
                 <button v-for="f in logFilters" :key="f.val"
-                        class="btn btn-sm"
-                        :class="logFilter === f.val ? 'btn-primary' : 'btn-outline-secondary'"
-                        @click="logFilter = f.val">
-                  {{ f.label }}
-                </button>
-                <span class="ms-auto text-muted small align-self-center">
-                  {{ filteredLogEvents.length }} eventos · {{ mailLogs.log_lines_read }} líneas leídas
+                        class="sv-btn sv-btn--sm" :class="logFilter === f.val ? 'sv-btn--primary' : 'sv-btn--ghost'"
+                        @click="logFilter = f.val">{{ f.label }}</button>
+                <span style="margin-left:auto;font-size:.8rem;color:var(--text-muted)">
+                  {{ filteredLogEvents.length }} eventos · {{ mailLogs.log_lines_read }} líneas
                 </span>
               </div>
-
-              <!-- Tabla de eventos -->
-              <div v-if="!filteredLogEvents.length" class="text-center py-4 text-muted">
-                <i class="bi bi-inbox display-6"></i>
-                <p class="mt-2 mb-0">Sin eventos para el filtro seleccionado</p>
+              <div v-if="!filteredLogEvents.length" class="sv-empty-inline">
+                <i class="bi bi-inbox"></i><span>Sin eventos para el filtro seleccionado</span>
               </div>
-
-              <div v-else class="table-responsive">
-                <table class="table table-sm table-hover align-middle mb-0" style="font-size:.82rem">
-                  <thead class="table-light">
+              <div v-else class="sv-table-wrap">
+                <table class="sv-table" style="font-size:.82rem">
+                  <thead>
                     <tr>
                       <th style="width:140px">Fecha/hora</th>
-                      <th style="width:90px" class="text-center">Tipo</th>
+                      <th style="width:90px;text-align:center">Tipo</th>
                       <th>De</th>
                       <th>Para</th>
                       <th>Relay / Motivo</th>
@@ -623,339 +434,203 @@
                   </thead>
                   <tbody>
                     <tr v-for="(ev, i) in filteredLogEvents" :key="i">
-                      <td class="text-nowrap font-monospace text-muted" style="font-size:.78rem">
-                        {{ ev.ts }}
-                      </td>
-                      <td class="text-center">
-                        <span :class="logBadge(ev.status)">
-                          {{ logLabel(ev.status) }}
-                        </span>
-                      </td>
-                      <td class="text-truncate font-monospace" style="max-width:160px" :title="ev.from">
-                        {{ ev.from || '—' }}
-                      </td>
-                      <td class="text-truncate font-monospace" style="max-width:160px" :title="ev.to">
-                        {{ ev.to || '—' }}
-                      </td>
-                      <td class="text-truncate text-muted" style="max-width:200px"
-                          :title="ev.reason || ev.relay">
-                        {{ ev.reason || ev.relay || '—' }}
-                      </td>
+                      <td style="white-space:nowrap;font-family:var(--font-mono);color:var(--text-muted);font-size:.78rem">{{ ev.ts }}</td>
+                      <td style="text-align:center"><span :class="logBadge(ev.status)">{{ logLabel(ev.status) }}</span></td>
+                      <td style="max-width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-family:var(--font-mono)" :title="ev.from">{{ ev.from || '—' }}</td>
+                      <td style="max-width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-family:var(--font-mono)" :title="ev.to">{{ ev.to || '—' }}</td>
+                      <td style="max-width:200px;overflow:hidden;text-overflow:ellipsis;color:var(--text-muted)" :title="ev.reason || ev.relay">{{ ev.reason || ev.relay || '—' }}</td>
                     </tr>
                   </tbody>
                 </table>
               </div>
             </template>
-
-            <div v-else class="text-center py-5 text-muted">
-              <i class="bi bi-activity display-4"></i>
-              <p class="mt-2 mb-0">Carga el monitoreo con el botón Actualizar</p>
+            <div v-else class="sv-empty-inline">
+              <i class="bi bi-activity"></i><span>Pulsa Actualizar para cargar el monitoreo</span>
             </div>
           </div>
 
           <!-- ── TAB: Relay SMTP ── -->
           <div v-if="activeTab === 'relay'">
-            <div v-if="loadingRelay" class="text-center py-4">
-              <div class="spinner-border spinner-border-sm text-primary"></div>
-            </div>
+            <div v-if="loadingRelay" class="sv-loading"><div class="spinner-border spinner-border-sm"></div></div>
             <template v-else-if="relay">
-              <div class="d-flex justify-content-between align-items-center mb-2">
+              <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:1rem">
                 <div>
-                  <h6 class="mb-1"><i class="bi bi-arrow-up-right-circle me-1"></i>Relay SMTP propio del dominio</h6>
-                  <p class="text-muted small mb-0">
-                    Envía el correo de <strong>{{ selectedDomain.domain_name }}</strong> a través de un
-                    smarthost (Proxmox Mail Gateway, Brevo, SendGrid…) en vez de directo.
+                  <div style="font-weight:600;margin-bottom:.25rem"><i class="bi bi-arrow-up-right-circle"></i> Relay SMTP del dominio</div>
+                  <p style="font-size:.85rem;color:var(--text-muted);margin:0">
+                    Envía el correo de <strong>{{ selectedDomain.domain_name }}</strong> por un smarthost en vez de directo.
                   </p>
                 </div>
-                <div class="form-check form-switch">
-                  <input class="form-check-input" type="checkbox" role="switch"
-                         v-model="relayForm.enabled" style="width:3em;height:1.5em">
-                </div>
+                <label class="form-switch" style="margin:0">
+                  <input class="form-check-input" type="checkbox" v-model="relayForm.enabled" style="width:3em;height:1.5em;cursor:pointer">
+                </label>
               </div>
-
-              <!-- Info del relay global -->
-              <div class="alert py-2 small" :class="relay.global_relay_active ? 'alert-info' : 'alert-light border'">
-                <i class="bi bi-info-circle me-1"></i>
-                <span v-if="relay.global_relay_active">
-                  Relay <strong>global</strong> activo (<code>{{ relay.global_relay_host }}</code>).
-                  Sin relay propio, este dominio usa el global. Configura uno aquí para overridearlo.
-                </span>
-                <span v-else>
-                  No hay relay global. Sin relay propio, este dominio envía <strong>directo</strong> (puerto 25).
-                </span>
+              <div class="sv-alert" :class="relay.global_relay_active ? 'sv-alert--info' : 'sv-alert--muted'" style="margin-bottom:1rem">
+                <i class="bi bi-info-circle"></i>
+                <span v-if="relay.global_relay_active">Relay <strong>global</strong> activo (<code>{{ relay.global_relay_host }}</code>). Sin relay propio, este dominio lo usa.</span>
+                <span v-else>No hay relay global. Sin relay propio, el correo sale <strong>directo</strong> (puerto 25).</span>
               </div>
-
-              <div v-if="relayForm.enabled" class="row g-2 mb-3">
-                <div class="col-md-6">
-                  <label class="form-label small mb-1">Host del smarthost</label>
-                  <input v-model="relayForm.host" class="form-control form-control-sm font-monospace"
-                         placeholder="pmg.midominio.com">
+              <div v-if="relayForm.enabled" class="sv-form-grid" style="margin-bottom:1rem">
+                <div class="sv-field">
+                  <label>Host del smarthost</label>
+                  <input v-model="relayForm.host" class="form-control form-control-sm font-monospace" placeholder="pmg.midominio.com">
                 </div>
-                <div class="col-md-2">
-                  <label class="form-label small mb-1">Puerto</label>
-                  <input v-model.number="relayForm.port" type="number" class="form-control form-control-sm"
-                         placeholder="587">
+                <div class="sv-field">
+                  <label>Puerto</label>
+                  <input v-model.number="relayForm.port" type="number" class="form-control form-control-sm" placeholder="587">
                 </div>
-                <div class="col-md-4"></div>
-                <div class="col-md-6">
-                  <label class="form-label small mb-1">Usuario <span class="text-muted">(vacío = sin auth)</span></label>
+                <div class="sv-field">
+                  <label>Usuario <span style="color:var(--text-muted)">(vacío = sin auth)</span></label>
                   <input v-model="relayForm.username" class="form-control form-control-sm" autocomplete="off">
                 </div>
-                <div class="col-md-6">
-                  <label class="form-label small mb-1">Contraseña</label>
-                  <input v-model="relayForm.password" type="password" class="form-control form-control-sm"
-                         autocomplete="new-password" :placeholder="relay.username ? '(sin cambios)' : ''">
+                <div class="sv-field">
+                  <label>Contraseña</label>
+                  <input v-model="relayForm.password" type="password" class="form-control form-control-sm" autocomplete="new-password" :placeholder="relay.username ? '(sin cambios)' : ''">
                 </div>
               </div>
-
-              <button class="btn btn-primary btn-sm" @click="saveDomainRelay" :disabled="relaySaving">
-                <span v-if="relaySaving" class="spinner-border spinner-border-sm me-1"></span>
-                <i v-else class="bi bi-save me-1"></i>
-                {{ relayForm.enabled ? 'Guardar relay del dominio' : 'Desactivar relay del dominio' }}
+              <button class="sv-btn sv-btn--primary sv-btn--sm" @click="saveDomainRelay" :disabled="relaySaving">
+                <span v-if="relaySaving" class="spinner-border spinner-border-sm"></span>
+                <i v-else class="bi bi-save"></i>
+                {{ relayForm.enabled ? 'Guardar relay' : 'Desactivar relay' }}
               </button>
             </template>
           </div>
 
           <!-- ── TAB: Ajustes ── -->
-          <div v-if="activeTab === 'settings'">
+          <div v-if="activeTab === 'settings'" style="display:flex;flex-direction:column;gap:1.5rem">
 
             <!-- Configuración general -->
-            <h6 class="mb-3">Configuración general</h6>
-            <form @submit.prevent="saveSettings" class="row g-3 mb-4">
-              <div class="col-md-6">
-                <label class="form-label">Catch-all
-                  <small class="text-muted">(correo para direcciones no existentes)</small>
-                </label>
-                <input type="email" class="form-control"
-                       v-model="settingsForm.catch_all"
-                       placeholder="catchall@example.com (vacío para desactivar)">
-              </div>
-              <div class="col-md-3">
-                <label class="form-label">Límite de buzones
-                  <small class="text-muted">(0 = sin límite)</small>
-                </label>
-                <input type="number" class="form-control" v-model.number="settingsForm.max_mailboxes"
-                       min="0" max="9999">
-              </div>
-              <div class="col-md-3">
-                <label class="form-label">Envío del dominio
-                  <small class="text-muted">(correos/hora, 0 = sin límite)</small>
-                </label>
-                <input type="number" class="form-control" v-model.number="settingsForm.send_limit_hour"
-                       min="0" max="1000000" placeholder="1000">
-              </div>
-              <div class="col-md-3">
-                <label class="form-label">Estado</label>
-                <select class="form-select" v-model="settingsForm.is_active">
-                  <option :value="true">Activo</option>
-                  <option :value="false">Suspendido</option>
-                </select>
-              </div>
-              <div class="col-12">
-                <button type="submit" class="btn btn-primary" :disabled="savingSettings">
-                  <span v-if="savingSettings" class="spinner-border spinner-border-sm me-2"></span>
-                  <i v-else class="bi bi-floppy me-1"></i>Guardar cambios
-                </button>
-              </div>
-            </form>
-
-            <hr />
-
-            <!-- Antispam (Rspamd) -->
-            <div class="d-flex align-items-center mb-3">
-              <h6 class="mb-0"><i class="bi bi-shield-check me-2 text-danger"></i>Antispam</h6>
-              <span v-if="loadingSpam" class="spinner-border spinner-border-sm ms-2"></span>
+            <div>
+              <h6 style="font-weight:600;font-size:.95rem;margin-bottom:1rem">Configuración general</h6>
+              <form @submit.prevent="saveSettings" class="sv-form-grid">
+                <div class="sv-field sv-field--full">
+                  <label>Catch-all <span style="color:var(--text-muted);font-weight:400">(correo para direcciones no existentes)</span></label>
+                  <input type="email" class="form-control" v-model="settingsForm.catch_all" placeholder="catchall@example.com (vacío = desactivado)">
+                </div>
+                <div class="sv-field">
+                  <label>Límite de buzones <span style="color:var(--text-muted);font-weight:400">(0 = sin límite)</span></label>
+                  <input type="number" class="form-control" v-model.number="settingsForm.max_mailboxes" min="0">
+                </div>
+                <div class="sv-field">
+                  <label>Envío del dominio <span style="color:var(--text-muted);font-weight:400">(correos/hora)</span></label>
+                  <input type="number" class="form-control" v-model.number="settingsForm.send_limit_hour" min="0" placeholder="1000">
+                </div>
+                <div class="sv-field">
+                  <label>Estado</label>
+                  <select class="form-select" v-model="settingsForm.is_active">
+                    <option :value="true">Activo</option>
+                    <option :value="false">Suspendido</option>
+                  </select>
+                </div>
+                <div class="sv-field sv-field--full">
+                  <button type="submit" class="sv-btn sv-btn--primary sv-btn--sm" :disabled="savingSettings">
+                    <span v-if="savingSettings" class="spinner-border spinner-border-sm"></span>
+                    <i v-else class="bi bi-floppy"></i> Guardar cambios
+                  </button>
+                </div>
+              </form>
             </div>
 
-            <!-- Estadísticas de spam -->
-            <div v-if="spamSettings.stats" class="row g-2 mb-4">
-              <div class="col-6 col-md-2">
-                <div class="card text-center border-0 bg-light">
-                  <div class="card-body py-2">
-                    <div class="fs-5 fw-bold">{{ spamSettings.stats.scanned }}</div>
-                    <div class="small text-muted">Analizados</div>
-                  </div>
+            <div style="border-top:1px solid var(--border)"></div>
+
+            <!-- Antispam -->
+            <div>
+              <div style="display:flex;align-items:center;gap:.5rem;margin-bottom:1rem">
+                <h6 style="font-weight:600;font-size:.95rem;margin:0"><i class="bi bi-shield-check" style="color:var(--danger)"></i> Antispam</h6>
+                <span v-if="loadingSpam" class="spinner-border spinner-border-sm"></span>
+              </div>
+              <div v-if="spamSettings.stats" class="sv-counters" style="margin-bottom:1rem">
+                <div class="sv-counter" v-for="(val, key) in {scanned:spamSettings.stats.scanned, clean:spamSettings.stats.clean, tagged:spamSettings.stats.tagged, greylisted:spamSettings.stats.greylisted, rejected:spamSettings.stats.rejected}" :key="key">
+                  <span class="sv-counter-val" style="font-size:1.25rem">{{ val }}</span>
+                  <span class="sv-counter-lbl">{{ {scanned:'Analizados',clean:'Limpios',tagged:'Etiquetados',greylisted:'Greylisted',rejected:'Rechazados'}[key] }}</span>
                 </div>
               </div>
-              <div class="col-6 col-md-2">
-                <div class="card text-center border-0 bg-success bg-opacity-10">
-                  <div class="card-body py-2">
-                    <div class="fs-5 fw-bold text-success">{{ spamSettings.stats.clean }}</div>
-                    <div class="small text-muted">Limpios</div>
+              <form @submit.prevent="saveSpamSettings" class="sv-form-grid">
+                <div class="sv-field">
+                  <label>Umbral etiquetado <span style="color:var(--text-muted);font-weight:400;display:block;font-size:.8rem">Score → añade cabecera spam</span></label>
+                  <div style="display:flex;gap:6px">
+                    <input type="number" class="form-control" step="0.5" min="1" max="20" v-model.number="spamForm.spam_tag_threshold">
+                    <span class="sv-input-suffix">pts</span>
                   </div>
                 </div>
-              </div>
-              <div class="col-6 col-md-2">
-                <div class="card text-center border-0 bg-warning bg-opacity-10">
-                  <div class="card-body py-2">
-                    <div class="fs-5 fw-bold text-warning">{{ spamSettings.stats.tagged }}</div>
-                    <div class="small text-muted">Etiquetados</div>
+                <div class="sv-field">
+                  <label>Umbral rechazo <span style="color:var(--text-muted);font-weight:400;display:block;font-size:.8rem">Score → rechazar mensaje</span></label>
+                  <div style="display:flex;gap:6px">
+                    <input type="number" class="form-control" step="0.5" min="3" max="100" v-model.number="spamForm.spam_reject_threshold">
+                    <span class="sv-input-suffix">pts</span>
                   </div>
                 </div>
-              </div>
-              <div class="col-6 col-md-2">
-                <div class="card text-center border-0 bg-secondary bg-opacity-10">
-                  <div class="card-body py-2">
-                    <div class="fs-5 fw-bold text-secondary">{{ spamSettings.stats.greylisted }}</div>
-                    <div class="small text-muted">Greylisted</div>
-                  </div>
+                <div class="sv-field">
+                  <label><i class="bi bi-check-circle" style="color:var(--success)"></i> Whitelist <span style="color:var(--text-muted);font-weight:400;display:block;font-size:.8rem">Siempre permitidos</span></label>
+                  <textarea class="form-control font-monospace" rows="4" v-model="spamForm.whitelist_senders" placeholder="usuario@dominio.com&#10;@dominio.com" style="font-size:.8rem"></textarea>
                 </div>
-              </div>
-              <div class="col-6 col-md-2">
-                <div class="card text-center border-0 bg-danger bg-opacity-10">
-                  <div class="card-body py-2">
-                    <div class="fs-5 fw-bold text-danger">{{ spamSettings.stats.rejected }}</div>
-                    <div class="small text-muted">Rechazados</div>
-                  </div>
+                <div class="sv-field">
+                  <label><i class="bi bi-x-circle" style="color:var(--danger)"></i> Blacklist <span style="color:var(--text-muted);font-weight:400;display:block;font-size:.8rem">Siempre bloqueados</span></label>
+                  <textarea class="form-control font-monospace" rows="4" v-model="spamForm.blacklist_senders" placeholder="spam@ejemplo.com&#10;@dominiomalicioso.com" style="font-size:.8rem"></textarea>
+                </div>
+                <div class="sv-field sv-field--full">
+                  <button type="submit" class="sv-btn sv-btn--danger sv-btn--sm" :disabled="savingSpam">
+                    <span v-if="savingSpam" class="spinner-border spinner-border-sm"></span>
+                    <i v-else class="bi bi-shield-check"></i> Guardar antispam
+                  </button>
+                </div>
+              </form>
+              <div v-if="spamSettings.stats?.history?.length" style="margin-top:1rem">
+                <div style="font-weight:600;font-size:.875rem;margin-bottom:.75rem">
+                  <i class="bi bi-clock-history"></i> Últimos mensajes
+                  <span class="sv-count" style="margin-left:6px">{{ spamSettings.stats.history.length }}</span>
+                </div>
+                <div class="sv-table-wrap">
+                  <table class="sv-table" style="font-size:.82rem">
+                    <thead><tr><th>Remitente</th><th>Asunto</th><th style="text-align:center">Acción</th><th style="text-align:center">Score</th><th style="text-align:right">Fecha</th></tr></thead>
+                    <tbody>
+                      <tr v-for="msg in spamSettings.stats.history" :key="msg.id">
+                        <td style="max-width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-family:var(--font-mono)" :title="msg.from_addr">{{ msg.from_addr || '—' }}</td>
+                        <td style="max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" :title="msg.subject">{{ msg.subject || '—' }}</td>
+                        <td style="text-align:center">
+                          <span :class="{
+                            'sv-badge sv-badge--danger': msg.action==='reject',
+                            'sv-badge sv-badge--warn':   msg.action==='add header',
+                            'sv-badge sv-badge--off':    msg.action==='greylist',
+                            'sv-badge sv-badge--on':     msg.action==='no action',
+                          }">{{ msg.action==='add header'?'spam':msg.action==='no action'?'limpio':msg.action||'?' }}</span>
+                        </td>
+                        <td style="text-align:center;font-family:var(--font-mono)">{{ msg.score.toFixed(2) }}</td>
+                        <td style="text-align:right;color:var(--text-muted);white-space:nowrap">{{ msg.timestamp }}</td>
+                      </tr>
+                    </tbody>
+                  </table>
                 </div>
               </div>
             </div>
 
-            <form @submit.prevent="saveSpamSettings" class="row g-3">
-              <!-- Umbrales -->
-              <div class="col-md-3">
-                <label class="form-label">
-                  Umbral etiquetado
-                  <small class="text-muted d-block">Score → añade cabecera spam</small>
-                </label>
-                <div class="input-group">
-                  <input type="number" class="form-control" step="0.5" min="1" max="20"
-                         v-model.number="spamForm.spam_tag_threshold">
-                  <span class="input-group-text">pts</span>
-                </div>
-              </div>
-              <div class="col-md-3">
-                <label class="form-label">
-                  Umbral rechazo
-                  <small class="text-muted d-block">Score → rechazar mensaje</small>
-                </label>
-                <div class="input-group">
-                  <input type="number" class="form-control" step="0.5" min="3" max="100"
-                         v-model.number="spamForm.spam_reject_threshold">
-                  <span class="input-group-text">pts</span>
-                </div>
-              </div>
-              <div class="col-md-3">
-                <label class="form-label">
-                  <i class="bi bi-check-circle text-success me-1"></i>Whitelist
-                  <small class="text-muted d-block">Remitentes siempre permitidos</small>
-                </label>
-                <textarea class="form-control font-monospace" rows="5"
-                          v-model="spamForm.whitelist_senders"
-                          placeholder="usuario@dominio.com&#10;@dominio.com&#10;otro@ejemplo.org"
-                          style="font-size:.8rem"></textarea>
-                <small class="text-muted">Un email o @dominio por línea</small>
-              </div>
-              <div class="col-md-3">
-                <label class="form-label">
-                  <i class="bi bi-x-circle text-danger me-1"></i>Blacklist
-                  <small class="text-muted d-block">Remitentes siempre bloqueados</small>
-                </label>
-                <textarea class="form-control font-monospace" rows="5"
-                          v-model="spamForm.blacklist_senders"
-                          placeholder="spam@ejemplo.com&#10;@dominiomalicioso.com"
-                          style="font-size:.8rem"></textarea>
-                <small class="text-muted">Un email o @dominio por línea</small>
-              </div>
+            <div style="border-top:1px solid var(--border)"></div>
 
-              <div class="col-12">
-                <button type="submit" class="btn btn-danger" :disabled="savingSpam">
-                  <span v-if="savingSpam" class="spinner-border spinner-border-sm me-2"></span>
-                  <i v-else class="bi bi-shield-check me-1"></i>Guardar configuración antispam
-                </button>
-              </div>
-            </form>
-
-            <!-- ── Historial reciente de mensajes ── -->
-            <div v-if="spamSettings.stats && spamSettings.stats.history && spamSettings.stats.history.length" class="mt-4">
-              <h6 class="mb-3">
-                <i class="bi bi-clock-history me-2 text-secondary"></i>Últimos mensajes analizados
-                <span class="badge bg-secondary ms-2">{{ spamSettings.stats.history.length }}</span>
-              </h6>
-              <div class="table-responsive">
-                <table class="table table-sm table-hover align-middle mb-0" style="font-size:.82rem">
-                  <thead class="table-light">
-                    <tr>
-                      <th>Remitente</th>
-                      <th>Asunto</th>
-                      <th class="text-center">Acción</th>
-                      <th class="text-center">Score</th>
-                      <th class="text-end">Fecha</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    <tr v-for="msg in spamSettings.stats.history" :key="msg.id">
-                      <td class="font-monospace text-truncate" style="max-width:160px" :title="msg.from_addr">
-                        {{ msg.from_addr || '—' }}
-                      </td>
-                      <td class="text-truncate" style="max-width:180px" :title="msg.subject">
-                        {{ msg.subject || '—' }}
-                      </td>
-                      <td class="text-center">
-                        <span :class="{
-                          'badge bg-danger':    msg.action === 'reject',
-                          'badge bg-warning text-dark': msg.action === 'add header',
-                          'badge bg-secondary': msg.action === 'greylist',
-                          'badge bg-success':   msg.action === 'no action',
-                          'badge bg-light text-dark border': !['reject','add header','greylist','no action'].includes(msg.action),
-                        }">
-                          {{ msg.action === 'add header' ? 'spam' :
-                             msg.action === 'no action'  ? 'limpio' :
-                             msg.action || '?' }}
-                        </span>
-                      </td>
-                      <td class="text-center font-monospace">
-                        {{ msg.score.toFixed(2) }}
-                      </td>
-                      <td class="text-end text-muted text-nowrap">{{ msg.timestamp }}</td>
-                    </tr>
-                  </tbody>
-                </table>
-              </div>
-            </div>
-            <div v-else-if="spamSettings.stats && spamSettings.stats.scanned === 0 && !loadingSpam"
-                 class="mt-3 text-muted small">
-              <i class="bi bi-info-circle me-1"></i>
-              Aún no hay mensajes registrados para este dominio.
-            </div>
-
-            <!-- ── Seguridad TLS (certificado propio del correo, SNI) ── -->
-            <hr class="my-4">
-            <div class="d-flex align-items-center mb-3">
-              <h6 class="mb-0"><i class="bi bi-shield-lock me-2 text-success"></i>Seguridad TLS del correo</h6>
-            </div>
-            <div v-if="mailtls" class="border rounded p-3">
-              <div class="d-flex justify-content-between align-items-center">
-                <div>
-                  <div class="fw-semibold">Certificado propio en <code>{{ mailtls.host }}</code></div>
-                  <p class="text-muted small mb-0">
-                    Tus clientes configuran <strong>{{ mailtls.host }}</strong> como servidor IMAP/SMTP
-                    y reciben un certificado válido de su propio dominio (sin avisos).
-                  </p>
+            <!-- TLS del correo -->
+            <div>
+              <h6 style="font-weight:600;font-size:.95rem;margin-bottom:1rem"><i class="bi bi-shield-lock" style="color:var(--success)"></i> Seguridad TLS del correo</h6>
+              <div v-if="mailtls" class="sv-info-box">
+                <div style="display:flex;justify-content:space-between;align-items:flex-start">
+                  <div>
+                    <div style="font-weight:600">Certificado en <code>{{ mailtls.host }}</code></div>
+                    <p style="font-size:.85rem;color:var(--text-muted);margin:.25rem 0 0">
+                      Clientes IMAP/SMTP usan <strong>{{ mailtls.host }}</strong> con certificado válido de su dominio.
+                    </p>
+                  </div>
+                  <label class="form-switch" style="margin:0;flex-shrink:0">
+                    <input class="form-check-input" type="checkbox" :checked="mailtls.enabled" :disabled="mailtlsSaving"
+                           @change="toggleMailTls($event.target.checked)" style="width:3em;height:1.5em;cursor:pointer">
+                  </label>
                 </div>
-                <div class="form-check form-switch">
-                  <input class="form-check-input" type="checkbox" role="switch"
-                         :checked="mailtls.enabled" :disabled="mailtlsSaving"
-                         @change="toggleMailTls($event.target.checked)" style="width:3em;height:1.5em">
+                <div v-if="mailtls.enabled" style="margin-top:.75rem">
+                  <span class="sv-badge" :class="mailtls.cert_valid ? 'sv-badge--on' : 'sv-badge--warn'">
+                    <i :class="mailtls.cert_valid ? 'bi bi-shield-check' : 'bi bi-exclamation-triangle'"></i>
+                    {{ mailtls.cert_valid ? 'Certificado válido' : 'Certificado pendiente' }}
+                  </span>
                 </div>
+                <p v-if="mailtlsSaving" style="font-size:.85rem;color:var(--text-muted);margin:.5rem 0 0">
+                  <span class="spinner-border spinner-border-sm"></span> Emitiendo certificado…
+                </p>
               </div>
-              <div v-if="mailtls.enabled" class="mt-2">
-                <span v-if="mailtls.cert_valid" class="badge bg-success">
-                  <i class="bi bi-shield-check me-1"></i>Certificado válido para {{ mailtls.host }}
-                </span>
-                <span v-else class="badge bg-warning text-dark">
-                  <i class="bi bi-exclamation-triangle me-1"></i>Certificado pendiente
-                </span>
-              </div>
-              <p v-if="!mailtls.enabled" class="text-muted small mt-2 mb-0">
-                Al activarlo se emite el certificado Let's Encrypt para <code>{{ mailtls.host }}</code>.
-                <span v-if="!mailtls.dns_managed">
-                  Tu DNS es externo: crea primero el registro <code>mail</code> apuntando a la IP del servidor.
-                </span>
-              </p>
-              <p v-if="mailtlsSaving" class="text-muted small mt-2 mb-0">
-                <span class="spinner-border spinner-border-sm me-1"></span>Emitiendo certificado y configurando…
-              </p>
             </div>
 
           </div>
@@ -2024,6 +1699,99 @@ export default {
 </script>
 
 <style scoped>
+/* ── Layout base ── */
+.sv-view { display:flex; flex-direction:column; gap:20px; padding:20px; max-width:var(--content-max,1200px); }
+
+/* ── Cabecera ── */
+.sv-page-head { display:flex; justify-content:space-between; align-items:flex-start; gap:1rem; }
+.sv-title { font-size:1.5rem; font-weight:700; margin:0 0 .25rem; display:flex; align-items:center; gap:.5rem; }
+.sv-subtitle { font-size:.875rem; color:var(--text-muted); margin:0; }
+.sv-head-actions { display:flex; gap:8px; flex-shrink:0; }
+.sv-breadcrumb { display:flex; align-items:center; gap:8px; margin-bottom:.5rem; font-size:.875rem; }
+.sv-chevron { color:var(--text-muted); font-size:.75rem; }
+.sv-domain-name { font-weight:600; }
+.sv-back-btn { background:none; border:1px solid var(--border); border-radius:var(--radius-sm,6px); padding:.25rem .75rem; font-size:.82rem; cursor:pointer; color:var(--text-secondary); transition:all .15s; }
+.sv-back-btn:hover { background:var(--surface-2); color:var(--text); }
+
+/* ── Botones ── */
+.sv-btn { display:inline-flex; align-items:center; gap:6px; padding:.4rem .9rem; border-radius:var(--radius-sm,6px); font-size:.875rem; font-weight:500; cursor:pointer; border:1px solid transparent; transition:all .15s; }
+.sv-btn--primary { background:var(--accent); color:#fff; border-color:var(--accent); }
+.sv-btn--primary:hover { opacity:.9; }
+.sv-btn--ghost { background:var(--surface); color:var(--text-secondary); border-color:var(--border); }
+.sv-btn--ghost:hover { background:var(--surface-2); color:var(--text); }
+.sv-btn--danger { background:color-mix(in srgb,var(--danger) 10%,transparent); color:var(--danger); border-color:color-mix(in srgb,var(--danger) 30%,transparent); }
+.sv-btn--danger:hover { background:var(--danger); color:#fff; }
+.sv-btn--sm { padding:.3rem .7rem; font-size:.82rem; }
+.sv-btn:disabled { opacity:.5; cursor:not-allowed; }
+.sv-icon-btn { width:32px; height:32px; display:inline-flex; align-items:center; justify-content:center; border:1px solid var(--border); border-radius:var(--radius-sm,6px); background:var(--surface); color:var(--text-secondary); cursor:pointer; transition:all .15s; }
+.sv-icon-btn:hover { background:var(--surface-2); color:var(--text); }
+.sv-icon-btn--danger:hover { background:var(--danger); color:#fff; border-color:var(--danger); }
+
+/* ── Card ── */
+.sv-card { background:var(--surface); border:1px solid var(--border); border-radius:var(--radius-md,10px); overflow:hidden; }
+.sv-card-head { display:flex; align-items:center; justify-content:space-between; padding:.875rem 1.25rem; border-bottom:1px solid var(--border); }
+.sv-card-title { font-weight:600; font-size:.95rem; display:flex; align-items:center; gap:.5rem; }
+.sv-count { background:var(--surface-2); border:1px solid var(--border); border-radius:999px; padding:.1rem .5rem; font-size:.75rem; font-weight:600; }
+
+/* ── Badges ── */
+.sv-badge { display:inline-flex; align-items:center; gap:.25rem; padding:.2rem .55rem; border-radius:999px; font-size:.72rem; font-weight:600; }
+.sv-badge--on { background:color-mix(in srgb,var(--success) 15%,transparent); color:var(--success); }
+.sv-badge--off { background:var(--surface-2); color:var(--text-muted); }
+.sv-badge--blue { background:color-mix(in srgb,var(--accent) 15%,transparent); color:var(--accent); }
+.sv-badge--teal { background:color-mix(in srgb,var(--info,#06b6d4) 15%,transparent); color:var(--info,#06b6d4); }
+.sv-badge--warn { background:color-mix(in srgb,var(--warning,#f59e0b) 15%,transparent); color:var(--warning,#f59e0b); }
+.sv-badge--danger { background:color-mix(in srgb,var(--danger) 15%,transparent); color:var(--danger); }
+
+/* ── Contadores ── */
+.sv-counters { display:grid; grid-template-columns:repeat(auto-fill,minmax(140px,1fr)); gap:12px; }
+.sv-counter { background:var(--surface); border:1px solid var(--border); border-radius:var(--radius-md,10px); padding:.875rem 1rem; display:flex; flex-direction:column; align-items:center; gap:.25rem; }
+.sv-counter-val { font-size:1.75rem; font-weight:700; line-height:1; }
+.sv-counter-lbl { font-size:.78rem; color:var(--text-muted); text-transform:uppercase; letter-spacing:.04em; }
+
+/* ── Tabla ── */
+.sv-table-wrap { overflow-x:auto; }
+.sv-table { width:100%; border-collapse:collapse; font-size:.875rem; }
+.sv-table th { padding:.65rem 1rem; text-align:left; font-size:.78rem; font-weight:600; color:var(--text-muted); text-transform:uppercase; letter-spacing:.04em; border-bottom:1px solid var(--border); background:var(--surface-2); }
+.sv-table td { padding:.7rem 1rem; border-bottom:1px solid var(--border); }
+.sv-table tr:last-child td { border-bottom:none; }
+.sv-table tbody tr:hover { background:var(--surface-2); }
+
+/* ── Tabs ── */
+.sv-tabs { display:flex; gap:2px; padding:.75rem 1rem .5rem; border-bottom:1px solid var(--border); flex-wrap:wrap; }
+.sv-tab { display:inline-flex; align-items:center; gap:6px; padding:.45rem .85rem; border-radius:var(--radius-sm,6px); font-size:.85rem; font-weight:500; cursor:pointer; border:1px solid transparent; color:var(--text-muted); background:none; transition:all .15s; }
+.sv-tab:hover { background:var(--surface-2); color:var(--text); }
+.sv-tab--active { background:var(--surface-2); color:var(--text); border-color:var(--border); }
+.sv-tab-count { background:var(--accent); color:#fff; border-radius:999px; font-size:.68rem; padding:.1rem .4rem; line-height:1.4; }
+.sv-tab-body { padding:1.25rem; }
+.sv-tab-head { display:flex; justify-content:space-between; align-items:center; margin-bottom:1rem; }
+.sv-tab-section-title { font-weight:600; font-size:.95rem; }
+
+/* ── Formularios ── */
+.sv-form-grid { display:grid; grid-template-columns:1fr 1fr; gap:.875rem; }
+.sv-field { display:flex; flex-direction:column; gap:.35rem; }
+.sv-field label { font-size:.82rem; font-weight:600; color:var(--text-secondary); }
+.sv-field--full { grid-column:1/-1; }
+.sv-input-copy { display:flex; align-items:stretch; gap:0; border:1px solid var(--border); border-radius:var(--radius-sm,6px); overflow:hidden; }
+.sv-input-label { padding:.4rem .65rem; background:var(--surface-2); color:var(--text-muted); font-size:.78rem; display:flex; align-items:center; white-space:nowrap; border-right:1px solid var(--border); }
+.sv-input-copy .form-control { border:none; border-radius:0; flex:1; }
+.sv-input-copy .sv-icon-btn { border:none; border-left:1px solid var(--border); border-radius:0; width:36px; }
+.sv-input-suffix { display:flex; align-items:center; padding:.4rem .65rem; background:var(--surface-2); border:1px solid var(--border); border-left:none; border-radius:0 var(--radius-sm,6px) var(--radius-sm,6px) 0; font-size:.82rem; color:var(--text-muted); }
+
+/* ── Alertas e info ── */
+.sv-alert { display:flex; align-items:flex-start; gap:.5rem; padding:.65rem .85rem; border-radius:var(--radius-sm,6px); font-size:.875rem; }
+.sv-alert--success { background:color-mix(in srgb,var(--success) 10%,transparent); color:var(--success); border:1px solid color-mix(in srgb,var(--success) 25%,transparent); }
+.sv-alert--warn { background:color-mix(in srgb,var(--warning,#f59e0b) 10%,transparent); color:var(--warning,#d97706); border:1px solid color-mix(in srgb,var(--warning,#f59e0b) 25%,transparent); }
+.sv-alert--info { background:color-mix(in srgb,var(--accent) 8%,transparent); color:var(--accent); border:1px solid color-mix(in srgb,var(--accent) 20%,transparent); }
+.sv-alert--muted { background:var(--surface-2); color:var(--text-muted); border:1px solid var(--border); }
+.sv-info-box { background:var(--surface-2); border:1px solid var(--border); border-radius:var(--radius-md,10px); padding:1rem; font-size:.875rem; }
+
+/* ── Vacíos y loading ── */
+.sv-empty-state { display:flex; flex-direction:column; align-items:center; justify-content:center; gap:.75rem; padding:3rem 1rem; text-align:center; }
+.sv-empty-icon { font-size:2.5rem; color:var(--text-muted); }
+.sv-empty-inline { display:flex; align-items:center; justify-content:center; gap:.75rem; padding:2rem; color:var(--text-muted); font-size:.875rem; }
+.sv-empty-inline i { font-size:1.5rem; }
+.sv-loading { display:flex; justify-content:center; padding:2rem; }
+
 .mbx-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: var(--sp-3); }
 .mbx {
   background: var(--surface); border: 1px solid var(--border);
