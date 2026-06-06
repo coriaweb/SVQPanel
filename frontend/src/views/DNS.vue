@@ -2,258 +2,255 @@
   <div class="sv-view">
 
     <!-- Cabecera -->
-    <div class="page-head-row">
+    <div class="dns-head">
       <div>
-        <h2 class="mb-1"><i class="bi bi-diagram-3 me-2"></i>DNS</h2>
-        <p class="text-muted mb-0">
-          {{ zones.length }} {{ zones.length === 1 ? 'zona' : 'zonas' }} · BIND9
-        </p>
+        <h2 class="dns-title"><i class="bi bi-diagram-3"></i> DNS</h2>
+        <p class="dns-subtitle">{{ zones.length }} {{ zones.length === 1 ? 'zona' : 'zonas' }} · BIND9</p>
       </div>
-      <button class="btn btn-primary" @click="openCreateZone">
-        <i class="bi bi-plus-lg me-1"></i> Nueva Zona
+      <button class="dns-btn dns-btn--primary" @click="openCreateZone">
+        <i class="bi bi-plus-lg"></i> Nueva Zona
       </button>
     </div>
 
-    <!-- Nameservers del panel (solo admin) -->
-    <div v-if="isAdmin" class="card shadow-sm mb-4">
-      <div class="card-header">
-        <h5 class="mb-0"><i class="bi bi-pin-map me-2"></i>Nameservers del panel</h5>
+    <!-- Nameservers (solo admin) -->
+    <div v-if="isAdmin" class="dns-card">
+      <div class="dns-card-head">
+        <span class="dns-card-title"><i class="bi bi-pin-map"></i> Nameservers del panel</span>
       </div>
-      <div class="card-body">
-        <p class="text-muted small mb-3">
-          Los nameservers que se publican en el <strong>SOA</strong> y los registros <strong>NS</strong> de tus zonas.
-          Si dejas los campos vacíos y hay cluster, se usan los hostnames de los nodos automáticamente.
-          <span v-if="ns.is_placeholder" class="text-warning">
-            <i class="bi bi-exclamation-triangle"></i> Ahora mismo se usa un valor por defecto (<code>{{ ns.ns1 }}</code>); configúralos.
+      <div class="dns-card-body">
+        <p class="dns-hint">
+          Los nameservers publicados en el <strong>SOA</strong> y registros <strong>NS</strong> de tus zonas.
+          <span v-if="ns.is_placeholder" class="dns-warn-text">
+            <i class="bi bi-exclamation-triangle"></i> Usando valor por defecto (<code>{{ ns.ns1 }}</code>); configúralos.
           </span>
         </p>
-        <div class="row g-2 align-items-end mb-3">
-          <div class="col-md-4">
-            <label class="form-label small mb-1">ns1 (primario)</label>
+        <div class="dns-ns-form">
+          <div class="dns-field">
+            <label>ns1 (primario)</label>
             <input v-model="nsForm.ns1" class="form-control form-control-sm font-monospace" :placeholder="ns.ns1 || 'ns1.tudominio.com'">
           </div>
-          <div class="col-md-4">
-            <label class="form-label small mb-1">ns2 (secundario)</label>
+          <div class="dns-field">
+            <label>ns2 (secundario)</label>
             <input v-model="nsForm.ns2" class="form-control form-control-sm font-monospace" :placeholder="ns.ns2 || 'ns2.tudominio.com'">
           </div>
-          <div class="col-md-4">
-            <button class="btn btn-primary btn-sm" @click="saveNameservers" :disabled="nsSaving">
-              <i class="bi bi-save me-1"></i> {{ nsSaving ? 'Guardando…' : 'Guardar' }}
+          <div class="dns-field dns-field--actions">
+            <button class="dns-btn dns-btn--primary dns-btn--sm" @click="saveNameservers" :disabled="nsSaving">
+              <i class="bi bi-save"></i> {{ nsSaving ? 'Guardando…' : 'Guardar' }}
             </button>
-            <button class="btn btn-outline-warning btn-sm ms-2" @click="regenerateAll" :disabled="regenAll"
-                    title="Reescribe SOA/NS de todas las zonas con estos nameservers">
-              <i class="bi bi-arrow-repeat me-1"></i> {{ regenAll ? 'Regenerando…' : 'Aplicar a todas las zonas' }}
+            <button class="dns-btn dns-btn--ghost dns-btn--sm" @click="regenerateAll" :disabled="regenAll">
+              <i class="bi bi-arrow-repeat"></i> {{ regenAll ? 'Regenerando…' : 'Aplicar a todas' }}
             </button>
           </div>
         </div>
-
-        <!-- Glue records -->
-        <div class="alert alert-info py-2 mb-0">
-          <strong class="small"><i class="bi bi-link-45deg me-1"></i>Glue records</strong> — regístralos en el registrador
-          del <em>dominio de tus nameservers</em> (donde compraste el dominio de <code>{{ ns.ns1 }}</code>):
-          <table class="table table-sm mb-0 mt-2 font-monospace small">
-            <tbody>
-              <tr><td>{{ ns.ns1 }}</td><td>A</td><td>{{ ns.ns1_ip || '— (IP de ns1)' }}</td></tr>
-              <tr v-if="ns.ns2"><td>{{ ns.ns2 }}</td><td>A</td><td>{{ ns.ns2_ip || '— (IP de ns2)' }}</td></tr>
-            </tbody>
+        <div class="dns-info-box" style="margin-top:.75rem">
+          <strong style="font-size:.82rem"><i class="bi bi-link-45deg"></i> Glue records</strong>
+          — regístralos en el registrador del dominio de tus nameservers:
+          <table class="dns-glue-table">
+            <tr><td>{{ ns.ns1 }}</td><td>A</td><td>{{ ns.ns1_ip || '— (IP de ns1)' }}</td></tr>
+            <tr v-if="ns.ns2"><td>{{ ns.ns2 }}</td><td>A</td><td>{{ ns.ns2_ip || '— (IP de ns2)' }}</td></tr>
           </table>
         </div>
       </div>
     </div>
 
     <!-- Cluster DNS (solo admin) -->
-    <div v-if="isAdmin" class="card shadow-sm mb-4">
-      <div class="card-header d-flex justify-content-between align-items-center">
-        <h5 class="mb-0"><i class="bi bi-hdd-network me-2"></i>Cluster DNS</h5>
-        <span v-if="cluster.enabled" class="badge bg-success">Activo</span>
-        <span v-else class="badge bg-light text-muted border">Sin cluster · el panel sirve DNS</span>
+    <div v-if="isAdmin" class="dns-card">
+      <div class="dns-card-head">
+        <span class="dns-card-title"><i class="bi bi-hdd-network"></i> Cluster DNS</span>
+        <span class="dns-badge" :class="cluster.enabled ? 'dns-badge--on' : 'dns-badge--off'">
+          {{ cluster.enabled ? 'Activo' : 'Sin cluster · el panel sirve DNS' }}
+        </span>
       </div>
-      <div class="card-body">
-        <p class="text-muted small mb-3">
+      <div class="dns-card-body">
+        <p class="dns-hint">
           Sin cluster, este servidor sirve el DNS. Con cluster, las zonas se empujan a
           <strong>ns1 (master)</strong> y este replica a <strong>ns2 (slave)</strong> vía AXFR + TSIG.
-          Da de alta los dos nodos (Debian 12, acceso SSH) y pulsa <em>Configurar cluster</em>.
         </p>
 
-        <!-- Tabla de nodos -->
-        <table class="table table-sm mb-3">
-          <thead class="table-light">
-            <tr><th>Rol</th><th>Hostname</th><th>IP</th><th>SSH</th><th>Estado</th><th class="text-end">Acciones</th></tr>
-          </thead>
-          <tbody>
-            <tr v-for="n in clusterNodes" :key="n.id">
-              <td><span class="badge" :class="n.role === 'master' ? 'bg-primary' : 'bg-info'">{{ n.role === 'master' ? 'ns1 master' : 'ns2 slave' }}</span></td>
-              <td class="font-monospace small">{{ n.hostname }}</td>
-              <td class="font-monospace small">{{ n.ip }}</td>
-              <td class="small text-muted">{{ n.ssh_user }}:{{ n.ssh_port }}</td>
-              <td>
-                <span v-if="n.status === 'ok'" class="badge bg-success">OK</span>
-                <span v-else-if="n.status === 'error'" class="badge bg-danger" :title="n.last_error">Error</span>
-                <span v-else class="badge bg-secondary">Pendiente</span>
-              </td>
-              <td class="text-end">
-                <button class="btn btn-sm btn-outline-secondary me-1" @click="testNode(n)" :disabled="testingNodeId === n.id" title="Probar conexión SSH">
-                  <i class="bi bi-plug"></i> {{ testingNodeId === n.id ? '...' : 'Probar' }}
-                </button>
-                <button class="btn btn-sm btn-outline-danger" @click="deleteNode(n)" title="Quitar nodo"><i class="bi bi-trash"></i></button>
-              </td>
-            </tr>
-            <tr v-if="!clusterNodes.length"><td colspan="6" class="text-center text-muted py-3">Sin nodos. Añade ns1 (master) y ns2 (slave).</td></tr>
-          </tbody>
-        </table>
+        <!-- Tabla nodos -->
+        <div class="dns-table-wrap" style="margin-bottom:1rem">
+          <table class="dns-table">
+            <thead>
+              <tr><th>Rol</th><th>Hostname</th><th>IP</th><th>SSH</th><th>Estado</th><th style="text-align:right">Acciones</th></tr>
+            </thead>
+            <tbody>
+              <tr v-for="n in clusterNodes" :key="n.id">
+                <td><span class="dns-badge" :class="n.role === 'master' ? 'dns-badge--blue' : 'dns-badge--teal'">{{ n.role === 'master' ? 'ns1 master' : 'ns2 slave' }}</span></td>
+                <td style="font-family:var(--font-mono);font-size:.82rem">{{ n.hostname }}</td>
+                <td style="font-family:var(--font-mono);font-size:.82rem">{{ n.ip }}</td>
+                <td style="font-size:.8rem;color:var(--text-muted)">{{ n.ssh_user }}:{{ n.ssh_port }}</td>
+                <td>
+                  <span class="dns-badge" :class="n.status === 'ok' ? 'dns-badge--on' : n.status === 'error' ? 'dns-badge--danger' : 'dns-badge--off'">
+                    {{ n.status === 'ok' ? 'OK' : n.status === 'error' ? 'Error' : 'Pendiente' }}
+                  </span>
+                </td>
+                <td style="text-align:right">
+                  <div style="display:flex;gap:4px;justify-content:flex-end">
+                    <button class="dns-icon-btn" @click="testNode(n)" :disabled="testingNodeId === n.id" title="Probar SSH">
+                      <i class="bi bi-plug"></i>
+                    </button>
+                    <button class="dns-icon-btn dns-icon-btn--danger" @click="deleteNode(n)" title="Quitar"><i class="bi bi-trash"></i></button>
+                  </div>
+                </td>
+              </tr>
+              <tr v-if="!clusterNodes.length">
+                <td colspan="6" style="text-align:center;padding:1.5rem;color:var(--text-muted);font-size:.875rem">Sin nodos. Añade ns1 (master) y ns2 (slave).</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
 
-        <!-- Alta de nodo -->
-        <div class="row g-2 align-items-end mb-3">
-          <div class="col-md-2">
-            <label class="form-label small mb-1">Rol</label>
+        <!-- Alta nodo -->
+        <div class="dns-node-form">
+          <div class="dns-field">
+            <label>Rol</label>
             <select v-model="nodeForm.role" class="form-select form-select-sm">
               <option value="master">ns1 (master)</option>
               <option value="slave">ns2 (slave)</option>
             </select>
           </div>
-          <div class="col-md-3">
-            <label class="form-label small mb-1">Hostname</label>
+          <div class="dns-field" style="flex:2">
+            <label>Hostname</label>
             <input v-model="nodeForm.hostname" class="form-control form-control-sm font-monospace" placeholder="ns1.tudominio.com" />
           </div>
-          <div class="col-md-2">
-            <label class="form-label small mb-1">IP</label>
+          <div class="dns-field">
+            <label>IP</label>
             <input v-model="nodeForm.ip" class="form-control form-control-sm font-monospace" placeholder="185.x.x.x" />
           </div>
-          <div class="col-md-2">
-            <label class="form-label small mb-1">Usuario SSH</label>
+          <div class="dns-field">
+            <label>Usuario SSH</label>
             <input v-model="nodeForm.ssh_user" class="form-control form-control-sm" placeholder="root" />
           </div>
-          <div class="col-md-2">
-            <label class="form-label small mb-1">Contraseña SSH</label>
+          <div class="dns-field">
+            <label>Contraseña SSH</label>
             <input v-model="nodeForm.ssh_password" type="password" class="form-control form-control-sm" placeholder="(o usa clave)" />
           </div>
-          <div class="col-md-1">
-            <button class="btn btn-sm btn-success w-100" @click="addNode" :disabled="savingNode"><i class="bi bi-plus-lg"></i></button>
+          <div class="dns-field dns-field--actions" style="padding-top:1.4rem">
+            <button class="dns-btn dns-btn--success dns-btn--sm" @click="addNode" :disabled="savingNode">
+              <i class="bi bi-plus-lg"></i>
+            </button>
           </div>
         </div>
 
-        <div class="d-flex gap-2 align-items-center">
-          <button class="btn btn-primary btn-sm" @click="provisionCluster" :disabled="provisioning || !clusterNodes.some(n => n.role === 'master')">
-            <i class="bi bi-gear-wide-connected me-1"></i> {{ provisioning ? 'Configurando…' : 'Configurar cluster' }}
+        <!-- Acciones cluster -->
+        <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:.75rem">
+          <button class="dns-btn dns-btn--primary dns-btn--sm" @click="provisionCluster" :disabled="provisioning || !clusterNodes.some(n => n.role === 'master')">
+            <i class="bi bi-gear-wide-connected"></i> {{ provisioning ? 'Configurando…' : 'Configurar cluster' }}
           </button>
-          <button v-if="cluster.enabled" class="btn btn-outline-primary btn-sm" @click="resyncCluster" :disabled="provisioning">
-            <i class="bi bi-arrow-repeat me-1"></i> Resincronizar zonas
+          <button v-if="cluster.enabled" class="dns-btn dns-btn--ghost dns-btn--sm" @click="resyncCluster" :disabled="provisioning">
+            <i class="bi bi-arrow-repeat"></i> Resincronizar
           </button>
-          <button class="btn btn-outline-secondary btn-sm" @click="loadCluster" :disabled="loadingCluster">
+          <button class="dns-icon-btn" @click="loadCluster" :disabled="loadingCluster">
             <i class="bi bi-arrow-clockwise"></i>
           </button>
-          <span v-if="cluster.replication" class="small ms-2" :class="cluster.replication.ok ? 'text-success' : 'text-warning'">
+          <span v-if="cluster.replication" style="font-size:.82rem;margin-left:.5rem" :style="cluster.replication.ok ? 'color:var(--success)' : 'color:var(--warning)'">
             <i class="bi" :class="cluster.replication.ok ? 'bi-check-circle' : 'bi-exclamation-triangle'"></i>
             Replicación {{ cluster.replication.ok ? 'OK' : 'pendiente' }} ({{ cluster.replication.sample_domain }})
           </span>
         </div>
 
-        <!-- Salud de sincronización por zona -->
-        <div v-if="cluster.enabled" class="mt-3">
-          <div class="d-flex justify-content-between align-items-center mb-2">
-            <h6 class="mb-0">
-              <i class="bi bi-clipboard-pulse me-1"></i> Sincronización por zona
-              <span v-if="health.summary" class="badge ms-1"
-                    :class="health.allOk ? 'bg-success' : 'bg-warning text-dark'">
+        <!-- Salud de sincronización -->
+        <div v-if="cluster.enabled" style="margin-top:1.25rem">
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:.75rem">
+            <span style="font-weight:600;font-size:.875rem">
+              <i class="bi bi-clipboard-pulse"></i> Sincronización por zona
+              <span v-if="health.summary" class="dns-badge ms-2" :class="health.allOk ? 'dns-badge--on' : 'dns-badge--warn'">
                 {{ health.summary.ok }}/{{ health.summary.total }} OK
               </span>
-            </h6>
-            <div class="d-flex align-items-center gap-2">
-              <small v-if="health.checkedAt" class="text-muted">
+            </span>
+            <div style="display:flex;align-items:center;gap:8px">
+              <span v-if="health.checkedAt" style="font-size:.78rem;color:var(--text-muted)">
                 comprobado {{ formatHealthTime(health.checkedAt) }}
-              </small>
-              <button class="btn btn-sm btn-outline-secondary" @click="loadHealth(true)" :disabled="loadingHealth">
+              </span>
+              <button class="dns-btn dns-btn--ghost dns-btn--sm" @click="loadHealth(true)" :disabled="loadingHealth">
                 <i class="bi" :class="loadingHealth ? 'bi-hourglass-split' : 'bi-arrow-clockwise'"></i>
                 {{ loadingHealth ? 'Comprobando…' : 'Comprobar ahora' }}
               </button>
             </div>
           </div>
-          <table v-if="health.rows.length" class="table table-sm table-hover mb-0">
-            <thead class="table-light">
-              <tr>
-                <th>Dominio</th>
-                <th class="text-end">Panel (BD)</th>
-                <th class="text-end">ns1 master</th>
-                <th class="text-end">ns2 slave</th>
-                <th class="text-center">Estado</th>
-              </tr>
-            </thead>
-            <tbody>
-              <tr v-for="r in health.rows" :key="r.domain">
-                <td class="font-monospace small">{{ r.domain }}</td>
-                <td class="text-end font-monospace small text-muted">{{ r.db_serial }}</td>
-                <td class="text-end font-monospace small" :class="serialClass(r, r.master_serial)">{{ r.master_serial ?? '—' }}</td>
-                <td class="text-end font-monospace small" :class="serialClass(r, r.slave_serial)">{{ r.slave_serial ?? '—' }}</td>
-                <td class="text-center">
-                  <span v-if="r.status === 'ok'" class="badge bg-success"><i class="bi bi-check-lg"></i> Sincronizado</span>
-                  <span v-else-if="r.status === 'desync'" class="badge bg-warning text-dark" title="Algún serial difiere"><i class="bi bi-exclamation-triangle"></i> Desfasado</span>
-                  <span v-else-if="r.status === 'master_down'" class="badge bg-danger">ns1 caído</span>
-                  <span v-else-if="r.status === 'slave_down'" class="badge bg-danger">ns2 caído</span>
-                </td>
-              </tr>
-            </tbody>
-          </table>
-          <p v-else class="text-muted small mb-0">Aún no hay datos de sincronización. Pulsa «Comprobar ahora».</p>
+          <div class="dns-table-wrap">
+            <table v-if="health.rows.length" class="dns-table" style="font-size:.82rem">
+              <thead>
+                <tr>
+                  <th>Dominio</th>
+                  <th style="text-align:right">Panel (BD)</th>
+                  <th style="text-align:right">ns1 master</th>
+                  <th style="text-align:right">ns2 slave</th>
+                  <th style="text-align:center">Estado</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr v-for="r in health.rows" :key="r.domain">
+                  <td style="font-family:var(--font-mono)">{{ r.domain }}</td>
+                  <td style="text-align:right;font-family:var(--font-mono);color:var(--text-muted)">{{ r.db_serial }}</td>
+                  <td style="text-align:right;font-family:var(--font-mono)" :class="serialClass(r, r.master_serial)">{{ r.master_serial ?? '—' }}</td>
+                  <td style="text-align:right;font-family:var(--font-mono)" :class="serialClass(r, r.slave_serial)">{{ r.slave_serial ?? '—' }}</td>
+                  <td style="text-align:center">
+                    <span class="dns-badge" :class="r.status==='ok'?'dns-badge--on':r.status==='desync'?'dns-badge--warn':'dns-badge--danger'">
+                      {{ r.status==='ok'?'Sincronizado':r.status==='desync'?'Desfasado':r.status==='master_down'?'ns1 caído':'ns2 caído' }}
+                    </span>
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+            <p v-else style="font-size:.82rem;color:var(--text-muted);padding:.75rem 0;margin:0">Aún no hay datos. Pulsa «Comprobar ahora».</p>
+          </div>
         </div>
       </div>
     </div>
 
     <!-- Lista de zonas -->
-    <div class="card shadow-sm mb-4">
-      <div class="card-header"><h5 class="mb-0">Zonas DNS</h5></div>
-      <div class="card-body p-0">
-        <div v-if="loadingZones" class="text-center py-5">
-          <div class="spinner-border text-primary"></div>
-        </div>
-        <div v-else-if="!zones.length" class="text-center py-5 text-muted">
-          <i class="bi bi-diagram-3 display-4"></i>
-          <p class="mt-2">No hay zonas DNS configuradas.</p>
-          <button class="btn btn-outline-primary btn-sm" @click="openCreateZone">
-            Crear primera zona
-          </button>
-        </div>
-        <table v-else class="table table-hover mb-0">
-          <thead class="table-light">
+    <div class="dns-card">
+      <div class="dns-card-head">
+        <span class="dns-card-title"><i class="bi bi-diagram-3"></i> Zonas DNS</span>
+        <span class="dns-count">{{ zones.length }}</span>
+      </div>
+      <div v-if="loadingZones" class="dns-loading"><div class="spinner-border spinner-border-sm"></div></div>
+      <div v-else-if="!zones.length" class="dns-empty">
+        <i class="bi bi-diagram-3"></i>
+        <p>No hay zonas DNS configuradas.</p>
+        <button class="dns-btn dns-btn--ghost dns-btn--sm" @click="openCreateZone">Crear primera zona</button>
+      </div>
+      <div v-else class="dns-table-wrap">
+        <table class="dns-table">
+          <thead>
             <tr>
               <th>Dominio</th>
               <th>IP</th>
               <th>SOA NS</th>
               <th>Plantilla</th>
               <th>DNSSEC</th>
-              <th>Registros</th>
+              <th style="text-align:center">Registros</th>
               <th>Serial</th>
-              <th class="text-end">Acciones</th>
+              <th style="text-align:right">Acciones</th>
             </tr>
           </thead>
           <tbody>
-            <tr v-for="zone in zones" :key="zone.id" :class="selectedZone?.id === zone.id ? 'table-primary' : ''">
-              <td class="fw-semibold">{{ zone.domain_name }}</td>
-              <td class="font-monospace small">{{ zone.ip_address || '—' }}</td>
-              <td class="small text-muted">{{ zone.soa_ns || '—' }}</td>
-              <td><span class="badge bg-secondary">{{ zone.template || 'default' }}</span></td>
+            <tr v-for="zone in zones" :key="zone.id" :class="{ 'dns-row--active': selectedZone?.id === zone.id }">
+              <td style="font-weight:600">{{ zone.domain_name }}</td>
+              <td style="font-family:var(--font-mono);font-size:.82rem">{{ zone.ip_address || '—' }}</td>
+              <td style="font-size:.8rem;color:var(--text-muted)">{{ zone.soa_ns || '—' }}</td>
+              <td><span class="dns-badge dns-badge--off">{{ zone.template || 'default' }}</span></td>
               <td>
-                <button v-if="zone.can_edit" class="btn btn-sm p-0 border-0 bg-transparent"
-                        @click="openDnssec(zone)" :title="cluster.enabled ? 'Gestionar DNSSEC' : 'DNSSEC requiere cluster'">
-                  <span v-if="zone.dnssec_enabled" class="badge bg-success"><i class="bi bi-shield-lock me-1"></i>Activo</span>
-                  <span v-else class="badge bg-light text-muted border"><i class="bi bi-shield me-1"></i>No</span>
+                <button v-if="zone.can_edit" style="background:none;border:none;cursor:pointer;padding:0"
+                        @click="openDnssec(zone)">
+                  <span class="dns-badge" :class="zone.dnssec_enabled ? 'dns-badge--on' : 'dns-badge--off'">
+                    <i :class="zone.dnssec_enabled ? 'bi bi-shield-lock' : 'bi bi-shield'"></i>
+                    {{ zone.dnssec_enabled ? 'Activo' : 'No' }}
+                  </span>
                 </button>
-                <span v-else>
-                  <span v-if="zone.dnssec_enabled" class="badge bg-success"><i class="bi bi-shield-lock me-1"></i>Activo</span>
-                  <span v-else class="badge bg-light text-muted border">No</span>
+                <span v-else class="dns-badge" :class="zone.dnssec_enabled ? 'dns-badge--on' : 'dns-badge--off'">
+                  {{ zone.dnssec_enabled ? 'Activo' : 'No' }}
                 </span>
               </td>
-              <td><span class="badge bg-secondary">{{ zone.record_count }}</span></td>
-              <td><code class="text-muted small">{{ zone.serial }}</code></td>
-              <td class="text-end">
-                <button v-if="zone.can_edit" class="btn btn-sm btn-outline-secondary me-1" @click="openEditZone(zone)" title="Editar zona">
-                  <i class="bi bi-pencil"></i>
-                </button>
-                <button class="btn btn-sm btn-outline-primary me-1" @click="openZoneRecords(zone)" title="Ver registros">
-                  <i class="bi bi-list-ul"></i>
-                </button>
-                <button v-if="zone.can_edit" class="btn btn-sm btn-outline-danger" @click="confirmDeleteZone(zone)" title="Eliminar zona">
-                  <i class="bi bi-trash"></i>
-                </button>
+              <td style="text-align:center"><span class="dns-badge dns-badge--blue">{{ zone.record_count }}</span></td>
+              <td><code style="font-size:.75rem;color:var(--text-muted)">{{ zone.serial }}</code></td>
+              <td style="text-align:right">
+                <div style="display:flex;gap:4px;justify-content:flex-end">
+                  <button v-if="zone.can_edit" class="dns-icon-btn" @click="openEditZone(zone)" title="Editar zona"><i class="bi bi-pencil"></i></button>
+                  <button class="dns-icon-btn" @click="openZoneRecords(zone)" title="Ver registros"><i class="bi bi-list-ul"></i></button>
+                  <button v-if="zone.can_edit" class="dns-icon-btn dns-icon-btn--danger" @click="confirmDeleteZone(zone)" title="Eliminar"><i class="bi bi-trash"></i></button>
+                </div>
               </td>
             </tr>
           </tbody>
@@ -261,100 +258,90 @@
       </div>
     </div>
 
-    <!-- Panel de registros de la zona seleccionada -->
-    <div v-if="selectedZone" class="card shadow-sm">
-      <div class="card-header d-flex justify-content-between align-items-center">
-        <h5 class="mb-0">
-          <i class="bi bi-list-ul me-2"></i>
+    <!-- Registros de la zona seleccionada -->
+    <div v-if="selectedZone" class="dns-card">
+      <div class="dns-card-head">
+        <span class="dns-card-title">
+          <i class="bi bi-list-ul"></i>
           Registros de <strong>{{ selectedZone.domain_name }}</strong>
-          <code class="ms-2 small text-muted">serial {{ selectedZone.serial }}</code>
-        </h5>
-        <div class="d-flex gap-2">
-          <button v-if="selectedZone.can_edit" class="btn btn-sm btn-success" @click="openAddRecord">
-            <i class="bi bi-plus-lg me-1"></i> Añadir Registro
+          <code style="font-size:.75rem;color:var(--text-muted);margin-left:.5rem">serial {{ selectedZone.serial }}</code>
+        </span>
+        <div style="display:flex;gap:6px;align-items:center">
+          <button v-if="selectedZone.can_edit" class="dns-btn dns-btn--success dns-btn--sm" @click="openAddRecord">
+            <i class="bi bi-plus-lg"></i> Añadir
           </button>
           <div v-if="selectedZone.can_edit" class="dropdown">
-            <button class="btn btn-sm btn-outline-primary dropdown-toggle" @click="showTemplates = !showTemplates">
-              <i class="bi bi-magic me-1"></i> Plantillas
+            <button class="dns-btn dns-btn--ghost dns-btn--sm" @click="showTemplates = !showTemplates">
+              <i class="bi bi-magic"></i> Plantillas
             </button>
             <div v-if="showTemplates" class="dns-templates" v-click-away="() => showTemplates = false">
-              <p class="dns-templates__title">Añadir registros de correo</p>
+              <p class="dns-templates__title">Registros de correo</p>
               <button @click="applyMailTemplate('spf')"><i class="bi bi-shield-check"></i> SPF (~all)</button>
               <button @click="applyMailTemplate('dmarc')"><i class="bi bi-shield-check"></i> DMARC (p=none)</button>
               <button @click="applyMailTemplate('mx')"><i class="bi bi-envelope"></i> MX (este servidor)</button>
               <div class="dns-templates__sep"></div>
-              <button @click="applyMailTemplate('all')"><i class="bi bi-stars"></i> Pack email seguro (MX+SPF+DMARC)</button>
+              <button @click="applyMailTemplate('all')"><i class="bi bi-stars"></i> Pack email seguro</button>
             </div>
           </div>
-          <button v-if="selectedZone.can_edit" class="btn btn-sm btn-outline-warning" @click="confirmRegenerate" :title="'Regenerar registros con plantilla ' + (selectedZone.template || 'default')">
-            <i class="bi bi-arrow-repeat me-1"></i> Regenerar plantilla
+          <button v-if="selectedZone.can_edit" class="dns-btn dns-btn--ghost dns-btn--sm" @click="confirmRegenerate">
+            <i class="bi bi-arrow-repeat"></i> Regenerar
           </button>
-          <button class="btn btn-sm btn-outline-secondary" @click="selectedZone = null">
-            <i class="bi bi-x"></i> Cerrar
-          </button>
+          <button class="dns-icon-btn" @click="selectedZone = null" title="Cerrar"><i class="bi bi-x-lg"></i></button>
         </div>
       </div>
-      <div class="card-body p-0">
-        <div v-if="loadingRecords" class="text-center py-4">
-          <div class="spinner-border spinner-border-sm text-primary"></div>
-        </div>
-        <table v-else class="table table-sm table-hover mb-0 font-monospace">
-          <thead class="table-light">
+      <div v-if="loadingRecords" class="dns-loading"><div class="spinner-border spinner-border-sm"></div></div>
+      <div v-else class="dns-table-wrap">
+        <table class="dns-table dns-table--mono">
+          <thead>
             <tr>
               <th>Nombre</th>
               <th>Tipo</th>
               <th>Contenido</th>
               <th>TTL</th>
               <th>Prio</th>
-              <th v-if="selectedZone.can_edit" class="text-end">Acciones</th>
+              <th v-if="selectedZone.can_edit" style="text-align:right">Acciones</th>
             </tr>
           </thead>
           <tbody>
-            <tr v-for="rec in records" :key="rec.id" :class="{ 'table-active': inlineEditId === rec.id }">
+            <tr v-for="rec in records" :key="rec.id" :class="{ 'dns-row--editing': inlineEditId === rec.id }">
               <td>{{ rec.name }}</td>
-              <td><span :class="typeClass(rec.record_type)" class="badge">{{ rec.record_type }}</span></td>
-
-              <!-- Modo lectura -->
+              <td><span :class="typeClass(rec.record_type)">{{ rec.record_type }}</span></td>
               <template v-if="inlineEditId !== rec.id">
-                <td class="text-break" style="max-width:280px;">{{ rec.content }}</td>
-                <td class="text-muted">{{ rec.ttl }}</td>
-                <td class="text-muted">{{ rec.priority || '—' }}</td>
-                <td v-if="selectedZone.can_edit" class="text-end">
-                  <button class="btn btn-sm btn-outline-secondary me-1" @click="startInlineEdit(rec)" title="Editar aquí">
-                    <i class="bi bi-pencil"></i>
-                  </button>
-                  <button class="btn btn-sm btn-outline-danger" @click="confirmDeleteRecord(rec)" title="Eliminar">
-                    <i class="bi bi-trash"></i>
-                  </button>
+                <td style="max-width:280px;word-break:break-all">{{ rec.content }}</td>
+                <td style="color:var(--text-muted)">{{ rec.ttl }}</td>
+                <td style="color:var(--text-muted)">{{ rec.priority || '—' }}</td>
+                <td v-if="selectedZone.can_edit" style="text-align:right">
+                  <div style="display:flex;gap:4px;justify-content:flex-end">
+                    <button class="dns-icon-btn" @click="startInlineEdit(rec)" title="Editar"><i class="bi bi-pencil"></i></button>
+                    <button class="dns-icon-btn dns-icon-btn--danger" @click="confirmDeleteRecord(rec)" title="Eliminar"><i class="bi bi-trash"></i></button>
+                  </div>
                 </td>
               </template>
-
-              <!-- Modo edición inline -->
               <template v-else>
                 <td><input v-model="inlineForm.content" class="form-control form-control-sm font-monospace" @keydown.enter="saveInlineEdit" @keydown.esc="cancelInlineEdit" /></td>
                 <td>
-                  <select v-model.number="inlineForm.ttl" class="form-select form-select-sm" style="min-width:90px">
+                  <select v-model.number="inlineForm.ttl" class="form-select form-select-sm" style="min-width:80px">
                     <option :value="300">300</option><option :value="3600">3600</option>
                     <option :value="14400">14400</option><option :value="86400">86400</option>
                   </select>
                 </td>
                 <td>
                   <input v-if="['MX','SRV'].includes(rec.record_type)" v-model.number="inlineForm.priority" type="number" class="form-control form-control-sm" min="0" style="width:70px" />
-                  <span v-else class="text-muted">—</span>
+                  <span v-else style="color:var(--text-muted)">—</span>
                 </td>
-                <td class="text-end" style="white-space:nowrap">
-                  <button class="btn btn-sm btn-success me-1" @click="saveInlineEdit" :disabled="savingRecord" title="Guardar">
-                    <span v-if="savingRecord" class="spinner-border spinner-border-sm"></span>
-                    <i v-else class="bi bi-check-lg"></i>
-                  </button>
-                  <button class="btn btn-sm btn-outline-secondary" @click="cancelInlineEdit" title="Cancelar">
-                    <i class="bi bi-x-lg"></i>
-                  </button>
+                <td style="text-align:right;white-space:nowrap">
+                  <div style="display:flex;gap:4px;justify-content:flex-end">
+                    <button class="dns-btn dns-btn--success dns-btn--sm" @click="saveInlineEdit" :disabled="savingRecord">
+                      <span v-if="savingRecord" class="spinner-border spinner-border-sm"></span>
+                      <i v-else class="bi bi-check-lg"></i>
+                    </button>
+                    <button class="dns-icon-btn" @click="cancelInlineEdit"><i class="bi bi-x-lg"></i></button>
+                  </div>
                 </td>
               </template>
             </tr>
             <tr v-if="!records.length">
-              <td :colspan="selectedZone.can_edit ? 6 : 5" class="text-center text-muted py-3">Sin registros</td>
+              <td :colspan="selectedZone.can_edit ? 6 : 5" style="text-align:center;padding:1.5rem;color:var(--text-muted)">Sin registros</td>
             </tr>
           </tbody>
         </table>
@@ -1286,6 +1273,74 @@ export default {
 
 <style scoped>
 .sv-view { display: flex; flex-direction: column; gap: 20px; }
+
+/* ── Layout ── */
+.dns-head { display:flex; justify-content:space-between; align-items:flex-start; gap:1rem; }
+.dns-title { font-size:1.5rem; font-weight:700; margin:0 0 .25rem; display:flex; align-items:center; gap:.5rem; }
+.dns-subtitle { font-size:.875rem; color:var(--text-muted); margin:0; }
+.dns-hint { font-size:.85rem; color:var(--text-muted); margin:0 0 .75rem; }
+.dns-warn-text { color:var(--warning,#d97706); font-size:.82rem; }
+
+/* ── Card ── */
+.dns-card { background:var(--surface); border:1px solid var(--border); border-radius:var(--r-md,10px); overflow:hidden; }
+.dns-card-head { display:flex; align-items:center; justify-content:space-between; padding:.875rem 1.25rem; border-bottom:1px solid var(--border); }
+.dns-card-title { font-weight:600; font-size:.95rem; display:flex; align-items:center; gap:.5rem; flex-wrap:wrap; }
+.dns-card-body { padding:1.25rem; }
+.dns-count { background:var(--surface-2); border:1px solid var(--border); border-radius:999px; padding:.1rem .5rem; font-size:.75rem; font-weight:600; }
+
+/* ── Botones ── */
+.dns-btn { display:inline-flex; align-items:center; gap:6px; padding:.4rem .9rem; border-radius:var(--r-sm,6px); font-size:.875rem; font-weight:500; cursor:pointer; border:1px solid transparent; transition:all .15s; }
+.dns-btn--primary { background:var(--ac); color:#fff; border-color:var(--ac); }
+.dns-btn--primary:hover { opacity:.9; }
+.dns-btn--ghost { background:var(--surface); color:var(--text-secondary); border-color:var(--border); }
+.dns-btn--ghost:hover { background:var(--surface-2); color:var(--text); }
+.dns-btn--success { background:color-mix(in srgb,var(--success) 12%,transparent); color:var(--success); border-color:color-mix(in srgb,var(--success) 30%,transparent); }
+.dns-btn--success:hover { background:var(--success); color:#fff; }
+.dns-btn--sm { padding:.3rem .7rem; font-size:.82rem; }
+.dns-btn:disabled { opacity:.5; cursor:not-allowed; }
+.dns-icon-btn { width:30px; height:30px; display:inline-flex; align-items:center; justify-content:center; border:1px solid var(--border); border-radius:var(--r-sm,6px); background:var(--surface); color:var(--text-secondary); cursor:pointer; transition:all .15s; font-size:.875rem; }
+.dns-icon-btn:hover { background:var(--surface-2); color:var(--text); }
+.dns-icon-btn--danger:hover { background:var(--danger); color:#fff; border-color:var(--danger); }
+
+/* ── Badges ── */
+.dns-badge { display:inline-flex; align-items:center; gap:.25rem; padding:.2rem .55rem; border-radius:999px; font-size:.72rem; font-weight:600; white-space:nowrap; }
+.dns-badge--on { background:color-mix(in srgb,var(--success) 15%,transparent); color:var(--success); }
+.dns-badge--off { background:var(--surface-2); color:var(--text-muted); border:1px solid var(--border); }
+.dns-badge--blue { background:color-mix(in srgb,var(--ac) 15%,transparent); color:var(--ac); }
+.dns-badge--teal { background:color-mix(in srgb,var(--info,#06b6d4) 15%,transparent); color:var(--info,#06b6d4); }
+.dns-badge--warn { background:color-mix(in srgb,var(--warning,#f59e0b) 15%,transparent); color:var(--warning,#d97706); }
+.dns-badge--danger { background:color-mix(in srgb,var(--danger) 15%,transparent); color:var(--danger); }
+
+/* ── Tabla ── */
+.dns-table-wrap { overflow-x:auto; }
+.dns-table { width:100%; border-collapse:collapse; font-size:.875rem; }
+.dns-table th { padding:.6rem 1rem; text-align:left; font-size:.75rem; font-weight:600; color:var(--text-muted); text-transform:uppercase; letter-spacing:.04em; border-bottom:1px solid var(--border); background:var(--surface-2); }
+.dns-table td { padding:.65rem 1rem; border-bottom:1px solid var(--border); }
+.dns-table tr:last-child td { border-bottom:none; }
+.dns-table tbody tr:hover { background:var(--surface-2); }
+.dns-table--mono td { font-family:var(--font-mono); font-size:.82rem; }
+.dns-row--active td { background:color-mix(in srgb,var(--ac) 6%,var(--surface)); }
+.dns-row--editing td { background:color-mix(in srgb,var(--ac) 4%,var(--surface)); }
+
+/* ── Formularios inline ── */
+.dns-ns-form { display:grid; grid-template-columns:1fr 1fr auto; gap:.75rem; align-items:end; }
+.dns-node-form { display:flex; gap:.75rem; align-items:end; flex-wrap:wrap; }
+.dns-field { display:flex; flex-direction:column; gap:.3rem; flex:1; min-width:120px; }
+.dns-field label { font-size:.78rem; font-weight:600; color:var(--text-secondary); }
+.dns-field--actions { flex:0; min-width:auto; }
+
+/* ── Info / empty / loading ── */
+.dns-info-box { background:var(--surface-2); border:1px solid var(--border); border-radius:var(--r-sm,6px); padding:.75rem 1rem; font-size:.85rem; }
+.dns-glue-table { width:100%; font-family:var(--font-mono); font-size:.78rem; margin-top:.5rem; border-collapse:collapse; }
+.dns-glue-table td { padding:.2rem .5rem; color:var(--text-secondary); }
+.dns-empty { display:flex; flex-direction:column; align-items:center; gap:.5rem; padding:3rem 1rem; text-align:center; color:var(--text-muted); }
+.dns-empty i { font-size:2.5rem; }
+.dns-loading { display:flex; justify-content:center; padding:2rem; }
+
+@media (max-width:700px) {
+  .dns-ns-form { grid-template-columns:1fr; }
+  .dns-node-form { flex-direction:column; }
+}
 /* Badges de tipo de registro DNS — colores semánticos legibles en light/dark */
 .dns-type {
   display: inline-block;
