@@ -1771,6 +1771,7 @@ export default {
 .sv-field { display:flex; flex-direction:column; gap:.35rem; }
 .sv-field label { font-size:.82rem; font-weight:600; color:var(--text-secondary); }
 .sv-field--full { grid-column:1/-1; }
+.sv-field--full .sv-btn { width:fit-content; }
 .sv-input-copy { display:flex; align-items:stretch; gap:0; border:1px solid var(--border); border-radius:var(--radius-sm,6px); overflow:hidden; }
 .sv-input-label { padding:.4rem .65rem; background:var(--surface-2); color:var(--text-muted); font-size:.78rem; display:flex; align-items:center; white-space:nowrap; border-right:1px solid var(--border); }
 .sv-input-copy .form-control { border:none; border-radius:0; flex:1; }
