@@ -112,201 +112,203 @@
     </div>
 
     <!-- Modal crear/editar -->
-    <div v-if="showForm" class="modal d-block" tabindex="-1" style="background:rgba(0,0,0,.5)">
-      <div class="modal-dialog modal-lg modal-dialog-scrollable">
+    <div v-if="showForm" class="modal d-block" tabindex="-1" style="background:rgba(0,0,0,.5)" @click.self="closeForm">
+      <div class="modal-dialog modal-xl modal-dialog-scrollable">
         <div class="modal-content">
           <div class="modal-header">
-            <h5 class="modal-title">{{ editing ? 'Editar backup' : 'Nuevo backup' }}</h5>
+            <h5 class="modal-title"><i class="bi bi-archive me-2"></i>{{ editing ? 'Editar backup' : 'Nuevo backup' }}</h5>
             <button type="button" class="btn-close" @click="closeForm"></button>
           </div>
-          <div class="modal-body">
-            <div class="row g-3">
-              <div class="col-md-6">
-                <label class="form-label fw-semibold">Nombre <span class="text-danger">*</span></label>
-                <input v-model="form.name" class="form-control" placeholder="Ej: Backup diario tienda" />
-              </div>
-              <div class="col-md-6">
-                <label class="form-label fw-semibold">Dominio</label>
-                <select v-model="form.domain_id" class="form-select" :disabled="editing">
-                  <option :value="null">— Todos mis dominios —</option>
-                  <option v-for="d in domains" :key="d.id" :value="d.id">{{ d.domain_name }}</option>
-                </select>
-                <div class="form-text">Sin selección: respalda todos tus dominios en una sola ejecución.</div>
-              </div>
-              <div class="col-12">
-                <label class="form-label">Descripción (opcional)</label>
-                <input v-model="form.description" class="form-control" placeholder="Notas sobre este backup" />
-              </div>
-            </div>
+          <div class="modal-body" style="display:grid;grid-template-columns:1fr 1fr;gap:1.5rem">
 
-            <hr />
+            <!-- Columna izquierda -->
+            <div style="display:flex;flex-direction:column;gap:1rem">
 
-            <!-- Contenido -->
-            <label class="form-label fw-semibold d-block">¿Qué respaldar?</label>
-            <div class="d-flex flex-wrap gap-4 mb-3">
-              <div class="form-check">
-                <input class="form-check-input" type="checkbox" id="incFiles" v-model="form.include_files" />
-                <label class="form-check-label" for="incFiles"><i class="bi bi-folder"></i> Archivos web</label>
-              </div>
-              <div class="form-check">
-                <input class="form-check-input" type="checkbox" id="incDb" v-model="form.include_databases" />
-                <label class="form-check-label" for="incDb"><i class="bi bi-database"></i> Bases de datos</label>
-              </div>
-              <div class="form-check">
-                <input class="form-check-input" type="checkbox" id="incMail" v-model="form.include_mail" />
-                <label class="form-check-label" for="incMail"><i class="bi bi-envelope"></i> Correo</label>
-              </div>
-            </div>
-
-            <div class="row g-3">
-              <!-- Tipo -->
-              <div class="col-md-6">
-                <label class="form-label fw-semibold">Tipo de copia</label>
-                <select v-model="form.backup_type" class="form-select">
-                  <option value="incremental">Incremental (solo cambios, recomendado)</option>
-                  <option value="full">Completa (todo cada vez)</option>
-                </select>
-              </div>
-              <!-- Retención -->
-              <div class="col-md-6">
-                <label class="form-label fw-semibold">Copias a conservar</label>
-                <input v-model.number="form.retention_copies" type="number" min="1" max="365" class="form-control" />
-                <div class="form-text">Se eliminan las más antiguas al superar este número (solo destino local).</div>
-              </div>
-            </div>
-
-            <hr />
-
-            <!-- Destino -->
-            <label class="form-label fw-semibold d-block">Destino</label>
-            <div class="d-flex gap-4 mb-3">
-              <div class="form-check">
-                <input class="form-check-input" type="radio" id="destLocal" value="local" v-model="form.destination_type" />
-                <label class="form-check-label" for="destLocal"><i class="bi bi-hdd"></i> Local</label>
-              </div>
-              <div class="form-check">
-                <input class="form-check-input" type="radio" id="destSftp" value="sftp" v-model="form.destination_type" />
-                <label class="form-check-label" for="destSftp"><i class="bi bi-hdd-network"></i> Remoto (SFTP)</label>
-              </div>
-            </div>
-
-            <div v-if="form.destination_type === 'local'" class="mb-2">
-              <label class="form-label">Ruta local</label>
-              <input v-model="form.local_path" class="form-control font-monospace" placeholder="/backups" />
-            </div>
-
-            <div v-else class="row g-3">
-              <div class="col-md-8">
-                <label class="form-label">Host SFTP <span class="text-danger">*</span></label>
-                <input v-model="form.sftp_host" class="form-control" placeholder="backup.midominio.com" />
-              </div>
-              <div class="col-md-4">
-                <label class="form-label">Puerto</label>
-                <input v-model.number="form.sftp_port" type="number" class="form-control" placeholder="22" />
-              </div>
-              <div class="col-md-6">
-                <label class="form-label">Usuario <span class="text-danger">*</span></label>
-                <input v-model="form.sftp_user" class="form-control" placeholder="backupuser" />
-              </div>
-              <div class="col-md-6">
-                <label class="form-label">Contraseña</label>
-                <input v-model="form.sftp_password" type="password" class="form-control"
-                       :placeholder="editing ? 'Dejar en blanco para no cambiar' : 'Opcional si usas clave SSH'" />
-              </div>
-              <div class="col-md-6">
-                <label class="form-label">Ruta remota</label>
-                <input v-model="form.sftp_path" class="form-control font-monospace" placeholder="/backups" />
-              </div>
-              <div class="col-md-6">
-                <label class="form-label">Clave SSH privada (ruta en el servidor)</label>
-                <input v-model="form.sftp_key_path" class="form-control font-monospace" placeholder="/root/.ssh/id_backup" />
-              </div>
-              <div class="col-12" v-if="editing">
-                <button class="btn btn-sm btn-outline-info" :disabled="testingSftp" @click="testSftp">
-                  <span v-if="testingSftp" class="spinner-border spinner-border-sm me-1"></span>
-                  <i v-else class="bi bi-plug"></i> Probar conexión
-                </button>
-                <span v-if="sftpTestMsg" :class="sftpTestOk ? 'text-success ms-2' : 'text-danger ms-2'">
-                  {{ sftpTestMsg }}
-                </span>
-              </div>
-            </div>
-
-            <hr />
-
-            <!-- Programación automática -->
-            <div class="d-flex align-items-center gap-2 mb-3">
-              <div class="form-check form-switch mb-0">
-                <input class="form-check-input" type="checkbox" id="schedEnabled" v-model="form.schedule_enabled" />
-                <label class="form-check-label fw-semibold" for="schedEnabled">Programación automática</label>
-              </div>
-            </div>
-
-            <div v-if="form.schedule_enabled" class="border rounded p-3 mb-3 bg-light">
-              <!-- Presets -->
-              <label class="form-label fw-semibold d-block mb-2">Frecuencia</label>
-              <div class="d-flex flex-wrap gap-2 mb-3">
-                <button type="button" class="btn btn-sm"
-                        :class="schedPreset === 'daily' ? 'btn-primary' : 'btn-outline-secondary'"
-                        @click="applyPreset('daily')">Diario</button>
-                <button type="button" class="btn btn-sm"
-                        :class="schedPreset === 'weekly' ? 'btn-primary' : 'btn-outline-secondary'"
-                        @click="applyPreset('weekly')">Semanal (lunes)</button>
-                <button type="button" class="btn btn-sm"
-                        :class="schedPreset === 'monthly' ? 'btn-primary' : 'btn-outline-secondary'"
-                        @click="applyPreset('monthly')">Mensual (día 1)</button>
-                <button type="button" class="btn btn-sm"
-                        :class="schedPreset === 'custom' ? 'btn-primary' : 'btn-outline-secondary'"
-                        @click="schedPreset = 'custom'">Personalizado</button>
+              <!-- Básico -->
+              <div class="bk-section">
+                <div class="bk-section-title">General</div>
+                <div class="bk-field">
+                  <label>Nombre <span class="text-danger">*</span></label>
+                  <input v-model="form.name" class="form-control form-control-sm" placeholder="Ej: Backup diario tienda" />
+                </div>
+                <div class="bk-field">
+                  <label>Dominio</label>
+                  <select v-model="form.domain_id" class="form-select form-select-sm" :disabled="editing">
+                    <option :value="null">— Todos mis dominios —</option>
+                    <option v-for="d in domains" :key="d.id" :value="d.id">{{ d.domain_name }}</option>
+                  </select>
+                  <span class="bk-hint">Sin selección: respalda todos tus dominios.</span>
+                </div>
+                <div class="bk-field">
+                  <label>Descripción</label>
+                  <input v-model="form.description" class="form-control form-control-sm" placeholder="Notas sobre este backup" />
+                </div>
               </div>
 
-              <!-- Hora para diario/semanal/mensual -->
-              <div v-if="schedPreset !== 'custom'" class="row g-2 align-items-end">
-                <div class="col-auto">
-                  <label class="form-label mb-1">Hora</label>
-                  <select v-model="presetHour" class="form-select form-select-sm" style="width:auto"
-                          @change="applyPreset(schedPreset)">
-                    <option v-for="h in 24" :key="h-1" :value="h-1">{{ String(h-1).padStart(2,'0') }}:00</option>
+              <!-- Contenido -->
+              <div class="bk-section">
+                <div class="bk-section-title">¿Qué respaldar?</div>
+                <div style="display:flex;gap:1rem;flex-wrap:wrap">
+                  <label class="bk-check">
+                    <input type="checkbox" v-model="form.include_files" />
+                    <i class="bi bi-folder"></i> Archivos web
+                  </label>
+                  <label class="bk-check">
+                    <input type="checkbox" v-model="form.include_databases" />
+                    <i class="bi bi-database"></i> Bases de datos
+                  </label>
+                  <label class="bk-check">
+                    <input type="checkbox" v-model="form.include_mail" />
+                    <i class="bi bi-envelope"></i> Correo
+                  </label>
+                </div>
+              </div>
+
+              <!-- Tipo y retención -->
+              <div class="bk-section">
+                <div class="bk-section-title">Opciones</div>
+                <div class="bk-field">
+                  <label>Tipo de copia</label>
+                  <select v-model="form.backup_type" class="form-select form-select-sm">
+                    <option value="incremental">Incremental (solo cambios, recomendado)</option>
+                    <option value="full">Completa (todo cada vez)</option>
                   </select>
                 </div>
-                <div class="col">
-                  <span class="text-muted small">{{ schedSummary }}</span>
+                <div class="bk-field">
+                  <label>Copias a conservar</label>
+                  <input v-model.number="form.retention_copies" type="number" min="1" max="365" class="form-control form-control-sm" />
+                  <span class="bk-hint">Se eliminan las más antiguas (solo destino local).</span>
+                </div>
+                <label class="bk-check" style="margin-top:.25rem">
+                  <input type="checkbox" v-model="form.is_active" />
+                  Backup activo
+                </label>
+              </div>
+
+            </div>
+
+            <!-- Columna derecha -->
+            <div style="display:flex;flex-direction:column;gap:1rem">
+
+              <!-- Destino -->
+              <div class="bk-section">
+                <div class="bk-section-title">Destino</div>
+                <div style="display:flex;gap:1.5rem;margin-bottom:.75rem">
+                  <label class="bk-check">
+                    <input type="radio" value="local" v-model="form.destination_type" />
+                    <i class="bi bi-hdd"></i> Local
+                  </label>
+                  <label class="bk-check">
+                    <input type="radio" value="sftp" v-model="form.destination_type" />
+                    <i class="bi bi-hdd-network"></i> Remoto (SFTP)
+                  </label>
+                </div>
+
+                <div v-if="form.destination_type === 'local'" class="bk-field">
+                  <label>Ruta local</label>
+                  <input v-model="form.local_path" class="form-control form-control-sm font-monospace" placeholder="/backups" />
+                </div>
+
+                <div v-else style="display:flex;flex-direction:column;gap:.75rem">
+                  <div style="display:grid;grid-template-columns:1fr auto;gap:.5rem">
+                    <div class="bk-field">
+                      <label>Host SFTP <span class="text-danger">*</span></label>
+                      <input v-model="form.sftp_host" class="form-control form-control-sm" placeholder="backup.midominio.com" />
+                    </div>
+                    <div class="bk-field" style="width:80px">
+                      <label>Puerto</label>
+                      <input v-model.number="form.sftp_port" type="number" class="form-control form-control-sm" placeholder="22" />
+                    </div>
+                  </div>
+                  <div style="display:grid;grid-template-columns:1fr 1fr;gap:.5rem">
+                    <div class="bk-field">
+                      <label>Usuario <span class="text-danger">*</span></label>
+                      <input v-model="form.sftp_user" class="form-control form-control-sm" placeholder="backupuser" />
+                    </div>
+                    <div class="bk-field">
+                      <label>Contraseña</label>
+                      <input v-model="form.sftp_password" type="password" class="form-control form-control-sm"
+                             :placeholder="editing ? 'Sin cambios' : 'Opcional'" />
+                    </div>
+                  </div>
+                  <div class="bk-field">
+                    <label>Ruta remota</label>
+                    <input v-model="form.sftp_path" class="form-control form-control-sm font-monospace" placeholder="/backups" />
+                  </div>
+                  <div class="bk-field">
+                    <label>Clave SSH privada (ruta en servidor)</label>
+                    <input v-model="form.sftp_key_path" class="form-control form-control-sm font-monospace" placeholder="/root/.ssh/id_backup" />
+                  </div>
+                  <div v-if="editing" style="display:flex;align-items:center;gap:.75rem">
+                    <button class="btn btn-sm btn-outline-info" :disabled="testingSftp" @click="testSftp">
+                      <span v-if="testingSftp" class="spinner-border spinner-border-sm me-1"></span>
+                      <i v-else class="bi bi-plug"></i> Probar conexión
+                    </button>
+                    <span v-if="sftpTestMsg" :class="sftpTestOk ? 'text-success' : 'text-danger'" style="font-size:.82rem">
+                      {{ sftpTestMsg }}
+                    </span>
+                  </div>
                 </div>
               </div>
 
-              <!-- Campos cron personalizados -->
-              <div v-if="schedPreset === 'custom'" class="row g-2">
-                <div class="col">
-                  <label class="form-label mb-1 small">Minuto</label>
-                  <input v-model="form.schedule_minute" class="form-control form-control-sm font-monospace" placeholder="0" />
+              <!-- Programación -->
+              <div class="bk-section">
+                <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:.75rem">
+                  <div class="bk-section-title" style="margin-bottom:0">Programación automática</div>
+                  <label class="form-check form-switch mb-0">
+                    <input class="form-check-input" type="checkbox" v-model="form.schedule_enabled" style="cursor:pointer" />
+                  </label>
                 </div>
-                <div class="col">
-                  <label class="form-label mb-1 small">Hora</label>
-                  <input v-model="form.schedule_hour" class="form-control form-control-sm font-monospace" placeholder="2" />
+
+                <div v-if="form.schedule_enabled">
+                  <div style="display:flex;flex-wrap:wrap;gap:.4rem;margin-bottom:.75rem">
+                    <button type="button" class="btn btn-sm" v-for="p in ['daily','weekly','monthly','custom']" :key="p"
+                            :class="schedPreset === p ? 'btn-primary' : 'btn-outline-secondary'"
+                            @click="p === 'custom' ? schedPreset = 'custom' : applyPreset(p)">
+                      {{ p === 'daily' ? 'Diario' : p === 'weekly' ? 'Semanal' : p === 'monthly' ? 'Mensual' : 'Personalizado' }}
+                    </button>
+                  </div>
+
+                  <div v-if="schedPreset !== 'custom'" style="display:flex;align-items:center;gap:.75rem">
+                    <div class="bk-field" style="flex:0">
+                      <label>Hora</label>
+                      <select v-model="presetHour" class="form-select form-select-sm" style="width:90px" @change="applyPreset(schedPreset)">
+                        <option v-for="h in 24" :key="h-1" :value="h-1">{{ String(h-1).padStart(2,'0') }}:00</option>
+                      </select>
+                    </div>
+                    <span style="font-size:.8rem;color:var(--text-muted);padding-top:1.4rem">{{ schedSummary }}</span>
+                  </div>
+
+                  <div v-if="schedPreset === 'custom'" style="display:grid;grid-template-columns:repeat(4,1fr);gap:.4rem">
+                    <div class="bk-field">
+                      <label>Minuto</label>
+                      <input v-model="form.schedule_minute" class="form-control form-control-sm font-monospace" placeholder="0" />
+                    </div>
+                    <div class="bk-field">
+                      <label>Hora</label>
+                      <input v-model="form.schedule_hour" class="form-control form-control-sm font-monospace" placeholder="2" />
+                    </div>
+                    <div class="bk-field">
+                      <label>Día mes</label>
+                      <input v-model="form.schedule_day" class="form-control form-control-sm font-monospace" placeholder="*" />
+                    </div>
+                    <div class="bk-field">
+                      <label>Día semana</label>
+                      <input v-model="form.schedule_weekday" class="form-control form-control-sm font-monospace" placeholder="*" />
+                    </div>
+                    <div style="grid-column:1/-1;font-size:.78rem;color:var(--text-muted);font-family:var(--font-mono)">
+                      {{ form.schedule_minute }} {{ form.schedule_hour }} * * {{ form.schedule_weekday }} — {{ schedSummary }}
+                    </div>
+                  </div>
                 </div>
-                <div class="col">
-                  <label class="form-label mb-1 small">Día mes</label>
-                  <input v-model="form.schedule_day" class="form-control form-control-sm font-monospace" placeholder="*" />
-                </div>
-                <div class="col">
-                  <label class="form-label mb-1 small">Día semana</label>
-                  <input v-model="form.schedule_weekday" class="form-control form-control-sm font-monospace" placeholder="* (0=lun)" />
-                </div>
-                <div class="col-12">
-                  <span class="text-muted small font-monospace">
-                    {{ form.schedule_minute }} {{ form.schedule_hour }} * * {{ form.schedule_weekday }}
-                    &nbsp;—&nbsp;{{ schedSummary }}
-                  </span>
-                </div>
+                <p v-else style="font-size:.82rem;color:var(--text-muted);margin:0">Ejecución manual únicamente.</p>
               </div>
+
             </div>
 
-            <div class="form-check mt-3">
-              <input class="form-check-input" type="checkbox" id="jobActive" v-model="form.is_active" />
-              <label class="form-check-label" for="jobActive">Backup activo</label>
-            </div>
+            <!-- Error a ancho completo -->
+            <div v-if="formError" class="alert alert-danger mb-0" style="grid-column:1/-1">{{ formError }}</div>
 
-            <div v-if="formError" class="alert alert-danger mt-3 mb-0">{{ formError }}</div>
           </div>
           <div class="modal-footer">
             <button class="btn btn-secondary" @click="closeForm">Cancelar</button>
@@ -869,3 +871,50 @@ export default {
   }
 }
 </script>
+
+<style scoped>
+.bk-section {
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: var(--r-md, 8px);
+  padding: 1rem;
+  display: flex;
+  flex-direction: column;
+  gap: .65rem;
+}
+.bk-section-title {
+  font-size: .8rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: .06em;
+  color: var(--text-muted);
+  margin-bottom: .1rem;
+}
+.bk-field {
+  display: flex;
+  flex-direction: column;
+  gap: .25rem;
+}
+.bk-field label {
+  font-size: .8rem;
+  font-weight: 600;
+  color: var(--text-secondary);
+}
+.bk-hint {
+  font-size: .75rem;
+  color: var(--text-muted);
+}
+.bk-check {
+  display: inline-flex;
+  align-items: center;
+  gap: .4rem;
+  font-size: .875rem;
+  cursor: pointer;
+  user-select: none;
+}
+.bk-check input { cursor: pointer; }
+
+@media (max-width: 768px) {
+  .modal-body { grid-template-columns: 1fr !important; }
+}
+</style>
