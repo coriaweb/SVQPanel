@@ -113,7 +113,7 @@
 
     <!-- Modal crear/editar -->
     <div v-if="showForm" class="modal d-block" tabindex="-1" style="background:rgba(0,0,0,.5)" @click.self="closeForm">
-      <div class="modal-dialog modal-xl modal-dialog-scrollable">
+      <div class="modal-dialog modal-xl modal-dialog-scrollable" style="max-width:900px">
         <div class="modal-content">
           <div class="modal-header">
             <h5 class="modal-title"><i class="bi bi-archive me-2"></i>{{ editing ? 'Editar backup' : 'Nuevo backup' }}</h5>
