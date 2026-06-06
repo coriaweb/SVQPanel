@@ -1485,15 +1485,28 @@ async def create_webmail_token(
     db.add(wt)
     db.commit()
 
-    # Usar SIEMPRE la barra final: /webmail/?svqtoken=... entra directo en el
-    # location /webmail/ de nginx. Sin la barra, nginx hace 301 a /webmail/ y
-    # PIERDE el query string (?svqtoken), por lo que Roundcube no recibe el
-    # token y se queda en blanco / vuelve al panel.
-    roundcube_url = os.getenv("ROUNDCUBE_URL", "/webmail/")
-    if "?" not in roundcube_url and not roundcube_url.endswith("/"):
-        roundcube_url += "/"
-    sep = "&" if "?" in roundcube_url else "?"
-    full_url = f"{roundcube_url}{sep}svqtoken={token}"
+    # Construir URL del webmail del dominio.
+    # Si el dominio tiene webmail propio (webmail.dominio.com) con SSL → usarlo.
+    # Si no, caer al ROUNDCUBE_URL del .env (ruta relativa al panel como fallback).
+    from scripts.webmail_manager import WebmailManager, vhost_name
+    import subprocess as _sp
+    webmail_domain = f"webmail.{md.domain_name}"
+    webmail_ssl = os.path.exists(
+        f"/etc/letsencrypt/live/{md.domain_name}/fullchain.pem"
+    ) or os.path.exists(
+        f"/etc/letsencrypt/live/{webmail_domain}/fullchain.pem"
+    )
+    vhost_enabled = os.path.exists(
+        f"/etc/nginx/sites-enabled/{vhost_name(md.domain_name)}"
+    )
+    if vhost_enabled:
+        scheme = "https" if webmail_ssl else "http"
+        roundcube_url = f"{scheme}://{webmail_domain}/"
+    else:
+        roundcube_url = os.getenv("ROUNDCUBE_URL", "/webmail/")
+        if not roundcube_url.endswith("/"):
+            roundcube_url += "/"
+    full_url = f"{roundcube_url}?svqtoken={token}"
 
     logger.info(f"Token webmail generado para {mb.full_email} (expira en 60s)")
     return WebmailTokenResponse(token=token, url=full_url, expires_in=60)
