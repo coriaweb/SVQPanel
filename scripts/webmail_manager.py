@@ -241,16 +241,73 @@ server {{
             else f"Webmail disponible en http://{webmail_host(domain)}"
 
     def remove(self, domain: str) -> Tuple[bool, str]:
-        """Elimina el vhost webmail.{dominio} y recarga nginx."""
-        avail = os.path.join(SITES_AVAILABLE, vhost_name(domain))
-        enabled = os.path.join(SITES_ENABLED, vhost_name(domain))
-        for p in (enabled, avail):
-            try:
-                if os.path.islink(p) or os.path.exists(p):
-                    os.remove(p)
-            except OSError as e:
-                logger.warning(f"No se pudo borrar {p}: {e}")
+        """
+        Desactiva el webmail del dominio.
+        En lugar de eliminar el vhost (lo que haría que nginx sirva el dominio padre),
+        lo reemplaza por un vhost mínimo que devuelve 503 con mensaje claro.
+        Así el subdominio webmail.{dominio} no muestra el sitio web del dominio.
+        """
+        host = webmail_host(domain)
+        avail   = os.path.join(SITES_AVAILABLE, vhost_name(domain))
+        enabled = os.path.join(SITES_ENABLED,   vhost_name(domain))
+
+        # Detectar si hay cert disponible para mantener HTTPS
+        domain_cert = f"/etc/letsencrypt/live/{domain}/fullchain.pem"
+        domain_key  = f"/etc/letsencrypt/live/{domain}/privkey.pem"
+        own_cert    = f"/etc/letsencrypt/live/{host}/fullchain.pem"
+        own_key     = f"/etc/letsencrypt/live/{host}/privkey.pem"
+
+        if os.path.exists(domain_cert):
+            ssl_cert, ssl_key = domain_cert, domain_key
+        elif os.path.exists(own_cert):
+            ssl_cert, ssl_key = own_cert, own_key
+        else:
+            ssl_cert = ssl_key = None
+
+        if ssl_cert:
+            vhost = f"""server {{
+    listen 80;
+    listen [::]:80;
+    server_name {host};
+    return 301 https://$host$request_uri;
+}}
+server {{
+    listen 443 ssl;
+    listen [::]:443 ssl;
+    server_name {host};
+    ssl_certificate {ssl_cert};
+    ssl_certificate_key {ssl_key};
+    ssl_protocols TLSv1.2 TLSv1.3;
+    return 503;
+    error_page 503 @webmail_disabled;
+    location @webmail_disabled {{
+        default_type text/html;
+        return 503 '<html><body style="font-family:sans-serif;text-align:center;padding:4rem"><h2>Webmail no disponible</h2><p>El webmail de {domain} está desactivado.</p></body></html>';
+    }}
+}}
+"""
+        else:
+            vhost = f"""server {{
+    listen 80;
+    listen [::]:80;
+    server_name {host};
+    return 503;
+    error_page 503 @webmail_disabled;
+    location @webmail_disabled {{
+        default_type text/html;
+        return 503 '<html><body style="font-family:sans-serif;text-align:center;padding:4rem"><h2>Webmail no disponible</h2><p>El webmail de {domain} está desactivado.</p></body></html>';
+    }}
+}}
+"""
+        try:
+            with open(avail, "w") as f:
+                f.write(vhost)
+            if not os.path.exists(enabled):
+                os.symlink(avail, enabled)
+        except OSError as e:
+            logger.warning(f"No se pudo escribir vhost desactivado para {host}: {e}")
+
         self.execute_command(["nginx", "-t"], check=False)
-        self.execute_command(["systemctl", "reload", "nginx"], check=False)
-        logger.info(f"Webmail vhost eliminado: {webmail_host(domain)}")
+        self.execute_command(["nginx", "-s", "reload"], check=False)
+        logger.info(f"Webmail desactivado (503): {host}")
         return True, "Webmail desactivado"
