@@ -203,8 +203,15 @@ server {{
 
     # ── Operaciones ───────────────────────────────────────────────────────────
     def is_enabled(self, domain: str) -> bool:
-        return os.path.islink(os.path.join(SITES_ENABLED, vhost_name(domain))) or \
-               os.path.exists(os.path.join(SITES_AVAILABLE, vhost_name(domain)))
+        avail = os.path.join(SITES_AVAILABLE, vhost_name(domain))
+        if not os.path.exists(avail):
+            return False
+        # Un vhost "desactivado" contiene return 503 — no está realmente activo
+        try:
+            with open(avail) as f:
+                return "return 503" not in f.read()
+        except OSError:
+            return False
 
     def enable(self, domain: str, ssl: bool = None) -> Tuple[bool, str]:
         """
@@ -282,7 +289,7 @@ server {{
     error_page 503 @webmail_disabled;
     location @webmail_disabled {{
         default_type text/html;
-        return 503 '<html><body style="font-family:sans-serif;text-align:center;padding:4rem"><h2>Webmail no disponible</h2><p>El webmail de {domain} está desactivado.</p></body></html>';
+        return 503 '<html><meta charset="utf-8"><body style="font-family:sans-serif;text-align:center;padding:4rem"><h2>Webmail no disponible</h2><p>El webmail de {domain} esta desactivado.</p></body></html>';
     }}
 }}
 """
@@ -295,7 +302,7 @@ server {{
     error_page 503 @webmail_disabled;
     location @webmail_disabled {{
         default_type text/html;
-        return 503 '<html><body style="font-family:sans-serif;text-align:center;padding:4rem"><h2>Webmail no disponible</h2><p>El webmail de {domain} está desactivado.</p></body></html>';
+        return 503 '<html><meta charset="utf-8"><body style="font-family:sans-serif;text-align:center;padding:4rem"><h2>Webmail no disponible</h2><p>El webmail de {domain} esta desactivado.</p></body></html>';
     }}
 }}
 """
