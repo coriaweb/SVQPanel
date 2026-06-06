@@ -222,10 +222,61 @@ class MailManager(SystemManager):
                            capture_output=True, env=env)
         threading.Thread(target=_do, daemon=True).start()
 
+    def _ensure_dovecot_passdb(self):
+        """
+        Garantiza que auth-passwdfile.conf.ext esté incluido en 10-auth.conf.
+        Dovecot updates o reinstalaciones pueden volver a comentar la línea,
+        dejando "No passdbs specified" y todo el correo caído.
+        """
+        auth_conf = "/etc/dovecot/conf.d/10-auth.conf"
+        passdb_conf = "/etc/dovecot/conf.d/auth-passwdfile.conf.ext"
+        include_line = "!include auth-passwdfile.conf.ext"
+        commented_line = "#!include auth-passwdfile.conf.ext"
+
+        try:
+            if not os.path.exists(auth_conf):
+                return
+
+            with open(auth_conf, "r") as f:
+                content = f.read()
+
+            # Si el include ya está activo, nada que hacer
+            if f"\n{include_line}" in content or content.startswith(include_line):
+                return
+
+            # Si está comentado, descomentarlo
+            if commented_line in content:
+                content = content.replace(commented_line, include_line, 1)
+                with open(auth_conf, "w") as f:
+                    f.write(content)
+                logger.info("Fixed: uncommented auth-passwdfile include in dovecot")
+            elif include_line not in content:
+                # No está ni comentado — añadirlo al final
+                with open(auth_conf, "a") as f:
+                    f.write(f"\n{include_line}\n")
+                logger.info("Fixed: added auth-passwdfile include to dovecot")
+
+            # Asegurar que auth-passwdfile.conf.ext tiene la config correcta
+            if os.path.exists(passdb_conf):
+                with open(passdb_conf, "r") as f:
+                    pdb_content = f.read()
+                if "username_format = %u" in pdb_content:
+                    # Bug: username_format como setting suelto en userdb no es válido
+                    pdb_content = pdb_content.replace(
+                        "  username_format = %u\n  args = /etc/dovecot/users",
+                        "  args = username_format=%u /etc/dovecot/users"
+                    )
+                    with open(passdb_conf, "w") as f:
+                        f.write(pdb_content)
+                    logger.info("Fixed: corrected userdb args format in auth-passwdfile.conf.ext")
+        except Exception as e:
+            logger.warning(f"_ensure_dovecot_passdb failed (non-fatal): {e}")
+
     def _reload_dovecot(self):
         import subprocess, threading, os
         env = os.environ.copy()
         env["PATH"] = "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+        self._ensure_dovecot_passdb()
         def _do():
             subprocess.run(["systemctl", "reload-or-restart", "dovecot"],
                            capture_output=True, env=env)
