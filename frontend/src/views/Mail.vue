@@ -1700,7 +1700,7 @@ export default {
 
 <style scoped>
 /* ── Layout base ── */
-.sv-view { display:flex; flex-direction:column; gap:20px; padding:20px; max-width:var(--content-max,1200px); }
+.sv-view { display:flex; flex-direction:column; gap:20px; }
 
 /* ── Cabecera ── */
 .sv-page-head { display:flex; justify-content:space-between; align-items:flex-start; gap:1rem; }
