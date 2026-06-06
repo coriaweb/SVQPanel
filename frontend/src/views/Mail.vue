@@ -1438,12 +1438,12 @@ export default {
       saving.value = true
       try {
         await api.createMailbox(selectedDomain.value.id, newMailboxForm.value)
-        showNewMailbox.value = false
-        newMailboxForm.value = { username: '', password: '', quota_mb: 1024, send_limit_hour: 200 }
-        showPwd.value = false
         store.showNotification('Buzón creado', 'success')
         await loadMailboxes(selectedDomain.value.id)
         await loadDomains()
+        showNewMailbox.value = false
+        newMailboxForm.value = { username: '', password: '', quota_mb: 1024, send_limit_hour: 200 }
+        showPwd.value = false
       } catch (e) {
         store.showNotification('Error: ' + e.message, 'danger')
       } finally {
