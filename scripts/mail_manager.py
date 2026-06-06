@@ -214,14 +214,22 @@ class MailManager(SystemManager):
     # ─────────────────────────────────────────────────────────────────────
 
     def _reload_postfix(self):
-        self.execute_command(
-            ["systemctl", "reload-or-restart", "postfix"], check=False
-        )
+        import subprocess, threading, os
+        env = os.environ.copy()
+        env["PATH"] = "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+        def _do():
+            subprocess.run(["systemctl", "reload-or-restart", "postfix"],
+                           capture_output=True, env=env)
+        threading.Thread(target=_do, daemon=True).start()
 
     def _reload_dovecot(self):
-        self.execute_command(
-            ["systemctl", "reload-or-restart", "dovecot"], check=False
-        )
+        import subprocess, threading, os
+        env = os.environ.copy()
+        env["PATH"] = "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+        def _do():
+            subprocess.run(["systemctl", "reload-or-restart", "dovecot"],
+                           capture_output=True, env=env)
+        threading.Thread(target=_do, daemon=True).start()
 
     # ─────────────────────────────────────────────────────────────────────
     # Dominios de correo
