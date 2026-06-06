@@ -127,7 +127,7 @@
       <!-- Contadores rápidos -->
       <div class="sv-counters">
         <div class="sv-counter">
-          <span class="sv-counter-val" style="color:var(--accent)">{{ mailboxes.length }}</span>
+          <span class="sv-counter-val" style="color:var(--ac)">{{ mailboxes.length }}</span>
           <span class="sv-counter-lbl">Buzones
             <span v-if="selectedDomain.max_mailboxes > 0" style="color:var(--text-muted)"> / {{ selectedDomain.max_mailboxes }}</span>
           </span>
@@ -1715,7 +1715,7 @@ export default {
 
 /* ── Botones ── */
 .sv-btn { display:inline-flex; align-items:center; gap:6px; padding:.4rem .9rem; border-radius:var(--radius-sm,6px); font-size:.875rem; font-weight:500; cursor:pointer; border:1px solid transparent; transition:all .15s; }
-.sv-btn--primary { background:var(--accent); color:#fff; border-color:var(--accent); }
+.sv-btn--primary { background:var(--ac); color:#fff; border-color:var(--ac); }
 .sv-btn--primary:hover { opacity:.9; }
 .sv-btn--ghost { background:var(--surface); color:var(--text-secondary); border-color:var(--border); }
 .sv-btn--ghost:hover { background:var(--surface-2); color:var(--text); }
@@ -1737,7 +1737,7 @@ export default {
 .sv-badge { display:inline-flex; align-items:center; gap:.25rem; padding:.2rem .55rem; border-radius:999px; font-size:.72rem; font-weight:600; }
 .sv-badge--on { background:color-mix(in srgb,var(--success) 15%,transparent); color:var(--success); }
 .sv-badge--off { background:var(--surface-2); color:var(--text-muted); }
-.sv-badge--blue { background:color-mix(in srgb,var(--accent) 15%,transparent); color:var(--accent); }
+.sv-badge--blue { background:color-mix(in srgb,var(--ac) 15%,transparent); color:var(--ac); }
 .sv-badge--teal { background:color-mix(in srgb,var(--info,#06b6d4) 15%,transparent); color:var(--info,#06b6d4); }
 .sv-badge--warn { background:color-mix(in srgb,var(--warning,#f59e0b) 15%,transparent); color:var(--warning,#f59e0b); }
 .sv-badge--danger { background:color-mix(in srgb,var(--danger) 15%,transparent); color:var(--danger); }
@@ -1761,7 +1761,7 @@ export default {
 .sv-tab { display:inline-flex; align-items:center; gap:6px; padding:.45rem .85rem; border-radius:var(--radius-sm,6px); font-size:.85rem; font-weight:500; cursor:pointer; border:1px solid transparent; color:var(--text-muted); background:none; transition:all .15s; }
 .sv-tab:hover { background:var(--surface-2); color:var(--text); }
 .sv-tab--active { background:var(--surface-2); color:var(--text); border-color:var(--border); }
-.sv-tab-count { background:var(--accent); color:#fff; border-radius:999px; font-size:.68rem; padding:.1rem .4rem; line-height:1.4; }
+.sv-tab-count { background:var(--ac); color:#fff; border-radius:999px; font-size:.68rem; padding:.1rem .4rem; line-height:1.4; }
 .sv-tab-body { padding:1.25rem; }
 .sv-tab-head { display:flex; justify-content:space-between; align-items:center; margin-bottom:1rem; }
 .sv-tab-section-title { font-weight:600; font-size:.95rem; }
@@ -1781,7 +1781,7 @@ export default {
 .sv-alert { display:flex; align-items:flex-start; gap:.5rem; padding:.65rem .85rem; border-radius:var(--radius-sm,6px); font-size:.875rem; }
 .sv-alert--success { background:color-mix(in srgb,var(--success) 10%,transparent); color:var(--success); border:1px solid color-mix(in srgb,var(--success) 25%,transparent); }
 .sv-alert--warn { background:color-mix(in srgb,var(--warning,#f59e0b) 10%,transparent); color:var(--warning,#d97706); border:1px solid color-mix(in srgb,var(--warning,#f59e0b) 25%,transparent); }
-.sv-alert--info { background:color-mix(in srgb,var(--accent) 8%,transparent); color:var(--accent); border:1px solid color-mix(in srgb,var(--accent) 20%,transparent); }
+.sv-alert--info { background:color-mix(in srgb,var(--ac) 8%,transparent); color:var(--ac); border:1px solid color-mix(in srgb,var(--ac) 20%,transparent); }
 .sv-alert--muted { background:var(--surface-2); color:var(--text-muted); border:1px solid var(--border); }
 .sv-info-box { background:var(--surface-2); border:1px solid var(--border); border-radius:var(--radius-md,10px); padding:1rem; font-size:.875rem; }
 
@@ -1828,5 +1828,5 @@ export default {
 [data-theme="dark"] .mbx__btn--primary { border-color: var(--border-strong); }
 [data-theme="dark"] .mbx__btn--primary:hover { background: var(--surface-2); }
 .mbx__btn--danger:hover { background: var(--danger-bg); color: var(--danger); border-color: var(--danger-border); }
-.mbx__btn--active { background: color-mix(in srgb, var(--accent) 10%, transparent); color: var(--accent); border-color: color-mix(in srgb, var(--accent) 30%, transparent); }
+.mbx__btn--active { background: color-mix(in srgb, var(--ac) 10%, transparent); color: var(--ac); border-color: color-mix(in srgb, var(--ac) 30%, transparent); }
 </style>
