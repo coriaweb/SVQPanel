@@ -113,13 +113,28 @@ class WebmailManager(SystemManager):
     location ~ ^/(README|INSTALL|LICENSE|CHANGELOG|UPGRADING|composer\\.(json|lock)|Makefile)$ {{ deny all; }}
 """
 
-        # El cert puede ser propio del webmail o del dominio padre (expand legacy)
-        webmail_cert = f"/etc/letsencrypt/live/{host}/fullchain.pem"
-        webmail_key  = f"/etc/letsencrypt/live/{host}/privkey.pem"
+        # Preferir siempre el cert del dominio padre si incluye webmail como SAN.
+        # Usar un cert separado para webmail causa conflictos SNI en nginx cuando
+        # múltiples vhosts comparten el mismo listen 443 (el primer cert cargado
+        # gana para toda la IP antes de leer el SNI del cliente).
+        import os as _os, subprocess as _sp
         domain_cert  = f"/etc/letsencrypt/live/{domain}/fullchain.pem"
         domain_key   = f"/etc/letsencrypt/live/{domain}/privkey.pem"
-        import os as _os, subprocess as _sp
-        if _os.path.exists(webmail_cert):
+        webmail_cert = f"/etc/letsencrypt/live/{host}/fullchain.pem"
+        webmail_key  = f"/etc/letsencrypt/live/{host}/privkey.pem"
+
+        def _cert_has_san(cert_path, san):
+            try:
+                r = _sp.run(["openssl", "x509", "-noout", "-ext", "subjectAltName",
+                              "-in", cert_path], capture_output=True, text=True, timeout=5)
+                return san in r.stdout
+            except Exception:
+                return False
+
+        if _os.path.exists(domain_cert) and _cert_has_san(domain_cert, host):
+            # El cert del dominio padre ya incluye webmail — usarlo directamente
+            ssl_cert, ssl_key = domain_cert, domain_key
+        elif _os.path.exists(webmail_cert):
             ssl_cert, ssl_key = webmail_cert, webmail_key
         else:
             ssl_cert, ssl_key = domain_cert, domain_key

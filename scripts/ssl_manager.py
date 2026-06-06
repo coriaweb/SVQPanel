@@ -164,39 +164,34 @@ class SSLManager(SystemManager):
 
     def expand_for_webmail(self, domain_name: str, email: str) -> dict:
         """
-        Emite un certificado independiente para webmail.{dominio} usando --webroot.
+        Expande el cert del dominio principal para incluir webmail.{dominio} como SAN.
+        Usar --expand evita el problema de SNI con nginx (cert compartido = un solo
+        fichero, nginx no necesita elegir entre varios certs para la misma IP:puerto).
         """
         webmail_host = f"webmail.{domain_name}"
-        webroot = "/var/www/webmail"
 
-        try:
-            logger.info(f"Creating webmail SSL cert for: {webmail_host}")
+        # Validar DNS
+        self._validate_dns(webmail_host)
 
-            # Validar DNS
-            self._validate_dns(webmail_host)
+        certbot_path = self._get_certbot_path()
+        cmd = [
+            certbot_path, "certonly", "--nginx",
+            "--expand",
+            "-d", domain_name,
+            "-d", webmail_host,
+            "--non-interactive", "--agree-tos", "-m", email,
+        ]
 
-            os.makedirs(f"{webroot}/.well-known/acme-challenge", exist_ok=True)
+        rc, stdout, stderr = self.execute_command(cmd, check=False)
+        if rc != 0:
+            error_msg = stderr.strip() if stderr else f"certbot exit code {rc}"
+            logger.error(f"certbot expand failed for webmail: {error_msg}")
+            raise RuntimeError(f"certbot failed: {error_msg}")
 
-            certbot_path = self._get_certbot_path()
-            cmd = [
-                certbot_path, "certonly", "--webroot",
-                "-w", webroot,
-                "-d", webmail_host,
-                "--non-interactive", "--agree-tos", "-m", email,
-            ]
-
-            rc, stdout, stderr = self.execute_command(cmd, check=False)
-            if rc != 0:
-                error_msg = stderr.strip() if stderr else f"certbot exit code {rc}"
-                logger.error(f"certbot failed for webmail: {error_msg}")
-                raise RuntimeError(f"certbot failed: {error_msg}")
-
-            logger.info(f"Webmail SSL cert issued: {webmail_host}")
-            return {"success": True, "domain": webmail_host,
-                    "cert": f"/etc/letsencrypt/live/{webmail_host}/fullchain.pem"}
-        except Exception as e:
-            logger.error(f"Failed to issue webmail SSL: {e}")
-            raise
+        logger.info(f"Cert expanded with webmail SAN: {webmail_host}")
+        # El cert expandido vive en el directorio del dominio principal
+        return {"success": True, "domain": webmail_host,
+                "cert": f"/etc/letsencrypt/live/{domain_name}/fullchain.pem"}
 
     def expand_for_mail(self, domain_name: str, email: str) -> dict:
         """
