@@ -158,9 +158,21 @@ def get_all_services() -> list:
     services = []
     seen = set()
 
+    # ¿Usa este servidor Apache? Solo mostramos apache2 si el webserver
+    # configurado lo incluye (modo apache o apache+nginx). En una instalación
+    # solo-Nginx, Apache puede quedar instalado por dependencias pero no se usa,
+    # y mostrarlo inactivo confunde (mismo motivo que con Exim).
+    try:
+        from scripts.webserver_config import get_webserver
+        _apache_in_use = get_webserver() in ("apache", "apache+nginx")
+    except Exception:
+        _apache_in_use = True  # ante la duda, no ocultar
+
     # Servicios conocidos
     for svc_name, description in KNOWN_SERVICES:
         if svc_name in seen:
+            continue
+        if svc_name == "apache2" and not _apache_in_use:
             continue
         info = get_service_info(svc_name, description)
         if info:

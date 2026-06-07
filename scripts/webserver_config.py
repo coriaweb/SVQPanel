@@ -27,12 +27,28 @@ def get_webserver() -> Literal["nginx", "apache", "apache+nginx"]:
         except Exception as e:
             logger.warning(f"Error leyendo {WEBSERVER_CONFIG_FILE}: {e}")
 
-    # Fallback: detectar por presencia de ejecutables/configs
-    if Path("/etc/nginx/nginx.conf").exists():
-        if Path("/etc/apache2/apache2.conf").exists():
+    # Fallback: detectar por presencia de ejecutables/configs.
+    # Importante: que exista /etc/apache2 NO significa que se use Apache (puede
+    # quedar instalado por dependencias). Solo asumimos apache+nginx si Apache
+    # está realmente HABILITADO en systemd; si no, es una instalación nginx.
+    nginx_present  = Path("/etc/nginx/nginx.conf").exists()
+    apache_present = Path("/etc/apache2/apache2.conf").exists()
+
+    def _apache_enabled() -> bool:
+        try:
+            import subprocess
+            r = subprocess.run(["systemctl", "is-enabled", "apache2"],
+                               capture_output=True, text=True, timeout=5)
+            # 'enabled' / 'static' = en uso; 'disabled'/'masked'/no-instalado = no
+            return r.stdout.strip() in ("enabled", "static")
+        except Exception:
+            return False
+
+    if nginx_present:
+        if apache_present and _apache_enabled():
             return "apache+nginx"
         return "nginx"
-    elif Path("/etc/apache2/apache2.conf").exists():
+    elif apache_present:
         return "apache"
 
     # Default a nginx si no se puede detectar
