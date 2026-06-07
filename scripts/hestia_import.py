@@ -354,6 +354,48 @@ class HestiaBackup:
         }
 
 
+def installed_php_versions() -> List[str]:
+    """Versiones PHP instaladas (con pool FPM) en el servidor, ordenadas."""
+    base = "/etc/php"
+    if not os.path.isdir(base):
+        return []
+    vers = []
+    for v in os.listdir(base):
+        if os.path.isdir(os.path.join(base, v, "fpm", "pool.d")):
+            vers.append(v)
+    return sorted(vers, key=lambda s: [int(x) for x in s.split(".") if x.isdigit()])
+
+
+def resolve_php_version(wanted: Optional[str]) -> str:
+    """Devuelve `wanted` si está instalada; si no, la más cercana disponible.
+
+    Hestia puede traer una versión PHP que el servidor destino no tenga (p. ej.
+    8.2 cuando el server tiene 8.4). En vez de fallar, caemos a la disponible
+    más cercana (preferimos una >= a la pedida; si no, la mayor instalada).
+    """
+    installed = installed_php_versions()
+    if not installed:
+        return wanted or "8.2"
+    if wanted and wanted in installed:
+        return wanted
+    if wanted:
+        try:
+            wf = float(wanted)
+            ge = [v for v in installed if _ver_float(v) >= wf]
+            if ge:
+                return min(ge, key=_ver_float)   # la menor >= pedida
+        except ValueError:
+            pass
+    return installed[-1]   # la mayor instalada
+
+
+def _ver_float(v: str) -> float:
+    try:
+        return float(v)
+    except ValueError:
+        return 0.0
+
+
 def _php_from_backend(backend: str) -> Optional[str]:
     """Extrae la versión PHP del campo BACKEND de Hestia.
 
@@ -503,7 +545,11 @@ def import_web(backup: "HestiaBackup", web: Dict, owner, db, report: ImportRepor
     from api.models.models_settings import Settings as _Settings
 
     domain_name = web["domain"]
-    php_version = web.get("php_version") or "8.2"
+    wanted_php = web.get("php_version") or "8.2"
+    php_version = resolve_php_version(wanted_php)
+    php_note = ""
+    if php_version != wanted_php:
+        php_note = f" (PHP {wanted_php} no disponible → {php_version})"
 
     mgr = DomainManager()
     # 1) Crear la estructura del dominio (dirs, pool PHP, vhost base)
@@ -556,7 +602,7 @@ def import_web(backup: "HestiaBackup", web: Dict, owner, db, report: ImportRepor
         report.fail("web-vhost", domain_name, f"vhost no regenerado: {e}")
 
     report.ok("web", domain_name, f"PHP {php_version}"
-              + (" + archivos" if data_tar else " (sin datos)"))
+              + (" + archivos" if data_tar else " (sin datos)") + php_note)
     return db_domain
 
 
