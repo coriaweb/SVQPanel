@@ -111,7 +111,7 @@
 </template>
 
 <script>
-import { ref, computed, watch } from 'vue'
+import { ref, computed, watch, onMounted } from 'vue'
 import api from '../services/api'
 import { useMainStore } from '../stores/useMainStore'
 import BaseCard from './ui/BaseCard.vue'
@@ -127,6 +127,12 @@ export default {
   },
   setup(props) {
     const store = useMainStore()
+    // domainId puede llegar como string desde route.params; lo normalizamos a
+    // entero válido. Si no lo es (montaje temprano), no lanzamos peticiones.
+    const did = computed(() => {
+      const n = parseInt(props.domainId, 10)
+      return Number.isInteger(n) ? n : null
+    })
     const info = ref(null)
     const loadingInfo = ref(false)
     const errorInfo = ref('')
@@ -154,9 +160,10 @@ export default {
     const adminUrl = computed(() => (info.value?.siteurl || '').replace(/\/$/, '') + '/wp-admin')
 
     const loadInfo = async () => {
+      if (did.value == null) return
       loadingInfo.value = true; errorInfo.value = ''
       try {
-        const r = await api.getWpInfo(props.domainId)
+        const r = await api.getWpInfo(did.value)
         info.value = r.data
         newUrl.value = r.data.siteurl || ''
       } catch (e) { errorInfo.value = e.message || 'No pude leer la instalación' }
@@ -164,24 +171,27 @@ export default {
     }
 
     const loadItems = async () => {
+      if (did.value == null) return
       loadingItems.value = true
-      try { const r = await api.getWpItems(props.domainId, itemKind.value); items.value = r.data || [] }
+      try { const r = await api.getWpItems(did.value, itemKind.value); items.value = r.data || [] }
       catch (e) { store.showNotification('Error: ' + e.message, 'danger') }
       finally { loadingItems.value = false }
     }
 
     const loadAdmins = async () => {
+      if (did.value == null) return
       loadingUsers.value = true
-      try { const r = await api.wpAction(props.domainId, 'admin-users'); admins.value = r.data.users || [] }
+      try { const r = await api.wpAction(did.value, 'admin-users'); admins.value = r.data.users || [] }
       catch (e) { store.showNotification('Error: ' + e.message, 'danger') }
       finally { loadingUsers.value = false }
     }
 
     // Ejecuta una acción genérica; refresca info/listado al terminar.
     const run = async (action, payload, busyId) => {
+      if (did.value == null) return
       busy.value = busyId || action
       try {
-        const r = await api.wpAction(props.domainId, action, payload)
+        const r = await api.wpAction(did.value, action, payload)
         store.showNotification(r.data?.output || r.data?.note || 'Hecho', 'success')
         await loadInfo()
         if (action === 'update-items' || action === 'toggle-item') await loadItems()
@@ -219,7 +229,10 @@ export default {
       if (t === 'access' && !admins.value.length) loadAdmins()
     })
 
-    loadInfo()
+    // Cargar info cuando el componente esté montado y el id sea válido. Si el id
+    // se resuelve más tarde (route.params aún no listo), el watch lo reintenta.
+    onMounted(loadInfo)
+    watch(did, (v, prev) => { if (v != null && prev == null) loadInfo() })
 
     return {
       info, loadingInfo, errorInfo, tab, tabs, busy, items, loadingItems,
