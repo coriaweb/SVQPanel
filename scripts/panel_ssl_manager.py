@@ -188,8 +188,9 @@ class PanelSSLManager(SystemManager):
 
         # Bloque HTTPS: copiar el contenido existente añadiendo directivas SSL
         ssl_directives = (
-            f"    listen 443 ssl http2;\n"
-            f"    listen [::]:443 ssl http2;\n"
+            f"    listen 443 ssl;\n"
+            f"    listen [::]:443 ssl;\n"
+            f"    http2 on;\n"
             f"    server_name {hostname};\n"
             f"\n"
             f"    ssl_certificate     {cert_path};\n"
@@ -394,7 +395,10 @@ class PanelSSLManager(SystemManager):
     # ──────────────────────────────────────────────────────────────────────────
 
     def _nginx_reload(self) -> None:
-        self.execute_command(["systemctl", "reload", "nginx"])
+        # restart (no reload): un SIGHUP no siempre recarga los certificados SSL
+        # nuevos en los workers; con un cert recién emitido/renovado el restart
+        # garantiza que nginx sirva el certificado correcto y no uno cacheado.
+        self.execute_command(["systemctl", "restart", "nginx"])
 
     def _get_cert_expiry(self, hostname: str) -> datetime | None:
         """Devuelve la fecha de expiración del certificado emitido."""
@@ -702,8 +706,9 @@ server {{
         # El panel sigue solo en su puerto dedicado. Es default_server del 443.
         welcome_https_block = f"""
 server {{
-    listen 443 ssl http2 default_server;
-    listen [::]:443 ssl http2 default_server;
+    listen 443 ssl default_server;
+    listen [::]:443 ssl default_server;
+    http2 on;
     server_name _;
 
     ssl_certificate     {cert_path};
@@ -722,8 +727,9 @@ server {{
         # El panel HTTPS se sirve en el puerto dedicado.
         https_block = f"""
 server {{
-    listen {PANEL_WEB_PORT} ssl http2;
-    listen [::]:{PANEL_WEB_PORT} ssl http2;
+    listen {PANEL_WEB_PORT} ssl;
+    listen [::]:{PANEL_WEB_PORT} ssl;
+    http2 on;
     server_name {hostname} _;
 
     ssl_certificate     {cert_path};
@@ -782,7 +788,10 @@ server {{
             raise RuntimeError(f"nginx -t falló: {err.strip()}")
 
     def _nginx_reload(self) -> None:
-        self.execute_command(["systemctl", "reload", "nginx"])
+        # restart (no reload): un SIGHUP no siempre recarga los certificados SSL
+        # nuevos en los workers; con un cert recién emitido/renovado el restart
+        # garantiza que nginx sirva el certificado correcto y no uno cacheado.
+        self.execute_command(["systemctl", "restart", "nginx"])
 
     # ──────────────────────────────────────────────────────────────────────────
     # Helpers certbot
