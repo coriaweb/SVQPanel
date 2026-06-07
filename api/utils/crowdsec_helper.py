@@ -100,25 +100,39 @@ def list_decisions() -> List[Dict[str, Any]]:
         return []
     out: List[Dict[str, Any]] = []
     # cscli decisions list devuelve: [{ "id":..., "decisions":[...] }, ...]
-    # Cada item es una IP/range con sus decisiones asociadas.
+    # Cada item es una IP/range con sus decisiones asociadas. Cuando una IP tiene
+    # VARIAS decisiones (baneada por varios escenarios), las anidadas a menudo
+    # solo traen 'scenario' y heredan el resto (value, type, duration, origin,
+    # country) de la fuente padre. Por eso, si un campo falta en la decisión hija
+    # lo tomamos del padre 'src' — así cada fila queda completa y no con guiones.
     for src in data:
-        # Algunas versiones devuelven la lista plana; otras anidada en 'decisions'
-        decisions = src.get("decisions") if isinstance(src, dict) else None
+        src_is_dict = isinstance(src, dict)
+        decisions = src.get("decisions") if src_is_dict else None
         items = decisions if decisions else [src]
+
+        def _pick(d, key):
+            """Valor de la decisión, con fallback a la fuente padre."""
+            v = d.get(key)
+            if (v is None or v == "") and src_is_dict:
+                return src.get(key)
+            return v
+
         for d in items:
             if not isinstance(d, dict):
                 continue
+            simulated = d.get("simulated", False) or (src_is_dict and src.get("simulated", False))
+            country = _pick(d, "country") or ""
             out.append({
-                "id":         d.get("id"),
-                "value":      d.get("value"),
-                "scope":      d.get("scope"),
-                "type":       d.get("type"),
-                "scenario":   d.get("scenario"),
-                "origin":     d.get("origin"),
-                "duration":   d.get("duration"),
-                "country":    (d.get("simulated", False) and "SIMULATED") or d.get("country") or "",
-                "created_at": d.get("created_at") or d.get("until"),
-                "until":      d.get("until"),
+                "id":         d.get("id") or (src.get("id") if src_is_dict else None),
+                "value":      _pick(d, "value"),
+                "scope":      _pick(d, "scope"),
+                "type":       _pick(d, "type"),
+                "scenario":   d.get("scenario"),   # el escenario sí es propio de cada decisión
+                "origin":     _pick(d, "origin"),
+                "duration":   _pick(d, "duration"),
+                "country":    "SIMULATED" if simulated else country,
+                "created_at": _pick(d, "created_at") or _pick(d, "until"),
+                "until":      _pick(d, "until"),
             })
     return out
 
