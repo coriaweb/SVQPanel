@@ -31,6 +31,9 @@
       <button class="mon-tab" :class="{'mon-tab--active': tab==='bbdd'}" @click="selectDbTab">
         <i class="bi bi-database"></i> BBDD
       </button>
+      <button class="mon-tab" :class="{'mon-tab--active': tab==='dns'}" @click="selectDnsTab">
+        <i class="bi bi-diagram-3"></i> DNS
+      </button>
     </div>
 
     <!-- ════════════ PESTAÑA RECURSOS ════════════ -->
@@ -397,6 +400,71 @@
         </div>
       </div>
     </template>
+
+    <!-- ════════════ PESTAÑA DNS ════════════ -->
+    <template v-if="tab==='dns'">
+      <div v-if="dnsLoading && !dns" class="mon-loading"><div class="spinner-border spinner-border-sm"></div></div>
+      <div v-else-if="dns">
+        <!-- Servicios -->
+        <div class="mail-services">
+          <div class="mail-svc" :class="dns.running ? 'mail-svc--on' : 'mail-svc--off'">
+            <i class="bi" :class="dns.running ? 'bi-check-circle-fill' : 'bi-x-circle-fill'"></i>
+            BIND9 <small>servidor DNS</small>
+          </div>
+          <div class="mail-svc mail-svc--on">
+            <i class="bi bi-diagram-3"></i> {{ dns.status.zones_user ?? '—' }} <small>zonas alojadas</small>
+          </div>
+          <div class="mail-svc mail-svc--on" v-if="dns.status.version">
+            <i class="bi bi-tag"></i> {{ dns.status.version }} <small>versión</small>
+          </div>
+        </div>
+
+        <!-- Contadores -->
+        <div class="mail-counters" v-if="dns.status.available">
+          <div class="mail-counter"><div class="mail-counter__val">{{ dns.status.zones_user ?? '—' }}</div><div class="mail-counter__lbl">Zonas de usuario</div></div>
+          <div class="mail-counter"><div class="mail-counter__val">{{ dns.status.uptime }}</div><div class="mail-counter__lbl">Uptime</div></div>
+          <div class="mail-counter"><div class="mail-counter__val">{{ dns.queries.available ? fmtNum(dns.queries.total) : '—' }}</div><div class="mail-counter__lbl">Consultas</div></div>
+          <div class="mail-counter"><div class="mail-counter__val">{{ dns.status.recursive_clients ?? 0 }}</div><div class="mail-counter__lbl">Clientes recursivos</div></div>
+          <div class="mail-counter"><div class="mail-counter__val">{{ dns.status.tcp_clients ?? 0 }}</div><div class="mail-counter__lbl">Clientes TCP</div></div>
+          <div class="mail-counter"><div class="mail-counter__val">{{ dns.status.xfers_running ?? 0 }}</div><div class="mail-counter__lbl">Transferencias</div></div>
+        </div>
+
+        <div class="mon-grid2">
+          <!-- Consultas por tipo -->
+          <div class="mon-card">
+            <div class="mon-card-head">
+              <span class="mon-card-title"><i class="bi bi-bar-chart"></i> Consultas por tipo</span>
+              <span class="mon-badge mon-badge--ok" v-if="dns.queries.available">{{ fmtNum(dns.queries.total) }} total</span>
+            </div>
+            <div class="mon-card-body">
+              <div v-if="!dns.queries.available || !dns.queries.by_type.length" class="mail-empty">Sin estadísticas de consultas aún.</div>
+              <div v-else>
+                <div v-for="q in dns.queries.by_type" :key="q.type" class="mail-toprow">
+                  <span class="mail-topaddr"><strong style="font-family:var(--font-mono)">{{ q.type }}</strong></span>
+                  <span class="mail-topcount">{{ fmtNum(q.count) }}</span>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Estado de resolución / detalle -->
+          <div class="mon-card">
+            <div class="mon-card-head"><span class="mon-card-title"><i class="bi bi-hdd-network"></i> Servidor BIND</span></div>
+            <div class="mon-card-body">
+              <div v-if="!dns.status.available" class="mail-empty">{{ dns.status.error || 'rndc no disponible.' }}</div>
+              <div v-else class="mail-rspamd">
+                <div class="mail-stat"><span>Zonas totales</span><strong>{{ dns.status.zones_total }}</strong></div>
+                <div class="mail-stat"><span>Zonas de usuario</span><strong>{{ dns.status.zones_user }}</strong></div>
+                <div class="mail-stat"><span>Recursivos</span><strong>{{ dns.status.recursive_clients }}/{{ dns.status.recursive_limit }}</strong></div>
+                <div class="mail-stat"><span>TCP</span><strong>{{ dns.status.tcp_clients }}/{{ dns.status.tcp_limit }}</strong></div>
+                <div class="mail-stat" v-if="dns.queries.available"><span>Resoluciones OK</span><strong class="mc-ok">{{ fmtNum(dns.queries.queries_success) }}</strong></div>
+                <div class="mail-stat" v-if="dns.queries.available"><span>NXDOMAIN</span><strong class="mc-warn">{{ fmtNum(dns.queries.queries_nxdomain) }}</strong></div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </template>
   </div>
 </template>
 
@@ -540,6 +608,22 @@ export default {
       if (!dbStats.value) loadDb()
     }
 
+    // ── Pestaña DNS ──
+    const dns = ref(null)
+    const dnsLoading = ref(false)
+    const loadDns = async () => {
+      dnsLoading.value = true
+      try {
+        dns.value = await api.get('/api/monitoring/services/dns')
+      } catch (e) {
+        store.showNotification('Error al cargar estadísticas DNS: ' + e.message, 'danger')
+      } finally { dnsLoading.value = false }
+    }
+    const selectDnsTab = () => {
+      tab.value = 'dns'
+      if (!dns.value) loadDns()
+    }
+
     onMounted(async () => {
       await Promise.all([loadHistory(), loadConfig(), loadEvents()])
       // Refresco automático cada 60s según la pestaña activa
@@ -548,6 +632,7 @@ export default {
         else if (tab.value === 'correo') { loadMail() }
         else if (tab.value === 'web') { loadWeb() }
         else if (tab.value === 'bbdd') { loadDb() }
+        else if (tab.value === 'dns') { loadDns() }
       }, 60000)
     })
     onUnmounted(() => { if (refreshTimer) clearInterval(refreshTimer) })
@@ -559,6 +644,7 @@ export default {
       tab, mail, mailLoading, loadMail, selectMailTab, fmtAge,
       web, webLoading, loadWeb, selectWebTab, fmtNum,
       dbStats, dbLoading, loadDb, selectDbTab,
+      dns, dnsLoading, loadDns, selectDnsTab,
     }
   },
 }

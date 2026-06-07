@@ -70,6 +70,18 @@
         </div>
 
         <div class="topbar-right">
+          <!-- Server Load (estilo cPanel: 1/5/15 min) -->
+          <div v-if="serverLoad" class="tb-load" :class="`tb-load--${loadLevel}`"
+               :title="`Carga del servidor (1 / 5 / 15 min) · ${cpuCount} CPUs`">
+            <i class="bi bi-speedometer2"></i>
+            <span class="tb-load__label">Load</span>
+            <span class="tb-load__vals">
+              <b>{{ serverLoad.load_1.toFixed(2) }}</b>
+              <span>{{ serverLoad.load_5.toFixed(2) }}</span>
+              <span>{{ serverLoad.load_15.toFixed(2) }}</span>
+            </span>
+          </div>
+
           <!-- Búsqueda -->
           <button class="tb-search" @click="openPalette" title="Buscar (Ctrl+K)">
             <i class="bi bi-search"></i>
@@ -146,7 +158,7 @@
 <script>
 import { useRoute, useRouter } from 'vue-router'
 import { useMainStore } from './stores/useMainStore'
-import { computed, ref } from 'vue'
+import { computed, ref, onMounted, onUnmounted, watch } from 'vue'
 import api from './services/api'
 import CommandPalette from './components/ui/CommandPalette.vue'
 
@@ -281,10 +293,37 @@ export default {
 
     const openPalette = () => window.dispatchEvent(new CustomEvent('svq:open-command-palette'))
 
+    // ── Server Load en la topbar (estilo cPanel: 1/5/15 min) ──
+    const serverLoad = ref(null)
+    const cpuCount = ref(1)
+    let loadTimer = null
+    const loadServerLoad = async () => {
+      if (!store.isAuthenticated || !store.currentUser?.is_admin) return
+      try {
+        const s = await api.get('/api/system/stats')
+        serverLoad.value = { load_1: s.load_1, load_5: s.load_5, load_15: s.load_15 }
+        cpuCount.value = s.cpu_count || 1
+      } catch (e) { /* silencioso */ }
+    }
+    // Nivel de color: verde si load_1 < nCPU, naranja si < 1.5×nCPU, rojo si más
+    const loadLevel = computed(() => {
+      if (!serverLoad.value) return 'ok'
+      const r = serverLoad.value.load_1 / Math.max(1, cpuCount.value)
+      return r < 0.85 ? 'ok' : r < 1.5 ? 'warn' : 'crit'
+    })
+    onMounted(() => {
+      loadServerLoad()
+      loadTimer = setInterval(loadServerLoad, 15000)  // refresco cada 15s
+    })
+    onUnmounted(() => { if (loadTimer) clearInterval(loadTimer) })
+    // Cargar al iniciar sesión (cuando cambia la autenticación)
+    watch(isAuthenticated, (v) => { if (v) loadServerLoad() })
+
     return {
       store, route, router, notification, isAuthenticated, currentUser, theme,
       sidebarCollapsed, mobileMenuOpen, navigate, dropdownOpen, visibleGroups, isActive, currentBreadcrumb,
       userInitials, toastIcon, logout, openPalette, serverHostname,
+      serverLoad, cpuCount, loadLevel,
     }
   },
 }
@@ -437,6 +476,27 @@ export default {
   position: sticky; top: 0; z-index: 100;
 }
 .topbar-left, .topbar-right { display: flex; align-items: center; gap: 12px; }
+
+/* Server Load (estilo cPanel) */
+.tb-load {
+  display: flex; align-items: center; gap: 7px;
+  padding: 5px 11px; border-radius: var(--r-md);
+  background: var(--surface-inset); border: 1px solid var(--border);
+  font-size: 12.5px; color: var(--text-secondary);
+}
+.tb-load > .bi { font-size: 15px; }
+.tb-load__label { font-weight: 600; text-transform: uppercase; letter-spacing: .03em; font-size: 11px; }
+.tb-load__vals { display: flex; gap: 7px; font-family: var(--font-mono); }
+.tb-load__vals b { color: var(--text); font-weight: 700; }
+.tb-load__vals span { opacity: .65; }
+.tb-load--ok   > .bi { color: var(--success); }
+.tb-load--warn > .bi { color: var(--warning, #d97706); }
+.tb-load--warn { border-color: color-mix(in srgb, var(--warning, #d97706) 40%, transparent); }
+.tb-load--crit > .bi { color: var(--danger); }
+.tb-load--crit { border-color: color-mix(in srgb, var(--danger) 45%, transparent); }
+.tb-load--crit .tb-load__vals b { color: var(--danger); }
+@media (max-width: 720px) { .tb-load__label { display: none; } }
+@media (max-width: 560px) { .tb-load { display: none; } }
 
 .tb-icon-btn {
   width: 38px; height: 38px; border: none; background: transparent;
