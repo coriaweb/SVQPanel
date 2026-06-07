@@ -217,6 +217,7 @@ export default {
           { to: '/plans',      label: 'Planes',   icon: 'bi-stack',       roles: ['admin', 'reseller'] },
           { to: '/server-ips', label: 'IPs',      icon: 'bi-hdd-network', roles: ['admin'] },
           { to: '/db-tuner',   label: 'Optimizar BD', icon: 'bi-speedometer', roles: ['admin'] },
+          { to: '/migrations', label: 'Migrar (Hestia)', icon: 'bi-box-arrow-in-down', roles: ['admin'] },
         ],
       },
       {

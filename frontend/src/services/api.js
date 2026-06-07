@@ -732,6 +732,47 @@ class APIClient {
     return this.get(`/api/apps/wordpress/locales`)
   }
 
+  // ── Migración de backups (Hestia) ──
+  // Multipart (file UploadFile o path en el servidor). Usamos XHR para no forzar
+  // Content-Type (el navegador pone el boundary) y poder reportar progreso de subida.
+  _multipart(endpoint, formData, onProgress = null) {
+    return new Promise((resolve, reject) => {
+      const xhr = new XMLHttpRequest()
+      xhr.open('POST', endpoint)
+      xhr.setRequestHeader('Authorization', `Bearer ${localStorage.getItem('token') || this.token}`)
+      if (onProgress) {
+        xhr.upload.addEventListener('progress', (e) => {
+          if (e.lengthComputable) onProgress(Math.round((e.loaded / e.total) * 100))
+        })
+      }
+      xhr.onload = () => {
+        const ct = xhr.getResponseHeader('content-type') || ''
+        let data = null
+        if (ct.includes('application/json')) { try { data = JSON.parse(xhr.responseText) } catch { /* */ } }
+        if (xhr.status >= 200 && xhr.status < 300) resolve(data)
+        else {
+          let msg
+          if (Array.isArray(data?.detail)) msg = data.detail.map(e => `${e.loc?.slice(-1)[0] ?? ''}: ${e.msg}`).join(' | ')
+          else if (data?.detail && typeof data.detail === 'object') msg = data.detail.message || JSON.stringify(data.detail)
+          else msg = data?.message || data?.detail || `Error ${xhr.status}`
+          const err = new Error(msg); err.status = xhr.status; err.data = data?.detail
+          reject(err)
+        }
+      }
+      xhr.onerror = () => reject(new Error('Error de red'))
+      xhr.send(formData)
+    })
+  }
+  hestiaAnalyze(formData, onProgress = null) {
+    return this._multipart('/api/migrations/hestia/analyze', formData, onProgress)
+  }
+  hestiaImport(formData, onProgress = null) {
+    return this._multipart('/api/migrations/hestia/import', formData, onProgress)
+  }
+  getMigrationJob(jobId) {
+    return this.get(`/api/migrations/jobs/${jobId}`)
+  }
+
   // ── Detección y gestión de app instalada (WP Toolkit) ──
   getDomainApp(domainId)         { return this.get(`/api/domains/${domainId}/app`) }
   getWpInfo(domainId, updates = false) {
