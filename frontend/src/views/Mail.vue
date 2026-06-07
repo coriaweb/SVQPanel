@@ -1748,6 +1748,7 @@ export default {
 /* ── Cabecera ── */
 .sv-page-head { display:flex; justify-content:space-between; align-items:flex-start; gap:1rem; }
 .sv-title { font-size:1.5rem; font-weight:700; margin:0 0 .25rem; display:flex; align-items:center; gap:.5rem; }
+.sv-title > .bi:first-child { color:var(--svq-orange); }
 .sv-subtitle { font-size:.875rem; color:var(--text-muted); margin:0; }
 .sv-head-actions { display:flex; gap:8px; flex-shrink:0; }
 .sv-breadcrumb { display:flex; align-items:center; gap:8px; margin-bottom:.5rem; font-size:.875rem; }
@@ -1772,8 +1773,9 @@ export default {
 
 /* ── Card ── */
 .sv-card { background:var(--surface); border:1px solid var(--border); border-radius:var(--radius-md,10px); overflow:hidden; }
-.sv-card-head { display:flex; align-items:center; justify-content:space-between; padding:.875rem 1.25rem; border-bottom:1px solid var(--border); }
+.sv-card-head { display:flex; align-items:center; justify-content:space-between; padding:.875rem 1.25rem; border-bottom:1px solid var(--border); background:var(--surface-inset); }
 .sv-card-title { font-weight:600; font-size:.95rem; display:flex; align-items:center; gap:.5rem; }
+.sv-card-title > .bi:first-child { color:var(--svq-orange); }
 .sv-count { background:var(--surface-2); border:1px solid var(--border); border-radius:999px; padding:.1rem .5rem; font-size:.75rem; font-weight:600; }
 
 /* ── Badges ── */
