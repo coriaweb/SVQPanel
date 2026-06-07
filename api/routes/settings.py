@@ -69,6 +69,14 @@ async def get_settings(
 
     # Calcular info IPv6
     result = SettingsResponse.model_validate(settings)
+
+    # La versión es la del archivo VERSION (fuente única de verdad), no la de BD,
+    # que puede quedar desactualizada respecto al código desplegado.
+    try:
+        from config.config import PANEL_VERSION
+        result.panel_version = PANEL_VERSION
+    except Exception:
+        pass
     if settings.ipv6_range:
         try:
             network = ipaddress.IPv6Network(settings.ipv6_range, strict=False)
