@@ -259,12 +259,19 @@ def wp_maintenance(docroot: str, owner: str, enable: bool) -> Dict:
     Lo hacemos manipulando directamente el fichero `.maintenance` (lo mismo que
     hace WordPress): es instantáneo y no requiere arrancar wp-cli (que tardaría
     ~1s en bootstrapear WP solo para crear/borrar este fichero).
+
+    IMPORTANTE: WordPress IGNORA el `.maintenance` si `$upgrading` tiene más de
+    10 minutos (es un flag de "actualización en curso", no de mantenimiento
+    permanente). Como aquí es un mantenimiento MANUAL que debe durar hasta que
+    el usuario lo quite, escribimos un timestamp en el futuro lejano para que no
+    expire solo. Al desactivar, borramos el fichero.
     """
     flag = os.path.join(docroot, ".maintenance")
     try:
         if enable:
+            # time() + ~10 años: nunca caduca hasta que se desactive a mano.
             with open(flag, "w") as f:
-                f.write("<?php $upgrading = time(); ?>")
+                f.write("<?php $upgrading = 9999999999; ?>")
             _run(["chown", f"{owner}:{owner}", flag])
         elif os.path.exists(flag):
             os.remove(flag)
