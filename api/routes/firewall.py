@@ -242,16 +242,33 @@ async def firewall_status(
         .count()
     )
 
-    # Banned: BannedIp activos (sin unbanned_at). Importamos aquí para evitar circular.
+    # Banned: contamos las IPs realmente baneadas = baneos manuales (BannedIp en
+    # la BD) + las IPs vivas de fail2ban (que NO se guardan en BannedIp), igual
+    # que hace la lista /fail2ban/banned. Si solo contáramos BannedIp, el panel
+    # diría 0 aunque fail2ban tuviera IPs baneadas.
     from api.models.models_security import BannedIp
+    from api.utils import fail2ban_helper as f2b
     from sqlalchemy import or_
     from datetime import datetime
-    banned_count = (
-        db.query(BannedIp)
+
+    banned_ips = set()
+    # 1) Baneos manuales activos del panel
+    manual = (
+        db.query(BannedIp.ip)
         .filter(BannedIp.unbanned_at.is_(None))
         .filter(or_(BannedIp.expires_at.is_(None), BannedIp.expires_at > datetime.utcnow()))
-        .count()
+        .all()
     )
+    banned_ips.update(ip for (ip,) in manual)
+    # 2) IPs vivas en los jails de fail2ban
+    try:
+        if f2b.is_running():
+            for jail in f2b.list_jails():
+                st = f2b.jail_status(jail) or {}
+                banned_ips.update(st.get("banned_ips", []))
+    except Exception:
+        pass  # si fail2ban no responde, contamos solo los manuales
+    banned_count = len(banned_ips)
 
     return FirewallStatusResponse(
         enabled          = nft.table_exists(),
