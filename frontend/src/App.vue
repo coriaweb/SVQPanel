@@ -204,6 +204,7 @@ export default {
           { to: '/users',      label: 'Usuarios', icon: 'bi-people',      roles: ['admin'] },
           { to: '/plans',      label: 'Planes',   icon: 'bi-stack',       roles: ['admin', 'reseller'] },
           { to: '/server-ips', label: 'IPs',      icon: 'bi-hdd-network', roles: ['admin'] },
+          { to: '/db-tuner',   label: 'Optimizar BD', icon: 'bi-speedometer', roles: ['admin'] },
         ],
       },
       {

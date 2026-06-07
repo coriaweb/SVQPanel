@@ -9,6 +9,7 @@ const UserAccount    = () => import('../views/UserAccount.vue')
 const Domains        = () => import('../views/Domains.vue')
 const DomainDetail   = () => import('../views/DomainDetail.vue')
 const Databases      = () => import('../views/Databases.vue')
+const DbTuner        = () => import('../views/DbTuner.vue')
 const DNS            = () => import('../views/DNS.vue')
 const Mail           = () => import('../views/Mail.vue')
 const Settings       = () => import('../views/Settings.vue')
@@ -87,6 +88,12 @@ const routes = [
     name: 'Databases',
     component: Databases,
     meta: { requiresAuth: true }
+  },
+  {
+    path: '/db-tuner',
+    name: 'DbTuner',
+    component: DbTuner,
+    meta: { requiresAuth: true, requiresAdmin: true }
   },
   {
     path: '/dns',

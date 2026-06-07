@@ -17,6 +17,8 @@ pytest
 | `test_whitelist.py`  | Parseo de IPs/CIDR de la whitelist del panel (IPv4/IPv6, rangos, entradas inválidas) |
 | `test_backup.py`     | Parseo de `DATABASE_URL` para el backup del panel (user/pass/host/puerto/db) |
 | `test_validators.py` | Validación de email para Let's Encrypt ACME (rechaza dominios de ejemplo/locales) |
+| `test_fpm_tuning.py` | Tuning del pool PHP-FPM por dominio: presets, caps del servidor, coherencia pm.* |
+| `test_mysql_tuner.py`| Tuner MariaDB: parsers de tamaño, allowlist de directivas, recomendaciones |
 
 ## Cómo añadir más
 

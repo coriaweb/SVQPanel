@@ -51,6 +51,19 @@ def _get_owned_domain(domain_id: int, db: Session, current_user: User) -> Domain
     raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Dominio no encontrado")
 
 
+def _fpm_tuning_of(domain) -> dict:
+    """Parsea el JSON de tuning FPM de un dominio. {} si no tiene (= preset medium)."""
+    import json
+    raw = getattr(domain, "fpm_pool_overrides", None)
+    if not raw:
+        return {}
+    try:
+        val = json.loads(raw)
+        return val if isinstance(val, dict) else {}
+    except (ValueError, TypeError):
+        return {}
+
+
 def _apply_builtin_template(domain, slug: str, owner, db: Session):
     """Aplica una plantilla web builtin (por slug) a un dominio y commitea."""
     from api.models.models_template import WebTemplate
@@ -349,7 +362,8 @@ async def update_domain(
             if owner:
                 phpini.write_pool(db_domain.domain_name, db_domain.php_version,
                                   owner.username, overrides,
-                                  relax_hardening=db_domain.php_hardening_relaxed or False)
+                                  relax_hardening=db_domain.php_hardening_relaxed or False,
+                                  fpm_tuning=_fpm_tuning_of(db_domain))
 
         if domain_update.is_active is not None:
             db_domain.is_active = domain_update.is_active
@@ -929,6 +943,7 @@ async def set_domain_php_config(
     ok, msg = phpini.write_pool(
         domain.domain_name, domain.php_version, owner.username, overrides,
         relax_hardening=domain.php_hardening_relaxed or False,
+        fpm_tuning=_fpm_tuning_of(domain),
     )
     if not ok:
         raise HTTPException(status_code=500, detail=f"Error escribiendo pool PHP: {msg}")
@@ -971,6 +986,105 @@ async def set_domain_php_config(
     }
 
 
+# ─────────────────────────────────────────────────────────────────────────────
+# Tuning de recursos del pool PHP-FPM por dominio (Fase 21)
+# ─────────────────────────────────────────────────────────────────────────────
+@router.get("/domains/{domain_id}/fpm-config")
+async def get_domain_fpm_config(
+    domain_id:    int,
+    current_user: User = Depends(require_auth),
+    db:           Session = Depends(get_db),
+):
+    """
+    Devuelve el tuning FPM actual del dominio, los presets disponibles, los caps
+    del servidor y las directivas pm.* efectivas que se aplicarían.
+    """
+    from scripts import php_ini_manager as phpini
+
+    domain = _get_owned_domain(domain_id, db, current_user)
+    if not domain:
+        raise HTTPException(status_code=404, detail="Dominio no encontrado")
+    _check_access(current_user, domain, db)
+
+    tuning = _fpm_tuning_of(domain)
+    return {
+        "domain":     domain.domain_name,
+        "tuning":     tuning,                          # {"preset":..,"manual":{..}} o {}
+        "effective":  phpini.resolve_fpm_tuning(tuning),  # directivas pm.* resultantes
+        "presets":    phpini.FPM_PRESETS,
+        "default_preset": phpini.FPM_DEFAULT_PRESET,
+        "caps": {
+            "pm.max_children": phpini.FPM_MAX_CHILDREN_CAP,
+            "pm.max_requests": phpini.FPM_MAX_REQUESTS_CAP,
+        },
+    }
+
+
+@router.put("/domains/{domain_id}/fpm-config")
+async def set_domain_fpm_config(
+    domain_id:    int,
+    payload:      dict,
+    current_user: User = Depends(require_auth),
+    db:           Session = Depends(get_db),
+):
+    """
+    Aplica el tuning de recursos del pool FPM del dominio.
+    Body: {"preset":"low|medium|high", "manual":{"pm.max_children":12,...}}.
+    Body vacío / {"preset":"medium"} → valores por defecto. Reescribe el pool.
+    """
+    import json
+    from scripts import php_ini_manager as phpini
+
+    if not isinstance(payload, dict):
+        raise HTTPException(status_code=400, detail="payload debe ser un objeto")
+
+    # Normalizar el tuning de entrada: solo preset + manual con claves conocidas.
+    tuning = {}
+    if payload.get("preset"):
+        tuning["preset"] = payload["preset"]
+    manual = payload.get("manual") or {}
+    if manual:
+        tuning["manual"] = {k: v for k, v in manual.items() if k in phpini._FPM_TUNABLE}
+
+    ok, errors = phpini.validate_fpm_tuning(tuning)
+    if not ok:
+        raise HTTPException(status_code=400, detail="; ".join(errors))
+
+    domain = _get_owned_domain(domain_id, db, current_user)
+    if not domain:
+        raise HTTPException(status_code=404, detail="Dominio no encontrado")
+    _check_access(current_user, domain, db)
+
+    owner = db.query(User).filter(User.id == domain.user_id).first()
+    if not owner:
+        raise HTTPException(status_code=500, detail="Propietario no encontrado")
+
+    try:
+        overrides = json.loads(domain.php_ini_overrides) if domain.php_ini_overrides else {}
+    except (ValueError, TypeError):
+        overrides = {}
+
+    # Reescribir el pool con el nuevo tuning (preserva php.ini overrides + hardening).
+    ok, msg = phpini.write_pool(
+        domain.domain_name, domain.php_version, owner.username, overrides,
+        relax_hardening=domain.php_hardening_relaxed or False,
+        fpm_tuning=tuning or None,
+    )
+    if not ok:
+        raise HTTPException(status_code=500, detail=f"Error escribiendo pool PHP: {msg}")
+
+    # Persistir. Guardamos {} → NULL (= preset medium por defecto).
+    domain.fpm_pool_overrides = json.dumps(tuning) if tuning else None
+    db.commit()
+
+    return {
+        "status":    "ok",
+        "domain":    domain.domain_name,
+        "tuning":    tuning,
+        "effective": phpini.resolve_fpm_tuning(tuning),
+    }
+
+
 @router.put("/domains/{domain_id}/php-hardening")
 async def set_domain_php_hardening(
     domain_id:    int,
@@ -1008,6 +1122,7 @@ async def set_domain_php_hardening(
     ok, msg = phpini.write_pool(
         domain.domain_name, domain.php_version, owner.username, overrides,
         relax_hardening=relaxed,
+        fpm_tuning=_fpm_tuning_of(domain),
     )
     if not ok:
         raise HTTPException(status_code=500, detail=f"Error escribiendo pool PHP: {msg}")

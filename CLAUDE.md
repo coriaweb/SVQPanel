@@ -62,6 +62,27 @@ El panel soporta dos configuraciones de instalación:
 - Bad bots: Nginx usa `map $http_user_agent` global; Apache usa `RewriteCond` por vhost
 - Headers: inyectados via `Header always set ...` en Apache, directamente en vhost Nginx
 
+## ⚙️ Tuning de recursos por dominio y de la BD (Fase 21)
+
+**PHP-FPM por dominio** — además del php.ini por dominio, se puede ajustar el
+*process manager* del pool (consumo de RAM/CPU de la cuenta):
+- `scripts/php_ini_manager.py` — `FPM_PRESETS` (low/medium/high), `resolve_fpm_tuning()`
+  (aplica caps del servidor `FPM_MAX_*` y coherencia de directivas según `pm`),
+  `validate_fpm_tuning()`. `_pool_content` ya no hardcodea `pm.*`: los toma del tuning.
+- Persistencia: `Domain.fpm_pool_overrides` (JSON `{"preset":..,"manual":{..}}`; NULL = medium).
+  Todos los callers de `write_pool()` pasan `fpm_tuning` (incl. `template_manager`).
+- API: `GET/PUT /api/domains/{id}/fpm-config`. UI: tab PHP de DomainDetail (presets + manual).
+
+**Tuner de MariaDB/MySQL** (solo admin, config GLOBAL del servidor):
+- `scripts/mysql_tuner.py` — lee `SHOW GLOBAL STATUS/VARIABLES` vía CLI (sin deps),
+  `analyze()` genera recomendaciones tipo mysqltuner (buffer pool hit, conexiones,
+  tmp en disco, query cache…), `write_dropin()` escribe SOLO un drop-in propio
+  (`/etc/mysql/mariadb.conf.d/99-svqpanel-tuner.cnf`) con una **allowlist** de
+  directivas (`TUNABLE_DIRECTIVES`) — reversible borrando ese archivo.
+- API: `api/routes/db_tuner.py` (`GET /db-tuner/status`, `PUT /db-tuner/config`,
+  `POST /db-tuner/restart`). UI: `views/DbTuner.vue` (menú Administración → Optimizar BD).
+- Reutiliza la config MariaDB de `databases.py` (env MARIADB_*).
+
 ## 🔒 Seguridad — Aislamiento PHP por dominio
 
 Cada dominio tiene un **pool PHP-FPM dedicado** (`/etc/php/{ver}/fpm/pool.d/

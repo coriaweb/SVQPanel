@@ -61,6 +61,10 @@ class Domain(Base):
     # exec/system/etc. open_basedir y el resto del hardening se mantienen.
     php_hardening_relaxed = Column(Boolean, default=False, nullable=False)
 
+    # Tuning de recursos del pool PHP-FPM por dominio (Fase 21). JSON:
+    # {"preset":"low|medium|high","manual":{"pm.max_children":12,...}}. None = preset medium.
+    fpm_pool_overrides = Column(Text, nullable=True)
+
     # Modo solo-lectura HTTP: bloquea POST/PUT/DELETE/PATCH excepto desde las
     # IPs indicadas. Útil para contener un CMS comprometido o proteger APIs.
     # allowed_mutation_ips: JSON array de IPs/CIDRs, ej: ["1.2.3.4","10.0.0.0/8"]

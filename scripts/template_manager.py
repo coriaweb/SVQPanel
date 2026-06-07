@@ -396,6 +396,12 @@ class TemplateManager(SystemManager):
         from scripts.php_ini_manager import write_pool, pool_socket_path, has_pool
         php_socket_override = pool_socket_path(domain_name) if has_pool(domain_name) else None
         relax = getattr(domain_row, "php_hardening_relaxed", False) or False
+        # Preservar el tuning FPM del dominio al reescribir el pool por la plantilla.
+        _fpm_raw = getattr(domain_row, "fpm_pool_overrides", None)
+        try:
+            fpm_tuning = json.loads(_fpm_raw) if _fpm_raw else None
+        except (ValueError, TypeError):
+            fpm_tuning = None
         if template_row.php_ini_overrides:
             try:
                 overrides = json.loads(template_row.php_ini_overrides)
@@ -405,6 +411,7 @@ class TemplateManager(SystemManager):
                     owner=username,
                     overrides=overrides,
                     relax_hardening=relax,
+                    fpm_tuning=fpm_tuning,
                 )
                 if ok:
                     php_socket_override = pool_socket_path(domain_name)

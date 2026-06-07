@@ -281,6 +281,90 @@
             </small>
             <BaseButton variant="primary" size="sm" :loading="phpSaving" @click="savePhp">Guardar y aplicar</BaseButton>
           </div>
+
+          <!-- ===== Tuning de recursos PHP-FPM ===== -->
+          <hr class="dd-sep" />
+          <div class="fpm-block">
+            <div class="fpm-head">
+              <div>
+                <h6 class="fpm-title">Recursos del pool PHP-FPM</h6>
+                <p class="dd-muted" style="margin:.2rem 0 0">
+                  Controla cuántos procesos PHP levanta este dominio (consumo de RAM/CPU).
+                  Elige un perfil o ajústalo a mano.
+                </p>
+              </div>
+            </div>
+
+            <div v-if="!fpmLoaded" class="svq-skeleton" style="height:90px"></div>
+            <div v-else>
+              <!-- Presets -->
+              <div class="fpm-presets">
+                <button v-for="(p, key) in fpmPresets" :key="key" type="button"
+                        class="fpm-preset" :class="{ 'is-active': fpmPreset === key }"
+                        @click="selectFpmPreset(key)">
+                  <span class="fpm-preset-name">{{ p.label }}</span>
+                  <span class="fpm-preset-desc">{{ p.description }}</span>
+                </button>
+              </div>
+
+              <!-- Ajuste manual (avanzado, colapsable) -->
+              <button type="button" class="fpm-advanced-toggle" @click="fpmAdvanced = !fpmAdvanced">
+                <i class="bi" :class="fpmAdvanced ? 'bi-chevron-down' : 'bi-chevron-right'"></i>
+                Ajuste manual avanzado
+              </button>
+              <div v-show="fpmAdvanced" class="fpm-manual">
+                <div class="fpm-field">
+                  <label>Modo (pm)</label>
+                  <select class="svq-input" v-model="fpmManual.pm">
+                    <option value="ondemand">ondemand — procesos solo bajo demanda (menos RAM)</option>
+                    <option value="dynamic">dynamic — mantiene procesos listos (más rápido)</option>
+                    <option value="static">static — número fijo de procesos</option>
+                  </select>
+                </div>
+                <div class="fpm-field">
+                  <label>Máx. procesos (max_children)</label>
+                  <input class="svq-input" type="number" min="1" :max="fpmCaps['pm.max_children']"
+                         v-model.number="fpmManual['pm.max_children']" />
+                  <small class="dd-muted">Tope del servidor: {{ fpmCaps['pm.max_children'] }}</small>
+                </div>
+                <div class="fpm-field">
+                  <label>Peticiones por proceso (max_requests)</label>
+                  <input class="svq-input" type="number" min="0" :max="fpmCaps['pm.max_requests']"
+                         v-model.number="fpmManual['pm.max_requests']" />
+                  <small class="dd-muted">Recicla el proceso tras N peticiones (mitiga fugas de memoria)</small>
+                </div>
+                <template v-if="fpmManual.pm === 'dynamic'">
+                  <div class="fpm-field">
+                    <label>Procesos iniciales (start_servers)</label>
+                    <input class="svq-input" type="number" min="1" v-model.number="fpmManual['pm.start_servers']" />
+                  </div>
+                  <div class="fpm-field">
+                    <label>Mín. en reserva (min_spare_servers)</label>
+                    <input class="svq-input" type="number" min="1" v-model.number="fpmManual['pm.min_spare_servers']" />
+                  </div>
+                  <div class="fpm-field">
+                    <label>Máx. en reserva (max_spare_servers)</label>
+                    <input class="svq-input" type="number" min="1" v-model.number="fpmManual['pm.max_spare_servers']" />
+                  </div>
+                </template>
+                <div class="fpm-field" v-if="fpmManual.pm === 'ondemand'">
+                  <label>Timeout de inactividad (idle_timeout)</label>
+                  <input class="svq-input" v-model="fpmManual['pm.process_idle_timeout']" placeholder="10s" />
+                </div>
+              </div>
+
+              <div class="dd-form-foot">
+                <small class="dd-muted">
+                  <i class="bi bi-cpu"></i>
+                  RAM estimada en pico: ~{{ fpmEstimatedRamMb }} MB
+                  <span style="opacity:.7">({{ fpmEffectiveChildren }} procesos × ~40 MB)</span>
+                </small>
+                <BaseButton variant="primary" size="sm" :loading="fpmSaving" @click="saveFpm">
+                  Aplicar recursos
+                </BaseButton>
+              </div>
+            </div>
+          </div>
         </div>
       </BaseCard>
 
@@ -670,6 +754,8 @@ export default {
         phpForm.value = form
       } catch (e) { store.showNotification('Error config PHP: ' + e.message, 'danger') }
       finally { phpLoading.value = false }
+      // Cargar también el tuning de recursos del pool FPM (mismo tab)
+      loadFpm()
     }
     const savePhp = async () => {
       phpSaving.value = true
@@ -687,6 +773,73 @@ export default {
         store.showNotification(`PHP cambiado a ${version}`, 'success')
         await reloadDomain(); await loadPhp()
       } catch (e) { store.showNotification('Error: ' + e.message, 'danger'); await reloadDomain() }
+    }
+
+    // ── PHP-FPM: tuning de recursos del pool ──
+    const fpmLoaded = ref(false), fpmSaving = ref(false), fpmAdvanced = ref(false)
+    const fpmPresets = ref({}), fpmCaps = ref({ 'pm.max_children': 50, 'pm.max_requests': 5000 })
+    const fpmPreset = ref('medium')
+    const fpmManual = ref({})   // pm.* efectivos (preset resuelto + ajustes del usuario)
+
+    const loadFpm = async () => {
+      try {
+        const cfg = await api.getDomainFpmConfig(domainId.value)
+        fpmPresets.value = cfg.presets || {}
+        fpmCaps.value = cfg.caps || fpmCaps.value
+        fpmPreset.value = (cfg.tuning && cfg.tuning.preset) || cfg.default_preset || 'medium'
+        // El manual arranca con las directivas efectivas (preset resuelto).
+        // Así el "ajuste avanzado" siempre muestra valores reales coherentes.
+        fpmManual.value = { ...(cfg.effective || {}) }
+        // Si el dominio tenía manual guardado, marcarlo encima
+        if (cfg.tuning && cfg.tuning.manual) {
+          fpmManual.value = { ...fpmManual.value, ...cfg.tuning.manual }
+          fpmAdvanced.value = true
+        }
+        fpmLoaded.value = true
+      } catch (e) { store.showNotification('Error config FPM: ' + e.message, 'danger') }
+    }
+
+    // Al elegir un preset, resolvemos sus directivas y reseteamos el manual a ellas.
+    const selectFpmPreset = (key) => {
+      fpmPreset.value = key
+      const p = fpmPresets.value[key] || {}
+      const eff = {}
+      for (const [k, v] of Object.entries(p)) {
+        if (k !== 'label' && k !== 'description') eff[k] = v
+      }
+      fpmManual.value = eff
+    }
+
+    // ¿El manual difiere del preset puro? Si sí, enviamos manual; si no, solo preset.
+    const fpmManualDiffersFromPreset = () => {
+      const p = fpmPresets.value[fpmPreset.value] || {}
+      for (const [k, v] of Object.entries(fpmManual.value)) {
+        if (k === 'label' || k === 'description') continue
+        if (String(p[k]) !== String(v)) return true
+      }
+      return false
+    }
+
+    const fpmEffectiveChildren = computed(() => Number(fpmManual.value['pm.max_children']) || 10)
+    const fpmEstimatedRamMb = computed(() => fpmEffectiveChildren.value * 40)
+
+    const saveFpm = async () => {
+      fpmSaving.value = true
+      try {
+        const tuning = { preset: fpmPreset.value }
+        if (fpmAdvanced.value && fpmManualDiffersFromPreset()) {
+          // Solo enviamos las claves tuneables relevantes
+          const keys = ['pm','pm.max_children','pm.max_requests','pm.process_idle_timeout',
+                        'pm.start_servers','pm.min_spare_servers','pm.max_spare_servers']
+          const manual = {}
+          for (const k of keys) if (fpmManual.value[k] != null && fpmManual.value[k] !== '') manual[k] = fpmManual.value[k]
+          tuning.manual = manual
+        }
+        const res = await api.setDomainFpmConfig(domainId.value, tuning)
+        fpmManual.value = { ...(res.effective || fpmManual.value) }
+        store.showNotification('Recursos PHP-FPM aplicados', 'success')
+      } catch (e) { store.showNotification('Error: ' + e.message, 'danger') }
+      finally { fpmSaving.value = false }
     }
 
     // ── Logs ──
@@ -1045,6 +1198,8 @@ export default {
       disk, diskLoading, loadDisk,
       cacheSaving, toggleCache, purgeCache,
       phpLoading, phpSaving, phpDirectives, phpDefaults, phpForm, phpHasPool, savePhp, changePHP,
+      fpmLoaded, fpmSaving, fpmAdvanced, fpmPresets, fpmCaps, fpmPreset, fpmManual,
+      selectFpmPreset, fpmEffectiveChildren, fpmEstimatedRamMb, saveFpm,
       logTab, logLines, logsLoading, logsData, loadLogs, switchLog,
       logSearch, filteredLogLines, logLineClass, highlightLog,
       downloading, downloadSite, suspend, unsuspend, remove, goFiles,
@@ -1128,6 +1283,24 @@ export default {
 .php-code { font-size: var(--fs-xs); color: var(--text-muted); font-family: var(--font-mono); }
 .php-server { font-size: var(--fs-sm); color: var(--text-muted); }
 .dd-form-foot { display: flex; align-items: center; justify-content: space-between; gap: var(--sp-3); margin-top: var(--sp-4); }
+
+/* PHP-FPM tuning */
+.dd-sep { border: none; border-top: 1px solid var(--border); margin: var(--sp-5) 0; }
+.fpm-title { font-size: var(--fs-sm); font-weight: var(--fw-semibold); color: var(--text); margin: 0; }
+.fpm-presets { display: grid; grid-template-columns: repeat(3, 1fr); gap: var(--sp-3); margin: var(--sp-4) 0; }
+@media (max-width: 640px) { .fpm-presets { grid-template-columns: 1fr; } }
+.fpm-preset { text-align: left; display: flex; flex-direction: column; gap: 4px; padding: var(--sp-3) var(--sp-4); border: 1px solid var(--border); border-radius: var(--r-md); background: var(--surface); cursor: pointer; transition: all .15s; }
+.fpm-preset:hover { border-color: var(--accent); }
+.fpm-preset.is-active { border-color: var(--accent); background: var(--accent-soft, rgba(99,102,241,.08)); box-shadow: 0 0 0 1px var(--accent) inset; }
+.fpm-preset-name { font-size: var(--fs-sm); font-weight: var(--fw-semibold); color: var(--text); }
+.fpm-preset-desc { font-size: var(--fs-xs); color: var(--text-muted); line-height: 1.35; }
+.fpm-advanced-toggle { background: none; border: none; color: var(--text-secondary); font-size: var(--fs-sm); cursor: pointer; display: inline-flex; align-items: center; gap: 6px; padding: var(--sp-2) 0; }
+.fpm-advanced-toggle:hover { color: var(--text); }
+.fpm-manual { display: grid; grid-template-columns: repeat(2, 1fr); gap: var(--sp-3) var(--sp-4); padding: var(--sp-3) 0; }
+@media (max-width: 640px) { .fpm-manual { grid-template-columns: 1fr; } }
+.fpm-field { display: flex; flex-direction: column; gap: 4px; }
+.fpm-field label { font-size: var(--fs-xs); color: var(--text-secondary); font-weight: var(--fw-medium); }
+.fpm-field small { font-size: var(--fs-xs); color: var(--text-muted); }
 
 /* Logs */
 .logs-controls { display: flex; align-items: center; gap: var(--sp-2); }

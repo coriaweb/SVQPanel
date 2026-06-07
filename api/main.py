@@ -13,7 +13,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from api.models.database import create_tables, get_db
 from config.config import PANEL_NAME, PANEL_VERSION
 
-from api.routes import users, domains, php, ssl, ipv6, auth, settings, dns, system, mail, databases, firewall, fail2ban, security_monitor, ip_lists, file_manager, crowdsec, plans, sftp, crons, server_ips, backups, templates, notifications, dns_cluster, git, git_webhook, monitoring
+from api.routes import users, domains, php, ssl, ipv6, auth, settings, dns, system, mail, databases, firewall, fail2ban, security_monitor, ip_lists, file_manager, crowdsec, plans, sftp, crons, server_ips, backups, templates, notifications, dns_cluster, git, git_webhook, monitoring, db_tuner
 
 # Crear app FastAPI
 app = FastAPI(
@@ -576,6 +576,10 @@ def _run_migrations():
             updated_at       TIMESTAMP DEFAULT NOW()
         )""",
         "CREATE INDEX IF NOT EXISTS ix_database_users_database_id ON database_users(database_id)",
+        # ─────────────────────────────────────────────────────────────────
+        # Fase 21 — Tuning de recursos del pool PHP-FPM por dominio
+        # ─────────────────────────────────────────────────────────────────
+        "ALTER TABLE domains ADD COLUMN IF NOT EXISTS fpm_pool_overrides TEXT",
     ]
     with engine.connect() as conn:
         for sql in migrations:
@@ -682,6 +686,7 @@ app.include_router(file_manager.router,     prefix="/api", tags=["File Manager"]
 app.include_router(notifications.router,     prefix="/api", tags=["Notifications"])
 app.include_router(git.router,               prefix="/api", tags=["Git Deploy"])
 app.include_router(monitoring.router,        prefix="/api", tags=["Monitoring"])
+app.include_router(db_tuner.router,          prefix="/api", tags=["DB Tuner"])
 # Autoconfig/Autodiscover sin prefijo (clientes de correo los buscan en rutas raíz)
 app.include_router(mail.router, prefix="", include_in_schema=False)
 # Webhook de despliegue Git sin prefijo (GitHub/GitLab llaman a /git/webhook/{token})

@@ -678,6 +678,26 @@ class APIClient {
     return this.put(`/api/domains/${domainId}/php-config`, { overrides })
   }
 
+  // Tuning de recursos del pool PHP-FPM por dominio
+  getDomainFpmConfig(domainId) {
+    return this.get(`/api/domains/${domainId}/fpm-config`)
+  }
+  setDomainFpmConfig(domainId, tuning) {
+    // tuning = { preset, manual: { 'pm.max_children': N, ... } }
+    return this.put(`/api/domains/${domainId}/fpm-config`, tuning)
+  }
+
+  // Tuner de MariaDB/MySQL (admin)
+  getDbTunerStatus() {
+    return this.get('/api/db-tuner/status')
+  }
+  setDbTunerConfig(directives) {
+    return this.put('/api/db-tuner/config', { directives })
+  }
+  restartDbTuner() {
+    return this.post('/api/db-tuner/restart', {})
+  }
+
   // FastCGI cache por dominio
   setDomainCache(domainId, enabled, ttlMinutes = 60) {
     return this.put(`/api/domains/${domainId}/cache`, { enabled, ttl_minutes: ttlMinutes })
