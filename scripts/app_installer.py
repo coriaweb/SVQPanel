@@ -120,6 +120,14 @@ def ensure_composer() -> bool:
     return rc == 0
 
 
+# Ficheros "index" placeholder que crea el panel al crear el dominio. Se
+# permiten en un docroot "limpio" pero DEBEN eliminarse antes de instalar una
+# app, o Apache/nginx sirven el index.html placeholder en vez de la app (p. ej.
+# WordPress, cuyo front es index.php → Apache prioriza index.html y muestra la
+# página "Gestionado con SVQPanel" en lugar del sitio).
+_PLACEHOLDER_INDEX = ("index.html", "index.nginx-debian.html")
+
+
 def _empty_or_safe(docroot: str) -> bool:
     """El docroot debe existir y estar vacío (o solo con index por defecto)."""
     if not os.path.isdir(docroot):
@@ -128,6 +136,24 @@ def _empty_or_safe(docroot: str) -> bool:
     # Permitimos un index.html/php por defecto de la creación del dominio
     trivial = {"index.html", "index.php", "index.nginx-debian.html", ".well-known"}
     return all(e in trivial for e in entries)
+
+
+def _clean_placeholders(docroot: str):
+    """Elimina los index.html placeholder del panel antes de instalar una app.
+
+    El index.php sí se conserva: WordPress/PrestaShop traen el suyo y wp-cli
+    sobrescribe el del panel; eliminarlo aquí no aporta y podría borrar uno ya
+    legítimo en flujos no-WP.
+    """
+    if not os.path.isdir(docroot):
+        return
+    for name in _PLACEHOLDER_INDEX:
+        p = os.path.join(docroot, name)
+        try:
+            if os.path.isfile(p):
+                os.remove(p)
+        except OSError:
+            pass
 
 
 def _chown_tree(path: str, user: str):
@@ -244,6 +270,7 @@ class AppInstaller:
             raise RuntimeError("No se pudo instalar wp-cli en el servidor")
         if not _empty_or_safe(docroot):
             raise RequirementsError("El directorio del dominio no está vacío; instala en un dominio limpio")
+        _clean_placeholders(docroot)
 
         db = self._create_db(owner, "wp")
 
@@ -301,6 +328,7 @@ class AppInstaller:
             raise RuntimeError("No se pudo instalar composer en el servidor")
         if not _empty_or_safe(docroot):
             raise RequirementsError("El directorio del dominio no está vacío; instala en un dominio limpio")
+        _clean_placeholders(docroot)
 
         db = self._create_db(owner, "lar")
 
@@ -387,6 +415,7 @@ class AppInstaller:
         """
         if not _empty_or_safe(docroot):
             raise RequirementsError("El directorio del dominio no está vacío; instala en un dominio limpio")
+        _clean_placeholders(docroot)
 
         # Binario PHP a usar para occ: php{ver} si existe, si no el genérico.
         php_bin = "php"
@@ -490,6 +519,7 @@ class AppInstaller:
         """
         if not _empty_or_safe(docroot):
             raise RequirementsError("El directorio del dominio no está vacío; instala en un dominio limpio")
+        _clean_placeholders(docroot)
 
         php_bin = "php"
         if php_version:
