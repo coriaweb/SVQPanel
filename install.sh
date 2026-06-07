@@ -261,6 +261,15 @@ apt-get update -qq
 apt-get upgrade -y -qq -o Dpkg::Options::="--force-confold"
 echo -e "${GREEN}✓ Sistema actualizado${NC}\n"
 
+# Prerequisitos MÍNIMOS antes de añadir repos externos. En un Debian minimal
+# 'gpg' (gnupg) y 'curl' NO vienen de serie, y los repos PGDG/nginx/rspamd/sury
+# usan 'curl ... | gpg --dearmor' para sus claves. Sin esto, la instalación
+# fallaba con "gpg: command not found" al añadir el repo de PostgreSQL.
+echo -e "${YELLOW}Instalando prerequisitos (gnupg, curl)...${NC}"
+apt-get install -y -qq -o Dpkg::Options::="--force-confold" \
+    gnupg ca-certificates curl wget apt-transport-https
+echo -e "${GREEN}✓ Prerequisitos instalados${NC}\n"
+
 ###############################################################################
 # 3b. SWAP — crear si no existe (evita OOM killer en VPS con poca RAM)
 ###############################################################################
@@ -283,6 +292,7 @@ fi
 # 4. REPO PGDG — PostgreSQL oficial (versión más reciente estable)
 ###############################################################################
 echo -e "${YELLOW}Añadiendo repo PostgreSQL oficial (PGDG)...${NC}"
+mkdir -p /usr/share/keyrings   # puede no existir en un Debian minimal
 curl -fsSL https://www.postgresql.org/media/keys/ACCC4CF8.asc \
     | gpg --yes --dearmor -o /usr/share/keyrings/postgresql-archive-keyring.gpg
 case "$OS_VERSION" in
