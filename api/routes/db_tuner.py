@@ -50,11 +50,13 @@ async def db_tuner_status(current_user: User = Depends(require_admin)):
     analysis = mysql_tuner.analyze(status_vars, variables, ram,
                                    dataset_bytes=dataset, reserved_bytes=reserved)
 
-    # Valores actuales de las directivas editables (mezcla servidor + drop-in)
+    # Valores actuales de las directivas editables (mezcla servidor + drop-in),
+    # formateados de forma legible (96M en vez de 100663296, 10 en vez de 10.000000).
     current_dropin = mysql_tuner.read_current_dropin()
     current_values = {}
     for name in mysql_tuner.TUNABLE_DIRECTIVES:
-        current_values[name] = current_dropin.get(name, variables.get(name))
+        raw = current_dropin.get(name, variables.get(name))
+        current_values[name] = mysql_tuner.format_directive_value(name, raw)
 
     return {
         "enabled":      True,

@@ -159,6 +159,34 @@ def human_size_mycnf(num_bytes: int) -> str:
     return f"{num_bytes}"
 
 
+def format_directive_value(name: str, raw) -> Optional[str]:
+    """
+    Formatea el valor de una directiva para MOSTRARLO de forma legible según su
+    tipo: 'size' → '96M' (en vez de 100663296); 'int'/'bool' → entero sin
+    decimales ('10' en vez de '10.000000'). Devuelve None si raw es None.
+    """
+    if raw is None:
+        return None
+    spec = TUNABLE_DIRECTIVES.get(name)
+    s = str(raw).strip()
+    if not spec:
+        return s
+    t = spec["type"]
+    if t == "size":
+        # Formato legible para mostrar (96M, 1.9G). Si el usuario lo edita y
+        # guarda un '1.9G', validate_directive lo normaliza a entero para my.cnf.
+        b = parse_size(s)
+        return human_size(b) if b > 0 else s
+    if t in ("int", "bool"):
+        # MariaDB devuelve long_query_time como '10.000000' → '10'
+        try:
+            f = float(s)
+            return str(int(f)) if f == int(f) else s
+        except ValueError:
+            return s
+    return s
+
+
 def validate_directive(name: str, value: str) -> Tuple[bool, str]:
     """Valida una directiva contra la allowlist. Devuelve (ok, error|valor_limpio)."""
     spec = TUNABLE_DIRECTIVES.get(name)
@@ -376,8 +404,17 @@ def analyze(status: Dict[str, str], variables: Dict[str, str], ram_bytes: int,
         # sea bajo (BD recién arrancada) no hay nada que subir.
         dataset_cabe = dataset_bytes and bp_size >= dataset_bytes
 
+        # ¿Está SOBREDIMENSIONADO? El buffer pool es mucho mayor que lo necesario
+        # y ese exceso es RAM que se le quita al resto del stack. Lo marcamos si
+        # el actual supera al recomendado en un margen claro y el desperdicio es
+        # significativo (≥ 256M), para no molestar por diferencias pequeñas.
+        desperdicio = bp_size - suggested
+        sobredimensionado = (
+            suggested > 0 and bp_size > suggested * 1.5 and desperdicio >= 256 * 1024**2
+        )
+
         if hit < 99 and uptime > 3600 and suggested > bp_size * 1.1 and not dataset_cabe:
-            # Explicar el porqué del número, con el desglose de RAM
+            # Demasiado pequeño: provoca lecturas a disco
             partes = []
             if dataset_bytes:
                 partes.append(f"el dataset InnoDB ocupa {human_size(dataset_bytes)}")
@@ -390,6 +427,18 @@ def analyze(status: Dict[str, str], variables: Dict[str, str], ram_bytes: int,
                 "detail": (f"Hit ratio {hit:.1f}% (objetivo ≥ 99%): el buffer pool actual "
                            f"({human_size(bp_size)}) provoca lecturas a disco. {razon}"
                            f"Valor calculado para este servidor sin quedarte sin RAM."),
+                "directive": "innodb_buffer_pool_size",
+                "suggested": human_size_mycnf(suggested),
+            })
+        elif sobredimensionado:
+            # Demasiado grande para los datos que hay: RAM desperdiciada
+            recs.append({
+                "level": "info",
+                "title": "Buffer pool InnoDB sobredimensionado",
+                "detail": (f"El buffer pool ({human_size(bp_size)}) es mucho mayor que los datos "
+                           f"InnoDB ({human_size(dataset_bytes)}). Sobran ~{human_size(desperdicio)} "
+                           f"de RAM reservada que no se usan y le hacen falta al panel, PHP y correo. "
+                           f"Puedes bajarlo y liberar esa memoria."),
                 "directive": "innodb_buffer_pool_size",
                 "suggested": human_size_mycnf(suggested),
             })

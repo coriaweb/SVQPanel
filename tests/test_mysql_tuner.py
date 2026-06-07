@@ -193,6 +193,54 @@ def test_no_recomienda_subir_si_dataset_cabe():
     assert bp["level"] == "ok"   # no warn
 
 
+def test_format_directive_value_legible():
+    # size: bytes crudos / con unidad → legible
+    assert t.format_directive_value("innodb_log_file_size", "100663296") == "96M"
+    assert t.format_directive_value("query_cache_size", "1048576") == "1M"
+    assert t.format_directive_value("innodb_buffer_pool_size", "2011004K") == "1.9G"
+    # int/bool: sin decimales
+    assert t.format_directive_value("long_query_time", "10.000000") == "10"
+    assert t.format_directive_value("max_connections", "151") == "151"
+    assert t.format_directive_value("slow_query_log", "OFF") == "OFF"
+    # None se respeta
+    assert t.format_directive_value("max_connections", None) is None
+
+
+def test_buffer_pool_sobredimensionado_recomienda_bajar():
+    # bp 1.9G con dataset 512K: debe avisar de sobredimensionado y proponer bajar
+    status = {
+        "Uptime": "400", "Innodb_buffer_pool_reads": "97000",
+        "Innodb_buffer_pool_read_requests": "100000", "Max_used_connections": "1",
+        "Created_tmp_tables": "10", "Created_tmp_disk_tables": "0",
+        "Opened_tables": "5", "Slow_queries": "0", "Questions": "1000",
+    }
+    variables = {"innodb_buffer_pool_size": "1946M", "max_connections": "151",
+                 "query_cache_type": "OFF", "table_open_cache": "2000", "tmp_table_size": "16M"}
+    res = t.analyze(status, variables, int(3.8 * GB), dataset_bytes=512 * 1024,
+                    reserved_bytes=int(1.7 * GB))
+    bp = next(r for r in res["recommendations"] if r.get("directive") == "innodb_buffer_pool_size")
+    assert "sobredimensionado" in bp["title"].lower()
+    # propone un valor menor que el actual
+    assert t.parse_size(bp["suggested"]) < t.parse_size("1946M")
+    assert "liberar" in bp["detail"].lower() or "bajarlo" in bp["detail"].lower()
+
+
+def test_buffer_pool_ok_no_avisa_si_dimension_razonable():
+    # bp 256M, dataset 200M: ni pequeño ni sobredimensionado → ok
+    status = {
+        "Uptime": "7200", "Innodb_buffer_pool_reads": "100",
+        "Innodb_buffer_pool_read_requests": "1000000", "Max_used_connections": "5",
+        "Created_tmp_tables": "10", "Created_tmp_disk_tables": "0",
+        "Opened_tables": "5", "Slow_queries": "0", "Questions": "1000",
+    }
+    variables = {"innodb_buffer_pool_size": "256M", "max_connections": "151",
+                 "query_cache_type": "OFF", "table_open_cache": "2000", "tmp_table_size": "16M"}
+    res = t.analyze(status, variables, int(3.8 * GB), dataset_bytes=200 * MB,
+                    reserved_bytes=int(1.2 * GB))
+    bp = next(r for r in res["recommendations"] if "Buffer pool" in r["title"])
+    assert bp["level"] == "ok"
+
+
 def test_recomendacion_buffer_pool_explica_el_porque():
     status = {
         "Uptime": "7200", "Innodb_buffer_pool_reads": "300000",
