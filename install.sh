@@ -1037,11 +1037,22 @@ PYEOF
 \$config['imap_host']      = 'localhost:143';
 \$config['imap_auth_type']  = null;
 
-// SMTP (Postfix submission)
-\$config['smtp_host']      = 'localhost:587';
+// SMTP (Postfix submission, puerto 587 con STARTTLS)
+\$config['smtp_host']      = 'tls://localhost:587';
 \$config['smtp_user']      = '%u';
 \$config['smtp_pass']      = '%p';
-\$config['smtp_auth_type']  = '';
+\$config['smtp_auth_type'] = 'PLAIN';
+// Roundcube y Postfix estan en la MISMA maquina: el cert es del hostname real
+// (no de 'localhost'), asi que no verificamos el certificado en esta conexion
+// local (el trafico nunca sale del servidor). Sin esto, STARTTLS falla con
+// "Peer certificate CN did not match expected CN=localhost".
+\$config['smtp_conn_options'] = array(
+    'ssl' => array(
+        'verify_peer'       => false,
+        'verify_peer_name'  => false,
+        'allow_self_signed' => true,
+    ),
+);
 
 // Panel
 \$config['product_name']   = 'Webmail';

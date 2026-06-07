@@ -53,7 +53,7 @@
       </div>
 
       <div class="lg-foot">
-        <span class="lg-muted">{{ rows.length }} líneas{{ search ? ' (filtradas)' : '' }}</span>
+        <span class="lg-muted">{{ rows.length }} líneas{{ search ? ' (filtradas)' : '' }} · más recientes arriba</span>
         <BaseButton variant="ghost" size="sm" @click="copyAll" :disabled="!rows.length">
           <i class="bi bi-clipboard"></i> Copiar
         </BaseButton>
@@ -117,10 +117,11 @@ export default {
         const data = await api.readSystemLog(selected.value, {
           lines: lines.value, search: search.value,
         })
-        rows.value = data.lines || []
+        // Mostrar lo más RECIENTE arriba (el log viene en orden cronológico)
+        rows.value = (data.lines || []).slice().reverse()
         await nextTick()
-        // Auto-scroll al final (lo más reciente)
-        if (outputEl.value) outputEl.value.scrollTop = outputEl.value.scrollHeight
+        // Scroll arriba del todo (lo más reciente)
+        if (outputEl.value) outputEl.value.scrollTop = 0
       } catch (e) {
         error.value = e.message || 'Error al leer el log'
         rows.value = []
