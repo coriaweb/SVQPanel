@@ -140,6 +140,18 @@
         />
         <small class="text-muted">0 = sin límite</small>
       </div>
+      <div class="col-md-6 mb-3">
+        <label for="disk_quota_mb" class="form-label">Cuota de disco (MB)</label>
+        <input
+          id="disk_quota_mb"
+          v-model.number="form.disk_quota_mb"
+          type="number"
+          class="form-control"
+          min="0"
+          placeholder="1024"
+        />
+        <small class="text-muted">0 = sin límite · se aplica con cuotas del SO</small>
+      </div>
     </div>
     <div class="row" v-else>
       <div class="col-12 mb-3">
@@ -202,6 +214,7 @@ export default {
       new_password_confirm:'',
       role:                props.user?.role        || 'user',
       domains_limit:       props.user?.domains_limit ?? 10,
+      disk_quota_mb:       props.user?.disk_quota_mb ?? 1024,
       plan_id:             props.user?.plan_id     ?? null,
       is_active:           props.user?.is_active   ?? true,
     })
@@ -243,6 +256,10 @@ export default {
             role:          form.value.role,
             domains_limit: form.value.domains_limit,
             is_active:     form.value.is_active,
+          }
+          // Solo enviar cuota si el usuario no tiene plan (con plan la fija el plan)
+          if (!form.value.plan_id) {
+            payload.disk_quota_mb = form.value.disk_quota_mb
           }
           // Solo incluir new_password si se rellenó y es válida
           if (form.value.new_password && !passwordError.value) {

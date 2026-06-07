@@ -52,6 +52,40 @@
             </div>
           </div>
         </div>
+
+        <!-- Uso de disco (cuota) -->
+        <div v-if="user.role !== 'reseller'" class="ua-card">
+          <div class="ua-card-title"><i class="bi bi-hdd"></i> Disco</div>
+          <div style="padding:1rem">
+            <div v-if="diskUsage === null" style="font-size:.85rem;color:var(--text-muted)">
+              <span class="spinner-border spinner-border-sm"></span> Calculando…
+            </div>
+            <template v-else>
+              <div style="display:flex;justify-content:space-between;font-size:.85rem;margin-bottom:.4rem">
+                <strong>{{ fmtMB(diskUsage.used_mb) }}</strong>
+                <span style="color:var(--text-muted)">
+                  de {{ diskUsage.limit_mb ? fmtMB(diskUsage.limit_mb) : '∞' }}
+                </span>
+              </div>
+              <div class="ua-bar">
+                <div class="ua-bar__fill"
+                     :class="diskBarClass"
+                     :style="{ width: Math.min(100, diskUsage.percent || 0) + '%' }"></div>
+              </div>
+              <div style="display:flex;justify-content:space-between;margin-top:.4rem;font-size:.75rem;color:var(--text-muted)">
+                <span v-if="diskUsage.limit_mb">{{ diskUsage.percent }}% usado</span>
+                <span v-else>Sin límite</span>
+                <span v-if="diskUsage.over_quota" style="color:var(--danger);font-weight:600">
+                  <i class="bi bi-exclamation-triangle"></i> Cuota llena
+                </span>
+              </div>
+              <p v-if="diskUsage.active === false" style="font-size:.72rem;color:var(--warning,#d97706);margin:.5rem 0 0">
+                <i class="bi bi-info-circle"></i> Las cuotas del sistema no están activas:
+                el límite es informativo (no se aplica en el SO).
+              </p>
+            </template>
+          </div>
+        </div>
       </aside>
 
       <!-- Panel principal -->
@@ -318,6 +352,7 @@ export default {
     const user           = ref(null)
     const clients        = ref([])
     const domains        = ref([])
+    const diskUsage      = ref(null)
     const loadingUser    = ref(true)
     const loadingClients = ref(false)
     const loadingDomains = ref(false)
@@ -381,6 +416,25 @@ export default {
         if (data?.versions?.length) phpAvailableVersions.value = data.versions
       } catch { /* usa la lista por defecto */ }
     }
+
+    // ─── Uso de disco (cuota) ──────────────────────────────────────────────
+    const loadDiskUsage = async () => {
+      try {
+        diskUsage.value = await api.get(`/api/users/${userId}/disk-usage`)
+      } catch {
+        diskUsage.value = { active: false, used_mb: 0, limit_mb: user.value?.disk_quota_mb || 0, percent: 0, over_quota: false }
+      }
+    }
+    const fmtMB = (mb) => {
+      if (mb == null) return '—'
+      return mb >= 1024 ? (mb / 1024).toFixed(1) + ' GB' : Math.round(mb) + ' MB'
+    }
+    const diskBarClass = computed(() => {
+      const p = diskUsage.value?.percent || 0
+      if (p >= 95) return 'ua-bar__fill--danger'
+      if (p >= 80) return 'ua-bar__fill--warn'
+      return 'ua-bar__fill--ok'
+    })
 
     // ─── Domain manager ─────────────────────────────────────────────────────
     const openDomainManager = (domain) => {
@@ -502,11 +556,12 @@ export default {
         await loadClients()
       } else {
         await loadDomains()
+        loadDiskUsage()
       }
     })
 
     return {
-      user, clients, domains,
+      user, clients, domains, diskUsage, fmtMB, diskBarClass,
       loadingUser, loadingClients, loadingDomains,
       showEditUser, showAddClient, showAddDomain, addingDomain, newDomain,
       showDomainManager, selectedDomain,
@@ -553,6 +608,15 @@ export default {
 .ua-card { background:var(--surface); border:1px solid var(--border); border-radius:var(--r-md,10px); overflow:hidden; }
 .ua-card-head { display:flex; align-items:center; justify-content:space-between; padding:.875rem 1.25rem; border-bottom:1px solid var(--border); }
 .ua-card-title { font-weight:600; font-size:.95rem; display:flex; align-items:center; gap:.5rem; }
+/* Cuando el título va suelto (tarjeta de disco), darle el padding del head */
+.ua-card > .ua-card-title { padding:.875rem 1.25rem; border-bottom:1px solid var(--border); }
+
+/* Barra de uso de disco */
+.ua-bar { height:8px; background:var(--surface-2); border-radius:999px; overflow:hidden; }
+.ua-bar__fill { height:100%; border-radius:999px; transition:width .3s ease; }
+.ua-bar__fill--ok    { background:var(--success); }
+.ua-bar__fill--warn  { background:var(--warning,#f59e0b); }
+.ua-bar__fill--danger{ background:var(--danger); }
 
 /* Sidebar info */
 .ua-info-list { display:flex; flex-direction:column; }
