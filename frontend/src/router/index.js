@@ -14,6 +14,7 @@ const Mail           = () => import('../views/Mail.vue')
 const Settings       = () => import('../views/Settings.vue')
 const SystemServices = () => import('../views/SystemServices.vue')
 const Security       = () => import('../views/Security.vue')
+const Monitoring     = () => import('../views/Monitoring.vue')
 const FileManager    = () => import('../views/FileManager.vue')
 const Plans          = () => import('../views/Plans.vue')
 const MySftp         = () => import('../views/MySftp.vue')
@@ -115,6 +116,12 @@ const routes = [
     path: '/security',
     name: 'Security',
     component: Security,
+    meta: { requiresAuth: true, requiresAdmin: true }
+  },
+  {
+    path: '/monitoring',
+    name: 'Monitoring',
+    component: Monitoring,
     meta: { requiresAuth: true, requiresAdmin: true }
   },
   {

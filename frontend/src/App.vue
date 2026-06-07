@@ -210,6 +210,7 @@ export default {
         label: 'Sistema',
         items: [
           { to: '/system',         label: 'Servicios',       icon: 'bi-hdd-rack',     roles: ['admin'] },
+          { to: '/monitoring',     label: 'Monitorización',  icon: 'bi-graph-up',     roles: ['admin'] },
           { to: '/security',       label: 'Seguridad',       icon: 'bi-shield-lock',  roles: ['admin'] },
           { to: '/system/updates', label: 'Actualizaciones', icon: 'bi-arrow-repeat', roles: ['admin'] },
           { to: '/settings',       label: 'Configuración',   icon: 'bi-gear',         roles: ['admin'] },
