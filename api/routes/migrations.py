@@ -235,13 +235,18 @@ async def hestia_analyze(
     ssh = _ssh_from_form(ssh_host, ssh_user, ssh_password, ssh_key, ssh_port, hestia_user)
     from scripts.hestia_import import build_dns_proposal
 
-    # IPs de ESTE servidor (destino de las reescrituras de A/AAAA).
+    # IPs de ESTE servidor (destino de las reescrituras de A/AAAA). Reusa el
+    # helper de dns.py que, si no está en Settings, la autodetecta del sistema.
     server_ipv4 = server_ipv6 = None
+    try:
+        from api.routes.dns import _get_server_ipv4
+        server_ipv4 = _get_server_ipv4(db) or None
+    except Exception:
+        pass
     try:
         from api.models.models_settings import Settings as _S
         _s = db.query(_S).filter(_S.id == 1).first()
         if _s:
-            server_ipv4 = _s.server_ipv4 or None
             server_ipv6 = getattr(_s, "server_ipv6", None) or None
     except Exception:
         pass

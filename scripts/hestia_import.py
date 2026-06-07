@@ -1108,13 +1108,18 @@ def run_import(tar_path: str, target_user_id: int, scope: List[str], db,
         raise HestiaImportError(
             "El destino no puede ser un administrador; elige una cuenta de cliente.")
 
-    # IPs de ESTE servidor (destino de las reescrituras).
+    # IPs de ESTE servidor (destino de las reescrituras). Autodetecta si no está
+    # en Settings (mismo helper que usa la creación de zonas DNS del panel).
     server_ipv4 = server_ipv6 = None
+    try:
+        from api.routes.dns import _get_server_ipv4
+        server_ipv4 = _get_server_ipv4(db) or None
+    except Exception:
+        pass
     try:
         from api.models.models_settings import Settings as _S
         _s = db.query(_S).filter(_S.id == 1).first()
         if _s:
-            server_ipv4 = _s.server_ipv4 or None
             server_ipv6 = getattr(_s, "server_ipv6", None) or None
     except Exception:
         pass
