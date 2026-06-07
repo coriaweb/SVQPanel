@@ -70,6 +70,78 @@
                    :series="seriesTx" :format="v => v.toFixed(1)" />
     </div>
 
+    <!-- Detalle EN VIVO del sistema -->
+    <div v-if="detail" class="mon-grid2">
+      <!-- RAM + Swap -->
+      <div class="mon-card">
+        <div class="mon-card-head"><span class="mon-card-title"><i class="bi bi-memory"></i> Memoria en vivo</span></div>
+        <div class="mon-card-body" v-if="detail.memory.available">
+          <div class="det-bar">
+            <div class="det-bar__fill" :class="barClass(detail.memory.used_pct)" :style="{ width: detail.memory.used_pct + '%' }"></div>
+          </div>
+          <div class="mail-rspamd">
+            <div class="mail-stat"><span>Total</span><strong>{{ fmtMB(detail.memory.total_mb) }}</strong></div>
+            <div class="mail-stat"><span>Usada</span><strong>{{ fmtMB(detail.memory.used_mb) }} ({{ detail.memory.used_pct }}%)</strong></div>
+            <div class="mail-stat"><span>Libre</span><strong>{{ fmtMB(detail.memory.free_mb) }}</strong></div>
+            <div class="mail-stat"><span>Buff/Cache</span><strong>{{ fmtMB(detail.memory.buffcache_mb) }}</strong></div>
+            <div class="mail-stat"><span>Compartida</span><strong>{{ fmtMB(detail.memory.shared_mb) }}</strong></div>
+            <div class="mail-stat"><span>Disponible</span><strong class="mc-ok">{{ fmtMB(detail.memory.avail_mb) }}</strong></div>
+          </div>
+          <template v-if="detail.memory.swap_total_mb > 0">
+            <div class="det-sublabel">Swap</div>
+            <div class="det-bar">
+              <div class="det-bar__fill" :class="barClass(detail.memory.swap_used_pct)" :style="{ width: detail.memory.swap_used_pct + '%' }"></div>
+            </div>
+            <div class="mail-rspamd">
+              <div class="mail-stat"><span>Swap total</span><strong>{{ fmtMB(detail.memory.swap_total_mb) }}</strong></div>
+              <div class="mail-stat"><span>Swap usada</span><strong :class="detail.memory.swap_used_pct > 20 ? 'mc-warn' : ''">{{ fmtMB(detail.memory.swap_used_mb) }} ({{ detail.memory.swap_used_pct }}%)</strong></div>
+            </div>
+          </template>
+        </div>
+      </div>
+
+      <!-- CPU + Discos -->
+      <div class="mon-card">
+        <div class="mon-card-head"><span class="mon-card-title"><i class="bi bi-cpu"></i> CPU y discos</span></div>
+        <div class="mon-card-body">
+          <div class="mail-rspamd" v-if="detail.cpu">
+            <div class="mail-stat" style="grid-column:1/-1"><span>Procesador</span><strong style="font-size:.76rem">{{ detail.cpu.model }}</strong></div>
+            <div class="mail-stat"><span>Núcleos</span><strong>{{ detail.cpu.cores }}</strong></div>
+            <div class="mail-stat"><span>Carga (1m)</span><strong>{{ detail.cpu.load_1 }}</strong></div>
+          </div>
+          <div class="det-sublabel">Discos</div>
+          <div v-for="dk in detail.disks" :key="dk.mount" class="det-disk">
+            <div class="det-disk__head">
+              <span><code>{{ dk.mount }}</code> <small style="color:var(--text-muted)">{{ dk.fstype }}</small></span>
+              <span>{{ dk.used_gb }} / {{ dk.size_gb }} GB · {{ dk.used_pct }}%</span>
+            </div>
+            <div class="det-bar"><div class="det-bar__fill" :class="barClass(dk.used_pct)" :style="{ width: dk.used_pct + '%' }"></div></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Red -->
+      <div class="mon-card" style="grid-column:1/-1" v-if="detail.network.length">
+        <div class="mon-card-head"><span class="mon-card-title"><i class="bi bi-ethernet"></i> Interfaces de red</span></div>
+        <div class="mon-card-body">
+          <div class="mon-table-wrap">
+            <table class="mon-table">
+              <thead><tr><th>Interfaz</th><th>IP</th><th>Recibido</th><th>Enviado</th><th>Errores</th></tr></thead>
+              <tbody>
+                <tr v-for="n in detail.network" :key="n.iface">
+                  <td style="font-family:var(--font-mono)">{{ n.iface }}</td>
+                  <td style="font-family:var(--font-mono);font-size:.8rem">{{ n.ips.join(', ') || '—' }}</td>
+                  <td>{{ n.rx_gb }} GB</td>
+                  <td>{{ n.tx_gb }} GB</td>
+                  <td :class="(n.rx_errors + n.tx_errors) > 0 ? 'mc-err' : ''">{{ n.rx_errors + n.tx_errors }}</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    </div>
+
     <!-- Configuración de alertas -->
     <div class="mon-card">
       <div class="mon-card-head">
@@ -510,6 +582,17 @@ export default {
       }
     }
 
+    // Detalle en vivo del sistema (RAM/swap, CPU, discos, red)
+    const detail = ref(null)
+    const loadDetail = async () => {
+      try { detail.value = await api.get('/api/monitoring/system-detail') } catch {}
+    }
+    const fmtMB = (mb) => {
+      if (mb == null) return '—'
+      return mb >= 1024 ? (mb / 1024).toFixed(1) + ' GB' : mb + ' MB'
+    }
+    const barClass = (pct) => pct >= 90 ? 'det-bar__fill--crit' : pct >= 75 ? 'det-bar__fill--warn' : 'det-bar__fill--ok'
+
     const loadConfig = async () => {
       try { cfg.value = await api.get('/api/monitoring/alerts/config') } catch {}
     }
@@ -625,10 +708,10 @@ export default {
     }
 
     onMounted(async () => {
-      await Promise.all([loadHistory(), loadConfig(), loadEvents()])
+      await Promise.all([loadHistory(), loadConfig(), loadEvents(), loadDetail()])
       // Refresco automático cada 60s según la pestaña activa
       refreshTimer = setInterval(() => {
-        if (tab.value === 'recursos') { loadHistory(); loadEvents() }
+        if (tab.value === 'recursos') { loadHistory(); loadEvents(); loadDetail() }
         else if (tab.value === 'correo') { loadMail() }
         else if (tab.value === 'web') { loadWeb() }
         else if (tab.value === 'bbdd') { loadDb() }
@@ -641,6 +724,7 @@ export default {
       range, points, loading, cfg, events, savingCfg, testing,
       seriesCpu, seriesRam, seriesDisk, seriesLoad, seriesRx, seriesTx,
       openAlerts, setRange, saveCfg, sendTest, relTime,
+      detail, fmtMB, barClass,
       tab, mail, mailLoading, loadMail, selectMailTab, fmtAge,
       web, webLoading, loadWeb, selectWebTab, fmtNum,
       dbStats, dbLoading, loadDb, selectDbTab,
@@ -762,4 +846,15 @@ export default {
 .mail-error:last-child { border-bottom:none; }
 .mail-error__to { font-weight:600; flex-shrink:0; color:var(--text); }
 .mail-error__msg { color:var(--text-muted); overflow:hidden; text-overflow:ellipsis; }
+
+/* Detalle en vivo: barras de uso */
+.det-bar { height:8px; background:var(--surface-2); border-radius:999px; overflow:hidden; margin:.25rem 0 .5rem; }
+.det-bar__fill { height:100%; border-radius:999px; transition:width .3s; }
+.det-bar__fill--ok { background:var(--success); }
+.det-bar__fill--warn { background:var(--warning,#d97706); }
+.det-bar__fill--crit { background:var(--danger); }
+.det-sublabel { font-size:.72rem; font-weight:600; text-transform:uppercase; letter-spacing:.04em; color:var(--text-muted); margin-top:.5rem; }
+.det-disk { margin-top:.4rem; }
+.det-disk__head { display:flex; justify-content:space-between; font-size:.8rem; gap:.5rem; }
+.det-disk__head code { font-family:var(--font-mono); }
 </style>
