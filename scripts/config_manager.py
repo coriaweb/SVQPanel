@@ -110,6 +110,104 @@ BASE_CONFIGS = {
             "comment":    "Configuración de MariaDB",
         },
     ],
+    "postfix": [
+        {
+            "label":      "main.cf",
+            "path":       "/etc/postfix/main.cf",
+            "test_cmd":   ["postfix", "check"],
+            "reload_svc": "postfix",
+            "comment":    "Configuración principal de Postfix (SMTP)",
+        },
+        {
+            "label":      "master.cf",
+            "path":       "/etc/postfix/master.cf",
+            "test_cmd":   ["postfix", "check"],
+            "reload_svc": "postfix",
+            "comment":    "Servicios/transports de Postfix (puertos, submission…)",
+        },
+    ],
+    "dovecot": [
+        {
+            "label":      "dovecot.conf",
+            "path":       "/etc/dovecot/dovecot.conf",
+            "test_cmd":   ["doveconf", "-n"],
+            "reload_svc": "dovecot",
+            "comment":    "Configuración principal de Dovecot (IMAP/POP3)",
+        },
+    ],
+    "rspamd": [
+        {
+            "label":      "ratelimit.conf",
+            "path":       "/etc/rspamd/local.d/ratelimit.conf",
+            "test_cmd":   None,
+            "reload_svc": "rspamd",
+            "comment":    "Límites de tasa de Rspamd (local.d)",
+        },
+        {
+            "label":      "milter_headers.conf",
+            "path":       "/etc/rspamd/local.d/milter_headers.conf",
+            "test_cmd":   None,
+            "reload_svc": "rspamd",
+            "comment":    "Cabeceras que Rspamd añade al correo",
+        },
+        {
+            "label":      "greylisting.conf",
+            "path":       "/etc/rspamd/local.d/greylisting.conf",
+            "test_cmd":   None,
+            "reload_svc": "rspamd",
+            "comment":    "Greylisting de Rspamd",
+        },
+        {
+            "label":      "dkim_signing.conf",
+            "path":       "/etc/rspamd/local.d/dkim_signing.conf",
+            "test_cmd":   None,
+            "reload_svc": "rspamd",
+            "comment":    "Firma DKIM de Rspamd",
+        },
+    ],
+    "redis": [
+        {
+            "label":      "redis.conf",
+            "path":       "/etc/redis/redis.conf",
+            "test_cmd":   None,
+            "reload_svc": "redis-server",
+            "comment":    "Configuración de Redis (cache)",
+        },
+    ],
+    "nftables": [
+        {
+            "label":      "nftables.conf",
+            "path":       "/etc/nftables.conf",
+            "test_cmd":   ["nft", "-c", "-f", "/etc/nftables.conf"],
+            "reload_svc": "nftables",
+            "comment":    "Reglas del firewall nftables (gestionado por el panel)",
+        },
+    ],
+    "crowdsec": [
+        {
+            "label":      "config.yaml",
+            "path":       "/etc/crowdsec/config.yaml",
+            "test_cmd":   None,
+            "reload_svc": "crowdsec",
+            "comment":    "Configuración principal de CrowdSec",
+        },
+        {
+            "label":      "acquis.yaml",
+            "path":       "/etc/crowdsec/acquis.yaml",
+            "test_cmd":   None,
+            "reload_svc": "crowdsec",
+            "comment":    "Fuentes de logs que analiza CrowdSec",
+        },
+    ],
+    "crowdsec-firewall-bouncer": [
+        {
+            "label":      "crowdsec-firewall-bouncer.yaml",
+            "path":       "/etc/crowdsec/bouncers/crowdsec-firewall-bouncer.yaml",
+            "test_cmd":   None,
+            "reload_svc": "crowdsec-firewall-bouncer",
+            "comment":    "Configuración del bouncer de firewall de CrowdSec",
+        },
+    ],
 }
 
 PHP_VERSIONS = ["5.6", "7.0", "7.1", "7.2", "7.3", "7.4",
