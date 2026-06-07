@@ -225,6 +225,24 @@ def wp_toggle_item(docroot: str, owner: str, kind: str, name: str,
     return {"ok": True, "output": out}
 
 
+def wp_delete_item(docroot: str, owner: str, kind: str, name: str) -> Dict:
+    """Elimina (borra los ficheros de) un plugin o tema.
+
+    wp-cli desactiva el plugin antes de borrarlo. Un tema no se puede borrar si
+    está activo: en ese caso wp-cli devuelve error y lo propagamos legible.
+    """
+    if kind not in ("plugin", "theme"):
+        raise WpError("Tipo no válido (plugin|theme)")
+    name = _safe_slug(name, kind)
+    rc, out, err = _wp_full(docroot, owner, [kind, "delete", name])
+    if rc != 0:
+        msg = (err or out).strip()
+        if kind == "theme" and "active" in msg.lower():
+            raise WpError("No puedes eliminar el tema activo. Activa otro tema primero.")
+        raise WpError(f"No pude eliminar el {kind} {name}: {msg}")
+    return {"ok": True, "output": out or f"{kind} {name} eliminado."}
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # WordPress — seguridad / mantenimiento
 # ─────────────────────────────────────────────────────────────────────────────

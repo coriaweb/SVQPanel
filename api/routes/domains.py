@@ -1600,6 +1600,10 @@ async def wp_action(domain_id: int, action: str,
                 raise HTTPException(status_code=400, detail="kind y name son obligatorios")
             data = wpm.wp_toggle_item(docroot, owner, payload.kind, payload.name,
                                       bool(payload.activate))
+        elif action == "delete-item":
+            if payload.kind not in ("plugin", "theme") or not payload.name:
+                raise HTTPException(status_code=400, detail="kind y name son obligatorios")
+            data = wpm.wp_delete_item(docroot, owner, payload.kind, payload.name)
         elif action == "flush-permalinks":
             data = wpm.wp_flush_permalinks(docroot, owner)
         elif action == "maintenance":

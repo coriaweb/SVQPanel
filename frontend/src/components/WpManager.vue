@@ -70,6 +70,7 @@
                 <button v-if="it.update==='available'" class="wpm-mini" :disabled="!!busy" @click="run('update-items', { kind: itemKind, name: it.name }, 'i:'+it.name)" title="Actualizar"><i class="bi bi-arrow-up-circle"></i></button>
                 <button v-if="it.status==='active'" class="wpm-mini" :disabled="!!busy" @click="run('toggle-item', { kind: itemKind, name: it.name, activate: false }, 't:'+it.name)" title="Desactivar"><i class="bi bi-pause-circle"></i></button>
                 <button v-else class="wpm-mini" :disabled="!!busy" @click="run('toggle-item', { kind: itemKind, name: it.name, activate: true }, 't:'+it.name)" title="Activar"><i class="bi bi-play-circle"></i></button>
+                <button class="wpm-mini wpm-mini--danger" :disabled="!!busy || it.status==='active'" @click="deleteItem(it)" :title="it.status==='active' ? (itemKind==='theme' ? 'Activa otro tema antes de borrar' : 'Desactiva el plugin antes de borrar') : 'Eliminar'"><i class="bi bi-trash"></i></button>
               </td>
             </tr>
             <tr v-if="!items.length"><td colspan="4" class="dd-muted" style="text-align:center;padding:1rem">No hay {{ itemKind === 'plugin' ? 'plugins' : 'temas' }}.</td></tr>
@@ -227,6 +228,9 @@ export default {
         } else if (action === 'update-items' || action === 'toggle-item') {
           await loadItems()                // refresca la tabla; updates aparte
           loadUpdates()
+        } else if (action === 'delete-item') {
+          await loadItems()                // desaparece de la tabla
+          loadInfo()                       // actualiza conteos del resumen
         }
         return r.data
       } catch (e) {
@@ -235,6 +239,12 @@ export default {
     }
 
     const toggleMaintenance = () => run('maintenance', { enable: !info.value.maintenance }, 'maint')
+
+    const deleteItem = (it) => {
+      const tipo = itemKind.value === 'theme' ? 'tema' : 'plugin'
+      if (!confirm(`¿Eliminar el ${tipo} "${it.title || it.name}"? Se borrarán sus archivos de forma permanente.`)) return
+      run('delete-item', { kind: itemKind.value, name: it.name }, 'd:' + it.name)
+    }
 
     const confirmSalts = () => {
       if (confirm('Regenerar las claves de seguridad cerrará TODAS las sesiones abiertas (tendrás que volver a iniciar sesión). ¿Continuar?'))
@@ -270,7 +280,7 @@ export default {
     return {
       info, loadingInfo, errorInfo, tab, tabs, busy, items, loadingItems,
       admins, loadingUsers, loadingUpdates, resetResult, newUrl, itemKind, totalUpdates, adminUrl,
-      loadInfo, loadItems, loadAdmins, run, toggleMaintenance, confirmSalts,
+      loadInfo, loadItems, loadAdmins, run, toggleMaintenance, deleteItem, confirmSalts,
       resetPw, changeUrl, statusLabel,
     }
   },
@@ -309,6 +319,8 @@ export default {
 .wpm-mini { background:none; border:1px solid var(--border); border-radius: var(--radius-sm); width:30px; height:30px; cursor:pointer; color: var(--text); margin-left:.25rem; }
 .wpm-mini:hover:not(:disabled) { background: var(--surface-inset); }
 .wpm-mini:disabled { opacity:.5; cursor:not-allowed; }
+.wpm-mini--danger { color: var(--danger); border-color: color-mix(in srgb, var(--danger) 35%, var(--border)); }
+.wpm-mini--danger:hover:not(:disabled) { background: color-mix(in srgb, var(--danger) 12%, transparent); }
 .wpm-urlbox { margin-top:1rem; padding-top:1rem; border-top:1px solid var(--border); }
 .wpm-urlrow { display:flex; gap:.5rem; align-items:center; }
 .wpm-urlrow .svq-input { flex:1; }
