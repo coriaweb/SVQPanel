@@ -1790,7 +1790,10 @@ server {
     listen __PANEL_WEB_PORT__;
     server_name _;
 
-    client_max_body_size 100M;
+    # Subidas grandes: file manager y, sobre todo, los .tar de migración de
+    # otros paneles (Hestia) pueden pesar varios GB. Sin esto nginx corta con
+    # 413 antes de llegar al backend.
+    client_max_body_size 6g;
 
     # Cabeceras de seguridad (a nivel server: válidas para todo el panel).
     # El CSP NO va aquí porque /webmail, /pma, /rspamd son apps aparte que

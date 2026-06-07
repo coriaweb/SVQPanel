@@ -101,7 +101,13 @@ def safe_extract_tar(tar_path: str, dest: str) -> None:
     Soporta el filtro 'data' de Python 3.12+; en versiones previas valida a mano.
     """
     mode = "r:*"  # autodetecta gz/bz2/xz/plano
-    with tarfile.open(tar_path, mode) as tar:
+    try:
+        tar = tarfile.open(tar_path, mode)
+    except (tarfile.ReadError, tarfile.CompressionError, OSError):
+        raise HestiaImportError(
+            "El archivo no es un .tar válido de HestiaCP. Sube el backup que "
+            "genera Hestia (v-backup-user), sin comprimir en .zip ni renombrar.")
+    with tar:
         members = tar.getmembers()
         for m in members:
             member_path = os.path.join(dest, m.name)
