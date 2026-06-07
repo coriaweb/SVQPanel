@@ -9,7 +9,7 @@ Monitorización: histórico de métricas del sistema y configuración de alertas
 - AlertEvent: registro de alertas disparadas (para no spamear y para histórico).
 """
 
-from sqlalchemy import Column, Integer, String, Boolean, DateTime, Float, Text, Index
+from sqlalchemy import Column, Integer, BigInteger, String, Boolean, DateTime, Float, Text
 from datetime import datetime
 from api.models.database import Base
 
@@ -31,13 +31,10 @@ class MetricSample(Base):
     load_1        = Column(Float, default=0.0)
     load_5        = Column(Float, default=0.0)
     load_15       = Column(Float, default=0.0)
-    # Red: bytes acumulados desde el arranque; el front calcula la tasa entre muestras
-    net_rx_bytes  = Column(Integer, default=0)
-    net_tx_bytes  = Column(Integer, default=0)
-
-    __table_args__ = (
-        Index("ix_metric_samples_ts", "ts"),
-    )
+    # Red: bytes acumulados desde el arranque; el front calcula la tasa entre muestras.
+    # BigInteger porque el acumulado supera fácilmente 2GB (rango de INT).
+    net_rx_bytes  = Column(BigInteger, default=0)
+    net_tx_bytes  = Column(BigInteger, default=0)
 
 
 class AlertConfig(Base):
