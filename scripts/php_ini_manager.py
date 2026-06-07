@@ -148,13 +148,14 @@ def _security_block(owner: str, domain: str, relax_hardening: bool = False) -> L
 
 def ensure_domain_tmp(owner: str, domain: str) -> None:
     """
-    Crea {domain_root}/tmp con owner www-data (PHP-FPM corre como www-data).
-    Idempotente. Mode 0700: solo FPM escribe/lee ahí (sesiones, uploads).
+    Crea {domain_root}/tmp con owner = usuario del dominio (el pool FPM corre
+    como ese usuario). Idempotente. Mode 0700: solo el FPM del dominio escribe/
+    lee ahí (sesiones, uploads, sys_temp), aislado del resto de dominios.
     """
     tmp = domain_tmp_dir(owner, domain)
     try:
         os.makedirs(tmp, exist_ok=True)
-        subprocess.run(["chown", "www-data:www-data", tmp], check=False, env=_SYS_ENV)
+        subprocess.run(["chown", f"{owner}:{owner}", tmp], check=False, env=_SYS_ENV)
         subprocess.run(["chmod", "0700", tmp], check=False, env=_SYS_ENV)
     except (OSError, FileNotFoundError) as e:
         logger.warning(f"ensure_domain_tmp({domain}): {e}")
@@ -284,9 +285,16 @@ def _pool_content(domain: str, owner: str, overrides: Dict[str, str],
     lines = [
         f"; SVQPanel — pool dedicado para {domain} (php.ini por dominio)",
         f"[svqpanel_{backend}]",
-        "user = www-data",
-        "group = www-data",
+        # El pool corre como el USUARIO del dominio (no www-data): así PHP puede
+        # escribir en su propio public_html (.htaccess de WordPress, uploads,
+        # actualizaciones de plugins…) y cada dominio queda aislado por UID
+        # (un sitio no puede tocar los ficheros de otro). open_basedir +
+        # disable_functions siguen aplicando como capa extra de hardening.
+        f"user = {owner}",
+        f"group = {owner}",
         f"listen = {socket}",
+        # El socket lo abre/lee el servidor web (nginx/apache = www-data), por eso
+        # listen.* sí es www-data; sin esto el front no podría conectar al pool.
         "listen.owner = www-data",
         "listen.group = www-data",
         "listen.mode = 0660",
