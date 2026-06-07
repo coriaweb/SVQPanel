@@ -197,3 +197,19 @@ async def test_alert_email(current_user=Depends(require_admin), db: Session = De
             "(Configuración → Email) y que hay un email de destino.",
         )
     return {"status": "success"}
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Monitor de servicios EN VIVO (estilo "Server Monitor" de Hestia)
+# ─────────────────────────────────────────────────────────────────────────────
+@router.get("/monitoring/services/mail")
+async def services_mail(current_user=Depends(require_admin)):
+    """
+    Estadísticas de correo en vivo: estado de Postfix/Dovecot/Rspamd, cola de
+    correo (postqueue), antispam (rspamc) y resumen del día (mail.log).
+    """
+    try:
+        from scripts import mail_stats
+        return mail_stats.collect()
+    except Exception as e:
+        raise HTTPException(500, f"No se pudieron obtener estadísticas de correo: {e}")
