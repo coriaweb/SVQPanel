@@ -13,10 +13,13 @@ import tempfile
 import logging
 from typing import Optional
 
-from fastapi import (APIRouter, Depends, HTTPException, UploadFile, File, Form)
+from datetime import datetime
+
+from fastapi import (APIRouter, Depends, HTTPException, UploadFile, File, Form,
+                     BackgroundTasks)
 from sqlalchemy.orm import Session
 
-from api.models.database import get_db
+from api.models.database import get_db, SessionLocal
 from api.models.models_user import User
 from api.dependencies import require_admin
 
@@ -129,3 +132,143 @@ async def hestia_analyze(
             "warnings": warnings,
         },
     }
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Importación (background) — solo si el preflight de conflictos pasa
+# ─────────────────────────────────────────────────────────────────────────────
+def _run_import_job(job_id: int, tar_path: str, cleanup_tar: bool):
+    """Ejecuta la importación en segundo plano y actualiza el MigrationJob."""
+    import json
+    from scripts.hestia_import import run_import
+    from api.models.models_migration import MigrationJob
+
+    db = SessionLocal()
+    try:
+        job = db.query(MigrationJob).filter(MigrationJob.id == job_id).first()
+        if not job:
+            return
+        job.status = "running"
+        job.started_at = datetime.utcnow()
+        db.commit()
+
+        scope = [s for s in (job.scope or "").split(",") if s]
+        report = run_import(tar_path, job.target_user_id, scope, db)
+
+        job.report_json = json.dumps(report, ensure_ascii=False)
+        job.status = "failed" if report["summary"]["errors"] and not report["summary"]["created"] else "success"
+        job.finished_at = datetime.utcnow()
+        db.commit()
+    except Exception as e:
+        logger.exception("Error en job de importación Hestia")
+        try:
+            job = db.query(MigrationJob).filter(MigrationJob.id == job_id).first()
+            if job:
+                job.status = "failed"
+                job.error = str(e)
+                job.finished_at = datetime.utcnow()
+                db.commit()
+        except Exception:
+            pass
+    finally:
+        db.close()
+        if cleanup_tar and os.path.exists(tar_path):
+            try:
+                os.remove(tar_path)
+            except OSError:
+                pass
+
+
+@router.post("/migrations/hestia/import")
+async def hestia_import(
+    background_tasks: BackgroundTasks,
+    file: Optional[UploadFile] = File(None),
+    path: Optional[str] = Form(None),
+    target_user_id: int = Form(...),
+    scope: str = Form("web,db,mail,dns"),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_admin),
+):
+    """Importa un backup de Hestia al usuario destino (en segundo plano).
+
+    Hace el preflight de conflictos: si hay alguno, ABORTA con 409 (no toca nada).
+    Si no, crea un MigrationJob y lanza la importación en background; devuelve el
+    job_id para hacer polling de su estado.
+    """
+    import json
+    from scripts.hestia_import import HestiaBackup, find_conflicts, HestiaImportError
+    from api.models.models_migration import MigrationJob
+
+    # Validar usuario destino (cliente, no admin)
+    target = db.query(User).filter(User.id == target_user_id).first()
+    if not target:
+        raise HTTPException(status_code=404, detail="Usuario destino no encontrado")
+    if target.role == "admin" or target.is_admin:
+        raise HTTPException(status_code=403,
+            detail="El destino debe ser una cuenta de cliente, no un administrador.")
+
+    tar_path = await _receive_backup(file, path)
+    cleanup_tar = _is_temp_upload(tar_path)
+
+    # Preflight: analizar y comprobar conflictos. Si hay, abortar.
+    try:
+        with HestiaBackup(tar_path) as backup:
+            manifest = backup.analyze()
+            conflicts = find_conflicts(manifest, db)
+    except HestiaImportError as e:
+        if cleanup_tar and os.path.exists(tar_path):
+            os.remove(tar_path)
+        raise HTTPException(status_code=422, detail=str(e))
+
+    if conflicts:
+        if cleanup_tar and os.path.exists(tar_path):
+            os.remove(tar_path)
+        raise HTTPException(status_code=409, detail={
+            "message": "La importación se ha cancelado: hay recursos que ya existen.",
+            "conflicts": conflicts,
+        })
+
+    # Crear el job y lanzar en background.
+    job = MigrationJob(
+        source_type="upload" if cleanup_tar else "path",
+        source_kind=manifest.get("system") or "hestia",
+        target_user_id=target_user_id,
+        status="pending",
+        scope=scope,
+        manifest_json=json.dumps({"system": manifest["system"],
+                                  "web": len(manifest["web"]),
+                                  "db": len(manifest["db"]),
+                                  "mail": len(manifest["mail"]),
+                                  "dns": len(manifest["dns"])}),
+    )
+    db.add(job)
+    db.commit()
+    db.refresh(job)
+
+    background_tasks.add_task(_run_import_job, job.id, tar_path, cleanup_tar)
+    return {"status": "success", "data": {"job_id": job.id, "status": "pending"}}
+
+
+@router.get("/migrations/jobs/{job_id}")
+async def migration_job_status(
+    job_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_admin),
+):
+    """Estado y, si terminó, informe de un job de importación."""
+    import json
+    from api.models.models_migration import MigrationJob
+    job = db.query(MigrationJob).filter(MigrationJob.id == job_id).first()
+    if not job:
+        raise HTTPException(status_code=404, detail="Job no encontrado")
+    return {"status": "success", "data": {
+        "id": job.id,
+        "status": job.status,
+        "scope": job.scope,
+        "target_user_id": job.target_user_id,
+        "manifest": json.loads(job.manifest_json) if job.manifest_json else None,
+        "report": json.loads(job.report_json) if job.report_json else None,
+        "error": job.error,
+        "created_at": job.created_at.isoformat() if job.created_at else None,
+        "finished_at": job.finished_at.isoformat() if job.finished_at else None,
+    }}

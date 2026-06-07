@@ -406,3 +406,235 @@ def find_conflicts(manifest: Dict, db) -> List[str]:
         pass
 
     return conflicts
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Descompresión de un .tar.{gz,zst} a un directorio destino
+# ─────────────────────────────────────────────────────────────────────────────
+def extract_data_archive(archive: str, dest: str) -> None:
+    """Extrae un domain_data/accounts .tar.(gz|zst) en `dest` de forma segura.
+
+    Para .zst usa el módulo `zstandard` si está, o el binario `zstd` como
+    fallback. Para .gz lo gestiona tarfile directamente.
+    """
+    os.makedirs(dest, exist_ok=True)
+    if is_zst(archive):
+        # Descomprimir zst a un .tar temporal y luego extraer con safe_extract.
+        tmp_tar = archive[:-4] if archive.endswith(".zst") else archive[:-5]
+        tmp_tar = tmp_tar + ".__tmp.tar"
+        _zst_decompress(archive, tmp_tar)
+        try:
+            safe_extract_tar(tmp_tar, dest)
+        finally:
+            if os.path.exists(tmp_tar):
+                os.remove(tmp_tar)
+    else:
+        safe_extract_tar(archive, dest)
+
+
+def _zst_decompress(src: str, dst: str) -> None:
+    try:
+        import zstandard
+        dctx = zstandard.ZstdDecompressor()
+        with open(src, "rb") as fin, open(dst, "wb") as fout:
+            dctx.copy_stream(fin, fout)
+        return
+    except ImportError:
+        pass
+    # Fallback al binario zstd
+    import subprocess
+    for tool in ("unzstd", "zstd"):
+        if shutil.which(tool):
+            args = [tool, "-d", "-f", "-o", dst, src] if tool == "zstd" else [tool, "-f", "-o", dst, src]
+            r = subprocess.run(args, capture_output=True, text=True)
+            if r.returncode == 0:
+                return
+    raise HestiaImportError(
+        "El backup usa compresión zstd y el servidor no tiene soporte. "
+        "Instala el paquete 'zstd' o el módulo python 'zstandard'.")
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Informe de la importación
+# ─────────────────────────────────────────────────────────────────────────────
+class ImportReport:
+    """Acumula el resultado de una importación, serializable a JSON."""
+
+    def __init__(self):
+        self.created: List[Dict] = []     # {type, name, detail}
+        self.errors: List[Dict] = []      # {type, name, error}
+        self.passwords: List[Dict] = []   # {type, name, password} (nuevas generadas)
+
+    def ok(self, rtype: str, name: str, detail: str = ""):
+        self.created.append({"type": rtype, "name": name, "detail": detail})
+        logger.info(f"[import] OK {rtype} {name} {detail}")
+
+    def fail(self, rtype: str, name: str, error: str):
+        self.errors.append({"type": rtype, "name": name, "error": str(error)})
+        logger.warning(f"[import] FAIL {rtype} {name}: {error}")
+
+    def password(self, rtype: str, name: str, password: str):
+        self.passwords.append({"type": rtype, "name": name, "password": password})
+
+    def to_dict(self) -> Dict:
+        return {
+            "created": self.created,
+            "errors": self.errors,
+            "passwords": self.passwords,
+            "summary": {
+                "created": len(self.created),
+                "errors": len(self.errors),
+                "new_passwords": len(self.passwords),
+            },
+        }
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Importación de WEB (dominio + archivos + vhost + SSL)
+# ─────────────────────────────────────────────────────────────────────────────
+def import_web(backup: "HestiaBackup", web: Dict, owner, db, report: ImportReport):
+    """Crea el dominio en SVQPanel, restaura public_html y regenera el vhost.
+
+    `web` es un item de manifest['web'] (incluye los campos internos _data_tar).
+    `owner` es el User destino. Reutiliza DomainManager y persiste Domain en BD.
+    """
+    from scripts.domain_manager import DomainManager
+    from api.models.models_domain import Domain
+    from api.models.models_settings import Settings as _Settings
+
+    domain_name = web["domain"]
+    php_version = web.get("php_version") or "8.2"
+
+    mgr = DomainManager()
+    # 1) Crear la estructura del dominio (dirs, pool PHP, vhost base)
+    mgr.create_domain(owner.username, domain_name, php_version)
+
+    # 2) Restaurar el contenido (domain_data.tar → public_html)
+    data_tar = web.get("_data_tar")
+    public_html = f"/home/{owner.username}/web/{domain_name}/public_html"
+    if data_tar and os.path.isfile(data_tar):
+        # El domain_data de Hestia contiene public_html/ (y a veces otros dirs).
+        # Extraemos a la raíz web del dominio para respetar esa estructura.
+        web_root = f"/home/{owner.username}/web/{domain_name}"
+        _restore_web_files(data_tar, web_root, public_html)
+        # Permisos: todo al usuario del dominio (ver svqpanel-php-pool-user)
+        import subprocess
+        subprocess.run(["chown", "-R", f"{owner.username}:{owner.username}", web_root],
+                       capture_output=True)
+
+    # 3) Persistir el Domain en la BD del panel
+    ipv4 = None
+    try:
+        _s = db.query(_Settings).filter(_Settings.id == 1).first()
+        ipv4 = (_s.server_ipv4 or None) if _s else None
+    except Exception:
+        pass
+
+    db_domain = Domain(
+        user_id=owner.id,
+        domain_name=domain_name,
+        php_version=php_version,
+        public_html=public_html,
+        ipv4=ipv4,
+        custom_docroot=web.get("custom_docroot") or None,
+        redirect_to=web.get("redirect") or None,
+    )
+    db.add(db_domain)
+    db.commit()
+    db.refresh(db_domain)
+
+    # 4) Regenerar el vhost con los ajustes reales (docroot, redirect…). SSL se
+    #    deja para emisión posterior (Let's Encrypt) — restaurar certs de Hestia
+    #    es frágil; el panel puede emitir uno nuevo cuando el DNS apunte aquí.
+    try:
+        mgr.regenerate_vhost(
+            owner.username, domain_name, php_version,
+            custom_docroot=web.get("custom_docroot") or None,
+            redirect_to=web.get("redirect") or None,
+        )
+    except Exception as e:
+        report.fail("web-vhost", domain_name, f"vhost no regenerado: {e}")
+
+    report.ok("web", domain_name, f"PHP {php_version}"
+              + (" + archivos" if data_tar else " (sin datos)"))
+    return db_domain
+
+
+def _restore_web_files(data_tar: str, web_root: str, public_html: str) -> None:
+    """Extrae domain_data a un tmp y copia public_html (y dirs hermanos) al sitio.
+
+    Hestia guarda dentro del tar el árbol del dominio (public_html/, etc.). Para
+    no pisar el vhost ni el pool, copiamos el CONTENIDO de public_html del backup
+    dentro del public_html ya creado por create_domain().
+    """
+    tmp = tempfile.mkdtemp(prefix="svq_webdata_")
+    try:
+        extract_data_archive(data_tar, tmp)
+        # Buscar el public_html dentro del extraído (puede estar a distinta
+        # profundidad según la versión de Hestia).
+        src_ph = _find_subdir(tmp, "public_html")
+        if src_ph:
+            _copy_into(src_ph, public_html)
+        else:
+            # Sin public_html explícito: copiar todo el contenido extraído.
+            _copy_into(tmp, public_html)
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
+def _find_subdir(base: str, name: str) -> Optional[str]:
+    """Busca un subdirectorio `name` hasta 3 niveles de profundidad."""
+    for root, dirs, _ in os.walk(base):
+        if os.path.relpath(root, base).count(os.sep) > 3:
+            continue
+        if name in dirs:
+            return os.path.join(root, name)
+    return None
+
+
+def _copy_into(src_dir: str, dst_dir: str) -> None:
+    """Copia el contenido de src_dir dentro de dst_dir (mezcla, no reemplaza dst)."""
+    os.makedirs(dst_dir, exist_ok=True)
+    for entry in os.listdir(src_dir):
+        s = os.path.join(src_dir, entry)
+        d = os.path.join(dst_dir, entry)
+        if os.path.isdir(s):
+            shutil.copytree(s, d, dirs_exist_ok=True)
+        else:
+            shutil.copy2(s, d)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Orquestador de la importación (lo invoca el job en segundo plano)
+# ─────────────────────────────────────────────────────────────────────────────
+def run_import(tar_path: str, target_user_id: int, scope: List[str], db) -> Dict:
+    """Importa el backup al usuario destino. Devuelve el informe (dict).
+
+    `scope`: subconjunto de {'web','db','mail','dns'}. Asume que el preflight de
+    conflictos ya pasó (terreno limpio). Cada recurso se registra en el informe;
+    un fallo en uno no aborta los demás.
+    """
+    from api.models.models_user import User
+
+    report = ImportReport()
+    owner = db.query(User).filter(User.id == target_user_id).first()
+    if not owner:
+        raise HestiaImportError("El usuario destino no existe.")
+    if owner.role == "admin" or owner.is_admin:
+        raise HestiaImportError(
+            "El destino no puede ser un administrador; elige una cuenta de cliente.")
+
+    with HestiaBackup(tar_path) as backup:
+        manifest = backup.analyze()
+
+        if "web" in scope:
+            for web in manifest["web"]:
+                try:
+                    import_web(backup, web, owner, db, report)
+                except Exception as e:
+                    db.rollback()
+                    report.fail("web", web["domain"], e)
+
+        # db / mail / dns se añaden en las fases 3 y 4.
+
+    return report.to_dict()
