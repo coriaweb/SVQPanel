@@ -673,12 +673,14 @@ server {{
     index index.html;
 
     location / {{
+        include snippets/svqpanel-whitelist.conf;
         try_files $uri $uri/ /index.html;
     }}
 
 {RSPAMD_LOCATION}{_service_locations()}
     # API backend
     location /api/ {{
+        include snippets/svqpanel-whitelist.conf;
         proxy_pass http://127.0.0.1:{PANEL_BACKEND_PORT};
         proxy_set_header Host $host;
         proxy_set_header X-Real-IP $remote_addr;
@@ -752,11 +754,13 @@ server {{
     index index.html;
 
     location / {{
+        include snippets/svqpanel-whitelist.conf;
         try_files $uri $uri/ /index.html;
     }}
 
 {RSPAMD_LOCATION}{_service_locations()}
     location /api/ {{
+        include snippets/svqpanel-whitelist.conf;
         proxy_pass http://127.0.0.1:{PANEL_BACKEND_PORT};
         proxy_set_header Host $host;
         proxy_set_header X-Real-IP $remote_addr;

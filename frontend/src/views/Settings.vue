@@ -499,6 +499,52 @@
         </div>
       </div>
 
+      <!-- Whitelist de IPs del panel -->
+      <div class="sv-full" v-show="tab==='sistema'">
+        <div class="card" :class="wl.enabled ? 'border-warning' : ''">
+          <div class="card-header d-flex justify-content-between align-items-center"
+               :class="wl.enabled ? 'bg-warning text-dark' : ''">
+            <span><i class="bi bi-shield-lock-fill me-2"></i> Acceso al panel por IP (whitelist)</span>
+            <span class="badge" :class="wl.enabled ? 'bg-dark' : 'bg-light text-muted border'">
+              {{ wl.enabled ? 'Activa' : 'Desactivada' }}
+            </span>
+          </div>
+          <div class="card-body">
+            <p class="text-muted small mb-3">
+              Restringe el acceso al panel a IPs concretas. Cualquier otra IP recibirá
+              <strong>403</strong> y no podrá ni ver el login. La validación ACME (<code>.well-known</code>)
+              siempre se permite para que el SSL del panel pueda renovarse.
+            </p>
+
+            <div class="alert alert-warning py-2 small mb-3" v-if="!wl.enabled">
+              <i class="bi bi-exclamation-triangle me-1"></i>
+              <strong>Cuidado:</strong> si activas esto y tu IP no está en la lista, te quedarás fuera.
+              Tu IP actual (<code>{{ wl.your_ip || '—' }}</code>) se añadirá automáticamente.
+              Rescate por SSH: <code>python -m api.cli panel_whitelist_disable</code>
+            </div>
+
+            <div class="form-check form-switch mb-3">
+              <input class="form-check-input" type="checkbox" role="switch" id="wlSw" v-model="wl.enabled">
+              <label class="form-check-label fw-semibold" for="wlSw">Activar whitelist de IPs</label>
+            </div>
+
+            <div :class="{ 'opacity-50': !wl.enabled }">
+              <label class="form-label small mb-1">IPs y rangos permitidos <span class="text-muted">(una por línea)</span></label>
+              <textarea v-model="wl.ips" class="form-control form-control-sm font-monospace" rows="4"
+                        :disabled="!wl.enabled"
+                        placeholder="88.1.2.3&#10;10.0.0.0/8&#10;2a01:abc::/64"></textarea>
+              <small class="text-muted">Acepta IPs sueltas y rangos CIDR (IPv4 e IPv6). Tu IP actual: <code>{{ wl.your_ip || '—' }}</code></small>
+            </div>
+
+            <button class="btn btn-warning btn-sm mt-3" @click="confirmSaveWhitelist" :disabled="wlSaving">
+              <span v-if="wlSaving" class="spinner-border spinner-border-sm me-1"></span>
+              <i v-else class="bi bi-shield-check me-1"></i>
+              {{ wl.enabled ? 'Aplicar whitelist' : 'Desactivar whitelist' }}
+            </button>
+          </div>
+        </div>
+      </div>
+
       <!-- Zona Horaria del Servidor -->
       <div class="sv-half" v-show="tab==='sistema'">
         <div class="card">
@@ -678,6 +724,42 @@
       </div>
     </div>
 
+    <!-- Modal de confirmación para activar whitelist -->
+    <div v-if="showWlConfirm" class="modal d-block" tabindex="-1" style="background:rgba(0,0,0,.5)" @click.self="showWlConfirm=false">
+      <div class="modal-dialog modal-dialog-centered">
+        <div class="modal-content">
+          <div class="modal-header bg-warning text-dark">
+            <h5 class="modal-title"><i class="bi bi-shield-lock me-2"></i> Confirmar whitelist del panel</h5>
+            <button type="button" class="btn-close" @click="showWlConfirm=false"></button>
+          </div>
+          <div class="modal-body">
+            <template v-if="wl.enabled">
+              <p>Solo estas IPs podrán acceder al panel. El resto recibirá <strong>403</strong>:</p>
+              <ul class="font-monospace small mb-3" style="max-height:160px;overflow:auto">
+                <li v-for="(ip, i) in previewIps" :key="i">
+                  {{ ip }}
+                  <span v-if="ip === wl.your_ip" class="badge bg-success ms-1">tu IP</span>
+                </li>
+              </ul>
+              <div class="alert alert-warning py-2 small mb-0">
+                <i class="bi bi-info-circle me-1"></i>
+                Tu IP actual (<code>{{ wl.your_ip }}</code>) está incluida, así que no te bloquearás.
+                Si tu IP cambia luego, usa el rescate por SSH.
+              </div>
+            </template>
+            <p v-else>Se desactivará la whitelist y el panel volverá a ser accesible desde cualquier IP.</p>
+          </div>
+          <div class="modal-footer">
+            <button class="btn btn-secondary" @click="showWlConfirm=false">Cancelar</button>
+            <button class="btn btn-warning" @click="saveWhitelist" :disabled="wlSaving">
+              <span v-if="wlSaving" class="spinner-border spinner-border-sm me-1"></span>
+              {{ wl.enabled ? 'Sí, activar whitelist' : 'Sí, desactivar' }}
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+
     <!-- Modal de confirmación para revocar SSL del panel -->
     <div v-if="showRevokeConfirm" class="modal d-block" tabindex="-1" style="background:rgba(0,0,0,.5)">
       <div class="modal-dialog modal-dialog-centered">
@@ -761,6 +843,48 @@ export default {
     const smtpTestMsg = ref('')
     const smtpTestOk  = ref(false)
     const showSmtpTest = ref(false)
+
+    // ─── Whitelist de IPs del panel ───
+    const wl = reactive({ enabled: false, ips: '', your_ip: '' })
+    const wlSaving = ref(false)
+    const showWlConfirm = ref(false)
+
+    const previewIps = computed(() => {
+      const list = (wl.ips || '').split('\n').map(s => s.trim()).filter(Boolean)
+      // Si la IP actual no está, se mostrará añadida (como hace el backend)
+      if (wl.your_ip && !list.includes(wl.your_ip)) list.unshift(wl.your_ip)
+      return list
+    })
+
+    const loadWhitelist = async () => {
+      try {
+        const r = await api.get('/api/settings/panel-whitelist')
+        wl.enabled = r.enabled
+        wl.ips = r.ips || ''
+        wl.your_ip = r.your_ip || ''
+      } catch { /* silencioso */ }
+    }
+
+    const confirmSaveWhitelist = () => { showWlConfirm.value = true }
+
+    const saveWhitelist = async () => {
+      wlSaving.value = true
+      try {
+        const r = await api.post('/api/settings/panel-whitelist', {
+          enabled: wl.enabled, ips: wl.ips,
+        })
+        wl.enabled = r.enabled
+        wl.ips = r.ips || ''
+        showWlConfirm.value = false
+        store.showNotification(
+          r.enabled ? `Whitelist activa (${r.count} IPs)` : 'Whitelist desactivada',
+          'success')
+      } catch (e) {
+        store.showNotification('Error: ' + (e.message || e), 'danger')
+      } finally {
+        wlSaving.value = false
+      }
+    }
     const smtpTestTo  = ref('')
 
     const loadSmtp = async () => {
@@ -1184,12 +1308,14 @@ export default {
       loadCurrentTimezone()
       loadRelay()
       loadSmtp()
+      loadWhitelist()
     })
 
     return {
       tab,
       smtp, smtpSaving, smtpTesting, smtpTestMsg, smtpTestOk,
       showSmtpTest, smtpTestTo, saveSmtp, openSmtpTest, sendSmtpTest,
+      wl, wlSaving, showWlConfirm, previewIps, confirmSaveWhitelist, saveWhitelist,
       loading, saving, settings, form, parsedRange, saveSettings,
       installedPhpVersions, recommendedPhp, defaultPhpNotInstalled,
       phpVersions, phpLoading, phpError, phpActionLoading,

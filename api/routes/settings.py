@@ -5,7 +5,7 @@ Rutas API para configuración del panel
 import ipaddress
 import random
 from datetime import datetime
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, status, Request
 from sqlalchemy.orm import Session
 from api.models.database import get_db
 from api.models.models_settings import Settings
@@ -536,6 +536,94 @@ async def test_panel_smtp(data: PanelSmtpTestRequest,
         raise HTTPException(502, f"No se pudo enviar: {e}")
 
     return {"status": "success", "to": to}
+
+
+# ─── Whitelist de IPs del panel ──────────────────────────────────────────────
+
+class PanelWhitelistRequest(_BM):
+    enabled: bool = False
+    ips:     str = _F("", max_length=8000)   # una IP/CIDR por línea
+
+
+def _client_ip(request) -> str:
+    """IP del cliente respetando X-Forwarded-For (nginx la pasa)."""
+    xff = request.headers.get("x-forwarded-for")
+    if xff:
+        return xff.split(",")[0].strip()
+    return request.client.host if request.client else ""
+
+
+@router.get("/settings/panel-whitelist")
+async def get_panel_whitelist(request: Request,
+                              current_user=Depends(require_admin),
+                              db: Session = Depends(get_db)):
+    """Estado de la whitelist + la IP actual del admin (para auto-incluirla)."""
+    s = get_or_create_settings(db)
+    return {
+        "enabled": bool(s.panel_whitelist_enabled),
+        "ips": s.panel_whitelist_ips or "",
+        "your_ip": _client_ip(request),
+    }
+
+
+@router.post("/settings/panel-whitelist")
+async def set_panel_whitelist(data: PanelWhitelistRequest,
+                              request: Request,
+                              current_user=Depends(require_admin),
+                              db: Session = Depends(get_db)):
+    """
+    Activa/desactiva la whitelist y aplica las directivas en nginx.
+    Anti-bloqueo: si se activa y la IP actual del admin no está en la lista,
+    se añade automáticamente para no dejar fuera a quien la configura.
+    """
+    from scripts.panel_whitelist_manager import PanelWhitelistManager, parse_ip_entries
+
+    try:
+        entries = parse_ip_entries(data.ips)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+
+    if data.enabled:
+        # Auto-incluir la IP actual del admin si no está cubierta
+        your_ip = _client_ip(request)
+        if your_ip and your_ip not in entries:
+            # Comprobar si ya está dentro de algún CIDR de la lista
+            import ipaddress
+            covered = False
+            try:
+                ip_obj = ipaddress.ip_address(your_ip)
+                for e in entries:
+                    if "/" in e and ip_obj in ipaddress.ip_network(e, strict=False):
+                        covered = True
+                        break
+            except ValueError:
+                pass
+            if not covered:
+                entries.insert(0, your_ip)
+
+        if not entries:
+            raise HTTPException(400, "Añade al menos una IP para activar la whitelist.")
+
+    # Guardar en BD
+    s = get_or_create_settings(db)
+    s.panel_whitelist_enabled = bool(data.enabled)
+    s.panel_whitelist_ips = "\n".join(entries) if entries else None
+    db.commit()
+
+    # Aplicar en nginx
+    try:
+        PanelWhitelistManager().apply(enabled=data.enabled, ips=entries)
+    except PermissionError:
+        raise HTTPException(403, "Se necesitan privilegios root")
+    except Exception as e:
+        raise HTTPException(502, f"Error aplicando la whitelist en nginx: {e}")
+
+    return {
+        "status": "success",
+        "enabled": bool(data.enabled and entries),
+        "ips": "\n".join(entries),
+        "count": len(entries),
+    }
 
 
 # ─── Timezone ────────────────────────────────────────────────────────────────

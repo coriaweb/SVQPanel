@@ -1699,6 +1699,7 @@ server {
 
     # API → proxy al backend
     location /api/ {
+        include snippets/svqpanel-whitelist.conf;
         proxy_pass http://svqpanel_backend;
         proxy_set_header Host $host;
         proxy_set_header X-Real-IP $remote_addr;
@@ -1746,6 +1747,7 @@ server {
 
     # Frontend → servir archivos estáticos, fallback a index.html (SPA)
     location / {
+        include snippets/svqpanel-whitelist.conf;
         try_files $uri $uri/ /index.html;
         # CSP solo para la SPA del panel (un location con add_header no hereda
         # los del server, así que reafirmamos también los de seguridad básicos).
@@ -1760,6 +1762,12 @@ NGINXEOF
 
     # Sustituir el placeholder del puerto del panel por el elegido en el wizard.
     sed -i "s|__PANEL_WEB_PORT__|${PANEL_WEB_PORT}|g" /etc/nginx/sites-available/svqpanel
+
+    # Snippet de whitelist del panel (vacío por defecto = sin filtrado). El
+    # vhost lo incluye con `include`; debe existir aunque esté vacío. El panel
+    # lo reescribe al activar la whitelist de IPs desde Configuración.
+    mkdir -p /etc/nginx/snippets
+    echo "# SVQPanel — whitelist desactivada (sin filtrado)" > /etc/nginx/snippets/svqpanel-whitelist.conf
 
     # ── phpMyAdmin: inyectar bloque /pma si se instaló ───────────────────────
     if [[ "$INSTALL_MARIADB" == true && -d /var/www/pma ]]; then

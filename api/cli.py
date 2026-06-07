@@ -610,11 +610,41 @@ def cmd_sample_metrics() -> int:
         db.close()
 
 
+def cmd_panel_whitelist_disable() -> int:
+    """
+    RESCATE: desactiva la whitelist de IPs del panel. Úsalo por SSH si te has
+    quedado fuera del panel web (IP cambió o mal configurada).
+        python -m api.cli panel_whitelist_disable
+    """
+    log = logging.getLogger("svqpanel-cli")
+    db = SessionLocal()
+    try:
+        from api.models.models_settings import Settings
+        from scripts.panel_whitelist_manager import PanelWhitelistManager
+
+        s = db.query(Settings).first()
+        if s:
+            s.panel_whitelist_enabled = False
+            db.commit()
+
+        PanelWhitelistManager().disable()
+        print("✓ Whitelist del panel DESACTIVADA. El acceso al panel está abierto de nuevo.")
+        log.info("panel_whitelist_disable ejecutado (rescate)")
+        return 0
+    except Exception as e:
+        print(f"✗ Error: {e}")
+        log.error("panel_whitelist_disable error: %s", e)
+        return 1
+    finally:
+        db.close()
+
+
 def main():
     parser = argparse.ArgumentParser(prog="api.cli", description="SVQPanel CLI")
     sub = parser.add_subparsers(dest="cmd", required=True)
 
     sub.add_parser("sample_metrics", help="Toma muestra de métricas y evalúa alertas")
+    sub.add_parser("panel_whitelist_disable", help="RESCATE: desactiva la whitelist de IPs del panel")
 
     p_refresh = sub.add_parser("refresh_ip_lists", help="Refresca listas IP vencidas")
     p_refresh.add_argument("--force", action="store_true", help="Refresca todas, ignorar interval")
@@ -650,6 +680,8 @@ def main():
         sys.exit(cmd_run_scheduled_backups())
     if args.cmd == "sample_metrics":
         sys.exit(cmd_sample_metrics())
+    if args.cmd == "panel_whitelist_disable":
+        sys.exit(cmd_panel_whitelist_disable())
 
 
 if __name__ == "__main__":

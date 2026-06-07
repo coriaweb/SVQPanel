@@ -57,6 +57,14 @@ class Settings(Base):
     relay_port     = Column(Integer, default=587)
     relay_username = Column(String(255), nullable=True)       # vacío = sin auth
 
+    # ── Whitelist de IPs para el acceso al panel ───────────────────────────
+    # Si está activo, nginx solo deja acceder al panel (puerto dedicado) a las
+    # IPs/CIDR de la lista. El .well-known (ACME) queda siempre permitido para
+    # que certbot pueda renovar el SSL del panel. Rescate por SSH si te bloqueas:
+    #   python -m api.cli panel_whitelist_disable
+    panel_whitelist_enabled = Column(Boolean, default=False)
+    panel_whitelist_ips     = Column(Text, nullable=True)   # una IP/CIDR por línea
+
     # ── SMTP saliente del PANEL (avisos, alertas, notificaciones) ──────────
     # Independiente del relay de clientes: lo usa el propio panel para enviar
     # sus correos (recuperación, avisos de cuota, expiración SSL, etc.) desde
