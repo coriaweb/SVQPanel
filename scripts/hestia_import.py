@@ -562,6 +562,14 @@ def import_web(backup: "HestiaBackup", web: Dict, owner, db, report: ImportRepor
         # El domain_data de Hestia contiene public_html/ (y a veces otros dirs).
         # Extraemos a la raíz web del dominio para respetar esa estructura.
         web_root = f"/home/{owner.username}/web/{domain_name}"
+        # Quitar el index.html placeholder del panel ANTES de copiar, para que
+        # no conviva con el index.php del sitio importado (Apache/nginx
+        # priorizarían el placeholder). Reutiliza la lógica del autoinstalador.
+        try:
+            from scripts.app_installer import _clean_placeholders
+            _clean_placeholders(public_html)
+        except Exception:
+            pass
         _restore_web_files(data_tar, web_root, public_html)
         # Permisos: todo al usuario del dominio (ver svqpanel-php-pool-user)
         import subprocess
@@ -651,6 +659,151 @@ def _copy_into(src_dir: str, dst_dir: str) -> None:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# Importación de BASE DE DATOS (BD + usuario + dump)
+# ─────────────────────────────────────────────────────────────────────────────
+def import_db(backup: "HestiaBackup", dbinfo: Dict, owner, db, report: ImportReport):
+    """Recrea una BD MariaDB y su usuario, e importa el dump.
+
+    Intenta reutilizar el hash de contraseña original del usuario MySQL
+    (`IDENTIFIED BY PASSWORD '<hash>'`). Si no se puede, genera una nueva y la
+    añade al informe. Registra la BD en la tabla ClientDatabase del panel.
+    Solo MySQL/MariaDB (Hestia con pgsql no es habitual; se omite con aviso).
+    """
+    from api.routes.databases import (
+        _run_mariadb, _hash_password, _encrypt_password, _generate_password)
+    from api.models.models_client_db import ClientDatabase
+
+    name = dbinfo["db"]
+    dbuser = dbinfo.get("dbuser") or name
+    md5 = (dbinfo.get("md5") or "").strip()    # hash nativo de MySQL
+    dbtype = dbinfo.get("type", "mysql")
+    charset = dbinfo.get("charset") or "utf8mb4"
+
+    if dbtype not in ("mysql", "mariadb"):
+        report.fail("db", name, f"tipo {dbtype} no soportado (solo MySQL/MariaDB)")
+        return
+
+    # Identificadores: respetamos el nombre original del backup (sin re-prefijar,
+    # para que el sitio importado siga encontrando su BD por el nombre de siempre).
+    safe_name = _ident(name)
+    safe_user = _ident(dbuser)
+    new_password = None
+
+    # 1) Crear la BD
+    _run_mariadb(f"CREATE DATABASE `{safe_name}` CHARACTER SET {charset};")
+
+    # 2) Crear el usuario reutilizando el hash, con fallback a pass nueva
+    created_user = _create_db_user_with_hash(_run_mariadb, safe_user, md5)
+    if not created_user:
+        new_password = _generate_password()
+        _run_mariadb(f"CREATE USER '{safe_user}'@'localhost' "
+                     f"IDENTIFIED BY '{new_password}';")
+        report.password("db", f"{name} (usuario {dbuser})", new_password)
+
+    # 3) Permisos
+    _run_mariadb(
+        f"GRANT SELECT, INSERT, UPDATE, DELETE, CREATE, DROP, INDEX, ALTER, "
+        f"CREATE TEMPORARY TABLES, LOCK TABLES, EXECUTE, CREATE VIEW, SHOW VIEW, "
+        f"CREATE ROUTINE, ALTER ROUTINE, EVENT, TRIGGER ON `{safe_name}`.* "
+        f"TO '{safe_user}'@'localhost';")
+    _run_mariadb("FLUSH PRIVILEGES;")
+
+    # 4) Importar el dump
+    dump = dbinfo.get("_dump")
+    if dump and os.path.isfile(dump):
+        _import_sql_dump(dump, safe_name)
+
+    # 5) Registrar en el panel (ClientDatabase). Sin la pass en claro del hash
+    #    reusado, guardamos un placeholder de hash y dejamos enc=None.
+    pw_for_panel = new_password or ""
+    suffix = name.split("_", 1)[-1] if "_" in name else name
+    usuffix = dbuser.split("_", 1)[-1] if "_" in dbuser else dbuser
+    client_db = ClientDatabase(
+        user_id=owner.id,
+        db_name=name,
+        db_name_suffix=suffix[:48],
+        db_user=dbuser,
+        db_user_suffix=usuffix[:48],
+        db_password_hash=_hash_password(pw_for_panel) if pw_for_panel else _hash_password("!imported!"),
+        db_password_enc=_encrypt_password(pw_for_panel) if pw_for_panel else None,
+        db_charset=charset,
+    )
+    db.add(client_db)
+    db.commit()
+
+    detail = "con dump" if dump else "sin dump"
+    detail += "; contraseña conservada" if created_user else "; contraseña NUEVA (ver informe)"
+    report.ok("db", name, detail)
+
+
+def _create_db_user_with_hash(run_sql, safe_user: str, md5: str) -> bool:
+    """Crea el usuario MySQL reutilizando el hash original. True si lo logró.
+
+    El hash de Hestia es el hash nativo de MySQL/MariaDB. Probamos dos sintaxis:
+    la moderna (`IDENTIFIED WITH mysql_native_password AS '<hash>'`) y la clásica
+    (`IDENTIFIED BY PASSWORD '<hash>'`). Si ninguna funciona, devolvemos False.
+    """
+    if not md5:
+        return False
+    # El hash nativo de mysql_native_password empieza por '*'. Otros formatos
+    # (caching_sha2, argon…) no se pueden reinyectar fiablemente → fallback.
+    candidates = []
+    if md5.startswith("*"):
+        candidates.append(
+            f"CREATE USER '{safe_user}'@'localhost' "
+            f"IDENTIFIED WITH mysql_native_password AS '{md5}';")
+        candidates.append(
+            f"CREATE USER '{safe_user}'@'localhost' "
+            f"IDENTIFIED BY PASSWORD '{md5}';")
+    for sql in candidates:
+        try:
+            run_sql(sql)
+            return True
+        except Exception:
+            continue
+    return False
+
+
+def _import_sql_dump(dump_path: str, db_name: str) -> None:
+    """Importa un dump .sql(.gz|.zst) en la BD indicada vía el cliente CLI."""
+    import subprocess
+    from api.routes.databases import (
+        _mariadb_binary, MARIADB_HOST, MARIADB_PANEL_USER, MARIADB_PANEL_PASSWORD)
+
+    # Descomprimir a un .sql temporal si hace falta.
+    tmp_sql = None
+    sql_path = dump_path
+    if is_zst(dump_path):
+        tmp_sql = dump_path + ".__tmp.sql"
+        _zst_decompress(dump_path, tmp_sql)
+        sql_path = tmp_sql
+    elif dump_path.endswith(".gz"):
+        import gzip, shutil as _sh
+        tmp_sql = dump_path + ".__tmp.sql"
+        with gzip.open(dump_path, "rb") as fin, open(tmp_sql, "wb") as fout:
+            _sh.copyfileobj(fin, fout)
+        sql_path = tmp_sql
+    try:
+        binary = _mariadb_binary()
+        with open(sql_path, "rb") as fin:
+            r = subprocess.run(
+                [binary, f"--host={MARIADB_HOST}", f"--user={MARIADB_PANEL_USER}",
+                 f"--password={MARIADB_PANEL_PASSWORD}", db_name],
+                stdin=fin, capture_output=True, timeout=1800)
+        if r.returncode != 0:
+            err = r.stderr.decode("utf-8", "replace").strip()
+            raise HestiaImportError(f"error importando el dump: {err[:300]}")
+    finally:
+        if tmp_sql and os.path.exists(tmp_sql):
+            os.remove(tmp_sql)
+
+
+def _ident(s: str) -> str:
+    """Sanea un identificador de BD/usuario (alfanumérico + _)."""
+    return re.sub(r"[^A-Za-z0-9_]", "", s)[:64]
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # Orquestador de la importación (lo invoca el job en segundo plano)
 # ─────────────────────────────────────────────────────────────────────────────
 def run_import(tar_path: str, target_user_id: int, scope: List[str], db) -> Dict:
@@ -681,6 +834,14 @@ def run_import(tar_path: str, target_user_id: int, scope: List[str], db) -> Dict
                     db.rollback()
                     report.fail("web", web["domain"], e)
 
-        # db / mail / dns se añaden en las fases 3 y 4.
+        if "db" in scope:
+            for dbinfo in manifest["db"]:
+                try:
+                    import_db(backup, dbinfo, owner, db, report)
+                except Exception as e:
+                    db.rollback()
+                    report.fail("db", dbinfo["db"], e)
+
+        # mail / dns se añaden en la fase 4.
 
     return report.to_dict()
