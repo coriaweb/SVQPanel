@@ -1758,6 +1758,14 @@ server {
     root /opt/svqpanel/frontend/dist;
     index index.html;
 
+    # Página amable si el backend (uvicorn) no responde (reinicio, caída).
+    # No afecta a los sitios/correo de clientes, solo al panel.
+    error_page 502 503 504 /502.html;
+    location = /502.html {
+        internal;
+        root /opt/svqpanel/frontend/dist;
+    }
+
     # API → proxy al backend
     location /api/ {
         include snippets/svqpanel-whitelist.conf;

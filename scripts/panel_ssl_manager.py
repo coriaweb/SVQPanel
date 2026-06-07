@@ -672,6 +672,9 @@ server {{
     root {PANEL_FRONTEND_PATH};
     index index.html;
 
+    error_page 502 503 504 /502.html;
+    location = /502.html {{ internal; root {PANEL_FRONTEND_PATH}; }}
+
     location / {{
         include snippets/svqpanel-whitelist.conf;
         try_files $uri $uri/ /index.html;
@@ -749,6 +752,8 @@ server {{
     # nginx devuelve 497; lo redirigimos a HTTPS en el mismo puerto en vez de
     # mostrar "400 Bad Request: plain HTTP request sent to HTTPS port".
     error_page 497 =301 https://$host:{PANEL_WEB_PORT}$request_uri;
+    error_page 502 503 504 /502.html;
+    location = /502.html {{ internal; root {PANEL_FRONTEND_PATH}; }}
 
     root {PANEL_FRONTEND_PATH};
     index index.html;

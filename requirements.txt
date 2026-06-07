@@ -20,3 +20,6 @@ email-validator>=2.1.0
 pyotp>=2.9.0
 qrcode[pil]>=7.4.2
 Pillow>=10.0.0
+
+# Tests (dev)
+pytest==8.3.4

@@ -15,28 +15,9 @@ from scripts.domain_manager import DomainManager
 
 router = APIRouter()
 
-_INVALID_EMAIL_DOMAINS = {"example.com", "example.org", "example.net", "localhost",
-                          "invalid", "test", "local", "localdomain"}
-
-
-def _validate_acme_email(email: str) -> str:
-    """
-    Valida que el email sea aceptable por Let's Encrypt ACME.
-    Devuelve el email limpio o lanza ValueError con mensaje descriptivo.
-    """
-    email = (email or "").strip().lower()
-    if not email or "@" not in email:
-        raise ValueError(
-            "Se necesita un email válido para Let's Encrypt. "
-            "Introdúcelo en el campo Email del formulario SSL."
-        )
-    domain_part = email.split("@", 1)[1]
-    if domain_part in _INVALID_EMAIL_DOMAINS or "." not in domain_part:
-        raise ValueError(
-            f"El email '{email}' no es válido para Let's Encrypt (dominio local o de ejemplo). "
-            "Usa tu email real, p.ej. admin@tudominio.com"
-        )
-    return email
+# La validación de email ACME vive en api.utils.validators (sin dependencias,
+# testeable). Se reexporta aquí con el nombre interno para no tocar las llamadas.
+from api.utils.validators import validate_acme_email as _validate_acme_email
 
 
 def _domain_ssl_response(domain: Domain, ssl_manager: SSLManager) -> SSLResponse:
