@@ -6,8 +6,11 @@
 
     <div v-if="loadingInfo && !info" class="wpm-loading"><span class="spinner"></span> Analizando la instalación…</div>
     <div v-else-if="errorInfo" class="wpm-error"><i class="bi bi-exclamation-triangle"></i> {{ errorInfo }}</div>
+    <div v-else-if="!info" class="wpm-loading">
+      <i class="bi bi-info-circle"></i> No se pudo cargar la información. Pulsa «Refrescar».
+    </div>
 
-    <template v-else-if="info">
+    <template v-else>
       <!-- Resumen -->
       <div class="wpm-summary">
         <div class="wpm-stat"><span class="wpm-stat__k">Versión WP</span><span class="wpm-stat__v mono">{{ info.version || '—' }}</span></div>
@@ -112,6 +115,7 @@
 
 <script>
 import { ref, computed, watch, onMounted } from 'vue'
+import { useRoute } from 'vue-router'
 import api from '../services/api'
 import { useMainStore } from '../stores/useMainStore'
 import BaseCard from './ui/BaseCard.vue'
@@ -122,19 +126,22 @@ export default {
   name: 'WpManager',
   components: { BaseCard, BaseButton, BaseTabs },
   props: {
-    domainId:   { type: [Number, String], required: true },
+    domainId:   { type: [Number, String], default: null },
     domainName: { type: String, default: '' },
   },
   setup(props) {
     const store = useMainStore()
-    // domainId puede llegar como string desde route.params; lo normalizamos a
-    // entero válido. Si no lo es (montaje temprano), no lanzamos peticiones.
+    const route = useRoute()
+    // El id se normaliza a entero válido. Fuente primaria: el prop; respaldo:
+    // el parámetro de la ruta (/domains/:id). Así, aunque el prop llegue como
+    // NaN/undefined en un render temprano, el componente sigue funcionando.
     const did = computed(() => {
-      const n = parseInt(props.domainId, 10)
+      let n = parseInt(props.domainId, 10)
+      if (!Number.isInteger(n)) n = parseInt(route.params.id, 10)
       return Number.isInteger(n) ? n : null
     })
     const info = ref(null)
-    const loadingInfo = ref(false)
+    const loadingInfo = ref(true)   // arranca en "analizando" hasta la 1ª carga
     const errorInfo = ref('')
     const tab = ref('general')
     const tabs = [
@@ -160,7 +167,7 @@ export default {
     const adminUrl = computed(() => (info.value?.siteurl || '').replace(/\/$/, '') + '/wp-admin')
 
     const loadInfo = async () => {
-      if (did.value == null) return
+      if (did.value == null) { loadingInfo.value = false; return }
       loadingInfo.value = true; errorInfo.value = ''
       try {
         const r = await api.getWpInfo(did.value)
