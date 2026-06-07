@@ -658,6 +658,89 @@ def cmd_backup_panel() -> int:
         return 1
 
 
+def cmd_admin_recover(username: str = None, password: str = None,
+                      email: str = None, list_only: bool = False) -> int:
+    """RESCATE: recupera el acceso de administrador desde la consola (root).
+
+    Pensado para cuando se ha perdido el usuario/contraseña del panel:
+      - Sin argumentos o con --list: lista las cuentas de administrador.
+      - Con --username + --password: resetea la contraseña de ese admin (o de
+        cualquier usuario, promoviéndolo a admin si no lo era).
+      - Si NO existe ningún admin, crea uno nuevo con los datos dados (o por
+        defecto username='admin').
+
+    La contraseña, si no se indica, se genera aleatoria y se imprime UNA vez.
+    """
+    import secrets, string
+
+    def _gen_pw(n=16):
+        alphabet = string.ascii_letters + string.digits
+        return "".join(secrets.choice(alphabet) for _ in range(n))
+
+    db = SessionLocal()
+    try:
+        admins = db.query(User).filter(
+            (User.is_admin == True) | (User.role == "admin")).all()  # noqa: E712
+
+        # Solo listar
+        if list_only or (not username and not password and admins):
+            print("Cuentas de administrador:")
+            for u in admins:
+                estado = "activa" if u.is_active else "INACTIVA"
+                print(f"  • {u.username}  <{u.email or 's/email'}>  (id={u.id}, {estado})")
+            if not admins:
+                print("  (ninguna) — ejecuta con --username y --password para crear una.")
+            print("\nPara resetear: python -m api.cli admin_recover "
+                  "--username <user> --password <nueva>")
+            return 0
+
+        target = None
+        if username:
+            target = db.query(User).filter(User.username == username).first()
+
+        # No hay admins y no se localizó destino → crear uno nuevo
+        if target is None:
+            if not username:
+                username = "admin"
+                target = db.query(User).filter(User.username == username).first()
+            if target is None:
+                pw = password or _gen_pw()
+                new_admin = User(
+                    username=username,
+                    email=email or f"{username}@localhost",
+                    role="admin",
+                    is_admin=True,
+                    is_active=True,
+                )
+                new_admin.set_password(pw)
+                db.add(new_admin)
+                db.commit()
+                print(f"✓ Administrador creado: {username}")
+                print(f"  Contraseña: {pw}")
+                return 0
+
+        # Resetear/promover el usuario destino
+        pw = password or _gen_pw()
+        target.set_password(pw)
+        target.is_admin = True
+        target.role = "admin"
+        target.is_active = True
+        if email:
+            target.email = email
+        db.commit()
+        print(f"✓ Acceso de administrador restaurado para: {target.username}")
+        print(f"  Contraseña: {pw}")
+        print("  Inicia sesión y cámbiala desde el panel.")
+        return 0
+    except Exception as e:
+        db.rollback()
+        logger.error("admin_recover error: %s", e)
+        print(f"✗ Error: {e}")
+        return 1
+    finally:
+        db.close()
+
+
 def main():
     parser = argparse.ArgumentParser(prog="api.cli", description="SVQPanel CLI")
     sub = parser.add_subparsers(dest="cmd", required=True)
@@ -665,6 +748,14 @@ def main():
     sub.add_parser("sample_metrics", help="Toma muestra de métricas y evalúa alertas")
     sub.add_parser("panel_whitelist_disable", help="RESCATE: desactiva la whitelist de IPs del panel")
     sub.add_parser("backup_panel", help="Backup de la BD y config del propio panel")
+
+    p_admin = sub.add_parser("admin_recover",
+        help="RESCATE: recupera/crea acceso de administrador (ejecutar como root)")
+    p_admin.add_argument("--username", default=None, help="Usuario admin a resetear o crear")
+    p_admin.add_argument("--password", default=None, help="Nueva contraseña (si se omite, se genera)")
+    p_admin.add_argument("--email", default=None, help="Email (al crear un admin nuevo)")
+    p_admin.add_argument("--list", action="store_true", dest="list_only",
+                         help="Solo listar las cuentas de administrador")
 
     p_refresh = sub.add_parser("refresh_ip_lists", help="Refresca listas IP vencidas")
     p_refresh.add_argument("--force", action="store_true", help="Refresca todas, ignorar interval")
@@ -702,6 +793,9 @@ def main():
         sys.exit(cmd_sample_metrics())
     if args.cmd == "panel_whitelist_disable":
         sys.exit(cmd_panel_whitelist_disable())
+    if args.cmd == "admin_recover":
+        sys.exit(cmd_admin_recover(username=args.username, password=args.password,
+                                   email=args.email, list_only=args.list_only))
     if args.cmd == "backup_panel":
         sys.exit(cmd_backup_panel())
 
