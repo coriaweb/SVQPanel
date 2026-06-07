@@ -732,6 +732,14 @@ class APIClient {
     return this.get(`/api/apps/wordpress/locales`)
   }
 
+  // ── Detección y gestión de app instalada (WP Toolkit) ──
+  getDomainApp(domainId)         { return this.get(`/api/domains/${domainId}/app`) }
+  getWpInfo(domainId)            { return this.get(`/api/domains/${domainId}/wp/info`) }
+  getWpItems(domainId, kind)     { return this.get(`/api/domains/${domainId}/wp/${kind}s`) }
+  wpAction(domainId, action, data = {}) {
+    return this.post(`/api/domains/${domainId}/wp/${action}`, data)
+  }
+
   // SFTP
   getSftpStatus(userId)           { return this.get(`/api/users/${userId}/sftp`) }
   setSftpEnabled(userId, enabled) {

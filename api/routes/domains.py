@@ -1487,3 +1487,129 @@ async def install_app(
             logging.getLogger(__name__).warning(f"No se pudo registrar BD en panel: {reg_err}")
 
     return {"status": "success", "message": f"{SUPPORTED_APPS[app]['name']} instalado", "data": result}
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Gestión de WordPress instalado (estilo WP Toolkit)
+# ─────────────────────────────────────────────────────────────────────────────
+def _resolve_docroot_owner(domain_id: int, db: Session, current_user: User):
+    """Devuelve (domain, owner_username, docroot) validando propiedad."""
+    domain = _get_owned_domain(domain_id, db, current_user)
+    owner = db.query(User).filter(User.id == domain.user_id).first()
+    if not owner:
+        raise HTTPException(status_code=409, detail="El dominio no tiene propietario")
+    docroot = domain.custom_docroot or get_domain_root(owner.username, domain.domain_name) + "/public_html"
+    return domain, owner.username, docroot
+
+
+def _wp_guard(docroot: str, owner: str):
+    """Lanza 409 si en el docroot no hay un WordPress gestionable."""
+    from scripts.wp_manager import detect_app
+    det = detect_app(docroot, owner)
+    if det.get("app") != "wordpress":
+        raise HTTPException(status_code=409,
+                            detail="Este dominio no tiene una instalación de WordPress.")
+
+
+class WpActionRequest(BaseModel):
+    kind:       Optional[str] = _Field(None, description="plugin|theme")
+    name:       Optional[str] = _Field(None, max_length=120)
+    activate:   Optional[bool] = None
+    enable:     Optional[bool] = None
+    user_login: Optional[str] = _Field(None, max_length=120)
+    password:   Optional[str] = _Field(None, max_length=128)
+    url:        Optional[str] = _Field(None, max_length=200)
+
+
+@router.get("/domains/{domain_id}/app")
+async def get_domain_app(domain_id: int,
+                         current_user: User = Depends(require_auth),
+                         db: Session = Depends(get_db)):
+    """Detecta qué app hay instalada en el dominio (y si es gestionable)."""
+    _domain, owner, docroot = _resolve_docroot_owner(domain_id, db, current_user)
+    from scripts.wp_manager import detect_app
+    return {"status": "success", "data": detect_app(docroot, owner)}
+
+
+@router.get("/domains/{domain_id}/wp/info")
+async def wp_get_info(domain_id: int,
+                      current_user: User = Depends(require_auth),
+                      db: Session = Depends(get_db)):
+    _domain, owner, docroot = _resolve_docroot_owner(domain_id, db, current_user)
+    _wp_guard(docroot, owner)
+    from scripts.wp_manager import wp_info, WpError
+    try:
+        return {"status": "success", "data": wp_info(docroot, owner)}
+    except WpError as e:
+        raise HTTPException(status_code=422, detail=str(e))
+
+
+@router.get("/domains/{domain_id}/wp/{kind}s")
+async def wp_list_items(domain_id: int, kind: str,
+                        current_user: User = Depends(require_auth),
+                        db: Session = Depends(get_db)):
+    """Lista plugins o temas (kind = 'plugin' | 'theme')."""
+    if kind not in ("plugin", "theme"):
+        raise HTTPException(status_code=400, detail="kind debe ser plugin o theme")
+    _domain, owner, docroot = _resolve_docroot_owner(domain_id, db, current_user)
+    _wp_guard(docroot, owner)
+    from scripts.wp_manager import wp_list, WpError
+    try:
+        return {"status": "success", "data": wp_list(docroot, owner, kind)}
+    except WpError as e:
+        raise HTTPException(status_code=422, detail=str(e))
+
+
+@router.post("/domains/{domain_id}/wp/{action}")
+async def wp_action(domain_id: int, action: str,
+                    payload: WpActionRequest,
+                    current_user: User = Depends(require_auth),
+                    db: Session = Depends(get_db)):
+    """Ejecuta una acción de gestión sobre el WordPress del dominio."""
+    _domain, owner, docroot = _resolve_docroot_owner(domain_id, db, current_user)
+    _wp_guard(docroot, owner)
+    import scripts.wp_manager as wpm
+    from scripts.wp_manager import WpError
+    try:
+        if action == "update-core":
+            data = wpm.wp_update_core(docroot, owner)
+        elif action == "update-items":
+            if payload.kind not in ("plugin", "theme"):
+                raise HTTPException(status_code=400, detail="kind debe ser plugin o theme")
+            data = wpm.wp_update_items(docroot, owner, payload.kind, payload.name)
+        elif action == "toggle-item":
+            if payload.kind not in ("plugin", "theme") or not payload.name:
+                raise HTTPException(status_code=400, detail="kind y name son obligatorios")
+            data = wpm.wp_toggle_item(docroot, owner, payload.kind, payload.name,
+                                      bool(payload.activate))
+        elif action == "flush-permalinks":
+            data = wpm.wp_flush_permalinks(docroot, owner)
+        elif action == "maintenance":
+            data = wpm.wp_maintenance(docroot, owner, bool(payload.enable))
+        elif action == "regenerate-salts":
+            data = wpm.wp_regenerate_salts(docroot, owner)
+        elif action == "flush-cache":
+            data = wpm.wp_flush_cache(docroot, owner)
+        elif action == "admin-users":
+            data = {"users": wpm.wp_admin_users(docroot, owner)}
+        elif action == "reset-password":
+            if not payload.user_login:
+                raise HTTPException(status_code=400, detail="user_login es obligatorio")
+            data = wpm.wp_reset_password(docroot, owner, payload.user_login, payload.password)
+        elif action == "set-url":
+            if not payload.url:
+                raise HTTPException(status_code=400, detail="url es obligatoria")
+            data = wpm.wp_set_url(docroot, owner, payload.url)
+        elif action == "login-link":
+            if not payload.user_login:
+                raise HTTPException(status_code=400, detail="user_login es obligatorio")
+            data = wpm.wp_login_link(docroot, owner, payload.user_login)
+        else:
+            raise HTTPException(status_code=400, detail=f"Acción no soportada: {action}")
+        return {"status": "success", "data": data}
+    except HTTPException:
+        raise
+    except WpError as e:
+        raise HTTPException(status_code=422, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error en acción WP: {e}")

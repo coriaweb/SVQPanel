@@ -184,7 +184,29 @@
           <p v-else class="dd-muted">Pulsa «Recalcular» para medir el uso de disco.</p>
         </BaseCard>
 
-        <BaseCard title="Instalar aplicación" icon="box-seam" class="dd-span2">
+        <!-- WordPress detectado → panel de gestión (WP Toolkit) -->
+        <WpManager
+          v-if="detectedApp.app === 'wordpress'"
+          :domain-id="domainId"
+          :domain-name="domain.domain_name"
+          class="dd-span2"
+        />
+
+        <!-- App no gestionable ya instalada (Laravel/Nextcloud/PrestaShop/otro) -->
+        <BaseCard
+          v-else-if="detectedApp.app && !['empty','wordpress'].includes(detectedApp.app)"
+          title="Aplicación instalada" icon="box-seam" class="dd-span2">
+          <div class="app-detected">
+            <i class="bi bi-hdd-stack app-detected__icon"></i>
+            <div>
+              <p class="app-detected__title">{{ appLabel(detectedApp.app) }} detectado</p>
+              <p class="dd-muted">Este dominio ya tiene contenido. El panel de gestión avanzado solo está disponible para WordPress; para esta app, gestiónala desde su propio backoffice.</p>
+            </div>
+          </div>
+        </BaseCard>
+
+        <!-- Dominio vacío → instalador -->
+        <BaseCard v-else title="Instalar aplicación" icon="box-seam" class="dd-span2">
           <p class="dd-muted">Instala una aplicación lista para usar en este dominio (crea su base de datos y la configura).</p>
           <div class="app-install">
             <div class="app-install__row">
@@ -656,10 +678,11 @@ import StatusBadge from '../components/ui/StatusBadge.vue'
 import EmptyState from '../components/ui/EmptyState.vue'
 import SSLManager from '../components/SSLManager.vue'
 import IPv6Manager from '../components/IPv6Manager.vue'
+import WpManager from '../components/WpManager.vue'
 
 export default {
   name: 'DomainDetail',
-  components: { BaseCard, BaseButton, BaseTabs, StatusBadge, EmptyState, SSLManager, IPv6Manager },
+  components: { BaseCard, BaseButton, BaseTabs, StatusBadge, EmptyState, SSLManager, IPv6Manager, WpManager },
   setup() {
     const route = useRoute()
     const router = useRouter()
@@ -913,6 +936,16 @@ export default {
     }
     const goFiles = () => router.push({ path: '/files', query: { domain: domainId.value } })
 
+    // ── Detección de app instalada (decide instalar vs gestionar) ──
+    const detectedApp = ref({ app: null, managed: false })
+    const loadDetectedApp = async () => {
+      try {
+        const r = await api.getDomainApp(domainId.value)
+        detectedApp.value = r.data || { app: null, managed: false }
+      } catch (e) { detectedApp.value = { app: null, managed: false } }
+    }
+    const appLabel = (a) => ({ wordpress: 'WordPress', laravel: 'Laravel', nextcloud: 'Nextcloud', prestashop: 'PrestaShop', unknown: 'Aplicación' }[a] || 'Aplicación')
+
     // ── Autoinstalador de apps ──
     const appForm = ref({ app: 'wordpress', admin_user: 'admin', admin_password: '', admin_email: '', locale: 'es_ES' })
     const installing = ref(false)
@@ -952,6 +985,7 @@ export default {
         installResult.value = r
         store.showNotification(r.message || 'Aplicación instalada', 'success')
         await reloadDomain()
+        await loadDetectedApp()   // tras instalar, la tarjeta pasa a modo gestión
       } catch (e) {
         store.showNotification('Error instalando: ' + e.message, 'danger')
       } finally {
@@ -1204,7 +1238,7 @@ export default {
       await loadDomain()
       try { const d = await api.getPHPVersions(); phpVersions.value = d?.versions?.length ? d.versions : ['8.2'] }
       catch { phpVersions.value = ['7.4', '8.0', '8.1', '8.2', '8.3', '8.4'] }
-      if (domain.value) { loadDisk(); loadPhp(); loadLogs(); loadSslState() }
+      if (domain.value) { loadDisk(); loadPhp(); loadLogs(); loadSslState(); loadDetectedApp() }
     })
 
     return {
@@ -1220,6 +1254,7 @@ export default {
       logSearch, filteredLogLines, logLineClass, highlightLog,
       downloading, downloadSite, suspend, unsuspend, remove, goFiles,
       appForm, installing, installResult, doInstallApp, appNeedsAdmin, appNeedsEmail, wpLocales,
+      detectedApp, appLabel,
       git, gitDeployments, gitLoading, gitSaving, gitDeploying, gitKeyGen, gitRolling, gitForm,
       loadGit, genKey, doSetup, doDeploy, doRollback, doDisableGit, copyText,
       showReadonlyForm, readonlyIps, readonlySaving, saveReadonlyMode, editReadonlyIps,
@@ -1274,6 +1309,9 @@ export default {
 .app-result__row { display: flex; gap: var(--sp-3); font-size: var(--fs-sm); }
 .app-result__row > span:first-child { min-width: 70px; color: var(--text-muted); }
 @media (max-width: 680px) { .app-install__row { grid-template-columns: 1fr; } }
+.app-detected { display: flex; align-items: flex-start; gap: var(--sp-3); }
+.app-detected__icon { font-size: 1.8rem; color: var(--accent); }
+.app-detected__title { margin: 0 0 4px; font-weight: var(--fw-semibold); }
 
 .disk-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: var(--sp-3); }
 .disk-item { background: var(--surface-inset); border-radius: var(--r-md); padding: var(--sp-3) var(--sp-4); }
