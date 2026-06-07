@@ -34,6 +34,28 @@ def test_human_size():
     assert t.human_size(512 * 1024**2) == "512M"
 
 
+def test_human_size_mycnf_siempre_entero():
+    # my.cnf NO acepta decimales: las sugerencias deben ser enteros + unidad
+    assert t.human_size_mycnf(2 * 1024**3) == "2G"          # exacto en G
+    assert t.human_size_mycnf(512 * 1024**2) == "512M"      # exacto en M
+    # ~1.9G no es entero en G → cae a M entero (no '1.9G')
+    out = t.human_size_mycnf(int(3.8 * 1024**3 * 0.5))
+    assert out.endswith("M") and "." not in out
+
+
+def test_parse_size_acepta_decimales():
+    # 1.9G debe parsearse (antes solo aceptaba enteros)
+    assert t.parse_size("1.9G") == int(1.9 * 1024**3)
+
+
+def test_validate_size_normaliza_decimal_a_entero():
+    # Regresión: la sugerencia '1.9G' rompía el guardado. Ahora se acepta y
+    # se normaliza a un entero válido para my.cnf.
+    ok, val = t.validate_directive("innodb_buffer_pool_size", "1.9G")
+    assert ok
+    assert "." not in val and val[-1] in "KMG"
+
+
 # ── Allowlist de directivas ───────────────────────────────────────────────────
 def test_validate_acepta_directiva_conocida():
     ok, val = t.validate_directive("innodb_buffer_pool_size", "512M")

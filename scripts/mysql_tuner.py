@@ -107,26 +107,27 @@ _SYS_ENV = {
 # Parsers / helpers de tamaño
 # ─────────────────────────────────────────────────────────────────────────────
 def parse_size(value) -> int:
-    """'256M','1G','512K','1073741824' → bytes int. -1/None → 0."""
+    """'256M','1G','512K','1.9G','1073741824' → bytes int. -1/None → 0."""
     if value is None:
         return 0
     s = str(value).strip()
     if s in ("", "-1"):
         return 0
-    m = re.match(r"^(\d+)\s*([KMGTkmgt]?)B?$", s)
+    # Acepta decimales (1.9G) además de enteros (512M)
+    m = re.match(r"^(\d+(?:\.\d+)?)\s*([KMGTkmgt]?)B?$", s)
     if not m:
         try:
-            return int(s)
+            return int(float(s))
         except ValueError:
             return 0
-    num = int(m.group(1))
+    num = float(m.group(1))
     unit = m.group(2).upper()
     mult = {"": 1, "K": 1024, "M": 1024**2, "G": 1024**3, "T": 1024**4}[unit]
-    return num * mult
+    return int(num * mult)
 
 
 def human_size(num_bytes: int) -> str:
-    """bytes → '1.5G' legible."""
+    """bytes → '1.5G' legible (para mostrar). Puede llevar 1 decimal."""
     n = float(num_bytes)
     for unit in ("B", "K", "M", "G", "T"):
         if n < 1024 or unit == "T":
@@ -135,6 +136,27 @@ def human_size(num_bytes: int) -> str:
             return f"{n:.1f}{unit}".replace(".0", "")
         n /= 1024
     return f"{n:.1f}T"
+
+
+def human_size_mycnf(num_bytes: int) -> str:
+    """
+    bytes → tamaño ENTERO + unidad válido para my.cnf (sin decimales).
+    Usa la mayor unidad que dé un entero exacto; si ninguna es exacta, redondea
+    en MB (precisión más que suficiente para estas directivas).
+    Ej.: 2147483648 → '2G'; 2040109465 (~1.9G) → '1946M'.
+    MySQL/MariaDB NO acepta decimales (1.9G es inválido), por eso este helper.
+    """
+    if num_bytes <= 0:
+        return "0"
+    for unit, mult in (("G", 1024**3), ("M", 1024**2), ("K", 1024)):
+        if num_bytes >= mult and num_bytes % mult == 0:
+            return f"{num_bytes // mult}{unit}"
+    # Sin unidad exacta: redondear a MB (o KB si es < 1 MB)
+    if num_bytes >= 1024**2:
+        return f"{round(num_bytes / 1024**2)}M"
+    if num_bytes >= 1024:
+        return f"{round(num_bytes / 1024)}K"
+    return f"{num_bytes}"
 
 
 def validate_directive(name: str, value: str) -> Tuple[bool, str]:
@@ -147,8 +169,12 @@ def validate_directive(name: str, value: str) -> Tuple[bool, str]:
         return False, f"'{name}' no puede estar vacío"
     t = spec["type"]
     if t == "size":
-        if not re.match(r"^\d+\s*[KMGkmg]?$", v):
+        # Acepta enteros (512M) y, por robustez, decimales (1.9G) que normalizamos
+        # a un entero válido para my.cnf (MySQL no acepta decimales).
+        if not re.match(r"^\d+(?:\.\d+)?\s*[KMGkmg]?$", v):
             return False, f"'{name}': formato inválido (ej. 512M, 2G)"
+        if "." in v:
+            v = human_size_mycnf(parse_size(v))
     elif t == "int":
         if not re.match(r"^\d+$", v):
             return False, f"'{name}': debe ser un entero positivo"
@@ -255,7 +281,7 @@ def analyze(status: Dict[str, str], variables: Dict[str, str], ram_bytes: int) -
                 "title": "Buffer pool InnoDB pequeño",
                 "detail": f"Hit ratio {hit:.1f}% (objetivo ≥ 99%). El buffer pool actual ({human_size(bp_size)}) no cabe el dataset; hay lecturas a disco.",
                 "directive": "innodb_buffer_pool_size",
-                "suggested": human_size(suggested),
+                "suggested": human_size_mycnf(suggested),
             })
         else:
             recs.append({
@@ -301,7 +327,7 @@ def analyze(status: Dict[str, str], variables: Dict[str, str], ram_bytes: int) -
                 "title": "Muchas tablas temporales en disco",
                 "detail": f"{disk_pct:.0f}% de las tablas temporales van a disco (lento). Sube tmp_table_size y max_heap_table_size por igual.",
                 "directive": "tmp_table_size",
-                "suggested": human_size(max(parse_size(variables.get("tmp_table_size")), 64 * 1024**2)),
+                "suggested": human_size_mycnf(max(parse_size(variables.get("tmp_table_size")), 64 * 1024**2)),
             })
 
     # ── Query cache (anti-patrón en concurrencia alta) ────────────────────────
