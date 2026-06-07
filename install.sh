@@ -89,6 +89,67 @@ done
 echo -e "${GREEN}✓ El panel se servirá en el puerto $PANEL_WEB_PORT${NC}\n"
 
 ###############################################################################
+# 1c. HOSTNAME DEL PANEL + SSL AUTOMÁTICO (OPCIONAL)
+###############################################################################
+# Si el usuario da un hostname (FQDN) que ya apunta por DNS a la IP de este
+# servidor, al final de la instalación se emitirá automáticamente el certificado
+# SSL Let's Encrypt y el panel quedará en HTTPS. Si lo omite o el DNS no apunta
+# todavía, el panel queda en HTTP y el SSL se puede emitir luego desde el panel.
+PANEL_HOSTNAME=""
+PANEL_SSL_READY=false
+
+# Detectar la IP pública del servidor para comparar con el DNS del hostname.
+# Prioriza la IP pública real (descarta privadas); si no, usa un servicio externo.
+_detect_server_ip() {
+    local ip
+    ip="$(hostname -I 2>/dev/null | tr ' ' '\n' \
+          | grep -vE '^(127\.|10\.|172\.(1[6-9]|2[0-9]|3[01])\.|192\.168\.|169\.254\.)' \
+          | head -1)"
+    if [[ -z "$ip" ]]; then
+        ip="$(curl -fsS --max-time 5 https://api.ipify.org 2>/dev/null || true)"
+    fi
+    echo "$ip"
+}
+_INSTALL_SERVER_IP="$(_detect_server_ip)"
+
+echo -e "${YELLOW}¿Quieres acceder al panel por un dominio con HTTPS?${NC}"
+echo "  Si tienes un dominio (ej: panel.midominio.com) apuntando a este servidor,"
+echo "  el instalador emitirá el certificado SSL automáticamente."
+echo "  Deja en blanco para acceder por IP:puerto (puedes emitir el SSL después)."
+printf "Hostname del panel [Enter para omitir]: "; read _PANEL_HOSTNAME_INPUT </dev/tty
+_PANEL_HOSTNAME_INPUT="$(echo "$_PANEL_HOSTNAME_INPUT" | tr -d ' ' | tr 'A-Z' 'a-z')"
+
+if [[ -n "$_PANEL_HOSTNAME_INPUT" ]]; then
+    # Validar que sea un FQDN razonable
+    if [[ "$_PANEL_HOSTNAME_INPUT" =~ ^([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,}$ ]]; then
+        PANEL_HOSTNAME="$_PANEL_HOSTNAME_INPUT"
+        echo -e "${GREEN}✓ Hostname válido: $PANEL_HOSTNAME${NC}"
+
+        # Comprobar que el DNS del hostname resuelve a la IP del servidor
+        echo "  Comprobando DNS de $PANEL_HOSTNAME ..."
+        _RESOLVED_IPS="$(getent ahostsv4 "$PANEL_HOSTNAME" 2>/dev/null | awk '{print $1}' | sort -u)"
+        if [[ -z "$_RESOLVED_IPS" ]]; then
+            _RESOLVED_IPS="$(dig +short A "$PANEL_HOSTNAME" 2>/dev/null | grep -E '^[0-9.]+$')"
+        fi
+
+        if [[ -n "$_INSTALL_SERVER_IP" ]] && echo "$_RESOLVED_IPS" | grep -qx "$_INSTALL_SERVER_IP"; then
+            PANEL_SSL_READY=true
+            echo -e "${GREEN}✓ $PANEL_HOSTNAME apunta a este servidor ($_INSTALL_SERVER_IP). Se emitirá SSL automáticamente.${NC}\n"
+        else
+            echo -e "${YELLOW}⚠ $PANEL_HOSTNAME no resuelve a la IP de este servidor.${NC}"
+            echo -e "${YELLOW}    IP del servidor : ${_INSTALL_SERVER_IP:-desconocida}${NC}"
+            echo -e "${YELLOW}    DNS resuelve a  : ${_RESOLVED_IPS:-(sin registro A)}${NC}"
+            echo -e "${YELLOW}    El panel quedará en HTTP. Configura el DNS y emite el SSL después${NC}"
+            echo -e "${YELLOW}    desde Configuración → SSL del Panel cuando el DNS propague.${NC}\n"
+        fi
+    else
+        echo -e "${YELLOW}⚠ '$_PANEL_HOSTNAME_INPUT' no es un FQDN válido. Se ignora; el panel será accesible por IP.${NC}\n"
+    fi
+else
+    echo -e "${GREEN}✓ Sin hostname: el panel será accesible por IP:$PANEL_WEB_PORT${NC}\n"
+fi
+
+###############################################################################
 # 2b. SERVIDOR DE CORREO (OPCIONAL)
 ###############################################################################
 echo -e "${YELLOW}¿Instalar servidor de correo electrónico?${NC}"
@@ -2762,6 +2823,53 @@ echo -e "${YELLOW}Aplicando aislamiento PHP por dominio (open_basedir + tmp prop
 echo ""
 
 ###############################################################################
+# 14b. SSL AUTOMÁTICO DEL PANEL (si el hostname apunta a este servidor)
+###############################################################################
+if [[ "$PANEL_SSL_READY" == true && -n "$PANEL_HOSTNAME" ]]; then
+    echo -e "${YELLOW}Emitiendo certificado SSL del panel para $PANEL_HOSTNAME...${NC}"
+    # El backend debe estar arrancado para que nginx sirva el ACME challenge.
+    systemctl start svqpanel 2>/dev/null || true
+    sleep 3
+    # Email para Let's Encrypt: el del admin si parece real, si no uno del hostname.
+    _LE_EMAIL="admin@${PANEL_HOSTNAME#*.}"
+    PANEL_SSL_HOSTNAME="$PANEL_HOSTNAME" PANEL_SSL_EMAIL="$_LE_EMAIL" \
+    /opt/svqpanel/venv/bin/python << 'PANELSSLEOF'
+import os, sys
+sys.path.insert(0, "/opt/svqpanel")
+hostname = os.environ["PANEL_SSL_HOSTNAME"]
+email    = os.environ["PANEL_SSL_EMAIL"]
+try:
+    from api.models.database import SessionLocal, load_all_models
+    load_all_models()
+    from api.routes.settings import get_or_create_settings
+    from scripts.panel_ssl_manager import PanelSSLManager
+
+    # Guardar el hostname en Settings antes de emitir
+    db = SessionLocal()
+    s = get_or_create_settings(db)
+    s.panel_hostname = hostname
+    db.commit()
+    db.close()
+
+    PanelSSLManager().issue_ssl(hostname, email, force_https=True)
+    print("OK")
+except Exception as e:
+    print(f"FAIL: {e}", file=sys.stderr)
+    sys.exit(1)
+PANELSSLEOF
+    if [[ $? -eq 0 ]]; then
+        echo -e "${GREEN}✓ SSL del panel emitido. Accede por https://$PANEL_HOSTNAME:$PANEL_WEB_PORT${NC}\n"
+        PANEL_ACCESS_URL="https://$PANEL_HOSTNAME:$PANEL_WEB_PORT"
+    else
+        echo -e "${YELLOW}⚠ No se pudo emitir el SSL automáticamente. El panel queda en HTTP;${NC}"
+        echo -e "${YELLOW}    emítelo después desde Configuración → SSL del Panel.${NC}\n"
+        PANEL_ACCESS_URL="http://${_INSTALL_SERVER_IP}:$PANEL_WEB_PORT"
+    fi
+else
+    PANEL_ACCESS_URL="http://${_INSTALL_SERVER_IP}:$PANEL_WEB_PORT"
+fi
+
+###############################################################################
 # CRON DE ACTUALIZACIONES AUTOMÁTICAS — 3:00am diario
 ###############################################################################
 echo -e "${YELLOW}Configurando actualización automática diaria...${NC}"
@@ -2823,9 +2931,20 @@ echo -e "Proximos pasos:"
 echo "  1. Verifica el estado: systemctl status svqpanel"
 echo "  2. Ver logs: journalctl -u svqpanel -f"
 echo -e "\n${GREEN}SVQPanel estará disponible en:${NC}"
-echo "  • Panel Web:    http://${SERVER_IP}:${PANEL_WEB_PORT}"
-echo "  • Seguridad:    http://${SERVER_IP}:${PANEL_WEB_PORT}/security  (firewall, fail2ban, listas IP)"
-echo "  • API Docs:     http://${SERVER_IP}:${PANEL_WEB_PORT}/docs"
+if [[ "$PANEL_SSL_READY" == true && -n "$PANEL_HOSTNAME" ]]; then
+    echo -e "  • Panel Web:    ${GREEN}https://${PANEL_HOSTNAME}:${PANEL_WEB_PORT}${NC}  (SSL activo)"
+    echo "  • Seguridad:    https://${PANEL_HOSTNAME}:${PANEL_WEB_PORT}/security"
+    echo "  • API Docs:     https://${PANEL_HOSTNAME}:${PANEL_WEB_PORT}/docs"
+    echo "  • (también por IP: http://${SERVER_IP}:${PANEL_WEB_PORT})"
+else
+    echo "  • Panel Web:    http://${SERVER_IP}:${PANEL_WEB_PORT}"
+    echo "  • Seguridad:    http://${SERVER_IP}:${PANEL_WEB_PORT}/security  (firewall, fail2ban, listas IP)"
+    echo "  • API Docs:     http://${SERVER_IP}:${PANEL_WEB_PORT}/docs"
+    if [[ -n "$PANEL_HOSTNAME" ]]; then
+        echo -e "  ${YELLOW}↳ Para HTTPS: configura el DNS de ${PANEL_HOSTNAME} → ${SERVER_IP} y emite${NC}"
+        echo -e "  ${YELLOW}  el SSL desde Configuración → SSL del Panel.${NC}"
+    fi
+fi
 echo -e "  ${YELLOW}Sugerencia de seguridad:${NC} cierra el puerto ${PANEL_WEB_PORT} en tu firewall"
 echo "  perimetral (Proxmox, etc.) y ábrelo solo a tus IPs de administración."
 echo -e "\n${YELLOW}Base de datos:${NC}"
