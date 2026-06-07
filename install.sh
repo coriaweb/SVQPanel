@@ -369,17 +369,58 @@ NGINXHARDEOF
 fi
 
 if [[ "$WEBSERVER" == "apache+nginx" ]]; then
-    echo -e "${YELLOW}Instalando Apache...${NC}"
+    echo -e "${YELLOW}Instalando Apache (backend para .htaccess)...${NC}"
     apt-get install -y -qq apache2
+
+    # ── Arquitectura: Nginx FRONT (80/443) + Apache BACKEND (8080) ──
+    # Nginx maneja SSL, HTTP/3, headers de seguridad, bad bots y sirve los
+    # dominios "nginx" directamente. Para los dominios "apache", Nginx hace
+    # proxy_pass a Apache (127.0.0.1:8080), que sirve el PHP RESPETANDO los
+    # ficheros .htaccess (mod_rewrite, deny/allow, auth básica, etc.) — el
+    # único motivo real para tener Apache. Apache NO escucha de cara a internet.
+
+    # Módulos: rewrite (.htaccess), proxy_fcgi (PHP-FPM), remoteip (IP real
+    # del visitante a través del proxy nginx), headers (por si un .htaccess los usa).
     a2enmod rewrite
     a2enmod headers
-    a2enmod ssl
     a2enmod proxy
     a2enmod proxy_fcgi
     a2enmod setenvif
-    systemctl enable apache2
-    systemctl start apache2
-    echo -e "${GREEN}✓ Apache instalado${NC}\n"
+    a2enmod remoteip
+
+    # Apache escucha SOLO en 127.0.0.1:8080 (no expuesto a internet).
+    cat > /etc/apache2/ports.conf << 'APACHEPORTS'
+# SVQPanel — Apache es BACKEND de Nginx. Solo escucha en localhost:8080.
+# Nginx (front) hace proxy_pass aquí para los dominios servidos por Apache.
+Listen 127.0.0.1:8080
+APACHEPORTS
+
+    # RemoteIP: confiar en la X-Forwarded-For que envía nginx (front local),
+    # para que Apache y los .htaccess vean la IP real del visitante, no 127.0.0.1.
+    cat > /etc/apache2/conf-available/svqpanel-remoteip.conf << 'APACHEREMOTEIP'
+RemoteIPHeader X-Forwarded-For
+RemoteIPTrustedProxy 127.0.0.1
+# Log con la IP real (remoteip) en vez de la del proxy
+LogFormat "%a %l %u %t \"%r\" %>s %O \"%{Referer}i\" \"%{User-Agent}i\"" svq_combined
+APACHEREMOTEIP
+    a2enconf svqpanel-remoteip
+
+    # Quitar el vhost por defecto de Apache (000-default escucha en *:80 y
+    # chocaría con nginx). Con ports.conf en 8080 ya no escucha en 80, pero
+    # deshabilitamos el default igualmente por limpieza.
+    a2dissite 000-default 2>/dev/null || true
+    a2dissite default-ssl 2>/dev/null || true
+
+    # Endurecer: ocultar versión de Apache
+    cat > /etc/apache2/conf-available/svqpanel-security.conf << 'APACHESEC'
+ServerTokens Prod
+ServerSignature Off
+TraceEnable Off
+APACHESEC
+    a2enconf svqpanel-security
+
+    apache2ctl configtest && systemctl enable apache2 && systemctl restart apache2
+    echo -e "${GREEN}✓ Apache instalado como backend (127.0.0.1:8080)${NC}\n"
 fi
 
 ###############################################################################

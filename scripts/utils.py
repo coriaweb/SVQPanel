@@ -300,8 +300,17 @@ def generate_nginx_config(
     blocked_user_agents: Optional[list] = None,
     security_headers_enabled: bool = False,
     http3_enabled: bool = False,
+    proxy_to_apache: bool = False,
 ) -> str:
-    """Generate Nginx vhost configuration (Hestia-style paths)"""
+    """
+    Generate Nginx vhost configuration (Hestia-style paths).
+
+    Si proxy_to_apache=True, el bloque que sirve PHP se reemplaza por un
+    proxy_pass a Apache (127.0.0.1:8080), que sirve el sitio respetando los
+    .htaccess. Nginx sigue siendo el front (SSL, headers, bots, HTTP/3); solo
+    delega la ejecución del PHP+.htaccess a Apache. El resto del vhost (TLS,
+    seguridad, ficheros bloqueados) es idéntico al modo nginx puro.
+    """
 
     # Si hay redirección activa, generar vhost mínimo de 301
     if redirect_to:
@@ -389,6 +398,52 @@ def generate_nginx_config(
     cache_block     = _fastcgi_cache_block(domain, fastcgi_cache_ttl_minutes, sec_headers=_sh) if fastcgi_cache_enabled else ""
     cache_block_ssl = _fastcgi_cache_block(domain, fastcgi_cache_ttl_minutes, sec_headers=_sh_https) if fastcgi_cache_enabled else ""
 
+    # ── Bloque que ejecuta la aplicación (location / + PHP) ──
+    # Modo nginx puro: try_files + fastcgi_pass a PHP-FPM.
+    # Modo apache (proxy_to_apache): proxy_pass a Apache backend (:8080), que
+    # sirve el sitio respetando .htaccess. Nginx sigue siendo front (SSL, bots,
+    # headers); solo delega la ejecución a Apache.
+    if proxy_to_apache:
+        _proxy = (
+            "    location / {\n"
+            "        proxy_pass http://127.0.0.1:8080;\n"
+            "        proxy_set_header Host $host;\n"
+            "        proxy_set_header X-Real-IP $remote_addr;\n"
+            "        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;\n"
+            "        proxy_set_header X-Forwarded-Proto $scheme;\n"
+            "        proxy_set_header X-Forwarded-Host $host;\n"
+            "        proxy_read_timeout 300;\n"
+            "    }\n"
+        )
+        app_block_http = _proxy
+        app_block_ssl  = _proxy
+    else:
+        # Bloque clásico nginx: location / con try_files + location ~ \.php$.
+        app_block_http = (
+            f"    location / {{{rl_directive}\n"
+            f"{readonly_block}        try_files $uri $uri/ /index.php?$query_string;\n"
+            f"    }}\n\n"
+            f"    location ~ \\.php$ {{\n"
+            f"        try_files $uri =404;\n"
+            f"        fastcgi_pass php_{backend_name};\n"
+            f"        fastcgi_index index.php;\n"
+            f"        fastcgi_param SCRIPT_FILENAME $document_root$fastcgi_script_name;\n"
+            f"        include fastcgi_params;{cache_block}\n"
+            f"    }}\n"
+        )
+        app_block_ssl = (
+            f"    location / {{{rl_directive}\n"
+            f"{readonly_block}        try_files $uri $uri/ /index.php?$query_string;\n"
+            f"    }}\n\n"
+            f"    location ~ \\.php$ {{\n"
+            f"        try_files $uri =404;\n"
+            f"        fastcgi_pass php_{backend_name};\n"
+            f"        fastcgi_index index.php;\n"
+            f"        fastcgi_param SCRIPT_FILENAME $document_root$fastcgi_script_name;\n"
+            f"        include fastcgi_params;{cache_block_ssl}\n"
+            f"    }}\n"
+        )
+
     # Si force_https: el bloque HTTP solo redirige a HTTPS
     if force_https and ssl_enabled:
         http_block = f"""server {{
@@ -420,19 +475,7 @@ def generate_nginx_config(
     # Pasamos el upstream al template via variable para que los location blocks
     # de la plantilla puedan usar $phpfpm_backend en lugar del nombre hardcodeado
     set $phpfpm_backend php_{backend_name};
-{tpl_extra}{bots_block}
-    location / {{{rl_directive}
-{readonly_block}        try_files $uri $uri/ /index.php?$query_string;
-    }}
-
-    location ~ \\.php$ {{
-        try_files $uri =404;
-        fastcgi_pass php_{backend_name};
-        fastcgi_index index.php;
-        fastcgi_param SCRIPT_FILENAME $document_root$fastcgi_script_name;
-        include fastcgi_params;{cache_block_ssl}
-    }}
-
+{tpl_extra}{bots_block}{app_block_http}
     location ~ /\\.ht {{
         deny all;
     }}
@@ -481,18 +524,7 @@ server {{
 
     index index.php index.html index.htm;
 {skip_block}    set $phpfpm_backend php_{backend_name};
-{tpl_extra}{bots_block}    location / {{{rl_directive}
-{readonly_block}        try_files $uri $uri/ /index.php?$query_string;
-    }}
-
-    location ~ \\.php$ {{
-        try_files $uri =404;
-        fastcgi_pass php_{backend_name};
-        fastcgi_index index.php;
-        fastcgi_param SCRIPT_FILENAME $document_root$fastcgi_script_name;
-        include fastcgi_params;{cache_block_ssl}
-    }}
-
+{tpl_extra}{bots_block}{app_block_ssl}
     location ~ /\\.ht {{
         deny all;
     }}

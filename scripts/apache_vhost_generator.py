@@ -1,5 +1,24 @@
 """
-Apache vhost generator — paralelo a generate_nginx_config()
+Apache vhost generator — Apache como BACKEND de Nginx (arquitectura proxy).
+
+ARQUITECTURA (modo apache+nginx):
+    Internet → Nginx (:80, :443)            ← maneja SSL, HTTP/3, headers,
+                 │                             bad bots, IPv6/IPv4
+                 └─ proxy_pass → Apache (127.0.0.1:8080)
+                                   └─ sirve PHP RESPETANDO .htaccess
+
+Por eso este vhost Apache es DELIBERADAMENTE simple:
+  - Escucha solo en 127.0.0.1:8080 (no expuesto a internet).
+  - NO lleva SSL, headers de seguridad, bad bots ni redirecciones HTTPS:
+    todo eso lo hace Nginx, el front. Duplicarlo causaría doble-header y
+    conflictos.
+  - SÍ lleva `AllowOverride All` → el único motivo de tener Apache: que los
+    clientes con apps legacy puedan usar sus ficheros .htaccess (mod_rewrite,
+    deny/allow, auth básica, etc.).
+  - El PHP se sirve vía PHP-FPM (mismo socket por dominio que en Nginx).
+
+La IP real del visitante llega vía X-Forwarded-For (mod_remoteip, configurado
+en install.sh) para que los .htaccess que filtran por IP funcionen.
 """
 
 import logging
@@ -7,282 +26,112 @@ from typing import Optional
 
 logger = logging.getLogger(__name__)
 
+# Puerto del backend Apache (debe coincidir con ports.conf del install)
+APACHE_BACKEND_PORT = 8080
+APACHE_BACKEND_ADDR = f"127.0.0.1:{APACHE_BACKEND_PORT}"
+
 
 def generate_apache_vhost(
     domain_name: str,
     username: str,
     php_version: str = "8.2",
-    ssl_enabled: bool = False,
-    ipv6: Optional[str] = None,
-    ipv4: Optional[str] = None,
-    force_https: bool = False,
-    hsts: bool = False,
+    ssl_enabled: bool = False,        # ignorado: el SSL lo termina Nginx
+    ipv6: Optional[str] = None,       # ignorado: el binding público lo hace Nginx
+    ipv4: Optional[str] = None,       # ignorado
+    force_https: bool = False,        # ignorado: la redirección la hace Nginx
+    hsts: bool = False,               # ignorado: HSTS lo pone Nginx
     redirect_to: Optional[str] = None,
     custom_docroot: Optional[str] = None,
     docroot_subdir: Optional[str] = None,
-    blocked_user_agents: Optional[list] = None,
-    readonly_mode_enabled: bool = False,
+    blocked_user_agents: Optional[list] = None,  # ignorado: bots los bloquea Nginx
+    readonly_mode_enabled: bool = False,         # ignorado: readonly lo hace Nginx
     allowed_mutation_ips: Optional[str] = None,
+    php_socket_override: Optional[str] = None,
 ) -> str:
     """
-    Genera un vhost Apache2 para un dominio.
+    Genera el vhost Apache BACKEND (127.0.0.1:8080) de un dominio.
 
-    Args:
-        domain_name: Nombre del dominio (ej: example.com)
-        username: Usuario propietario del dominio
-        php_version: Versión PHP (7.4, 8.0, 8.1, 8.2, 8.3, 8.4, 8.5)
-        ssl_enabled: Si SSL está activo
-        ipv6: IPv6 opcional a bindar
-        ipv4: IPv4 opcional a bindar
-        force_https: Redirigir HTTP a HTTPS
-        hsts: Habilitar HSTS
-        redirect_to: Redirigir a otra URL
-        custom_docroot: Docroot personalizado (default: public_html)
-        docroot_subdir: Subdir dentro de public_html (ej: "app/public")
-        blocked_user_agents: Lista de user-agents a bloquear
-        readonly_mode_enabled: Desactivar PUT/DELETE/POST
-        allowed_mutation_ips: IPs que pueden hacer mutaciones en modo readonly
-
-    Returns:
-        Contenido del vhost Apache
+    Solo sirve PHP + ficheros estáticos respetando .htaccess. Todo lo de cara
+    a internet (SSL, headers, bots, redirecciones) lo gestiona el Nginx front,
+    por eso varios parámetros se aceptan por compatibilidad pero se ignoran.
     """
-    from scripts.utils import (
-        get_public_html,
-        get_domain_logs,
-    )
-
-    blocked_user_agents = blocked_user_agents or []
+    from scripts.utils import get_public_html, get_domain_logs
 
     # Docroot
     if custom_docroot:
         docroot = custom_docroot
     else:
         public_html = get_public_html(username, domain_name)
-        if docroot_subdir:
-            docroot = f"{public_html}/{docroot_subdir.lstrip('/')}"
-        else:
-            docroot = public_html
+        docroot = f"{public_html}/{docroot_subdir.lstrip('/')}" if docroot_subdir else public_html
 
     logs_dir = get_domain_logs(username, domain_name)
     access_log = f"{logs_dir}/apache.access.log"
     error_log = f"{logs_dir}/apache.error.log"
 
-    # Bind addresses
-    listen_http = "*:80"
-    listen_https = "*:443"
-    if ipv4:
-        listen_http = f"{ipv4}:80"
-        listen_https = f"{ipv4}:443"
-    if ipv6:
-        listen_http = f"[{ipv6}]:80"
-        listen_https = f"[{ipv6}]:443"
+    # Socket PHP-FPM del dominio (mismo que usa Nginx para este dominio)
+    php_socket = php_socket_override or f"/run/php/php{php_version}-fpm-svqpanel-{domain_name}.sock"
 
-    server_names = f"{domain_name} www.{domain_name}"
-    if ipv6:
-        server_names += f" [{ipv6}]"
-
-    # ─────────────────────────────────────────────────────────────────────────
-    # VHost HTTP (redirect a HTTPS si fuerza_https)
-    # ─────────────────────────────────────────────────────────────────────────
-
+    # Modo redirección: si el dominio redirige a otra URL, el Nginx front ya
+    # hace el 301; el backend Apache no necesita vhost real. Devolvemos uno
+    # mínimo que responde 410 por si acaso recibe tráfico directo.
     if redirect_to:
-        # Modo redirección: HTTP y HTTPS redirigen a redirect_to
-        vhost_http = f"""<VirtualHost {listen_http}>
+        return f"""# SVQPanel — {domain_name} (redirección gestionada por Nginx front)
+<VirtualHost {APACHE_BACKEND_ADDR}>
     ServerName {domain_name}
     ServerAlias www.{domain_name}
-
+    Redirect 410 /
     ErrorLog {error_log}
-    CustomLog {access_log} combined
-
-    # Redirigir a {redirect_to}
-    RewriteEngine On
-    RewriteRule ^(.*)$ {redirect_to}$1 [R=301,L]
+    CustomLog {access_log} svq_combined
 </VirtualHost>
 """
-        if ssl_enabled:
-            vhost_https = f"""<VirtualHost {listen_https}>
-    ServerName {domain_name}
-    ServerAlias www.{domain_name}
 
-    SSLEngine On
-    SSLCertificateFile /etc/letsencrypt/live/{domain_name}/fullchain.pem
-    SSLCertificateKeyFile /etc/letsencrypt/live/{domain_name}/privkey.pem
-    SSLProtocol TLSv1.2 TLSv1.3
-    SSLCipherSuite HIGH:!aNULL:!MD5
+    readonly_block = ""
+    if readonly_mode_enabled:
+        # Nginx ya bloquea las mutaciones en el front, pero lo replicamos como
+        # defensa en profundidad por si alguien apunta directo al backend.
+        readonly_block = _readonly_block(allowed_mutation_ips)
 
-    ErrorLog {error_log}
-    CustomLog {access_log} combined
-
-    # Redirigir a {redirect_to}
-    RewriteEngine On
-    RewriteRule ^(.*)$ {redirect_to}$1 [R=301,L]
-</VirtualHost>
-"""
-        else:
-            vhost_https = ""
-
-    else:
-        # Modo normal: servir contenido
-        vhost_http = f"""<VirtualHost {listen_http}>
+    return f"""# SVQPanel — backend Apache de {domain_name} (front: Nginx)
+# Apache solo sirve PHP + .htaccess; SSL/headers/bots los hace Nginx.
+<VirtualHost {APACHE_BACKEND_ADDR}>
     ServerName {domain_name}
     ServerAlias www.{domain_name}
     DocumentRoot {docroot}
 
     ErrorLog {error_log}
-    CustomLog {access_log} combined
+    CustomLog {access_log} svq_combined
 
-"""
-
-        # Headers de seguridad HTTP (aplica a HTTP si no fuerza HTTPS)
-        security_headers = _generate_apache_security_headers(hsts=False)
-        vhost_http += security_headers
-
-        # Bad bots blocker (Apache)
-        if blocked_user_agents:
-            bots_block = _generate_apache_bots_block(blocked_user_agents)
-            vhost_http += bots_block
-
-        # PHP-FPM (socket)
-        php_socket = f"/run/php/php{php_version}-fpm-svqpanel-{domain_name}.sock"
-        vhost_http += f"""
+    # PHP vía PHP-FPM (socket dedicado del dominio)
     <FilesMatch "\\.php$">
         SetHandler "proxy:unix:{php_socket}|fcgi://localhost"
     </FilesMatch>
 
     <Directory {docroot}>
         Options -Indexes +FollowSymLinks
+        # AllowOverride All = soporte .htaccess (el motivo de usar Apache)
         AllowOverride All
         Require all granted
     </Directory>
-"""
-
-        # Readonly mode
-        if readonly_mode_enabled:
-            vhost_http += _generate_apache_readonly_block(allowed_mutation_ips)
-
-        # Force HTTPS
-        if force_https:
-            vhost_http += f"""
-    RewriteEngine On
-    RewriteCond %{{HTTPS}} !=on
-    RewriteRule ^(.*)$ https://{{{{HTTP_HOST}}}}$1 [R=301,L]
-"""
-
-        vhost_http += """
-</VirtualHost>
-"""
-
-        # ─────────────────────────────────────────────────────────────────────────
-        # VHost HTTPS
-        # ─────────────────────────────────────────────────────────────────────────
-
-        if ssl_enabled:
-            vhost_https = f"""<VirtualHost {listen_https}>
-    ServerName {domain_name}
-    ServerAlias www.{domain_name}
-    DocumentRoot {docroot}
-
-    SSLEngine On
-    SSLCertificateFile /etc/letsencrypt/live/{domain_name}/fullchain.pem
-    SSLCertificateKeyFile /etc/letsencrypt/live/{domain_name}/privkey.pem
-    SSLProtocol TLSv1.2 TLSv1.3
-    SSLCipherSuite HIGH:!aNULL:!MD5
-
-    ErrorLog {error_log}
-    CustomLog {access_log} combined
-
-"""
-            # Headers de seguridad (HTTPS con HSTS)
-            security_headers = _generate_apache_security_headers(hsts=hsts)
-            vhost_https += security_headers
-
-            # Bad bots blocker
-            if blocked_user_agents:
-                bots_block = _generate_apache_bots_block(blocked_user_agents)
-                vhost_https += bots_block
-
-            # PHP-FPM (socket)
-            vhost_https += f"""
-    <FilesMatch "\\.php$">
-        SetHandler "proxy:unix:{php_socket}|fcgi://localhost"
+{readonly_block}
+    # Proteger ficheros sensibles aunque el .htaccess del cliente no lo haga
+    <FilesMatch "(^\\.|\\.(env|git|sql|bak|old|log|sh)$)">
+        Require all denied
     </FilesMatch>
-
-    <Directory {docroot}>
-        Options -Indexes +FollowSymLinks
-        AllowOverride All
-        Require all granted
-    </Directory>
-"""
-
-            # Readonly mode
-            if readonly_mode_enabled:
-                vhost_https += _generate_apache_readonly_block(allowed_mutation_ips)
-
-            vhost_https += """
 </VirtualHost>
 """
-        else:
-            vhost_https = ""
-
-    # Combinar
-    result = vhost_http
-    if vhost_https:
-        result += "\n" + vhost_https
-
-    return result
 
 
-def _generate_apache_security_headers(hsts: bool = False) -> str:
-    """Genera directivas Apache para headers HTTP de seguridad."""
-    headers = """    # Security Headers (SVQPanel)
-    Header always set X-Frame-Options "SAMEORIGIN"
-    Header always set X-Content-Type-Options "nosniff"
-    Header always set X-XSS-Protection "1; mode=block"
-    Header always set Referrer-Policy "strict-origin-when-cross-origin"
-    Header always set Permissions-Policy "accelerometer=(), camera=(), geolocation=(), gyroscope=(), magnetometer=(), microphone=(), payment=(), usb=()"
-"""
-    if hsts:
-        headers += '    Header always set Strict-Transport-Security "max-age=31536000; includeSubDomains; preload"\n'
-
-    return headers
-
-
-def _generate_apache_bots_block(blocked_user_agents: list) -> str:
-    """Genera bloque Apache para bloquear user-agents."""
-    if not blocked_user_agents:
-        return ""
-
+def _readonly_block(allowed_mutation_ips: Optional[str] = None) -> str:
+    """Bloquea PUT/DELETE/POST salvo IPs permitidas (defensa en profundidad)."""
     block = """
-    # Bad Bots Blocker (SVQPanel)
-    RewriteEngine On
-"""
-    for pattern in blocked_user_agents:
-        # Escapar caracteres especiales para RewriteCond
-        safe_pattern = pattern.replace('"', '\\"')
-        block += f"""    RewriteCond %{{HTTP_USER_AGENT}} {safe_pattern} [NC]
-"""
-
-    block += """    RewriteRule ^(.*)$ - [F,L]
-
-"""
-    return block
-
-
-def _generate_apache_readonly_block(allowed_mutation_ips: Optional[str] = None) -> str:
-    """Genera bloque Apache para modo readonly (bloquea PUT/DELETE/POST)."""
-    block = """
-    # Readonly Mode (SVQPanel) — bloquea PUT, DELETE, POST
+    # Readonly mode (defensa en profundidad; el front Nginx ya lo aplica)
     RewriteEngine On
     RewriteCond %{REQUEST_METHOD} ^(PUT|DELETE|POST)$ [NC]
 """
-
     if allowed_mutation_ips:
-        # allowed_mutation_ips es una cadena "ip1, ip2, ..."
         for ip in allowed_mutation_ips.split(","):
             ip = ip.strip()
-            block += f"    RewriteCond %{{REMOTE_ADDR}} !^{ip}$ [NC]\n"
-
-    block += """    RewriteRule ^(.*)$ - [F,L]
-
-"""
+            if ip:
+                block += f"    RewriteCond %{{REMOTE_ADDR}} !^{ip}$ [NC]\n"
+    block += "    RewriteRule ^(.*)$ - [F,L]\n"
     return block

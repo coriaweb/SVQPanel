@@ -394,34 +394,67 @@ class DomainManager(SystemManager):
                 webserver = "nginx"
 
         if webserver == "apache":
+            # ── Arquitectura dual: Nginx FRONT + Apache BACKEND ──
+            # 1) Vhost Apache (127.0.0.1:8080): sirve PHP respetando .htaccess.
+            # 2) Vhost Nginx (front 80/443): SSL/headers/bots + proxy_pass a Apache.
+            # Así Apache aporta .htaccess y Nginx aporta todo lo moderno.
             from scripts.apache_vhost_generator import generate_apache_vhost
             from scripts.webserver_config import get_apache_vhost_path
 
-            config_path = get_apache_vhost_path(domain_name)
-            config_content = generate_apache_vhost(
+            # 1) Apache backend
+            apache_path = get_apache_vhost_path(domain_name)
+            apache_content = generate_apache_vhost(
                 domain_name,
                 username,
                 php_version,
-                ssl_enabled=ssl_enabled,
-                ipv6=ipv6,
-                ipv4=ipv4,
-                force_https=force_https,
-                hsts=hsts,
                 redirect_to=redirect_to,
                 custom_docroot=custom_docroot,
                 docroot_subdir=docroot_subdir,
-                blocked_user_agents=blocked_user_agents or [],
                 readonly_mode_enabled=readonly_mode_enabled,
                 allowed_mutation_ips=allowed_mutation_ips,
+                php_socket_override=php_socket_override,
+            )
+            with open(apache_path, "w") as f:
+                f.write(apache_content)
+
+            # Habilitar el sitio en Apache (symlink en sites-enabled) y recargar
+            self.execute_command(["a2ensite", f"{domain_name}.conf"], check=False)
+            rc, _, err = self.execute_command(["apache2ctl", "configtest"], check=False)
+            if rc != 0:
+                raise RuntimeError(f"Apache configtest falló: {err.strip()}")
+            # Reload en background para no bloquear el panel (igual que nginx)
+            import subprocess, threading, os as _os
+            _env = _os.environ.copy()
+            _env["PATH"] = "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+            threading.Thread(
+                target=lambda: subprocess.run(
+                    ["systemctl", "reload", "apache2"], capture_output=True, env=_env),
+                daemon=True,
+            ).start()
+
+            # 2) Vhost Nginx front (proxy a Apache). Reutiliza TODA la lógica
+            #    nginx (SSL, headers, bots, HTTP/3) con proxy_to_apache=True.
+            config_path = get_nginx_config_path(domain_name)
+            config_content = generate_nginx_config(
+                domain_name, username, php_version,
+                ssl_enabled=ssl_enabled, ipv6=ipv6,
+                php_socket_override=php_socket_override,
+                template_nginx_extra=template_nginx_extra,
+                redirect_to=redirect_to, custom_docroot=custom_docroot,
+                ipv4=ipv4, force_https=force_https, hsts=hsts,
+                rate_limit_enabled=rate_limit_enabled, rate_limit_burst=rate_limit_burst,
+                docroot_subdir=docroot_subdir,
+                readonly_mode_enabled=readonly_mode_enabled,
+                allowed_mutation_ips=allowed_mutation_ips,
+                blocked_user_agents=blocked_user_agents or [],
+                security_headers_enabled=security_headers_enabled,
+                http3_enabled=http3_enabled,
+                proxy_to_apache=True,
             )
             with open(config_path, "w") as f:
                 f.write(config_content)
-
-            # Reload Apache
-            try:
-                self.execute_command(["systemctl", "reload", "apache2"])
-            except:
-                raise RuntimeError("Apache reload failed tras regenerar vhost")
+            if not reload_nginx():
+                raise RuntimeError("Nginx reload failed tras regenerar vhost (modo apache)")
 
         else:  # nginx
             if fastcgi_cache_enabled:
