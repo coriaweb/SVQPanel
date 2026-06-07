@@ -935,77 +935,189 @@ def _quota_to_mb(q: str) -> int:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Importación de DNS (zona + registros)
+# Propuesta de DNS (clasifica registros del backup; NO toca nada)
 # ─────────────────────────────────────────────────────────────────────────────
-def import_dns(backup: "HestiaBackup", zoneinfo: Dict, owner, db, report: ImportReport):
-    """Crea la zona DNS y sus registros a partir del backup."""
+# Tipos que descartamos: los nameservers y el SOA los genera SVQPanel para este
+# servidor; importar los del backup dejaría la zona apuntando al panel viejo.
+_DNS_DISCARD_TYPES = {"NS", "SOA"}
+
+
+def build_dns_proposal(zoneinfo: Dict, server_ipv4: Optional[str],
+                       server_ipv6: Optional[str], old_ip: Optional[str]) -> List[Dict]:
+    """Convierte los registros crudos del backup en una propuesta clasificada.
+
+    Cada registro propuesto: {name, type, content, ttl, priority,
+        action: 'keep'|'rewrite'|'discard', rewrite_suggested: bool,
+        original_content, new_content, note, include: bool}.
+
+    Reglas (el núcleo del fix):
+      - NS/SOA → action='discard' (los pone SVQPanel).
+      - A/AAAA cuyo content == old_ip (la IP del servidor Hestia viejo) →
+        rewrite a la IP de SVQPanel. CUALQUIER OTRA IP se MANTIENE intacta
+        (correo externo, oficina, otro hosting…).
+      - Resto (CNAME/MX/TXT/SRV/CAA…) → keep.
+    Esto es solo una SUGERENCIA: el usuario decide cada registro en la UI.
+    """
+    proposal = []
+    default_ttl = int(zoneinfo.get("ttl") or 14400)
+    for rec in zoneinfo.get("_records", []):
+        rtype = (rec.get("TYPE") or "").upper()
+        name = rec.get("RECORD") or "@"
+        content = rec.get("VALUE") or ""
+        if not rtype:
+            continue
+        try:
+            ttl = int(rec.get("TTL") or default_ttl)
+        except (ValueError, TypeError):
+            ttl = default_ttl
+        try:
+            priority = int(rec.get("PRIORITY") or 0)
+        except (ValueError, TypeError):
+            priority = 0
+
+        item = {
+            "name": name, "type": rtype, "content": content,
+            "ttl": ttl, "priority": priority,
+            "original_content": content, "new_content": content,
+            "rewrite_suggested": False, "note": "",
+        }
+
+        if rtype in _DNS_DISCARD_TYPES:
+            item["action"] = "discard"
+            item["include"] = False
+            item["note"] = "Lo genera SVQPanel (nameservers/SOA del panel)."
+        elif rtype == "A" and old_ip and content.strip() == old_ip.strip() and server_ipv4:
+            item["action"] = "rewrite"
+            item["rewrite_suggested"] = True
+            item["new_content"] = server_ipv4
+            item["include"] = True
+            item["note"] = "Apuntaba al servidor antiguo → se reescribe a este servidor."
+        elif rtype == "AAAA" and old_ip and server_ipv6 and content.strip() == (old_ip.strip()):
+            # (poco común: AAAA == old_ip textual)
+            item["action"] = "rewrite"
+            item["rewrite_suggested"] = True
+            item["new_content"] = server_ipv6
+            item["include"] = True
+            item["note"] = "Apuntaba al servidor antiguo → se reescribe a este servidor."
+        else:
+            item["action"] = "keep"
+            item["include"] = True
+            if rtype in ("A", "AAAA"):
+                item["note"] = "Apunta a otra IP (no al hosting migrado): se mantiene."
+
+        proposal.append(item)
+    return proposal
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Importación de DNS (zona + registros aprobados)
+# ─────────────────────────────────────────────────────────────────────────────
+def import_dns(backup: "HestiaBackup", zoneinfo: Dict, owner, db, report: ImportReport,
+               approved_records: Optional[List[Dict]] = None,
+               server_ipv4: Optional[str] = None, server_ipv6: Optional[str] = None):
+    """Crea la zona DNS con los registros APROBADOS por el usuario.
+
+    Si `approved_records` es None (p. ej. import por CLI sin UI), se usa la
+    propuesta automática (rewrite de la IP vieja, mantener el resto). Los NS y el
+    SOA SIEMPRE los pone SVQPanel (create_zone), nunca el backup.
+    """
     from scripts.dns_manager import DNSManager
     from api.models.models_dns import DnsZone, DnsRecord
 
     domain = zoneinfo["domain"]
-    ip = zoneinfo.get("ip")
+    old_ip = zoneinfo.get("ip")
     mgr = DNSManager()
+
+    # NS/SOA + zona base la crea SVQPanel apuntando a ESTE servidor.
     try:
-        serial = mgr.create_zone(domain, ipv4=ip)
+        serial = mgr.create_zone(domain, ipv4=server_ipv4 or old_ip)
     except PermissionError:
         serial = 2026052501
 
     zone = DnsZone(domain_name=domain, serial=serial,
-                   ip_address=ip, ttl=int(zoneinfo.get("ttl") or 14400))
+                   ip_address=server_ipv4 or old_ip, ttl=int(zoneinfo.get("ttl") or 14400))
     db.add(zone)
     db.commit()
     db.refresh(zone)
 
+    # Registros a crear: los aprobados por el usuario o, en su defecto, la
+    # propuesta automática.
+    if approved_records is None:
+        approved_records = build_dns_proposal(zoneinfo, server_ipv4, server_ipv6, old_ip)
+
     n = 0
-    for rec in zoneinfo.get("_records", []):
+    for rec in approved_records:
         try:
-            rtype = rec.get("TYPE", "").upper()
-            name = rec.get("RECORD", "@")
-            content = rec.get("VALUE", "")
-            if not rtype or not content:
+            if not rec.get("include", True):
+                continue
+            rtype = (rec.get("type") or "").upper()
+            if not rtype or rtype in _DNS_DISCARD_TYPES:
+                continue
+            # El valor final: si la acción es rewrite usamos new_content; si no,
+            # el content (que el usuario pudo editar en la UI).
+            if rec.get("action") == "rewrite":
+                content = rec.get("new_content") or rec.get("content") or ""
+            else:
+                content = rec.get("content") or ""
+            if not content:
                 continue
             db.add(DnsRecord(
                 zone_id=zone.id,
                 record_type=rtype,
-                name=name,
+                name=rec.get("name") or "@",
                 content=content,
-                ttl=int(rec.get("TTL") or zoneinfo.get("ttl") or 14400),
-                priority=int(rec.get("PRIORITY") or 0),
+                ttl=int(rec.get("ttl") or zoneinfo.get("ttl") or 14400),
+                priority=int(rec.get("priority") or 0),
             ))
             n += 1
         except Exception:
             continue
     db.commit()
 
-    # Reescribir la zona en BIND con los registros importados, si es posible.
+    # Reescribir la zona en BIND con los registros aprobados, si es posible.
     try:
         all_zones = [z.domain_name for z in db.query(DnsZone).filter(DnsZone.is_active == True).all()]
         mgr.reload_zone(domain, all_zones)
     except Exception:
         pass
 
-    report.ok("dns", domain, f"{n} registro(s)")
+    report.ok("dns", domain, f"{n} registro(s) (NS/SOA de SVQPanel)")
 
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Orquestador de la importación (lo invoca el job en segundo plano)
 # ─────────────────────────────────────────────────────────────────────────────
-def run_import(tar_path: str, target_user_id: int, scope: List[str], db) -> Dict:
+def run_import(tar_path: str, target_user_id: int, scope: List[str], db,
+               dns_records: Optional[Dict[str, List[Dict]]] = None) -> Dict:
     """Importa el backup al usuario destino. Devuelve el informe (dict).
 
     `scope`: subconjunto de {'web','db','mail','dns'}. Asume que el preflight de
     conflictos ya pasó (terreno limpio). Cada recurso se registra en el informe;
     un fallo en uno no aborta los demás.
+    `dns_records`: {domain: [registros aprobados]} desde la UI. Si una zona no
+    está, se usa la propuesta automática.
     """
     from api.models.models_user import User
 
     report = ImportReport()
+    dns_records = dns_records or {}
     owner = db.query(User).filter(User.id == target_user_id).first()
     if not owner:
         raise HestiaImportError("El usuario destino no existe.")
     if owner.role == "admin" or owner.is_admin:
         raise HestiaImportError(
             "El destino no puede ser un administrador; elige una cuenta de cliente.")
+
+    # IPs de ESTE servidor (destino de las reescrituras).
+    server_ipv4 = server_ipv6 = None
+    try:
+        from api.models.models_settings import Settings as _S
+        _s = db.query(_S).filter(_S.id == 1).first()
+        if _s:
+            server_ipv4 = _s.server_ipv4 or None
+            server_ipv6 = getattr(_s, "server_ipv6", None) or None
+    except Exception:
+        pass
 
     with HestiaBackup(tar_path) as backup:
         manifest = backup.analyze()
@@ -1037,7 +1149,10 @@ def run_import(tar_path: str, target_user_id: int, scope: List[str], db) -> Dict
         if "dns" in scope:
             for zoneinfo in manifest["dns"]:
                 try:
-                    import_dns(backup, zoneinfo, owner, db, report)
+                    approved = dns_records.get(zoneinfo["domain"])
+                    import_dns(backup, zoneinfo, owner, db, report,
+                               approved_records=approved,
+                               server_ipv4=server_ipv4, server_ipv6=server_ipv6)
                 except Exception as e:
                     db.rollback()
                     report.fail("dns", zoneinfo["domain"], e)

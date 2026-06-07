@@ -118,6 +118,49 @@
         </div>
       </div>
 
+      <!-- Revisión de zonas DNS (tabla editable) -->
+      <div v-if="manifest.dns.length && scope.includes('dns')" class="mig-dns">
+        <div class="mig-dnsnote">
+          <i class="bi bi-info-circle"></i>
+          Los <strong>NS</strong> y el <strong>SOA</strong> los genera SVQPanel (nameservers del panel) — recuerda delegar el dominio a ns1/ns2 de SVQPanel.
+          Los registros <strong>A</strong> que apuntaban al servidor antiguo ({{ dnsZones[0]?.old_ip || 'IP vieja' }}) se reescriben a este servidor ({{ dnsZones[0]?.server_ipv4 || '' }}); el resto se mantiene. Revisa y ajusta lo que quieras.
+        </div>
+
+        <div v-for="z in dnsZones" :key="'dz'+z.domain" class="mig-dnszone">
+          <button class="mig-dnshdr" @click="z._open = !z._open">
+            <i class="bi" :class="z._open ? 'bi-chevron-down' : 'bi-chevron-right'"></i>
+            <strong>{{ z.domain }}</strong>
+            <span class="dd-muted">· {{ z.records.filter(r => r.include).length }}/{{ z.records.length }} a importar</span>
+          </button>
+          <div v-if="z._open" class="mig-dnstbl-wrap">
+            <table class="mig-table mig-dnstbl">
+              <thead><tr><th></th><th>Nombre</th><th>Tipo</th><th>Valor</th><th>TTL</th><th>Acción</th></tr></thead>
+              <tbody>
+                <tr v-for="(r,ri) in z.records" :key="ri" :class="{ 'is-discard': r.type==='NS'||r.type==='SOA', 'is-off': !r.include }">
+                  <td><input type="checkbox" v-model="r.include" :disabled="r.type==='NS'||r.type==='SOA'" /></td>
+                  <td class="mono">{{ r.name }}</td>
+                  <td>{{ r.type }}</td>
+                  <td>
+                    <template v-if="r.type==='NS'||r.type==='SOA'"><span class="dd-muted mono">{{ r.content }}</span></template>
+                    <template v-else-if="r.action==='rewrite'">
+                      <input class="svq-input mono mig-dnsinput" v-model="r.new_content" />
+                      <span class="mig-old">antes: {{ r.original_content }}</span>
+                    </template>
+                    <input v-else class="svq-input mono mig-dnsinput" v-model="r.content" />
+                  </td>
+                  <td><input class="svq-input mono mig-dnsttl" v-model.number="r.ttl" :disabled="r.type==='NS'||r.type==='SOA'" /></td>
+                  <td>
+                    <span v-if="r.type==='NS'||r.type==='SOA'" class="mig-badge mig-badge--discard">descartado</span>
+                    <span v-else-if="r.action==='rewrite'" class="mig-badge mig-badge--rewrite" :title="r.note">reescrito → SVQ</span>
+                    <span v-else class="mig-badge mig-badge--keep" :title="r.note">se mantiene</span>
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+
       <!-- Conflictos: bloquean la importación -->
       <div v-if="manifest.conflicts.length" class="mig-conflicts">
         <p class="mig-conflicts__title"><i class="bi bi-x-octagon-fill"></i> No se puede importar: hay recursos que ya existen</p>
@@ -200,6 +243,7 @@ export default {
     const analyzing = ref(false)
     const importing = ref(false)
     const manifest = ref(null)
+    const dnsZones = ref([])   // zonas DNS con registros editables (clon de proposed_records)
     const job = ref(null)
     let pollTimer = null
 
@@ -226,7 +270,7 @@ export default {
 
     const onFile = (e) => { file.value = e.target.files?.[0] || null }
 
-    const _formData = () => {
+    const _formData = (forImport = false) => {
       const fd = new FormData()
       if (source.value === 'upload' && file.value) fd.append('file', file.value)
       else if (source.value === 'path') fd.append('path', serverPath.value.trim())
@@ -241,14 +285,28 @@ export default {
       }
       fd.append('target_user_id', String(targetUserId.value))
       fd.append('scope', scope.value.join(','))
+      // En la importación, enviar los registros DNS aprobados/editados.
+      if (forImport && scope.value.includes('dns') && dnsZones.value.length) {
+        const payload = {}
+        for (const z of dnsZones.value) payload[z.domain] = z.records
+        fd.append('dns_records', JSON.stringify(payload))
+      }
       return fd
     }
 
     const analyze = async () => {
-      analyzing.value = true; manifest.value = null; job.value = null
+      analyzing.value = true; manifest.value = null; job.value = null; dnsZones.value = []
       try {
         const r = await api.hestiaAnalyze(_formData())
         manifest.value = r.data
+        // Clonar las zonas DNS para edición local (registros + estado abierto).
+        dnsZones.value = (r.data.dns || []).map((z, i) => ({
+          domain: z.domain,
+          old_ip: z.old_ip,
+          server_ipv4: z.server_ipv4,
+          _open: i === 0,   // la primera abierta por defecto
+          records: (z.proposed_records || []).map(rec => ({ ...rec })),
+        }))
       } catch (e) {
         store.showNotification('Error analizando: ' + e.message, 'danger')
       } finally { analyzing.value = false }
@@ -258,7 +316,7 @@ export default {
       if (!confirm(`¿Importar el backup a la cuenta «${targetUsername.value}»? Se crearán los recursos en el servidor.`)) return
       importing.value = true
       try {
-        const r = await api.hestiaImport(_formData())
+        const r = await api.hestiaImport(_formData(true))
         const jobId = r.data.job_id
         job.value = { status: 'pending', report: null }
         _poll(jobId)
@@ -290,7 +348,7 @@ export default {
 
     return {
       source, file, serverPath, url, ssh, targetUserId, clientUsers, scope, scopeOptions,
-      analyzing, importing, manifest, job, canAnalyze, mailAccounts, targetUsername,
+      analyzing, importing, manifest, dnsZones, job, canAnalyze, mailAccounts, targetUsername,
       onFile, analyze, startImport,
     }
   },
@@ -348,4 +406,22 @@ input[type="file"].svq-input { padding: var(--sp-2); height: auto; }
 .mig-pw { margin-top: var(--sp-3); }
 .mig-errs { margin-top: var(--sp-3); font-size: var(--fs-sm); color: var(--danger); }
 .mono { font-family: var(--font-mono, monospace); }
+
+/* Revisión DNS */
+.mig-dns { margin-top: var(--sp-4); padding-top: var(--sp-4); border-top: 1px solid var(--border); }
+.mig-dnsnote { display: flex; gap: .5rem; padding: .6rem .8rem; border-radius: var(--radius-md); background: var(--surface-inset); color: var(--text-secondary); font-size: var(--fs-sm); margin-bottom: var(--sp-3); }
+.mig-dnszone { border: 1px solid var(--border); border-radius: var(--radius-md); margin-bottom: var(--sp-3); overflow: hidden; }
+.mig-dnshdr { width: 100%; display: flex; align-items: center; gap: .5rem; padding: .6rem .8rem; background: var(--surface-inset); border: none; cursor: pointer; color: var(--text); font-size: var(--fs-base); text-align: left; }
+.mig-dnshdr:hover { background: var(--surface-2); }
+.mig-dnstbl-wrap { overflow-x: auto; }
+.mig-dnstbl td { vertical-align: middle; }
+.mig-dnstbl tr.is-discard { opacity: .6; }
+.mig-dnstbl tr.is-off { opacity: .45; }
+.mig-dnsinput { height: 30px; min-width: 200px; display: inline-block; }
+.mig-dnsttl { height: 30px; width: 80px; }
+.mig-old { display: block; font-size: .7rem; color: var(--text-muted); margin-top: 2px; }
+.mig-badge { font-size: .68rem; padding: 1px 7px; border-radius: 999px; white-space: nowrap; }
+.mig-badge--keep { background: var(--surface-inset); color: var(--text-secondary); }
+.mig-badge--rewrite { background: color-mix(in srgb, var(--warning) 18%, transparent); color: var(--warning); }
+.mig-badge--discard { background: color-mix(in srgb, var(--danger) 14%, transparent); color: var(--danger); }
 </style>

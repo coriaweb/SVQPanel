@@ -233,12 +233,31 @@ async def hestia_analyze(
     from scripts.hestia_import import HestiaBackup, find_conflicts, HestiaImportError, has_zstd
 
     ssh = _ssh_from_form(ssh_host, ssh_user, ssh_password, ssh_key, ssh_port, hestia_user)
+    from scripts.hestia_import import build_dns_proposal
+
+    # IPs de ESTE servidor (destino de las reescrituras de A/AAAA).
+    server_ipv4 = server_ipv6 = None
+    try:
+        from api.models.models_settings import Settings as _S
+        _s = db.query(_S).filter(_S.id == 1).first()
+        if _s:
+            server_ipv4 = _s.server_ipv4 or None
+            server_ipv6 = getattr(_s, "server_ipv6", None) or None
+    except Exception:
+        pass
+
     tar_path = await _receive_backup(file, path, url, ssh)
     cleanup = _is_temp_upload(tar_path)
     try:
         with HestiaBackup(tar_path) as backup:
             manifest = backup.analyze()
             conflicts = find_conflicts(manifest, db)
+            # Propuesta DNS por zona (clasifica reescrituras) — dentro del with
+            # porque necesita los _records antes de limpiar el tmp.
+            dns_proposals = {}
+            for z in manifest["dns"]:
+                dns_proposals[z["domain"]] = build_dns_proposal(
+                    z, server_ipv4, server_ipv6, z.get("ip"))
     except HestiaImportError as e:
         raise HTTPException(status_code=422, detail=str(e))
     except Exception as e:
@@ -271,7 +290,11 @@ async def hestia_analyze(
             "db": _clean(manifest["db"]),
             "mail": [{**{k: v for k, v in m.items() if not k.startswith("_")},
                       "accounts_count": len(m["accounts"])} for m in manifest["mail"]],
-            "dns": _clean(manifest["dns"]),
+            "dns": [{**{k: v for k, v in z.items() if not k.startswith("_")},
+                     "old_ip": z.get("ip"),
+                     "server_ipv4": server_ipv4,
+                     "proposed_records": dns_proposals.get(z["domain"], [])}
+                    for z in manifest["dns"]],
             "conflicts": conflicts,
             "importable": len(conflicts) == 0,
             "warnings": warnings,
@@ -282,7 +305,8 @@ async def hestia_analyze(
 # ─────────────────────────────────────────────────────────────────────────────
 # Importación (background) — solo si el preflight de conflictos pasa
 # ─────────────────────────────────────────────────────────────────────────────
-def _run_import_job(job_id: int, tar_path: str, cleanup_tar: bool):
+def _run_import_job(job_id: int, tar_path: str, cleanup_tar: bool,
+                    dns_records: dict = None):
     """Ejecuta la importación en segundo plano y actualiza el MigrationJob."""
     import json
     from scripts.hestia_import import run_import
@@ -298,7 +322,8 @@ def _run_import_job(job_id: int, tar_path: str, cleanup_tar: bool):
         db.commit()
 
         scope = [s for s in (job.scope or "").split(",") if s]
-        report = run_import(tar_path, job.target_user_id, scope, db)
+        report = run_import(tar_path, job.target_user_id, scope, db,
+                            dns_records=dns_records)
 
         job.report_json = json.dumps(report, ensure_ascii=False)
         job.status = "failed" if report["summary"]["errors"] and not report["summary"]["created"] else "success"
@@ -338,6 +363,7 @@ async def hestia_import(
     hestia_user: Optional[str] = Form(None),
     target_user_id: int = Form(...),
     scope: str = Form("web,db,mail,dns"),
+    dns_records: Optional[str] = Form(None),
     db: Session = Depends(get_db),
     current_user: User = Depends(require_admin),
 ):
@@ -346,10 +372,21 @@ async def hestia_import(
     Hace el preflight de conflictos: si hay alguno, ABORTA con 409 (no toca nada).
     Si no, crea un MigrationJob y lanza la importación en background; devuelve el
     job_id para hacer polling de su estado.
+
+    `dns_records`: JSON `{dominio: [registros aprobados]}` con la edición que el
+    admin hizo en la UI. Si falta una zona, se usa la propuesta automática.
     """
     import json
     from scripts.hestia_import import HestiaBackup, find_conflicts, HestiaImportError
     from api.models.models_migration import MigrationJob
+
+    # Parsear los registros DNS aprobados (si vienen de la UI).
+    dns_records_parsed = None
+    if dns_records:
+        try:
+            dns_records_parsed = json.loads(dns_records)
+        except (ValueError, TypeError):
+            raise HTTPException(status_code=400, detail="dns_records no es un JSON válido")
 
     # Validar usuario destino (cliente, no admin)
     target = db.query(User).filter(User.id == target_user_id).first()
@@ -398,7 +435,8 @@ async def hestia_import(
     db.commit()
     db.refresh(job)
 
-    background_tasks.add_task(_run_import_job, job.id, tar_path, cleanup_tar)
+    background_tasks.add_task(_run_import_job, job.id, tar_path, cleanup_tar,
+                              dns_records_parsed)
     return {"status": "success", "data": {"job_id": job.id, "status": "pending"}}
 
 
