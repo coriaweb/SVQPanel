@@ -87,6 +87,143 @@ def parse_conf_multi(text: str, key_field: str) -> List[Dict[str, str]]:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# Parser de ficheros de zona BIND (cPanel guarda dnszones/{dominio}.db así)
+# ─────────────────────────────────────────────────────────────────────────────
+_BIND_TYPES = ("A", "AAAA", "CNAME", "MX", "TXT", "NS", "SRV", "CAA", "PTR", "SPF")
+
+
+def parse_bind_zone(text: str, domain: str):
+    """Parsea un fichero de zona BIND a (records, old_ip).
+
+    `records`: lista de dicts {RECORD, TYPE, VALUE, PRIORITY, TTL} (mismo formato
+    que produce el parser de Hestia, para reutilizar todo el pipeline DNS).
+    `old_ip`: la IP del registro A del dominio raíz (@), para sugerir reescritura.
+
+    Es tolerante: maneja $TTL, $ORIGIN, nombres relativos/FQDN/@, TTL por línea,
+    el "nombre heredado" (líneas que empiezan con espacios reusan el último
+    nombre), y SOA multilínea (que se ignora — el SOA lo genera SVQPanel).
+    """
+    records = []
+    old_ip = None
+    default_ttl = 14400
+    origin = domain.rstrip(".") + "."
+    last_name = "@"
+    in_soa = False
+    soa_paren_depth = 0
+
+    fqdn = domain.rstrip(".") + "."
+
+    def _rel_name(name: str) -> str:
+        """Convierte un nombre a relativo al dominio (@ para la raíz)."""
+        if name in ("@", origin):
+            return "@"
+        n = name.rstrip(".")
+        d = domain.rstrip(".")
+        if n == d:
+            return "@"
+        if n.endswith("." + d):
+            return n[: -(len(d) + 1)]
+        return name  # ya relativo o de otra zona
+
+    for raw in text.splitlines():
+        line = raw.rstrip()
+        # Quitar comentarios (; …) respetando que no estén dentro de comillas.
+        if ";" in line and '"' not in line.split(";", 1)[0]:
+            line = line.split(";", 1)[0].rstrip()
+        if not line.strip():
+            continue
+
+        # Directivas
+        up = line.strip()
+        if up.startswith("$TTL"):
+            m = re.search(r"\$TTL\s+(\d+)", up)
+            if m:
+                default_ttl = int(m.group(1))
+            continue
+        if up.startswith("$ORIGIN"):
+            m = re.search(r"\$ORIGIN\s+(\S+)", up)
+            if m:
+                origin = m.group(1)
+            continue
+
+        # Gestionar SOA multilínea entre paréntesis (lo ignoramos por completo).
+        if in_soa:
+            soa_paren_depth += line.count("(") - line.count(")")
+            if soa_paren_depth <= 0:
+                in_soa = False
+            continue
+        if re.search(r"\bSOA\b", line):
+            soa_paren_depth = line.count("(") - line.count(")")
+            if soa_paren_depth > 0:
+                in_soa = True
+            continue
+
+        # Tokenizar respetando comillas (para TXT con espacios).
+        tokens = _tokenize_zone_line(line)
+        if not tokens:
+            continue
+
+        # Determinar si la línea empieza con un nombre o hereda el anterior.
+        starts_with_ws = raw[:1] in (" ", "\t")
+        idx = 0
+        if starts_with_ws:
+            name = last_name
+        else:
+            name = tokens[0]
+            last_name = name
+            idx = 1
+
+        # Saltar TTL y clase (IN) hasta encontrar el tipo.
+        ttl = default_ttl
+        rtype = None
+        while idx < len(tokens):
+            tok = tokens[idx].upper()
+            if tok.isdigit():
+                ttl = int(tokens[idx]); idx += 1; continue
+            if tok in ("IN", "CH", "HS"):
+                idx += 1; continue
+            if tok in _BIND_TYPES:
+                rtype = tok; idx += 1; break
+            # token desconocido en posición de tipo → abortar esta línea
+            break
+
+        if not rtype or idx > len(tokens):
+            continue
+        value_tokens = tokens[idx:]
+        if not value_tokens:
+            continue
+
+        priority = 0
+        if rtype in ("MX", "SRV") and value_tokens and value_tokens[0].isdigit():
+            priority = int(value_tokens[0])
+            value_tokens = value_tokens[1:]
+        value = " ".join(value_tokens).strip()
+        if rtype == "TXT":
+            value = value.strip('"')
+        else:
+            value = value.rstrip(".") if value.endswith(".") and rtype in ("CNAME", "NS", "MX", "SRV", "PTR") else value
+
+        rel = _rel_name(name)
+        if rtype == "A" and rel == "@" and old_ip is None:
+            old_ip = value
+
+        records.append({
+            "RECORD": rel, "TYPE": rtype, "VALUE": value,
+            "PRIORITY": str(priority), "TTL": str(ttl),
+        })
+
+    return records, old_ip
+
+
+def _tokenize_zone_line(line: str) -> List[str]:
+    """Tokeniza una línea de zona BIND respetando comillas dobles (TXT)."""
+    tokens = []
+    for m in re.finditer(r'"[^"]*"|\S+', line.strip()):
+        tokens.append(m.group(0))
+    return tokens
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # Extracción segura de tar (anti path-traversal)
 # ─────────────────────────────────────────────────────────────────────────────
 def _is_within(base: str, target: str) -> bool:
@@ -568,12 +705,13 @@ def import_web(backup: "HestiaBackup", web: Dict, owner, db, report: ImportRepor
     # 1) Crear la estructura del dominio (dirs, pool PHP, vhost base)
     mgr.create_domain(owner.username, domain_name, php_version)
 
-    # 2) Restaurar el contenido (domain_data.tar → public_html)
+    # 2) Restaurar el contenido. Hestia trae un domain_data.tar.gz (_data_tar);
+    #    cPanel trae los archivos ya descomprimidos en una carpeta (_data_dir).
     data_tar = web.get("_data_tar")
+    data_dir = web.get("_data_dir")
     public_html = f"/home/{owner.username}/web/{domain_name}/public_html"
-    if data_tar and os.path.isfile(data_tar):
-        # El domain_data de Hestia contiene public_html/ (y a veces otros dirs).
-        # Extraemos a la raíz web del dominio para respetar esa estructura.
+    has_data = (data_tar and os.path.isfile(data_tar)) or (data_dir and os.path.isdir(data_dir))
+    if has_data:
         web_root = f"/home/{owner.username}/web/{domain_name}"
         # Quitar el index.html placeholder del panel ANTES de copiar, para que
         # no conviva con el index.php del sitio importado (Apache/nginx
@@ -583,7 +721,12 @@ def import_web(backup: "HestiaBackup", web: Dict, owner, db, report: ImportRepor
             _clean_placeholders(public_html)
         except Exception:
             pass
-        _restore_web_files(data_tar, web_root, public_html)
+        if data_dir and os.path.isdir(data_dir):
+            # cPanel: el documentroot del dominio ya es su public_html → copiamos
+            # su CONTENIDO directamente al public_html creado por el panel.
+            _copy_into(data_dir, public_html)
+        else:
+            _restore_web_files(data_tar, web_root, public_html)
         # Permisos: todo al usuario del dominio (ver svqpanel-php-pool-user)
         import subprocess
         subprocess.run(["chown", "-R", f"{owner.username}:{owner.username}", web_root],
@@ -623,7 +766,7 @@ def import_web(backup: "HestiaBackup", web: Dict, owner, db, report: ImportRepor
         report.fail("web-vhost", domain_name, f"vhost no regenerado: {e}")
 
     report.ok("web", domain_name, f"PHP {php_version}"
-              + (" + archivos" if data_tar else " (sin datos)") + php_note)
+              + (" + archivos" if has_data else " (sin datos)") + php_note)
     return db_domain
 
 
@@ -897,17 +1040,29 @@ def import_mail(backup: "HestiaBackup", mailinfo: Dict, owner, db, report: Impor
         except Exception as e:
             report.fail("mail-account", email, e)
 
-    # 3) Restaurar maildirs reales (accounts.tar) por encima de la estructura.
+    # 3) Restaurar los maildir reales. Hestia los trae en accounts.tar(.gz);
+    #    cPanel los trae descomprimidos en una carpeta (_accounts_dir).
+    acc_dir = mailinfo.get("_accounts_dir")
     acc_tar = mailinfo.get("accounts_tar")
-    if not acc_tar:
+    if not acc_tar and not acc_dir and hasattr(backup, "_find_data_archive"):
         acc_tar = backup._find_data_archive("mail", domain, "accounts")
-    if acc_tar and os.path.isfile(acc_tar):
-        try:
+    try:
+        if acc_dir and os.path.isdir(acc_dir):
+            _restore_maildirs_dir(acc_dir, owner.username, domain)
+        elif acc_tar and os.path.isfile(acc_tar):
             _restore_maildirs(acc_tar, owner.username, domain)
-        except Exception as e:
-            report.fail("mail-data", domain, f"maildir no restaurado: {e}")
+    except Exception as e:
+        report.fail("mail-data", domain, f"maildir no restaurado: {e}")
 
     report.ok("mail", domain, f"{n_ok} buzón(es)")
+
+
+def _restore_maildirs_dir(src_dir: str, panel_username: str, domain: str) -> None:
+    """Copia los maildir ya descomprimidos (cPanel) al mail dir del dominio."""
+    import subprocess
+    dest = f"/home/{panel_username}/mail/{domain}"
+    _copy_into(src_dir, dest)
+    subprocess.run(["chown", "-R", "vmail:vmail", dest], capture_output=True)
 
 
 def _restore_maildirs(acc_tar: str, panel_username: str, domain: str) -> None:
@@ -1094,8 +1249,21 @@ def import_dns(backup: "HestiaBackup", zoneinfo: Dict, owner, db, report: Import
 # ─────────────────────────────────────────────────────────────────────────────
 # Orquestador de la importación (lo invoca el job en segundo plano)
 # ─────────────────────────────────────────────────────────────────────────────
+def open_backup(source_panel: str, tar_path: str):
+    """Factory: devuelve el backup adecuado según el panel de origen.
+
+    Tanto HestiaBackup como CpanelBackup exponen analyze() y son context managers,
+    así que el resto del pipeline los usa indistintamente.
+    """
+    if (source_panel or "hestia").lower() == "cpanel":
+        from scripts.cpanel_import import CpanelBackup
+        return CpanelBackup(tar_path)
+    return HestiaBackup(tar_path)
+
+
 def run_import(tar_path: str, target_user_id: int, scope: List[str], db,
-               dns_records: Optional[Dict[str, List[Dict]]] = None) -> Dict:
+               dns_records: Optional[Dict[str, List[Dict]]] = None,
+               source_panel: str = "hestia") -> Dict:
     """Importa el backup al usuario destino. Devuelve el informe (dict).
 
     `scope`: subconjunto de {'web','db','mail','dns'}. Asume que el preflight de
@@ -1103,6 +1271,7 @@ def run_import(tar_path: str, target_user_id: int, scope: List[str], db,
     un fallo en uno no aborta los demás.
     `dns_records`: {domain: [registros aprobados]} desde la UI. Si una zona no
     está, se usa la propuesta automática.
+    `source_panel`: 'hestia' | 'cpanel'.
     """
     from api.models.models_user import User
 
@@ -1131,7 +1300,7 @@ def run_import(tar_path: str, target_user_id: int, scope: List[str], db,
     except Exception:
         pass
 
-    with HestiaBackup(tar_path) as backup:
+    with open_backup(source_panel, tar_path) as backup:
         manifest = backup.analyze()
 
         if "web" in scope:

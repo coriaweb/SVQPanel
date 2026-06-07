@@ -3,13 +3,20 @@
     <div class="page-head">
       <div>
         <h1 class="page-head__title">Migrar desde otro panel</h1>
-        <p class="page-head__sub">Importa un backup de HestiaCP (.tar) y recrea sus webs, bases de datos, correo y DNS en SVQPanel.</p>
+        <p class="page-head__sub">Importa un backup de HestiaCP o cPanel y recrea sus webs, bases de datos, correo y DNS en SVQPanel.</p>
       </div>
     </div>
 
     <!-- Paso 1: origen + destino -->
     <BaseCard title="1 · Origen del backup y destino" icon="box-arrow-in-down">
       <div class="mig-grid">
+        <label class="mig-field">
+          <span>Panel de origen</span>
+          <select class="svq-select" v-model="sourcePanel">
+            <option value="hestia">HestiaCP</option>
+            <option value="cpanel">cPanel</option>
+          </select>
+        </label>
         <label class="mig-field">
           <span>Origen</span>
           <select class="svq-select" v-model="source">
@@ -21,8 +28,8 @@
         </label>
 
         <label class="mig-field" v-if="source === 'upload'">
-          <span>Archivo de backup (.tar)</span>
-          <input type="file" accept=".tar" class="svq-input" @change="onFile" />
+          <span>Archivo de backup ({{ sourcePanel === 'cpanel' ? '.tar.gz' : '.tar' }})</span>
+          <input type="file" accept=".tar,.gz,.tgz" class="svq-input" @change="onFile" />
         </label>
         <label class="mig-field" v-else-if="source === 'path'">
           <span>Ruta del .tar en el servidor</span>
@@ -33,6 +40,16 @@
           <input class="svq-input mono" v-model="url" placeholder="https://servidor/backup/usuario.tar" />
         </label>
       </div>
+
+      <p class="mig-hint dd-muted">
+        <i class="bi bi-info-circle"></i>
+        <template v-if="sourcePanel === 'cpanel'">
+          Backup completo de cPanel (cpmove). En cPanel: <strong>Archivos → Copia de seguridad → Descargar una copia de seguridad completa</strong>, o por terminal <code>/scripts/pkgacct usuario</code>. El archivo es un <code>.tar.gz</code> que empieza por <code>cpmove-</code> o <code>backup-</code>.
+        </template>
+        <template v-else>
+          Backup de usuario de HestiaCP. En el servidor Hestia: <code>v-backup-user usuario</code> (queda en <code>/backup/</code>), o con el origen «SSH» el panel lo genera y lo trae solo.
+        </template>
+      </p>
 
       <!-- Campos SSH (origen = ssh) -->
       <div v-if="source === 'ssh'" class="mig-grid mig-ssh">
@@ -228,6 +245,7 @@ export default {
   components: { BaseCard, BaseButton },
   setup() {
     const store = useMainStore()
+    const sourcePanel = ref('hestia')
     const source = ref('upload')
     const file = ref(null)
     const serverPath = ref('')
@@ -285,6 +303,7 @@ export default {
       }
       fd.append('target_user_id', String(targetUserId.value))
       fd.append('scope', scope.value.join(','))
+      fd.append('source_panel', sourcePanel.value)
       // En la importación, enviar los registros DNS aprobados/editados.
       if (forImport && scope.value.includes('dns') && dnsZones.value.length) {
         const payload = {}
@@ -347,7 +366,7 @@ export default {
     loadUsers()
 
     return {
-      source, file, serverPath, url, ssh, targetUserId, clientUsers, scope, scopeOptions,
+      sourcePanel, source, file, serverPath, url, ssh, targetUserId, clientUsers, scope, scopeOptions,
       analyzing, importing, manifest, dnsZones, job, canAnalyze, mailAccounts, targetUsername,
       onFile, analyze, startImport,
     }

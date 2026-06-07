@@ -224,19 +224,21 @@ async def hestia_analyze(
     ssh_port: Optional[int] = Form(None),
     hestia_user: Optional[str] = Form(None),
     scope: str = Form("web,db,mail,dns"),
+    source_panel: str = Form("hestia"),
     db: Session = Depends(get_db),
     current_user: User = Depends(require_admin),
 ):
-    """Analiza un backup de Hestia y devuelve manifiesto + conflictos.
+    """Analiza un backup (Hestia o cPanel) y devuelve manifiesto + conflictos.
 
     No crea nada en el sistema; solo lee el backup y compara con la BD del panel.
     Los conflictos se comprueban SOLO para lo que se va a importar (`scope`).
     """
-    from scripts.hestia_import import HestiaBackup, find_conflicts, HestiaImportError, has_zstd
+    from scripts.hestia_import import (
+        open_backup, find_conflicts, HestiaImportError, has_zstd, build_dns_proposal)
+    from scripts.cpanel_import import CpanelImportError
 
     scope_list = [s for s in scope.split(",") if s]
     ssh = _ssh_from_form(ssh_host, ssh_user, ssh_password, ssh_key, ssh_port, hestia_user)
-    from scripts.hestia_import import build_dns_proposal
 
     # IPs de ESTE servidor (destino de las reescrituras de A/AAAA). Reusa el
     # helper de dns.py que, si no está en Settings, la autodetecta del sistema.
@@ -257,7 +259,7 @@ async def hestia_analyze(
     tar_path = await _receive_backup(file, path, url, ssh)
     cleanup = _is_temp_upload(tar_path)
     try:
-        with HestiaBackup(tar_path) as backup:
+        with open_backup(source_panel, tar_path) as backup:
             manifest = backup.analyze()
             conflicts = find_conflicts(manifest, db, scope_list)
             # Propuesta DNS por zona (clasifica reescrituras) — dentro del with
@@ -266,10 +268,10 @@ async def hestia_analyze(
             for z in manifest["dns"]:
                 dns_proposals[z["domain"]] = build_dns_proposal(
                     z, server_ipv4, server_ipv6, z.get("ip"))
-    except HestiaImportError as e:
+    except (HestiaImportError, CpanelImportError) as e:
         raise HTTPException(status_code=422, detail=str(e))
     except Exception as e:
-        logger.exception("Error analizando backup Hestia")
+        logger.exception("Error analizando backup")
         raise HTTPException(status_code=500, detail=f"Error analizando el backup: {e}")
     finally:
         if cleanup and os.path.exists(tar_path):
@@ -331,7 +333,8 @@ def _run_import_job(job_id: int, tar_path: str, cleanup_tar: bool,
 
         scope = [s for s in (job.scope or "").split(",") if s]
         report = run_import(tar_path, job.target_user_id, scope, db,
-                            dns_records=dns_records)
+                            dns_records=dns_records,
+                            source_panel=job.source_kind or "hestia")
 
         job.report_json = json.dumps(report, ensure_ascii=False)
         job.status = "failed" if report["summary"]["errors"] and not report["summary"]["created"] else "success"
@@ -372,10 +375,11 @@ async def hestia_import(
     target_user_id: int = Form(...),
     scope: str = Form("web,db,mail,dns"),
     dns_records: Optional[str] = Form(None),
+    source_panel: str = Form("hestia"),
     db: Session = Depends(get_db),
     current_user: User = Depends(require_admin),
 ):
-    """Importa un backup de Hestia al usuario destino (en segundo plano).
+    """Importa un backup (Hestia o cPanel) al usuario destino (en segundo plano).
 
     Hace el preflight de conflictos: si hay alguno, ABORTA con 409 (no toca nada).
     Si no, crea un MigrationJob y lanza la importación en background; devuelve el
@@ -385,7 +389,8 @@ async def hestia_import(
     admin hizo en la UI. Si falta una zona, se usa la propuesta automática.
     """
     import json
-    from scripts.hestia_import import HestiaBackup, find_conflicts, HestiaImportError
+    from scripts.hestia_import import open_backup, find_conflicts, HestiaImportError
+    from scripts.cpanel_import import CpanelImportError
     from api.models.models_migration import MigrationJob
 
     # Parsear los registros DNS aprobados (si vienen de la UI).
@@ -411,10 +416,10 @@ async def hestia_import(
     # Preflight: analizar y comprobar conflictos SOLO de lo que se importa.
     scope_list = [s for s in (scope or "").split(",") if s]
     try:
-        with HestiaBackup(tar_path) as backup:
+        with open_backup(source_panel, tar_path) as backup:
             manifest = backup.analyze()
             conflicts = find_conflicts(manifest, db, scope_list)
-    except HestiaImportError as e:
+    except (HestiaImportError, CpanelImportError) as e:
         if cleanup_tar and os.path.exists(tar_path):
             os.remove(tar_path)
         raise HTTPException(status_code=422, detail=str(e))
