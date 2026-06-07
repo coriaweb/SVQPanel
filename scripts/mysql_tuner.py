@@ -242,6 +242,27 @@ class MySQLTuner:
             pass
         return 0
 
+    def get_innodb_dataset_bytes(self) -> int:
+        """
+        Tamaño real de los datos+índices InnoDB (de information_schema). Sirve
+        para no recomendar un buffer pool mayor que el dataset: cachear más de
+        lo que hay es desperdiciar RAM.
+        Devuelve 0 si no se puede determinar.
+        """
+        sql = ("SELECT IFNULL(SUM(data_length + index_length),0) "
+               "FROM information_schema.tables WHERE engine='InnoDB'")
+        binary = self._binary()
+        cmd = [binary, f"--host={self.host}", f"--user={self.user}",
+               f"--password={self.password}", "--silent", "--skip-column-names",
+               "--execute", sql]
+        try:
+            r = subprocess.run(cmd, capture_output=True, text=True, timeout=30, env=_SYS_ENV)
+            if r.returncode == 0:
+                return int((r.stdout or "0").strip() or 0)
+        except (subprocess.SubprocessError, ValueError):
+            pass
+        return 0
+
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Diagnóstico + recomendaciones (estilo mysqltuner, simplificado y seguro)
@@ -253,7 +274,76 @@ def _f(d: Dict[str, str], key: str, default: float = 0.0) -> float:
         return default
 
 
-def analyze(status: Dict[str, str], variables: Dict[str, str], ram_bytes: int) -> Dict:
+# ─────────────────────────────────────────────────────────────────────────────
+# Dimensionado consciente del resto del stack (panel + nginx + PHP-FPM + correo)
+# ─────────────────────────────────────────────────────────────────────────────
+# RAM media que consume un proceso PHP-FPM bajo carga (estimación conservadora).
+_PHP_PROCESS_MB = 40
+# Colchón base para SO + nginx + panel (uvicorn) + Postfix/Dovecot/Rspamd.
+_BASE_RESERVE_MB = 768
+# Suelo y techo de seguridad para el buffer pool recomendado.
+_MIN_BUFFER_POOL = 128 * 1024**2     # nunca recomendar menos de 128M
+_MAX_BUFFER_POOL_RATIO = 0.70        # ni más del 70% de la RAM total
+
+
+def estimate_php_fpm_ram_bytes() -> int:
+    """
+    Estima la RAM que puede llegar a usar PHP-FPM sumando pm.max_children de
+    TODOS los pools del panel (cada hijo ~_PHP_PROCESS_MB). El panel gestiona
+    estos pools, así que es una cota realista del consumo del stack PHP.
+    Devuelve 0 si no hay pools / no se puede leer.
+    """
+    import glob
+    total_children = 0
+    found_any = False
+    for conf in glob.glob("/etc/php/*/fpm/pool.d/*.conf"):
+        try:
+            with open(conf) as f:
+                for line in f:
+                    line = line.strip()
+                    if line.startswith("pm.max_children"):
+                        found_any = True
+                        try:
+                            total_children += int(line.split("=", 1)[1].strip())
+                        except (ValueError, IndexError):
+                            pass
+        except OSError:
+            continue
+    if not found_any:
+        return 0
+    return total_children * _PHP_PROCESS_MB * 1024**2
+
+
+def recommend_buffer_pool(ram_bytes: int, dataset_bytes: int,
+                          reserved_bytes: int) -> int:
+    """
+    Recomienda un innodb_buffer_pool_size CONSCIENTE del servidor:
+      - parte de la RAM libre tras reservar el resto del stack (panel, nginx,
+        PHP-FPM, correo, SO);
+      - no propone más que el dataset real (+30% de margen de crecimiento):
+        cachear más de lo que existe es desperdiciar RAM;
+      - respeta un suelo (128M) y un techo (70% de la RAM total).
+    Devuelve bytes. 0 si no hay datos de RAM (no recomendar a ciegas).
+    """
+    if ram_bytes <= 0:
+        return 0
+    # RAM realmente disponible para la BD tras el resto del stack
+    available = ram_bytes - reserved_bytes
+    if available < _MIN_BUFFER_POOL:
+        # Stack ya muy apretado: recomendar el mínimo razonable, no inflar
+        available = _MIN_BUFFER_POOL
+    # No cachear más de lo que ocupa el dataset (+30% para crecer)
+    target = available
+    if dataset_bytes > 0:
+        target = min(available, int(dataset_bytes * 1.3))
+    # Aplicar techo y suelo
+    target = min(target, int(ram_bytes * _MAX_BUFFER_POOL_RATIO))
+    target = max(target, _MIN_BUFFER_POOL)
+    return target
+
+
+def analyze(status: Dict[str, str], variables: Dict[str, str], ram_bytes: int,
+            dataset_bytes: int = 0, reserved_bytes: int = 0) -> Dict:
     """
     Devuelve un dict con métricas y una lista de recomendaciones. Cada
     recomendación: {level, title, detail, directive?, suggested?}.
@@ -272,22 +362,45 @@ def analyze(status: Dict[str, str], variables: Dict[str, str], ram_bytes: int) -
         metrics["innodb_buffer_hit_pct"] = round(hit, 2)
         bp_size = parse_size(variables.get("innodb_buffer_pool_size"))
         metrics["innodb_buffer_pool_size"] = human_size(bp_size)
-        if hit < 99 and uptime > 3600:
-            suggested = bp_size
-            if ram_bytes:
-                suggested = int(ram_bytes * 0.5)  # 50% de la RAM como objetivo
+        if dataset_bytes:
+            metrics["innodb_dataset_size"] = human_size(dataset_bytes)
+        if reserved_bytes:
+            metrics["ram_reservada_stack"] = human_size(reserved_bytes)
+
+        # Recomendación CONSCIENTE del servidor: cruza RAM total, RAM ya
+        # comprometida por el resto del stack (panel/nginx/PHP-FPM/correo) y el
+        # tamaño real del dataset. No es un 50% a ciegas.
+        suggested = recommend_buffer_pool(ram_bytes, dataset_bytes, reserved_bytes)
+
+        # ¿El dataset ya cabe en el buffer pool actual? Entonces aunque el hit
+        # sea bajo (BD recién arrancada) no hay nada que subir.
+        dataset_cabe = dataset_bytes and bp_size >= dataset_bytes
+
+        if hit < 99 and uptime > 3600 and suggested > bp_size * 1.1 and not dataset_cabe:
+            # Explicar el porqué del número, con el desglose de RAM
+            partes = []
+            if dataset_bytes:
+                partes.append(f"el dataset InnoDB ocupa {human_size(dataset_bytes)}")
+            if reserved_bytes:
+                partes.append(f"se reservan ~{human_size(reserved_bytes)} para el panel, web, PHP y correo")
+            razon = ("; ".join(partes) + ". ") if partes else ""
             recs.append({
                 "level": "warn",
                 "title": "Buffer pool InnoDB pequeño",
-                "detail": f"Hit ratio {hit:.1f}% (objetivo ≥ 99%). El buffer pool actual ({human_size(bp_size)}) no cabe el dataset; hay lecturas a disco.",
+                "detail": (f"Hit ratio {hit:.1f}% (objetivo ≥ 99%): el buffer pool actual "
+                           f"({human_size(bp_size)}) provoca lecturas a disco. {razon}"
+                           f"Valor calculado para este servidor sin quedarte sin RAM."),
                 "directive": "innodb_buffer_pool_size",
                 "suggested": human_size_mycnf(suggested),
             })
         else:
+            motivo = f"Hit ratio {hit:.1f}%"
+            if dataset_cabe:
+                motivo += f" — el dataset ({human_size(dataset_bytes)}) cabe entero en el buffer pool"
             recs.append({
                 "level": "ok",
                 "title": "Buffer pool InnoDB",
-                "detail": f"Hit ratio {hit:.1f}% — bien.",
+                "detail": f"{motivo}. Bien.",
             })
 
     # ── Conexiones ────────────────────────────────────────────────────────────
@@ -299,12 +412,23 @@ def analyze(status: Dict[str, str], variables: Dict[str, str], ram_bytes: int) -
         metrics["max_used_connections"] = int(max_used)
         metrics["connections_used_pct"] = round(used_pct, 1)
         if used_pct > 85:
+            # Subir, pero acotado por la RAM: cada conexión cuesta ~per-thread
+            # buffers (sort/read/join/net ≈ 4-8 MB). No proponer un número que
+            # multiplicado por ese coste se coma la RAM libre.
+            per_conn_mb = 6
+            propuesto = int(max_conn * 1.5)
+            if ram_bytes:
+                libre = max(ram_bytes - reserved_bytes - parse_size(variables.get("innodb_buffer_pool_size")), 0)
+                techo = int(libre / (per_conn_mb * 1024**2)) if libre else propuesto
+                propuesto = max(int(max_conn) + 10, min(propuesto, techo))
             recs.append({
                 "level": "warn",
                 "title": "Conexiones cerca del límite",
-                "detail": f"Se llegó al {used_pct:.0f}% de max_connections ({int(max_used)}/{int(max_conn)}). Considera subirlo si tienes RAM.",
+                "detail": (f"Se llegó al {used_pct:.0f}% de max_connections "
+                           f"({int(max_used)}/{int(max_conn)}). Sugerido teniendo en cuenta "
+                           f"la RAM libre (~{per_conn_mb} MB por conexión)."),
                 "directive": "max_connections",
-                "suggested": str(int(max_conn * 1.5)),
+                "suggested": str(propuesto),
             })
         # Connection aborts
         aborted = _f(status, "Aborted_connects")

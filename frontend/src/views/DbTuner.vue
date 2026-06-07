@@ -200,6 +200,10 @@ export default {
                      cls: m.innodb_buffer_hit_pct >= 99 ? 'ok' : 'warn' })
       if (m.innodb_buffer_pool_size != null)
         cards.push({ label: 'Buffer pool', value: m.innodb_buffer_pool_size })
+      if (m.innodb_dataset_size != null)
+        cards.push({ label: 'Datos InnoDB', value: m.innodb_dataset_size })
+      if (m.ram_reservada_stack != null)
+        cards.push({ label: 'RAM reservada (stack)', value: m.ram_reservada_stack })
       if (m.connections_used_pct != null)
         cards.push({ label: 'Conexiones (pico)', value: m.connections_used_pct + '%',
                      cls: m.connections_used_pct > 85 ? 'warn' : 'ok' })

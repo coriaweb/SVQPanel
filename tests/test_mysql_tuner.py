@@ -144,3 +144,69 @@ def test_query_cache_activado_se_avisa():
 def test_dropin_filename_es_del_panel():
     # El archivo gestionado por el panel tiene el prefijo svqpanel para no chocar
     assert "svqpanel" in t._DROPIN_FILENAME
+
+
+# ── Recomendación de buffer pool CONSCIENTE del servidor ──────────────────────
+GB = 1024**3
+MB = 1024**2
+
+
+def test_buffer_pool_no_sobredimensiona_dataset_pequeno():
+    # dataset 300M en server de 3.8G: NO debe recomendar 1.9G (el viejo 50%),
+    # sino ~dataset+30%.
+    r = t.recommend_buffer_pool(int(3.8 * GB), dataset_bytes=300 * MB, reserved_bytes=768 * MB)
+    assert r < 600 * MB           # nada de 1.9G
+    assert r >= 300 * MB          # pero cubre el dataset
+
+
+def test_buffer_pool_limitado_por_ram_libre():
+    # dataset enorme (5G) pero RAM libre escasa: limitado por RAM, no por dataset
+    r = t.recommend_buffer_pool(int(3.8 * GB), dataset_bytes=5 * GB,
+                                reserved_bytes=int(768 * MB + 800 * MB))
+    assert r < int(3.8 * GB * 0.71)   # respeta el techo del 70%
+    assert r < 5 * GB                  # no intenta cachear todo el dataset
+
+
+def test_buffer_pool_respeta_suelo():
+    r = t.recommend_buffer_pool(int(3.8 * GB), dataset_bytes=5 * GB, reserved_bytes=int(3.7 * GB))
+    assert r >= t._MIN_BUFFER_POOL
+
+
+def test_buffer_pool_sin_ram_no_recomienda():
+    assert t.recommend_buffer_pool(0, 5 * GB, 0) == 0
+
+
+def test_no_recomienda_subir_si_dataset_cabe():
+    # Buffer pool 512M y dataset 300M: aunque el hit sea bajo (BD recién
+    # arrancada), el dataset ya cabe → no debe proponer subirlo.
+    status = {
+        "Uptime": "7200", "Innodb_buffer_pool_reads": "500000",
+        "Innodb_buffer_pool_read_requests": "1000000", "Max_used_connections": "5",
+        "Created_tmp_tables": "10", "Created_tmp_disk_tables": "0",
+        "Opened_tables": "5", "Slow_queries": "0", "Questions": "1000",
+    }
+    variables = {"innodb_buffer_pool_size": "512M", "max_connections": "150",
+                 "query_cache_type": "OFF", "table_open_cache": "4000", "tmp_table_size": "16M"}
+    res = t.analyze(status, variables, int(3.8 * GB), dataset_bytes=300 * MB,
+                    reserved_bytes=768 * MB)
+    bp = next(r for r in res["recommendations"] if "Buffer pool" in r["title"])
+    assert bp["level"] == "ok"   # no warn
+
+
+def test_recomendacion_buffer_pool_explica_el_porque():
+    status = {
+        "Uptime": "7200", "Innodb_buffer_pool_reads": "300000",
+        "Innodb_buffer_pool_read_requests": "1000000", "Max_used_connections": "5",
+        "Created_tmp_tables": "10", "Created_tmp_disk_tables": "0",
+        "Opened_tables": "5", "Slow_queries": "0", "Questions": "1000",
+    }
+    variables = {"innodb_buffer_pool_size": "128M", "max_connections": "150",
+                 "query_cache_type": "OFF", "table_open_cache": "4000", "tmp_table_size": "16M"}
+    res = t.analyze(status, variables, int(3.8 * GB), dataset_bytes=1 * GB,
+                    reserved_bytes=int(1.2 * GB))
+    bp = next(r for r in res["recommendations"] if r.get("directive") == "innodb_buffer_pool_size")
+    # El detalle menciona el dataset y la reserva del stack (no es un 50% a ciegas)
+    assert "dataset" in bp["detail"].lower()
+    assert "reserv" in bp["detail"].lower()
+    # La sugerencia es un entero válido para my.cnf
+    assert "." not in bp["suggested"]

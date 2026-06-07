@@ -44,7 +44,11 @@ async def db_tuner_status(current_user: User = Depends(require_admin)):
         raise HTTPException(status_code=500, detail=f"No pude consultar MariaDB: {e}")
 
     ram = tuner.get_system_ram_bytes()
-    analysis = mysql_tuner.analyze(status_vars, variables, ram)
+    dataset = tuner.get_innodb_dataset_bytes()
+    # RAM ya comprometida por el resto del stack (panel/nginx/correo/SO + PHP-FPM)
+    reserved = mysql_tuner._BASE_RESERVE_MB * 1024**2 + mysql_tuner.estimate_php_fpm_ram_bytes()
+    analysis = mysql_tuner.analyze(status_vars, variables, ram,
+                                   dataset_bytes=dataset, reserved_bytes=reserved)
 
     # Valores actuales de las directivas editables (mezcla servidor + drop-in)
     current_dropin = mysql_tuner.read_current_dropin()
