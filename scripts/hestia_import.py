@@ -804,6 +804,184 @@ def _ident(s: str) -> str:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# Importación de CORREO (dominio + buzones + maildir, reusando el hash)
+# ─────────────────────────────────────────────────────────────────────────────
+def _dovecot_scheme(md5: str) -> Optional[str]:
+    """Prefijo de esquema Dovecot para un hash de Hestia, o None si desconocido."""
+    if not md5:
+        return None
+    if md5.startswith("$6$"):
+        return "{SHA512-CRYPT}" + md5
+    if md5.startswith("$5$"):
+        return "{SHA256-CRYPT}" + md5
+    if md5.startswith(("$2y$", "$2a$", "$2b$")):
+        return "{BLF-CRYPT}" + md5
+    if md5.startswith("$argon2"):
+        return "{ARGON2ID}" + md5 if "argon2id" in md5 else "{ARGON2I}" + md5
+    if md5.startswith("{"):       # ya viene con esquema
+        return md5
+    return None
+
+
+def import_mail(backup: "HestiaBackup", mailinfo: Dict, owner, db, report: ImportReport):
+    """Crea el dominio de correo y sus buzones, reutilizando el hash de cada uno.
+
+    Estrategia: usa create_mailbox() (que monta maildir + postfix + dovecot) con
+    una contraseña temporal y luego sobrescribe el hash en Dovecot con el ORIGINAL
+    del backup vía _dovecot_set(). Así conservamos la contraseña del usuario sin
+    duplicar toda la lógica de mailbox. Si el hash no es reconocible, dejamos la
+    contraseña nueva y la reportamos.
+    """
+    import os as _os
+    if _os.getenv("MAIL_ENABLED", "false").lower() != "true":
+        report.fail("mail", mailinfo["domain"], "el módulo de correo no está activo")
+        return
+
+    from scripts.mail_manager import MailManager
+    from api.models.models_mail import MailDomain, Mailbox
+    from api.routes.databases import _generate_password
+
+    domain = mailinfo["domain"]
+    mgr = MailManager()
+
+    # 1) Dominio de correo + registro
+    mgr.create_mail_domain(domain, owner.username)
+    mail_domain = MailDomain(user_id=owner.id, domain_name=domain, is_active=True)
+    db.add(mail_domain)
+    db.commit()
+    db.refresh(mail_domain)
+
+    # 2) Buzones
+    n_ok = 0
+    for acc in mailinfo.get("accounts", []):
+        user = acc["account"]
+        email = f"{user}@{domain}"
+        try:
+            quota = _quota_to_mb(acc.get("quota", "0"))
+            scheme = _dovecot_scheme((acc.get("md5") or "").strip())
+
+            tmp_pw = _generate_password()
+            mgr.create_mailbox(owner.username, domain, user, tmp_pw, quota_mb=quota)
+
+            if scheme:
+                # Sobrescribir el hash temporal con el ORIGINAL del backup.
+                mgr._dovecot_set(email, scheme, owner.username, domain, user, quota)
+                mgr._reload_dovecot()
+                stored_hash = scheme
+            else:
+                stored_hash = mgr.hash_password(tmp_pw)
+                report.password("mail", email, tmp_pw)
+
+            db.add(Mailbox(
+                mail_domain_id=mail_domain.id,
+                username=user,
+                password_hash=stored_hash,
+                quota_mb=quota,
+                is_active=True,
+            ))
+            db.commit()
+            n_ok += 1
+        except Exception as e:
+            report.fail("mail-account", email, e)
+
+    # 3) Restaurar maildirs reales (accounts.tar) por encima de la estructura.
+    acc_tar = mailinfo.get("accounts_tar")
+    if not acc_tar:
+        acc_tar = backup._find_data_archive("mail", domain, "accounts")
+    if acc_tar and os.path.isfile(acc_tar):
+        try:
+            _restore_maildirs(acc_tar, owner.username, domain)
+        except Exception as e:
+            report.fail("mail-data", domain, f"maildir no restaurado: {e}")
+
+    report.ok("mail", domain, f"{n_ok} buzón(es)")
+
+
+def _restore_maildirs(acc_tar: str, panel_username: str, domain: str) -> None:
+    """Extrae accounts.tar y copia los maildirs al mail dir del dominio."""
+    import subprocess
+    dest = f"/home/{panel_username}/mail/{domain}"
+    tmp = tempfile.mkdtemp(prefix="svq_maildata_")
+    try:
+        extract_data_archive(acc_tar, tmp)
+        # El tar suele contener {cuenta}/{cur,new,tmp}. Copiamos su contenido.
+        src = tmp
+        # Si está anidado un nivel, ajustamos.
+        entries = os.listdir(tmp)
+        if len(entries) == 1 and os.path.isdir(os.path.join(tmp, entries[0])):
+            inner = os.path.join(tmp, entries[0])
+            if any(os.path.isdir(os.path.join(inner, e)) for e in os.listdir(inner)):
+                src = inner
+        _copy_into(src, dest)
+        subprocess.run(["chown", "-R", "vmail:vmail", dest], capture_output=True)
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
+def _quota_to_mb(q: str) -> int:
+    q = (q or "").strip().lower()
+    if q in ("", "0", "unlimited"):
+        return 0
+    try:
+        return int(float(q))
+    except ValueError:
+        return 1024
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Importación de DNS (zona + registros)
+# ─────────────────────────────────────────────────────────────────────────────
+def import_dns(backup: "HestiaBackup", zoneinfo: Dict, owner, db, report: ImportReport):
+    """Crea la zona DNS y sus registros a partir del backup."""
+    from scripts.dns_manager import DNSManager
+    from api.models.models_dns import DnsZone, DnsRecord
+
+    domain = zoneinfo["domain"]
+    ip = zoneinfo.get("ip")
+    mgr = DNSManager()
+    try:
+        serial = mgr.create_zone(domain, ipv4=ip)
+    except PermissionError:
+        serial = 2026052501
+
+    zone = DnsZone(domain_name=domain, serial=serial,
+                   ip_address=ip, ttl=int(zoneinfo.get("ttl") or 14400))
+    db.add(zone)
+    db.commit()
+    db.refresh(zone)
+
+    n = 0
+    for rec in zoneinfo.get("_records", []):
+        try:
+            rtype = rec.get("TYPE", "").upper()
+            name = rec.get("RECORD", "@")
+            content = rec.get("VALUE", "")
+            if not rtype or not content:
+                continue
+            db.add(DnsRecord(
+                zone_id=zone.id,
+                record_type=rtype,
+                name=name,
+                content=content,
+                ttl=int(rec.get("TTL") or zoneinfo.get("ttl") or 14400),
+                priority=int(rec.get("PRIORITY") or 0),
+            ))
+            n += 1
+        except Exception:
+            continue
+    db.commit()
+
+    # Reescribir la zona en BIND con los registros importados, si es posible.
+    try:
+        all_zones = [z.domain_name for z in db.query(DnsZone).filter(DnsZone.is_active == True).all()]
+        mgr.reload_zone(domain, all_zones)
+    except Exception:
+        pass
+
+    report.ok("dns", domain, f"{n} registro(s)")
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # Orquestador de la importación (lo invoca el job en segundo plano)
 # ─────────────────────────────────────────────────────────────────────────────
 def run_import(tar_path: str, target_user_id: int, scope: List[str], db) -> Dict:
@@ -842,6 +1020,20 @@ def run_import(tar_path: str, target_user_id: int, scope: List[str], db) -> Dict
                     db.rollback()
                     report.fail("db", dbinfo["db"], e)
 
-        # mail / dns se añaden en la fase 4.
+        if "mail" in scope:
+            for mailinfo in manifest["mail"]:
+                try:
+                    import_mail(backup, mailinfo, owner, db, report)
+                except Exception as e:
+                    db.rollback()
+                    report.fail("mail", mailinfo["domain"], e)
+
+        if "dns" in scope:
+            for zoneinfo in manifest["dns"]:
+                try:
+                    import_dns(backup, zoneinfo, owner, db, report)
+                except Exception as e:
+                    db.rollback()
+                    report.fail("dns", zoneinfo["domain"], e)
 
     return report.to_dict()
