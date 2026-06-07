@@ -6,12 +6,29 @@
         <h2 class="mon-title"><i class="bi bi-graph-up"></i> Monitorización</h2>
         <p class="mon-subtitle">Histórico de recursos y alertas del servidor</p>
       </div>
-      <div class="mon-range">
+      <div v-if="tab==='recursos'" class="mon-range">
         <button v-for="r in ['24h','7d','30d']" :key="r"
                 class="mon-range__btn" :class="{ 'mon-range__btn--active': range === r }"
                 @click="setRange(r)">{{ r }}</button>
       </div>
+      <button v-else class="mon-btn mon-btn--ghost mon-btn--sm" @click="loadMail" :disabled="mailLoading">
+        <span v-if="mailLoading" class="spinner-border spinner-border-sm"></span>
+        <i v-else class="bi bi-arrow-repeat"></i> Actualizar
+      </button>
     </div>
+
+    <!-- Pestañas -->
+    <div class="mon-tabs">
+      <button class="mon-tab" :class="{'mon-tab--active': tab==='recursos'}" @click="tab='recursos'">
+        <i class="bi bi-cpu"></i> Recursos
+      </button>
+      <button class="mon-tab" :class="{'mon-tab--active': tab==='correo'}" @click="selectMailTab">
+        <i class="bi bi-envelope"></i> Correo
+      </button>
+    </div>
+
+    <!-- ════════════ PESTAÑA RECURSOS ════════════ -->
+    <template v-if="tab==='recursos'">
 
     <!-- Alertas abiertas -->
     <div v-if="openAlerts.length" class="mon-alerts">
@@ -141,6 +158,122 @@
         </table>
       </div>
     </div>
+
+    </template>
+
+    <!-- ════════════ PESTAÑA CORREO ════════════ -->
+    <template v-if="tab==='correo'">
+      <div v-if="mailLoading && !mail" class="mon-loading"><div class="spinner-border spinner-border-sm"></div></div>
+      <div v-else-if="mail">
+        <!-- Estado de servicios -->
+        <div class="mail-services">
+          <div class="mail-svc" :class="mail.services.postfix ? 'mail-svc--on' : 'mail-svc--off'">
+            <i class="bi" :class="mail.services.postfix ? 'bi-check-circle-fill' : 'bi-x-circle-fill'"></i>
+            Postfix <small>SMTP</small>
+          </div>
+          <div class="mail-svc" :class="mail.services.dovecot ? 'mail-svc--on' : 'mail-svc--off'">
+            <i class="bi" :class="mail.services.dovecot ? 'bi-check-circle-fill' : 'bi-x-circle-fill'"></i>
+            Dovecot <small>IMAP/POP3</small>
+          </div>
+          <div class="mail-svc" :class="mail.services.rspamd ? 'mail-svc--on' : 'mail-svc--off'">
+            <i class="bi" :class="mail.services.rspamd ? 'bi-check-circle-fill' : 'bi-x-circle-fill'"></i>
+            Rspamd <small>antispam</small>
+          </div>
+        </div>
+
+        <!-- Contadores del día -->
+        <div class="mail-counters">
+          <div class="mail-counter"><div class="mail-counter__val">{{ mail.summary.received }}</div><div class="mail-counter__lbl">Recibidos hoy</div></div>
+          <div class="mail-counter"><div class="mail-counter__val mc-ok">{{ mail.summary.delivered }}</div><div class="mail-counter__lbl">Entregados</div></div>
+          <div class="mail-counter"><div class="mail-counter__val mc-warn">{{ mail.summary.deferred }}</div><div class="mail-counter__lbl">Diferidos</div></div>
+          <div class="mail-counter"><div class="mail-counter__val mc-err">{{ mail.summary.bounced }}</div><div class="mail-counter__lbl">Rebotados</div></div>
+          <div class="mail-counter"><div class="mail-counter__val mc-err">{{ mail.summary.rejected }}</div><div class="mail-counter__lbl">Rechazados</div></div>
+          <div class="mail-counter"><div class="mail-counter__val" :class="mail.queue.count > 0 ? 'mc-warn' : ''">{{ mail.queue.count }}</div><div class="mail-counter__lbl">En cola</div></div>
+        </div>
+
+        <div class="mon-grid2">
+          <!-- Cola de correo -->
+          <div class="mon-card">
+            <div class="mon-card-head">
+              <span class="mon-card-title"><i class="bi bi-hourglass-split"></i> Cola de correo</span>
+              <span class="mon-badge" :class="mail.queue.count > 0 ? 'mon-badge--warn' : 'mon-badge--ok'">
+                {{ mail.queue.count }} · {{ mail.queue.size_kb }} KB
+              </span>
+            </div>
+            <div class="mon-card-body">
+              <div v-if="!mail.queue.count" class="mail-empty"><i class="bi bi-check-circle"></i> Cola vacía. Todo el correo se está entregando.</div>
+              <div v-else class="mon-table-wrap">
+                <table class="mon-table">
+                  <thead><tr><th>ID</th><th>De</th><th>Para</th><th>Edad</th><th>Motivo</th></tr></thead>
+                  <tbody>
+                    <tr v-for="m in mail.queue.messages" :key="m.id">
+                      <td style="font-family:var(--font-mono);font-size:.78rem">{{ m.id }}</td>
+                      <td style="font-size:.8rem">{{ m.sender }}</td>
+                      <td style="font-size:.8rem">{{ m.recipients.join(', ') }}</td>
+                      <td style="font-size:.8rem;white-space:nowrap">{{ fmtAge(m.age_s) }}</td>
+                      <td style="font-size:.76rem;color:var(--text-muted)">{{ m.reason || '—' }}</td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+
+          <!-- Antispam -->
+          <div class="mon-card">
+            <div class="mon-card-head">
+              <span class="mon-card-title"><i class="bi bi-shield-fill-check"></i> Antispam (Rspamd)</span>
+            </div>
+            <div class="mon-card-body">
+              <div v-if="!mail.rspamd.available" class="mail-empty">Rspamd no responde.</div>
+              <div v-else class="mail-rspamd">
+                <div class="mail-stat"><span>Escaneados</span><strong>{{ mail.rspamd.scanned }}</strong></div>
+                <div class="mail-stat"><span>Limpios (ham)</span><strong class="mc-ok">{{ mail.rspamd.ham }}</strong></div>
+                <div class="mail-stat"><span>Spam</span><strong class="mc-err">{{ mail.rspamd.spam }}</strong></div>
+                <div class="mail-stat"><span>Rechazados</span><strong class="mc-err">{{ mail.rspamd.reject }}</strong></div>
+                <div class="mail-stat"><span>Greylisted</span><strong class="mc-warn">{{ mail.rspamd.greylist }}</strong></div>
+                <div class="mail-stat"><span>Aprendidos</span><strong>{{ mail.rspamd.learned }}</strong></div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="mon-grid2">
+          <!-- Top remitentes -->
+          <div class="mon-card">
+            <div class="mon-card-head"><span class="mon-card-title"><i class="bi bi-person-up"></i> Top remitentes (hoy)</span></div>
+            <div class="mon-card-body">
+              <div v-if="!mail.summary.top_senders.length" class="mail-empty">Sin datos hoy.</div>
+              <div v-for="s in mail.summary.top_senders" :key="s.addr" class="mail-toprow">
+                <span class="mail-topaddr">{{ s.addr }}</span><span class="mail-topcount">{{ s.count }}</span>
+              </div>
+            </div>
+          </div>
+
+          <!-- Top motivos de rechazo -->
+          <div class="mon-card">
+            <div class="mon-card-head"><span class="mon-card-title"><i class="bi bi-shield-x"></i> Motivos de rechazo (hoy)</span></div>
+            <div class="mon-card-body">
+              <div v-if="!mail.summary.top_reject_reasons.length" class="mail-empty">Sin rechazos hoy.</div>
+              <div v-for="r in mail.summary.top_reject_reasons" :key="r.reason" class="mail-toprow">
+                <span class="mail-topaddr" :title="r.reason">{{ r.reason }}</span><span class="mail-topcount mc-err">{{ r.count }}</span>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Errores recientes (rebotes) -->
+        <div class="mon-card" v-if="mail.summary.recent_errors.length">
+          <div class="mon-card-head"><span class="mon-card-title"><i class="bi bi-exclamation-triangle"></i> Rebotes recientes</span></div>
+          <div class="mon-card-body">
+            <div v-for="(e, i) in mail.summary.recent_errors" :key="i" class="mail-error">
+              <span class="mail-error__to">{{ e.to }}</span>
+              <span class="mail-error__msg">{{ e.msg }}</span>
+            </div>
+          </div>
+        </div>
+      </div>
+    </template>
   </div>
 </template>
 
@@ -228,10 +361,36 @@ export default {
       return `hace ${Math.floor(diff / 86400)} d`
     }
 
+    // ── Pestaña Correo ──
+    const tab = ref('recursos')
+    const mail = ref(null)
+    const mailLoading = ref(false)
+    const fmtAge = (s) => {
+      if (s < 60) return s + 's'
+      if (s < 3600) return Math.floor(s / 60) + 'm'
+      if (s < 86400) return Math.floor(s / 3600) + 'h'
+      return Math.floor(s / 86400) + 'd'
+    }
+    const loadMail = async () => {
+      mailLoading.value = true
+      try {
+        mail.value = await api.get('/api/monitoring/services/mail')
+      } catch (e) {
+        store.showNotification('Error al cargar estadísticas de correo: ' + e.message, 'danger')
+      } finally { mailLoading.value = false }
+    }
+    const selectMailTab = () => {
+      tab.value = 'correo'
+      if (!mail.value) loadMail()
+    }
+
     onMounted(async () => {
       await Promise.all([loadHistory(), loadConfig(), loadEvents()])
       // Refresco automático cada 60s
-      refreshTimer = setInterval(() => { loadHistory(); loadEvents() }, 60000)
+      refreshTimer = setInterval(() => {
+        if (tab.value === 'recursos') { loadHistory(); loadEvents() }
+        else { loadMail() }
+      }, 60000)
     })
     onUnmounted(() => { if (refreshTimer) clearInterval(refreshTimer) })
 
@@ -239,6 +398,7 @@ export default {
       range, points, loading, cfg, events, savingCfg, testing,
       seriesCpu, seriesRam, seriesDisk, seriesLoad, seriesRx, seriesTx,
       openAlerts, setRange, saveCfg, sendTest, relTime,
+      tab, mail, mailLoading, loadMail, selectMailTab, fmtAge,
     }
   },
 }
@@ -312,4 +472,48 @@ export default {
 .mon-loading { display:flex; justify-content:center; padding:3rem; }
 .mon-empty { display:flex; flex-direction:column; align-items:center; gap:.5rem; padding:3rem; color:var(--text-muted); text-align:center; }
 .mon-empty i { font-size:2.5rem; }
+
+/* Pestañas */
+.mon-tabs { display:flex; gap:2px; padding:.35rem; background:var(--surface-2); border-radius:var(--r-md,10px); width:fit-content; }
+.mon-tab { display:inline-flex; align-items:center; gap:6px; padding:.45rem .9rem; border-radius:var(--r-sm,6px); font-size:.85rem; font-weight:500; cursor:pointer; border:none; background:none; color:var(--text-muted); transition:all .15s; }
+.mon-tab:hover { background:var(--surface); color:var(--text); }
+.mon-tab--active { background:var(--surface); color:var(--text); box-shadow:0 1px 3px rgba(0,0,0,.08); }
+.mon-tab--active i { color:var(--svq-orange); }
+
+/* Correo: servicios */
+.mail-services { display:grid; grid-template-columns:repeat(3,1fr); gap:12px; }
+@media (max-width:640px){ .mail-services { grid-template-columns:1fr; } }
+.mail-svc { display:flex; align-items:center; gap:.6rem; padding:.85rem 1.1rem; border:1px solid var(--border); border-radius:var(--r-md,10px); background:var(--surface); font-weight:600; }
+.mail-svc small { color:var(--text-muted); font-weight:400; }
+.mail-svc i { font-size:1.2rem; }
+.mail-svc--on i { color:var(--success); }
+.mail-svc--off { border-color:color-mix(in srgb,var(--danger) 40%,transparent); }
+.mail-svc--off i { color:var(--danger); }
+
+/* Correo: contadores */
+.mail-counters { display:grid; grid-template-columns:repeat(6,1fr); gap:12px; }
+@media (max-width:820px){ .mail-counters { grid-template-columns:repeat(3,1fr); } }
+@media (max-width:480px){ .mail-counters { grid-template-columns:repeat(2,1fr); } }
+.mail-counter { background:var(--surface); border:1px solid var(--border); border-radius:var(--r-md,10px); padding:.85rem; text-align:center; }
+.mail-counter__val { font-size:1.6rem; font-weight:700; line-height:1; color:var(--text); }
+.mail-counter__lbl { font-size:.72rem; color:var(--text-muted); text-transform:uppercase; letter-spacing:.03em; margin-top:.35rem; }
+.mc-ok { color:var(--success); } .mc-warn { color:var(--warning,#d97706); } .mc-err { color:var(--danger); }
+
+.mon-grid2 { display:grid; grid-template-columns:1fr 1fr; gap:16px; }
+@media (max-width:820px){ .mon-grid2 { grid-template-columns:1fr; } }
+
+.mail-empty { display:flex; align-items:center; gap:.5rem; color:var(--text-muted); font-size:.875rem; padding:1rem 0; }
+.mail-rspamd { display:grid; grid-template-columns:1fr 1fr; gap:.5rem .75rem; }
+.mail-stat { display:flex; justify-content:space-between; align-items:center; padding:.4rem .6rem; background:var(--surface-2); border-radius:var(--r-sm,6px); font-size:.85rem; }
+.mail-stat strong { font-family:var(--font-mono); }
+
+.mail-toprow { display:flex; justify-content:space-between; align-items:center; gap:.75rem; padding:.4rem 0; border-bottom:1px solid var(--border); font-size:.82rem; }
+.mail-toprow:last-child { border-bottom:none; }
+.mail-topaddr { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; color:var(--text-secondary); }
+.mail-topcount { font-family:var(--font-mono); font-weight:700; flex-shrink:0; }
+
+.mail-error { display:flex; gap:.75rem; padding:.5rem 0; border-bottom:1px solid var(--border); font-size:.82rem; }
+.mail-error:last-child { border-bottom:none; }
+.mail-error__to { font-weight:600; flex-shrink:0; color:var(--text); }
+.mail-error__msg { color:var(--text-muted); overflow:hidden; text-overflow:ellipsis; }
 </style>
