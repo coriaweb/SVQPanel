@@ -559,3 +559,63 @@ async def get_system_versions(current_user=Depends(require_admin)):
 
     return versions
 
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Visor de logs del servidor (admin)
+# ─────────────────────────────────────────────────────────────────────────────
+@router.get("/system/logs/catalog")
+async def logs_catalog(current_user=Depends(require_admin)):
+    """Lista de logs disponibles en este servidor (catálogo curado + por dominio)."""
+    from scripts import log_viewer
+    catalog = log_viewer.catalog()
+    return {"logs": catalog}
+
+
+@router.get("/system/logs")
+async def read_system_log(
+    key: str,
+    lines: int = 300,
+    search: str = "",
+    regex: bool = False,
+    current_user=Depends(require_admin),
+):
+    """
+    Lee un log del catálogo por su clave (no rutas libres). Soporta filtro de
+    búsqueda (grep) y límite de líneas. Devuelve las últimas N líneas.
+    """
+    from scripts import log_viewer
+    res = log_viewer.read_log(key, lines=lines, search=search, regex=regex)
+    if not res.get("available"):
+        raise HTTPException(404, res.get("error", "log no disponible"))
+    return res
+
+
+@router.get("/system/logs/domain/{domain_id}")
+async def read_domain_log(
+    domain_id: int,
+    which: str = "error",   # error | access
+    lines: int = 300,
+    search: str = "",
+    current_user=Depends(require_admin),
+    db: Session = Depends(get_db),
+):
+    """Lee el log access/error de un dominio (admin). Resuelve la ruta del vhost."""
+    from scripts import log_viewer
+    from scripts.utils import get_domain_logs
+    domain = db.query(Domain).filter(Domain.id == domain_id).first()
+    if not domain:
+        raise HTTPException(404, "Dominio no encontrado")
+    owner = db.query(User).filter(User.id == domain.user_id).first()
+    if not owner:
+        raise HTTPException(404, "Propietario del dominio no encontrado")
+    which = "access" if which == "access" else "error"
+    # Ruta real de logs por dominio: /home/{user}/web/{domain}/logs/nginx.{which}.log
+    logs_dir = get_domain_logs(owner.username, domain.domain_name)
+    path = f"{logs_dir}/nginx.{which}.log"
+    res = log_viewer.read_path(path, lines=lines, search=search)
+    if not res.get("available"):
+        raise HTTPException(404, res.get("error", "log de dominio no disponible"))
+    res["domain"] = domain.domain_name
+    res["which"] = which
+    return res
+
