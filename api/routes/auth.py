@@ -27,8 +27,9 @@ from api.schemas.auth_schemas import (
     TwoFAVerifyRequest,
 )
 from api.dependencies import get_current_user, require_auth
-from api.utils.auth_log import log_auth_failed
+from api.utils.auth_log import log_auth_failed, client_ip
 from api.utils.secret import get_secret_key
+from api.utils import rate_limit
 
 router = APIRouter()
 
@@ -111,28 +112,38 @@ async def login(
     Login. Si el usuario tiene 2FA activo devuelve {requires_2fa, temp_token};
     en caso contrario devuelve el JWT completo.
     """
+    ip = client_ip(request)
+
+    # Rate-limit: si la IP está bloqueada por demasiados intentos fallidos, 429
+    blocked_for = rate_limit.check_blocked(ip)
+    if blocked_for:
+        log_auth_failed(request, credentials.username, "rate_limited")
+        mins = max(1, blocked_for // 60)
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail=f"Demasiados intentos fallidos. Espera {mins} min e inténtalo de nuevo.",
+            headers={"Retry-After": str(blocked_for)},
+        )
+
+    def _fail(reason: str, code: int, detail: str):
+        """Registra el fallo (log + contador) y lanza la excepción."""
+        log_auth_failed(request, credentials.username, reason)
+        rate_limit.record_failure(ip)
+        raise HTTPException(status_code=code, detail=detail)
+
     user = db.query(User).filter(User.username == credentials.username).first()
 
     if not user:
-        log_auth_failed(request, credentials.username, "unknown_user")
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Usuario o contraseña incorrectos"
-        )
+        _fail("unknown_user", status.HTTP_401_UNAUTHORIZED, "Usuario o contraseña incorrectos")
 
     if not user.check_password(credentials.password):
-        log_auth_failed(request, credentials.username, "bad_password")
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Usuario o contraseña incorrectos"
-        )
+        _fail("bad_password", status.HTTP_401_UNAUTHORIZED, "Usuario o contraseña incorrectos")
 
     if not user.is_active:
-        log_auth_failed(request, credentials.username, "inactive_user")
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Usuario inactivo"
-        )
+        _fail("inactive_user", status.HTTP_403_FORBIDDEN, "Usuario inactivo")
+
+    # Credenciales correctas → limpiar el contador de esa IP
+    rate_limit.record_success(ip)
 
     # Si 2FA está activo → segundo paso requerido
     if user.totp_enabled and user.totp_secret:
@@ -348,14 +359,31 @@ async def verify_2fa(
     secret = _decrypt_secret(user.totp_secret)
     totp   = pyotp.TOTP(secret)
 
+    ip = client_ip(request)
+
+    # Rate-limit del segundo factor (6 dígitos = espacio pequeño, fácil de fuerza bruta)
+    blocked_for = rate_limit.check_blocked(ip)
+    if blocked_for:
+        log_auth_failed(request, user.username, "rate_limited_2fa")
+        mins = max(1, blocked_for // 60)
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail=f"Demasiados intentos fallidos. Espera {mins} min e inténtalo de nuevo.",
+            headers={"Retry-After": str(blocked_for)},
+        )
+
     if not totp.verify(payload.code, valid_window=1):
-        # Registrar el fallo para que fail2ban (jail svqpanel-auth) banee la IP:
-        # cierra la fuerza bruta del segundo factor (6 dígitos TOTP).
+        # Registrar el fallo (fail2ban + rate-limit en memoria): cierra la
+        # fuerza bruta del segundo factor (6 dígitos TOTP).
         log_auth_failed(request, user.username, "bad_2fa_code")
+        rate_limit.record_failure(ip)
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Código incorrecto o caducado"
         )
+
+    # Código correcto → limpiar contador
+    rate_limit.record_success(ip)
 
     # Emitir JWT completo
     token = user.generate_token()
