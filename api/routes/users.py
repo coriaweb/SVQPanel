@@ -10,8 +10,29 @@ from api.models.models_user import User
 from api.schemas.user_schemas import UserCreate, UserUpdate, UserResponse
 from api.dependencies import require_admin, require_auth, require_admin_or_reseller
 from scripts.user_manager import UserManager
+import logging
 
 router = APIRouter()
+logger = logging.getLogger(__name__)
+
+
+def _apply_disk_quota(db_user: User) -> None:
+    """
+    Aplica la cuota de disco del usuario en el SO vía setquota.
+    Tolerante a fallos: si el sistema de cuotas no está activo o algo falla,
+    solo loguea (no rompe la operación del panel). disk_quota_mb=0 → ilimitado.
+    """
+    try:
+        from scripts.quota_manager import QuotaManager
+        qm = QuotaManager()
+        if not qm.is_quota_active():
+            logger.info("Sistema de cuotas inactivo; no se aplica disk_quota a %s", db_user.username)
+            return
+        qm.set_quota(db_user.username, db_user.disk_quota_mb or 0)
+    except PermissionError:
+        logger.warning("Sin privilegios root para aplicar cuota (¿entorno dev?)")
+    except Exception as e:
+        logger.warning("No se pudo aplicar cuota a %s: %s", db_user.username, e)
 
 
 @router.post("/users", response_model=UserResponse, status_code=status.HTTP_201_CREATED)
@@ -61,6 +82,11 @@ async def create_user(
         db.add(db_user)
         db.commit()
         db.refresh(db_user)
+
+        # Aplicar la cuota de disco en el SO (si el sistema de cuotas está activo).
+        # Tolerante a fallos: si no hay cuotas activas, no rompe la creación.
+        _apply_disk_quota(db_user)
+
         return db_user
     except IntegrityError:
         db.rollback()
@@ -169,6 +195,10 @@ async def update_user(
             db_user.is_active = user_update.is_active
         if user_update.domains_limit is not None:
             db_user.domains_limit = user_update.domains_limit
+        quota_changed = False
+        if user_update.disk_quota_mb is not None and user_update.disk_quota_mb != db_user.disk_quota_mb:
+            db_user.disk_quota_mb = user_update.disk_quota_mb
+            quota_changed = True
         if user_update.role is not None:
             db_user.role = user_update.role
             db_user.is_admin = (user_update.role == "admin")
@@ -187,6 +217,11 @@ async def update_user(
 
         db.commit()
         db.refresh(db_user)
+
+        # Si cambió la cuota de disco, aplicarla en el SO
+        if quota_changed:
+            _apply_disk_quota(db_user)
+
         return db_user
     except IntegrityError:
         db.rollback()
@@ -236,3 +271,77 @@ async def delete_user(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Error al eliminar usuario: {str(e)}"
         )
+
+
+# ── Cuotas de disco ──────────────────────────────────────────────────────────
+
+@router.get("/quota/status")
+async def quota_system_status(current_user: User = Depends(require_admin)):
+    """Estado del sistema de cuotas del servidor (activo o no, punto de montaje)."""
+    try:
+        from scripts.quota_manager import QuotaManager
+        return QuotaManager().status()
+    except PermissionError:
+        raise HTTPException(403, "Se necesitan privilegios root")
+    except Exception as e:
+        return {"active": False, "mount": None, "message": f"No disponible: {e}"}
+
+
+@router.get("/users/{user_id}/disk-usage")
+async def user_disk_usage(
+    user_id: int,
+    current_user: User = Depends(require_auth),
+    db: Session = Depends(get_db),
+):
+    """
+    Uso de disco real del usuario (vía repquota) + su límite.
+    Accesible por el propio usuario o por admin/reseller padre.
+    """
+    db_user = db.query(User).filter(User.id == user_id).first()
+    if not db_user:
+        raise HTTPException(404, "Usuario no encontrado")
+
+    # Permisos: el propio usuario, un admin, o el reseller padre
+    if not (current_user.is_admin
+            or current_user.id == db_user.id
+            or db_user.parent_id == current_user.id):
+        raise HTTPException(403, "Sin permiso para ver este usuario")
+
+    try:
+        from scripts.quota_manager import QuotaManager
+        usage = QuotaManager().get_usage(db_user.username)
+    except PermissionError:
+        raise HTTPException(403, "Se necesitan privilegios root")
+    except Exception as e:
+        usage = {"active": False, "used_mb": None, "limit_mb": None,
+                 "percent": None, "over_quota": False, "error": str(e)}
+
+    # Si la cuota del SO no está activa, devolver al menos el límite del plan (BD)
+    if not usage.get("active"):
+        usage["limit_mb"] = db_user.disk_quota_mb or 0
+    return usage
+
+
+@router.post("/users/{user_id}/apply-quota")
+async def apply_user_quota(
+    user_id: int,
+    current_user: User = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
+    """Reaplica la cuota del usuario en el SO (útil tras activar cuotas o reparar)."""
+    db_user = db.query(User).filter(User.id == user_id).first()
+    if not db_user:
+        raise HTTPException(404, "Usuario no encontrado")
+    try:
+        from scripts.quota_manager import QuotaManager
+        qm = QuotaManager()
+        if not qm.is_quota_active():
+            raise HTTPException(409, "El sistema de cuotas no está activo en el servidor")
+        qm.set_quota(db_user.username, db_user.disk_quota_mb or 0)
+        return {"status": "success", "disk_quota_mb": db_user.disk_quota_mb or 0}
+    except HTTPException:
+        raise
+    except PermissionError:
+        raise HTTPException(403, "Se necesitan privilegios root")
+    except Exception as e:
+        raise HTTPException(500, f"Error aplicando cuota: {e}")

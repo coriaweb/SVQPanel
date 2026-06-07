@@ -25,6 +25,7 @@ class UserUpdate(BaseModel):
     role: Optional[str] = Field(None, pattern="^(admin|reseller|user)$")
     is_active: Optional[bool] = None
     domains_limit: Optional[int] = Field(None, ge=0)
+    disk_quota_mb: Optional[int] = Field(None, ge=0, description="Cuota de disco en MB; 0 = ilimitado")
     new_password: Optional[str] = Field(None, min_length=8, description="Nueva contraseña (opcional)")
 
 

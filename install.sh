@@ -270,9 +270,79 @@ apt-get install -y -qq -o Dpkg::Options::="--force-confold" \
     rsyslog \
     rsync \
     zstd \
+    quota \
+    quotatool \
     mailutils
 
 echo -e "${GREEN}✓ Dependencias instaladas${NC}\n"
+
+###############################################################################
+# 5b. ACTIVAR CUOTAS DE DISCO POR USUARIO (kernel quota, estilo cPanel)
+###############################################################################
+# El sistema de cuotas del kernel impide físicamente que un usuario escriba más
+# de su límite de disco (el write falla con "Disk quota exceeded"). El panel
+# fija los límites con setquota a partir del plan de cada usuario.
+#
+# Requiere montar el filesystem con la opción usrquota. Aplicamos la cuota sobre
+# /home si es su propia partición, o sobre / en caso contrario.
+echo -e "${YELLOW}Activando sistema de cuotas de disco...${NC}"
+
+# Determinar el punto de montaje de las cuotas
+if mountpoint -q /home; then
+    QUOTA_MOUNT="/home"
+else
+    QUOTA_MOUNT="/"
+fi
+echo "  Punto de montaje para cuotas: $QUOTA_MOUNT"
+
+# Añadir usrquota a las opciones de montaje en /etc/fstab si no está ya.
+# Hacemos backup de fstab antes de tocarlo.
+cp /etc/fstab /etc/fstab.svqpanel.bak
+
+# Localizar la línea del fstab cuyo punto de montaje es $QUOTA_MOUNT y añadir
+# usrquota,grpquota a sus opciones (si no las tiene). Se respeta el resto.
+python3 - "$QUOTA_MOUNT" << 'FSTABEOF'
+import sys, re
+mount = sys.argv[1]
+with open("/etc/fstab") as f:
+    lines = f.readlines()
+out = []
+changed = False
+for line in lines:
+    if line.strip().startswith("#") or not line.strip():
+        out.append(line); continue
+    parts = line.split()
+    if len(parts) >= 4 and parts[1] == mount:
+        opts = parts[3].split(",")
+        for q in ("usrquota", "grpquota"):
+            if q not in opts:
+                opts.append(q); changed = True
+        # quitar 'defaults' redundante si añadimos opciones explícitas no necesario
+        parts[3] = ",".join(opts)
+        out.append("\t".join(parts) + "\n")
+    else:
+        out.append(line)
+if changed:
+    with open("/etc/fstab", "w") as f:
+        f.writelines(out)
+    print("  fstab actualizado con usrquota,grpquota")
+else:
+    print("  fstab ya tenía las opciones de cuota")
+FSTABEOF
+
+# Remontar para aplicar las nuevas opciones sin reiniciar
+if mount -o remount "$QUOTA_MOUNT" 2>/dev/null; then
+    echo "  Remontado $QUOTA_MOUNT con cuotas"
+else
+    echo -e "${YELLOW}  ⚠ No se pudo remontar $QUOTA_MOUNT en caliente.${NC}"
+    echo -e "${YELLOW}    Las cuotas se activarán tras el próximo reinicio.${NC}"
+fi
+
+# Generar ficheros de cuota (aquota.user / aquota.group) y activar
+quotacheck -cugm "$QUOTA_MOUNT" 2>/dev/null || quotacheck -cug "$QUOTA_MOUNT" 2>/dev/null || true
+quotaon -v "$QUOTA_MOUNT" 2>/dev/null && \
+    echo -e "${GREEN}✓ Cuotas de disco activas en $QUOTA_MOUNT${NC}\n" || \
+    echo -e "${YELLOW}⚠ Cuotas instaladas; se activarán tras reiniciar (quotaon).${NC}\n"
 
 ###############################################################################
 # 4b. INSTALAR CERTBOT (vía snap — versión oficial siempre actualizada)
