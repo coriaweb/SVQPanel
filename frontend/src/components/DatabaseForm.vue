@@ -1,6 +1,24 @@
 <template>
   <form @submit.prevent="handleSubmit">
 
+    <!-- Selector de usuario propietario: obligatorio para admin/reseller -->
+    <div v-if="isAdminOrReseller && !isEditing" class="mb-3">
+      <label class="form-label">Usuario (cliente propietario)</label>
+      <select v-model.number="form.user_id" class="form-select" required>
+        <option :value="null">Selecciona un cliente</option>
+        <option v-for="user in clientUsers" :key="user.id" :value="user.id">
+          {{ user.username }} ({{ user.email }})
+        </option>
+      </select>
+      <div v-if="clientUsers.length === 0" class="form-text text-warning">
+        No hay cuentas de cliente. Las bases de datos pertenecen a un cliente, no
+        al administrador; crea primero un usuario en la sección Usuarios.
+      </div>
+      <small v-else class="text-muted">
+        La BD y su usuario MariaDB se crearán bajo este cliente, no bajo tu cuenta.
+      </small>
+    </div>
+
     <!-- Sufijo de BD -->
     <div class="mb-3">
       <label class="form-label">Nombre de BD (sufijo)</label>
@@ -131,6 +149,7 @@ export default {
   props: {
     database: { type: Object, default: null },
     domains: { type: Array, default: () => [] },
+    users: { type: Array, default: () => [] },
     ownerUsername: { type: String, default: '' }
   },
   emits: ['submit', 'cancel'],
@@ -142,12 +161,26 @@ export default {
     const collationMap = ref({})
     const isEditing = ref(!!props.database)
 
+    const isAdminOrReseller = computed(() =>
+      ['admin', 'reseller'].includes(store.currentUser?.role) || store.currentUser?.is_admin
+    )
+
+    // Solo clientes pueden ser propietarios (las BDs no son del admin)
+    const clientUsers = computed(() =>
+      props.users.filter(u => u.role !== 'admin' && !u.is_admin)
+    )
+
     const form = ref({
       db_name_suffix: props.database?.db_name_suffix || '',
       db_user_suffix: props.database?.db_user_suffix || '',
       db_password: '',
       db_charset: props.database?.db_charset || 'utf8mb4',
       db_collation: props.database?.db_collation || 'utf8mb4_unicode_ci',
+      // Para admin/reseller arranca vacío (debe elegir cliente); para usuario
+      // normal es él mismo.
+      user_id: props.database?.user_id ||
+               (['admin', 'reseller'].includes(store.currentUser?.role) || store.currentUser?.is_admin
+                 ? null : store.currentUser?.id),
       domain_id: props.database?.domain_id || null,
       quota_mb: props.database?.quota_mb || 1024
     })
@@ -166,15 +199,25 @@ export default {
       )
     })
 
+    // Username del propietario: el cliente seleccionado (admin/reseller) o el
+    // propio usuario. Determina el prefijo real de la BD y del usuario MariaDB.
+    const ownerUsername = computed(() => {
+      if (form.value.user_id) {
+        const u = props.users.find(x => x.id === form.value.user_id)
+        if (u) return u.username
+      }
+      return props.ownerUsername || currentUser.value?.username || 'user'
+    })
+
     const predictedDbName = computed(() => {
       if (!form.value.db_name_suffix) return '(nombre real)'
-      const prefix = (props.ownerUsername || currentUser.value?.username || 'user').slice(0, 16)
+      const prefix = ownerUsername.value.slice(0, 16)
       return `${prefix}_${form.value.db_name_suffix}`.slice(0, 64)
     })
 
     const predictedDbUser = computed(() => {
       if (!form.value.db_user_suffix) return '(usuario real)'
-      const prefix = (props.ownerUsername || currentUser.value?.username || 'user').slice(0, 10)
+      const prefix = ownerUsername.value.slice(0, 10)
       return `${prefix}_${form.value.db_user_suffix}`.slice(0, 32)
     })
 
@@ -193,6 +236,12 @@ export default {
     const handleSubmit = async () => {
       if (!form.value.db_password && !isEditing.value) {
         store.showNotification('Ingresa una contraseña', 'error')
+        return
+      }
+
+      // Admin/reseller deben asignar la BD a un cliente (no al admin)
+      if (!isEditing.value && isAdminOrReseller.value && !form.value.user_id) {
+        store.showNotification('Selecciona el usuario propietario de la base de datos', 'error')
         return
       }
 
@@ -231,6 +280,8 @@ export default {
       charsets,
       availableCollations,
       isEditing,
+      isAdminOrReseller,
+      clientUsers,
       predictedDbName,
       predictedDbUser,
       userDomains,

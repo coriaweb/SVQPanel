@@ -40,6 +40,9 @@ def _validate_password(v: str) -> str:
 class MailDomainCreate(BaseModel):
     domain_name:   str           = Field(..., min_length=4, max_length=255,
                                          description="Nombre de dominio, ej: example.com")
+    # Propietario. Obligatorio para admin/reseller: el dominio de correo pertenece
+    # a un cliente, no al admin. Se ignora para un usuario normal (es él mismo).
+    user_id:       Optional[int] = Field(None, description="ID del cliente propietario (admin/reseller)")
     domain_id:     Optional[int] = Field(None, description="ID del dominio web vinculado (opcional)")
     catch_all:     Optional[str] = Field(None, max_length=255,
                                          description="Email destino del catch-all (vacío = desactivado)")

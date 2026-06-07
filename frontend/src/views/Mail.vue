@@ -656,6 +656,21 @@
           </div>
           <form @submit.prevent="createDomain">
             <div class="modal-body">
+              <!-- Propietario: obligatorio para admin/reseller -->
+              <div v-if="isAdminOrReseller" class="mb-3">
+                <label class="form-label">Usuario (cliente propietario) <span class="text-danger">*</span></label>
+                <select class="form-select" v-model.number="newDomainForm.user_id" required>
+                  <option :value="null">Selecciona un cliente</option>
+                  <option v-for="u in clientUsers" :key="u.id" :value="u.id">
+                    {{ u.username }} ({{ u.email }})
+                  </option>
+                </select>
+                <div v-if="clientUsers.length === 0" class="form-text text-warning">
+                  No hay cuentas de cliente. El dominio de correo pertenece a un cliente,
+                  no al administrador; crea primero un usuario en la sección Usuarios.
+                </div>
+                <div v-else class="form-text">El dominio de correo se asignará a este cliente.</div>
+              </div>
               <div class="mb-3">
                 <label class="form-label">Nombre de dominio <span class="text-danger">*</span></label>
                 <input type="text" class="form-control font-monospace"
@@ -987,6 +1002,23 @@ export default {
     const activeTab      = ref('mailboxes')
     const loading        = ref(false)
 
+    // ── Usuarios (para asignar propietario al crear dominio de correo) ──
+    const users = ref([])
+    const isAdminOrReseller = computed(() =>
+      ['admin', 'reseller'].includes(store.currentUser?.role) || store.currentUser?.is_admin
+    )
+    // Las cuentas de correo son de clientes, nunca del admin
+    const clientUsers = computed(() =>
+      users.value.filter(u => u.role !== 'admin' && !u.is_admin)
+    )
+    const loadUsers = async () => {
+      if (!isAdminOrReseller.value) return
+      try {
+        const data = await api.getUsers(0, 1000)
+        users.value = Array.isArray(data) ? data : []
+      } catch (e) { /* no bloqueante */ }
+    }
+
     // ── Roundcube / Webmail ───────────────────────────────────────────
     const roundcubeEnabled = ref(false)
     const roundcubeUrl     = ref(null)
@@ -1023,7 +1055,7 @@ export default {
     const showPwd          = ref(false)
 
     // ── Formularios ───────────────────────────────────────────────────
-    const newDomainForm  = ref({ domain_name: '', catch_all: '', max_mailboxes: 0 })
+    const newDomainForm  = ref({ domain_name: '', catch_all: '', max_mailboxes: 0, user_id: null })
     const newMailboxForm = ref({ username: '', password: '', quota_mb: 1024, send_limit_hour: 200 })
     const newAliasForm   = ref({ source: '', destination: '' })
     const passwordTarget  = ref(null)
@@ -1310,15 +1342,21 @@ export default {
     // ─────────────────────────────────────────────────────────────────
 
     const openNewDomain = () => {
-      newDomainForm.value = { domain_name: '', catch_all: '', max_mailboxes: 0 }
+      newDomainForm.value = { domain_name: '', catch_all: '', max_mailboxes: 0, user_id: null }
       showNewDomain.value = true
     }
 
     const createDomain = async () => {
+      // Admin/reseller debe asignar el dominio a un cliente (no al admin)
+      if (isAdminOrReseller.value && !newDomainForm.value.user_id) {
+        store.showNotification('Selecciona el usuario propietario del dominio de correo', 'danger')
+        return
+      }
       saving.value = true
       try {
         const payload = { ...newDomainForm.value }
         if (!payload.catch_all) delete payload.catch_all
+        if (!payload.user_id) delete payload.user_id
         await api.createMailDomain(payload)
         showNewDomain.value = false
         store.showNotification('Dominio de correo creado', 'success')
@@ -1664,9 +1702,11 @@ export default {
     onMounted(() => {
       loadDomains()
       loadRoundcubeStatus()
+      loadUsers()
     })
 
     return {
+      isAdminOrReseller, clientUsers,
       mailEnabled, mailDomains, selectedDomain, activeTab, loading,
       mailboxes, aliases, dkimInfo,
       loadingMailboxes, loadingAliases, loadingDkim,

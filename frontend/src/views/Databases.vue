@@ -144,6 +144,7 @@
       <DatabaseForm
         :database="editingDatabase"
         :domains="userDomains"
+        :users="users"
         :owner-username="currentUser?.username || ''"
         @submit="handleFormSubmit"
         @cancel="showFormModal = false"

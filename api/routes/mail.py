@@ -400,11 +400,25 @@ async def create_mail_domain(
             detail=f"'{data.domain_name}' ya es un dominio de correo"
         )
 
-    # El usuario regular solo puede crear dominios de correo para sí mismo
-    if current_user.role == "user":
-        user_id = current_user.id
-    else:
-        user_id = current_user.id  # admin/reseller crea bajo sí mismo por defecto
+    # Seguridad: el dominio de correo pertenece SIEMPRE a un cliente, no al admin.
+    # Admin/reseller debe elegir el propietario (igual que en dominios/BD).
+    from api.utils.validators import validate_owner_assignment, OwnerAssignmentError
+    owner_user = None
+    if data.user_id:
+        owner_user = db.query(User).filter(User.id == data.user_id).first()
+    try:
+        user_id = validate_owner_assignment(
+            actor_role=getattr(current_user, "role", None),
+            actor_id=current_user.id,
+            actor_is_admin=bool(current_user.is_admin),
+            requested_user_id=data.user_id,
+            owner_exists=owner_user is not None,
+            owner_is_admin=bool(owner_user.is_admin) if owner_user else False,
+            owner_parent_id=getattr(owner_user, "parent_id", None) if owner_user else None,
+            resource_label="el dominio de correo",
+        )
+    except OwnerAssignmentError as e:
+        raise HTTPException(status_code=e.status_code, detail=str(e))
 
     md = MailDomain(
         user_id       = user_id,

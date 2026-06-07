@@ -352,9 +352,28 @@ def create_database(
     _check_mariadb_enabled()
 
     # ── Determinar propietario ────────────────────────────────────────────────
-    # Un admin puede crear BDs para cualquier usuario si pasara user_id,
-    # pero en este endpoint el propietario siempre es el usuario autenticado.
-    owner = current_user
+    # Seguridad: una BD pertenece SIEMPRE a un cliente concreto, igual que un
+    # dominio. Un admin/reseller NO crea BDs bajo su propia cuenta (eso prefijaría
+    # los usuarios MariaDB con el nombre del admin y ampliaría su superficie de
+    # ataque): debe elegir el cliente propietario obligatoriamente.
+    from api.utils.validators import validate_owner_assignment, OwnerAssignmentError
+    requested_owner = None
+    if data.user_id:
+        requested_owner = db.query(User).filter(User.id == data.user_id).first()
+    try:
+        owner_id = validate_owner_assignment(
+            actor_role=getattr(current_user, "role", None),
+            actor_id=current_user.id,
+            actor_is_admin=bool(current_user.is_admin),
+            requested_user_id=data.user_id,
+            owner_exists=requested_owner is not None,
+            owner_is_admin=bool(requested_owner.is_admin) if requested_owner else False,
+            owner_parent_id=getattr(requested_owner, "parent_id", None) if requested_owner else None,
+            resource_label="la base de datos",
+        )
+    except OwnerAssignmentError as e:
+        raise HTTPException(status_code=e.status_code, detail=str(e))
+    owner = requested_owner if requested_owner else current_user
 
     # ── Verificar límite ──────────────────────────────────────────────────────
     db_count = db.query(ClientDatabase).filter(ClientDatabase.user_id == owner.id).count()

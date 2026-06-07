@@ -173,14 +173,35 @@ async def create_zone(
     current_user=Depends(require_auth),
     db: Session = Depends(get_db)
 ):
-    """Crear zona DNS. Admin: cualquier dominio. Usuario: solo sus propios dominios."""
-    # Verificar permisos: admin puede todo, usuario solo sus dominios
+    """Crear zona DNS. La zona pertenece al cliente dueño del dominio.
+
+    Seguridad: la zona SIEMPRE se ata a un dominio existente de un cliente (no del
+    admin), igual que el resto de recursos. Un admin/reseller no puede crear zonas
+    "sueltas" para dominios inexistentes o de su propia cuenta de admin.
+    """
+    domain = db.query(Domain).filter(Domain.domain_name == data.domain_name).first()
+
     if current_user.role != "admin":
-        domain = db.query(Domain).filter(Domain.domain_name == data.domain_name).first()
+        # Usuario/reseller: solo sus propios dominios
         if not domain or domain.user_id != current_user.id:
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail="Solo puedes crear zonas DNS para tus propios dominios"
+            )
+    else:
+        # Admin: el dominio debe existir y pertenecer a un cliente (no a un admin)
+        if not domain:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=(f"No existe el dominio '{data.domain_name}' en el panel. "
+                        "Crea primero el dominio (asignado a un cliente) y luego su zona DNS."),
+            )
+        owner = db.query(User).filter(User.id == domain.user_id).first()
+        if owner and (owner.is_admin or getattr(owner, "role", None) == "admin"):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=("Ese dominio pertenece a una cuenta de administrador. "
+                        "Las zonas DNS deben pertenecer a un cliente."),
             )
 
     existing = db.query(DnsZone).filter(DnsZone.domain_name == data.domain_name).first()

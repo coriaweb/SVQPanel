@@ -42,6 +42,10 @@ class DatabaseCreate(BaseModel):
     db_name_suffix: str   # sufijo; nombre real = {username}_{sufijo}
     db_user_suffix: str   # sufijo usuario; user real = {username}_{sufijo}
     db_password: str
+    # Propietario de la BD. Obligatorio para admin/reseller (no pueden crear BDs
+    # bajo su propia cuenta): toda BD pertenece a un cliente, igual que un dominio.
+    # Para un usuario normal se ignora (siempre es él mismo).
+    user_id: Optional[int] = None
     domain_id: Optional[int] = None  # dominio asociado (opcional)
     db_charset: str = "utf8mb4"
     db_collation: str = "utf8mb4_unicode_ci"

@@ -371,8 +371,16 @@
                   type="text"
                   class="form-control"
                   placeholder="ejemplo.com"
+                  list="dns-domain-options"
                   :disabled="!!editingZone"
                 />
+                <datalist id="dns-domain-options">
+                  <option v-for="d in domainsWithoutZone" :key="d.id" :value="d.domain_name" />
+                </datalist>
+                <div v-if="!editingZone" class="form-text">
+                  Debe ser un dominio existente de un cliente. Si no aparece, créalo primero
+                  en <strong>Dominios</strong> asignándolo a su cliente.
+                </div>
               </div>
 
               <!-- IP -->
@@ -718,6 +726,20 @@ export default {
     // Zones
     const zones        = ref([])
     const loadingZones = ref(false)
+
+    // Dominios existentes (la zona DNS se ata a un dominio de cliente, no al admin)
+    const domains = ref([])
+    const loadDomains = async () => {
+      try {
+        const data = await api.getDomains(null, 0, 1000)
+        domains.value = Array.isArray(data) ? data : (data?.domains || data?.items || [])
+      } catch (e) { /* no bloqueante */ }
+    }
+    // Dominios candidatos para una zona: los que NO tienen ya zona creada.
+    const domainsWithoutZone = computed(() => {
+      const withZone = new Set(zones.value.map(z => z.domain_name))
+      return domains.value.filter(d => !withZone.has(d.domain_name))
+    })
 
     // Selected zone + records
     const selectedZone   = ref(null)
@@ -1243,9 +1265,10 @@ export default {
       }
     }
 
-    onMounted(async () => { await loadZones(); await loadNameservers(); await loadCluster(); await loadHealth(false) })
+    onMounted(async () => { await loadZones(); await loadDomains(); await loadNameservers(); await loadCluster(); await loadHealth(false) })
 
     return {
+      domainsWithoutZone,
       isAdmin,
       ns, nsForm, nsSaving, regenAll, loadNameservers, saveNameservers, regenerateAll,
       cluster, clusterNodes, loadingCluster, savingNode, provisioning, testingNodeId, nodeForm,
