@@ -231,10 +231,23 @@ export default {
       navGroups.map((g) => ({ ...g, items: g.items.filter(canSee) })).filter((g) => g.items.length > 0)
     )
 
+    // Lista de todas las rutas del menú, para detectar la coincidencia más específica
+    const allNavPaths = navGroups.flatMap((g) => g.items.map((it) => it.to))
+
     const isActive = (to) => {
       if (route.path === to) return true
-      if (to !== '/dashboard' && route.path.startsWith(to + '/')) return true
-      return false
+      if (to === '/dashboard') return false
+      // ¿La ruta actual cuelga de "to"? (p. ej. /domains/1 bajo /domains)
+      if (!route.path.startsWith(to + '/')) return false
+      // Si existe otra ruta del menú más específica que también encaja
+      // (p. ej. /system/updates cuando "to" es /system), entonces "to" NO
+      // debe marcarse activo: gana el item más concreto.
+      const moreSpecific = allNavPaths.some(
+        (p) => p !== to && p.length > to.length &&
+               (route.path === p || route.path.startsWith(p + '/')) &&
+               p.startsWith(to + '/')
+      )
+      return !moreSpecific
     }
 
     // ── Breadcrumb ──
