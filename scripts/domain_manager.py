@@ -187,10 +187,22 @@ class DomainManager(SystemManager):
                     ))
                 logger.info(f"Created Apache vhost: {apache_path}")
                 self.execute_command(["a2ensite", domain_name], check=False)
+                # Validar la configuración ANTES de recargar. Si el configtest
+                # falla, distinguimos si el problema es ESTE vhost o uno ajeno
+                # (un vhost roto de otro dominio bloquearía el reload de todos).
+                rc, _out, err = self.execute_command(
+                    ["apache2ctl", "configtest"], check=False)
+                if rc != 0:
+                    err = (err or "").strip()
+                    if domain_name in err:
+                        raise RuntimeError(f"Apache configtest falló para este dominio: {err}")
+                    raise RuntimeError(
+                        "Apache no puede recargar porque otro vhost tiene un error "
+                        f"(no es de este dominio). Revisa `apache2ctl configtest`: {err}")
                 try:
                     self.execute_command(["systemctl", "reload", "apache2"])
-                except Exception:
-                    raise RuntimeError("Apache reload failed")
+                except Exception as e:
+                    raise RuntimeError(f"Apache reload failed: {e}")
 
                 # 2) Vhost Nginx FRONT (80/443) que hace proxy a Apache
                 config_path = get_nginx_config_path(domain_name)
