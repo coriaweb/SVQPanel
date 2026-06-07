@@ -1,8 +1,10 @@
 <template>
-  <div class="mig">
+  <div class="sv-view mig">
     <div class="page-head">
-      <h1 class="page-head__title">Migrar desde otro panel</h1>
-      <p class="page-head__subtitle">Importa un backup de HestiaCP (.tar) y recrea sus webs, bases de datos, correo y DNS en SVQPanel.</p>
+      <div>
+        <h1 class="page-head__title">Migrar desde otro panel</h1>
+        <p class="page-head__sub">Importa un backup de HestiaCP (.tar) y recrea sus webs, bases de datos, correo y DNS en SVQPanel.</p>
+      </div>
     </div>
 
     <!-- Paso 1: origen + destino -->
@@ -308,7 +310,9 @@ export default {
 textarea.svq-input { height: auto; padding: var(--sp-2) var(--sp-3); line-height: 1.4; }
 input[type="file"].svq-input { padding: var(--sp-2); height: auto; }
 
-.mig { max-width: 1000px; }
+/* Igual que el resto de vistas: ocupa el ancho del área de contenido. Las
+   tarjetas se separan en vertical. */
+.mig :deep(.card) { margin-bottom: var(--sp-4); }
 .mig-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: var(--sp-3); }
 .mig-field { display: flex; flex-direction: column; gap: 4px; }
 .mig-field > span { font-size: var(--fs-sm); color: var(--text-secondary); font-weight: var(--fw-medium); }
