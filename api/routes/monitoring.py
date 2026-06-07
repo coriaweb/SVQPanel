@@ -247,6 +247,19 @@ async def services_db(current_user=Depends(require_admin)):
         raise HTTPException(500, f"No se pudieron obtener estadísticas de BD: {e}")
 
 
+@router.get("/monitoring/system-detail")
+async def system_detail(current_user=Depends(require_admin)):
+    """
+    Detalle en vivo del sistema: RAM/swap (free), CPU (modelo/núcleos/load),
+    particiones de disco y interfaces de red. Complementa las gráficas históricas.
+    """
+    try:
+        from scripts import system_detail
+        return system_detail.collect()
+    except Exception as e:
+        raise HTTPException(500, f"No se pudo obtener el detalle del sistema: {e}")
+
+
 @router.get("/monitoring/services/dns")
 async def services_dns(current_user=Depends(require_admin), db: Session = Depends(get_db)):
     """
