@@ -24,6 +24,89 @@ logger = logging.getLogger(__name__)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# Aplicación a nftables en SEGUNDO PLANO con coalescing (debounce)
+#
+# Aplicar listas IP a nftables es lento (descarga + parseo + reload). Si el
+# usuario bloquea/desbloquea varios países seguidos, no queremos bloquear cada
+# clic ni lanzar N reloads en paralelo. En su lugar:
+#   - cada cambio marca "hay trabajo pendiente" y responde al instante;
+#   - un único hilo de fondo espera una pequeña pausa (coalescing) y entonces
+#     aplica el estado actual de TODAS las listas una sola vez;
+#   - si llegan más cambios mientras espera, reinicia la pausa (así 10 clics
+#     seguidos = 1 sola aplicación al final).
+# ─────────────────────────────────────────────────────────────────────────────
+import threading
+
+_apply_lock = threading.Lock()
+_apply_timer: Optional[threading.Timer] = None
+_apply_state = {
+    "applying": False,      # hay una aplicación en curso
+    "pending":  False,      # hay cambios esperando a aplicarse
+    "last_error": None,     # error de la última aplicación (o None)
+    "last_applied_at": None,
+}
+_COALESCE_SECONDS = 1.5     # espera tras el último cambio antes de aplicar
+
+
+def _do_background_apply():
+    """Aplica el estado actual de las listas a nftables. Corre en un hilo."""
+    from api.models.database import SessionLocal
+    with _apply_lock:
+        _apply_state["applying"] = True
+        _apply_state["pending"] = False
+    db = SessionLocal()
+    try:
+        enabled = db.query(IpList).filter(IpList.enabled.is_(True)).all()
+        active_tuples = []
+        for il in enabled:
+            v4, v6, err = ip_list_fetcher.refresh_one(il)
+            db.commit()
+            if err == "unchanged":
+                try:
+                    text, _ = ip_list_fetcher.fetch_url(il.url)
+                    v4, v6, _ = ip_list_fetcher.parse_list_content(text, il.max_entries)
+                except Exception as e:
+                    logger.warning(f"iplist {il.name}: refetch unchanged falló: {e}")
+                    continue
+            elif err:
+                logger.warning(f"iplist {il.name}: refresh falló: {err}")
+                continue
+            active_tuples.append((il, v4, v6))
+
+        content = ip_list_fetcher.regenerate_iplists_nft(active_tuples)
+        ip_list_fetcher.write_iplists_nft(content)
+        ok, msg = nft.reload_nftables()
+        with _apply_lock:
+            _apply_state["last_error"] = None if ok else msg
+            _apply_state["last_applied_at"] = datetime.utcnow().isoformat()
+        if not ok:
+            logger.error(f"geo/iplist apply: reload nftables falló: {msg}")
+    except Exception as e:
+        logger.error(f"geo/iplist background apply error: {e}")
+        with _apply_lock:
+            _apply_state["last_error"] = str(e)
+    finally:
+        db.close()
+        with _apply_lock:
+            _apply_state["applying"] = False
+            # ¿Llegaron cambios mientras aplicábamos? Reprograma otra pasada.
+            if _apply_state["pending"]:
+                _schedule_apply()
+
+
+def _schedule_apply():
+    """Programa (o reprograma) una aplicación en background con debounce."""
+    global _apply_timer
+    with _apply_lock:
+        _apply_state["pending"] = True
+        if _apply_timer is not None:
+            _apply_timer.cancel()
+        _apply_timer = threading.Timer(_COALESCE_SECONDS, _do_background_apply)
+        _apply_timer.daemon = True
+        _apply_timer.start()
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # CRUD
 # ─────────────────────────────────────────────────────────────────────────────
 @router.get("/firewall/ip-lists", response_model=List[IpListResponse])
@@ -263,9 +346,8 @@ async def geo_block(
         if not il.enabled:
             il.enabled = True
             db.commit()
-            _refresh_and_apply(db, request, user)
-        db.refresh(il)
-        return {"status": "ok", "country": cc, "list": name, "already": True}
+            _schedule_apply()   # aplicar en segundo plano (respuesta inmediata)
+        return {"status": "ok", "country": cc, "list": name, "already": True, "applying": True}
 
     url = geo.country_url(cc)
     ok, msg = ip_list_fetcher.url_resolves_safe(url)
@@ -285,14 +367,13 @@ async def geo_block(
     )
     db.add(il)
     db.commit()
-    db.refresh(il)
     log_audit(db, user=user, category="iplist", action="geo_block",
               target=f"{country['name']} ({cc})", request=request)
 
-    _refresh_and_apply(db, request, user)
-    db.refresh(il)
-    return {"status": "ok", "country": cc, "list": name,
-            "entry_count": (il.entry_count_v4 or 0) + (il.entry_count_v6 or 0)}
+    # Registrado en BD → respondemos YA. La descarga + nftables va en background
+    # (con coalescing: si bloqueas varios países seguidos, se aplica todo junto).
+    _schedule_apply()
+    return {"status": "ok", "country": cc, "list": name, "applying": True}
 
 
 @router.post("/firewall/geo/{cc}/unblock")
@@ -314,5 +395,17 @@ async def geo_unblock(
     log_audit(db, user=user, category="iplist", action="geo_unblock",
               target=cc, request=request)
 
-    _refresh_and_apply(db, request, user)
-    return {"status": "ok", "country": cc, "removed": True}
+    _schedule_apply()   # reaplicar nftables en segundo plano
+    return {"status": "ok", "country": cc, "removed": True, "applying": True}
+
+
+@router.get("/firewall/geo/apply-status")
+async def geo_apply_status(_: dict = Depends(require_admin)):
+    """Estado de la aplicación a nftables en background (para que la UI muestre
+    'aplicando…' y avise cuando termina o si hubo error)."""
+    with _apply_lock:
+        return {
+            "applying":        _apply_state["applying"] or _apply_state["pending"],
+            "last_error":      _apply_state["last_error"],
+            "last_applied_at": _apply_state["last_applied_at"],
+        }

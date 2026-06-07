@@ -673,6 +673,7 @@ class APIClient {
   getGeoCatalog()                 { return this.get('/api/firewall/geo/catalog') }
   geoBlock(cc)                    { return this.post(`/api/firewall/geo/${cc}/block`, {}) }
   geoUnblock(cc)                  { return this.post(`/api/firewall/geo/${cc}/unblock`, {}) }
+  getGeoApplyStatus()             { return this.get('/api/firewall/geo/apply-status') }
 
   // php.ini por dominio
   getDomainPhpConfig(domainId) {

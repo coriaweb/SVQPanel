@@ -229,25 +229,27 @@
       <div class="sec-card" style="margin-bottom:1rem">
         <div class="sec-card-head">
           <span class="sec-card-title"><i class="bi bi-globe-americas"></i> Bloqueo por país</span>
-          <button class="sec-icon-btn" @click="loadGeoCatalog" title="Refrescar"><i class="bi bi-arrow-clockwise"></i></button>
+          <span v-if="geoApplying" class="geo-applying">
+            <span class="spinner-border spinner-border-sm"></span> Aplicando al firewall…
+          </span>
+          <button v-else class="sec-icon-btn" @click="loadGeoCatalog" title="Refrescar"><i class="bi bi-arrow-clockwise"></i></button>
         </div>
         <div class="sec-card-body">
           <p class="sec-hint">
             Bloquea en el firewall todo el tráfico entrante de un país (rangos IP de
             <a href="https://www.ipdeny.com" target="_blank" rel="noopener">ipdeny.com</a>,
-            refresco automático cada 24h). Haz clic para activar o desactivar cada país.
+            refresco automático cada 24h). Pincha los que quieras: se aplican en
+            segundo plano, no tienes que esperar entre clic y clic.
           </p>
           <div v-if="geoLoading" class="sec-empty"><span class="spinner-border spinner-border-sm"></span></div>
           <div v-else class="geo-grid">
             <button v-for="c in geoCountries" :key="c.cc" type="button"
                     class="geo-chip" :class="{ 'geo-chip--on': c.blocked }"
-                    :disabled="geoBusy === c.cc"
                     @click="toggleGeo(c)"
-                    :title="c.blocked ? `Bloqueado (${c.entry_count} rangos) — clic para desbloquear` : 'Clic para bloquear'">
+                    :title="c.blocked ? `Bloqueado${c.entry_count ? ' ('+c.entry_count+' rangos)' : ''} — clic para desbloquear` : 'Clic para bloquear'">
               <span class="geo-flag">{{ c.flag }}</span>
               <span class="geo-name">{{ c.name }}</span>
-              <span v-if="geoBusy === c.cc" class="spinner-border spinner-border-sm geo-spin"></span>
-              <i v-else-if="c.blocked" class="bi bi-check-circle-fill geo-check"></i>
+              <i v-if="c.blocked" class="bi bi-check-circle-fill geo-check"></i>
               <i v-else class="bi bi-plus-circle geo-plus"></i>
             </button>
           </div>
@@ -812,7 +814,7 @@ const ipLists       = ref([])
 // Geo-blocking (bloqueo por país)
 const geoCountries = ref([])
 const geoLoading   = ref(false)
-const geoBusy      = ref(null)   // cc en proceso
+const geoApplying  = ref(false)  // aplicándose a nftables en segundo plano
 const geoBlockedCount = computed(() => geoCountries.value.filter(c => c.blocked).length)
 
 const connections   = ref([])
@@ -913,22 +915,48 @@ async function loadGeoCatalog() {
 }
 
 async function toggleGeo(c) {
-  if (geoBusy.value) return
-  geoBusy.value = c.cc
+  // Actualización OPTIMISTA: el chip cambia al instante; el firewall se aplica
+  // en segundo plano (el backend hace coalescing si pinchas varios seguidos).
+  const wasBlocked = c.blocked
+  c.blocked = !wasBlocked          // feedback inmediato
+  geoApplying.value = true
   try {
-    if (c.blocked) {
+    if (wasBlocked) {
       await api.geoUnblock(c.cc)
     } else {
       await api.geoBlock(c.cc)
     }
-    // Refrescar catálogo y listas (la lista geo_ aparece/desaparece)
-    await loadGeoCatalog()
-    await loadIpLists()
+    pollGeoApply()                 // vigilar cuándo termina de aplicarse
   } catch (e) {
+    c.blocked = wasBlocked         // revertir si el registro falló
+    geoApplying.value = false
     alert('Geo-bloqueo (' + c.name + '): ' + e.message)
-  } finally {
-    geoBusy.value = null
   }
+}
+
+let _geoPollTimer = null
+function pollGeoApply() {
+  if (_geoPollTimer) clearTimeout(_geoPollTimer)
+  const check = async () => {
+    try {
+      const st = await api.getGeoApplyStatus()
+      if (st.applying) {
+        geoApplying.value = true
+        _geoPollTimer = setTimeout(check, 1500)
+      } else {
+        geoApplying.value = false
+        if (st.last_error) {
+          alert('El firewall reportó un error al aplicar: ' + st.last_error)
+        }
+        // Sincronizar contadores reales (nº de rangos por país)
+        loadGeoCatalog()
+        loadIpLists()
+      }
+    } catch (e) {
+      geoApplying.value = false
+    }
+  }
+  _geoPollTimer = setTimeout(check, 1200)
 }
 
 async function loadConnections() {
@@ -1262,7 +1290,7 @@ onMounted(async () => {
 .geo-name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .geo-check { color: var(--danger); flex-shrink: 0; }
 .geo-plus { color: var(--text-muted); flex-shrink: 0; }
-.geo-spin { width: 14px; height: 14px; }
+.geo-applying { display: inline-flex; align-items: center; gap: .4rem; font-size: .8rem; color: var(--ac); font-weight: 600; }
 
 /* Aislamiento PHP */
 .iso-card { border-left: 4px solid var(--border-strong) !important; }
