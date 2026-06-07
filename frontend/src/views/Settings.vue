@@ -231,15 +231,26 @@
           <div class="card-body">
             <label class="form-label">Versión PHP por defecto</label>
             <select v-model="form.php_default_version" class="form-select">
-              <option value="8.5">PHP 8.5</option>
-              <option value="8.4">PHP 8.4</option>
-              <option value="8.3">PHP 8.3</option>
-              <option value="8.2">PHP 8.2 (recomendado)</option>
-              <option value="8.1">PHP 8.1</option>
-              <option value="8.0">PHP 8.0</option>
-              <option value="7.4">PHP 7.4</option>
+              <option v-for="php in installedPhpVersions" :key="php.version" :value="php.version">
+                PHP {{ php.version }}{{ php.version === recommendedPhp ? ' (recomendada)' : '' }}{{ !php.running ? ' — detenida' : '' }}
+              </option>
+              <!-- Si la actual no está instalada, mostrarla igualmente para no perder el valor -->
+              <option v-if="form.php_default_version && !installedPhpVersions.some(p => p.version === form.php_default_version)"
+                      :value="form.php_default_version">
+                PHP {{ form.php_default_version }} — no instalada
+              </option>
             </select>
-            <div class="form-text">Se usará al crear nuevos dominios.</div>
+            <div class="form-text">
+              Se usará al crear nuevos dominios. Solo se listan las versiones instaladas.
+              <span v-if="!installedPhpVersions.length" class="text-warning">
+                <i class="bi bi-exclamation-triangle"></i> No hay ninguna versión PHP instalada todavía.
+              </span>
+            </div>
+            <div v-if="defaultPhpNotInstalled" class="alert alert-warning py-2 small mt-2 mb-0">
+              <i class="bi bi-exclamation-triangle me-1"></i>
+              La versión por defecto (<strong>PHP {{ form.php_default_version }}</strong>) no está instalada.
+              Instálala en "Versiones PHP" o elige otra para que los dominios nuevos funcionen.
+            </div>
           </div>
         </div>
       </div>
@@ -904,6 +915,29 @@ export default {
       }
     }
 
+    // Versiones PHP instaladas (las que se pueden elegir como default), ordenadas desc
+    const installedPhpVersions = computed(() =>
+      phpVersions.value
+        .filter(p => p.installed)
+        .sort((a, b) => parseFloat(b.version) - parseFloat(a.version))
+    )
+
+    // Recomendada = la instalada y corriendo más reciente; si ninguna corre,
+    // la instalada más reciente. Sin nada instalado, no recomienda.
+    const recommendedPhp = computed(() => {
+      const running = installedPhpVersions.value.filter(p => p.running)
+      if (running.length) return running[0].version
+      if (installedPhpVersions.value.length) return installedPhpVersions.value[0].version
+      return null
+    })
+
+    // ¿El default elegido no está instalado? (aviso)
+    const defaultPhpNotInstalled = computed(() =>
+      !!form.php_default_version &&
+      phpVersions.value.length > 0 &&
+      !phpVersions.value.some(p => p.version === form.php_default_version && p.installed)
+    )
+
     const parsedRange = computed(() => {
       if (!form.ipv6_range) return null
       try {
@@ -1157,6 +1191,7 @@ export default {
       smtp, smtpSaving, smtpTesting, smtpTestMsg, smtpTestOk,
       showSmtpTest, smtpTestTo, saveSmtp, openSmtpTest, sendSmtpTest,
       loading, saving, settings, form, parsedRange, saveSettings,
+      installedPhpVersions, recommendedPhp, defaultPhpNotInstalled,
       phpVersions, phpLoading, phpError, phpActionLoading,
       uninstallTarget,
       loadPHPStatus, installPHP, enablePHP, disablePHP,

@@ -2500,6 +2500,43 @@ finally:
     session.close()
 PYTHONEOF
 
+# Fijar php_default_version a la versión instalada más reciente (no hardcodear 8.2,
+# que podría no estar instalada). Recomendamos la más nueva que el usuario eligió.
+SVQPANEL_PHP_VERSIONS="${PHP_ARRAY[*]}" python3 << 'PYTHONEOF'
+import sys, os
+sys.path.insert(0, '/opt/svqpanel')
+from api.models.database import SessionLocal, load_all_models
+load_all_models()
+from api.models.models_settings import Settings
+
+versions = (os.environ.get('SVQPANEL_PHP_VERSIONS', '') or '').split()
+if not versions:
+    sys.exit(0)
+
+# Más reciente por valor numérico (8.5 > 8.3 > 7.4)
+def vkey(v):
+    try:
+        return tuple(int(x) for x in v.split('.'))
+    except Exception:
+        return (0,)
+default_php = sorted(versions, key=vkey, reverse=True)[0]
+
+session = SessionLocal()
+try:
+    s = session.query(Settings).first()
+    if s is None:
+        s = Settings(id=1)
+        session.add(s)
+    s.php_default_version = default_php
+    session.commit()
+    print(f"php_default_version set to {default_php}")
+except Exception as e:
+    print(f"Error setting default PHP: {e}")
+    session.rollback()
+finally:
+    session.close()
+PYTHONEOF
+
 # Guardar credenciales en archivo seguro
 mkdir -p /opt/svqpanel/.credentials
 echo "${ADMIN_USER}:${ADMIN_PASSWORD}" > /opt/svqpanel/.credentials/admin.txt

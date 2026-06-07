@@ -27,8 +27,9 @@ class Settings(Base):
     panel_ipv6 = Column(String(50), nullable=True)            # IPv6 dedicada del panel (::1 del rango)
     network_interface = Column(String(20), default="eth0")    # Interfaz de red (eth0, ens3…)
 
-    # PHP
-    php_default_version = Column(String(10), default="8.2")
+    # PHP — fallback solo si el install no fija uno; el install lo sobreescribe
+    # con la versión más reciente realmente instalada.
+    php_default_version = Column(String(10), default="8.3")
 
     # File Manager - Límites de subida
     max_upload_mb = Column(Integer, default=100)              # MB máximo por archivo
