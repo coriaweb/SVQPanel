@@ -11,6 +11,7 @@ export const useMainStore = defineStore('main', () => {
   const isAuthenticated = ref(!!token.value)
   const theme = ref(localStorage.getItem('theme') || 'light')
   const sidebarCollapsed = ref(localStorage.getItem('sidebarCollapsed') === '1')
+  const mobileMenuOpen = ref(false)
 
   const applyTheme = (value) => {
     theme.value = value
@@ -23,9 +24,17 @@ export const useMainStore = defineStore('main', () => {
   }
 
   const toggleSidebar = () => {
-    sidebarCollapsed.value = !sidebarCollapsed.value
-    localStorage.setItem('sidebarCollapsed', sidebarCollapsed.value ? '1' : '0')
+    // En móvil (≤768px) el botón controla la apertura del drawer;
+    // en desktop controla el colapso del sidebar.
+    if (window.innerWidth <= 768) {
+      mobileMenuOpen.value = !mobileMenuOpen.value
+    } else {
+      sidebarCollapsed.value = !sidebarCollapsed.value
+      localStorage.setItem('sidebarCollapsed', sidebarCollapsed.value ? '1' : '0')
+    }
   }
+
+  const closeMobileMenu = () => { mobileMenuOpen.value = false }
 
   const showNotification = (message, type = 'success', duration = 3000) => {
     notification.value = { message, type }
@@ -81,9 +90,11 @@ export const useMainStore = defineStore('main', () => {
     isAuthenticated,
     theme,
     sidebarCollapsed,
+    mobileMenuOpen,
     applyTheme,
     toggleTheme,
     toggleSidebar,
+    closeMobileMenu,
     showNotification,
     setLoading,
     updateUsers,

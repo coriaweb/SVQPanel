@@ -97,4 +97,14 @@ export default {
 .modal-enter-active .modal-content, .modal-leave-active .modal-content { transition: transform var(--t-base) var(--ease-out), opacity var(--t-base) var(--ease); }
 .modal-enter-from, .modal-leave-to { opacity: 0; }
 .modal-enter-from .modal-content, .modal-leave-to .modal-content { transform: scale(.96) translateY(8px); opacity: 0; }
+
+/* Móvil: bottom-sheet */
+@media (max-width: 600px) {
+  .modal-overlay { padding: 0; align-items: flex-end; }
+  .modal-content, .modal-content.modal-lg, .modal-content.modal-xl, .modal-content.modal-sm {
+    max-width: 100%; max-height: 92vh;
+    border-radius: var(--r-xl) var(--r-xl) 0 0;
+  }
+  .modal-enter-from .modal-content, .modal-leave-to .modal-content { transform: translateY(100%); opacity: 1; }
+}
 </style>

@@ -1,7 +1,7 @@
 <template>
-  <div class="app-shell" v-if="isAuthenticated" :data-collapsed="sidebarCollapsed">
+  <div class="app-shell" v-if="isAuthenticated" :data-collapsed="sidebarCollapsed" :class="{ 'mobile-open': mobileMenuOpen }">
     <!-- ===== Sidebar SVQ ===== -->
-    <aside class="sb" :class="{ 'sb--collapsed': sidebarCollapsed }">
+    <aside class="sb" :class="{ 'sb--collapsed': sidebarCollapsed, 'sb--mobile-open': mobileMenuOpen }">
 
       <!-- Wordmark -->
       <div class="sb-brand">
@@ -26,7 +26,7 @@
             class="sb-item"
             :class="{ 'sb-item--active': isActive(item.to) }"
             :title="sidebarCollapsed ? item.label : ''"
-            @click.prevent="router.push(item.to)">
+            @click.prevent="navigate(item.to)">
             <i class="bi" :class="item.icon"></i>
             <span class="sb-item__label">{{ item.label }}</span>
             <span v-if="item.badge != null && !sidebarCollapsed" class="sb-badge">{{ item.badge }}</span>
@@ -117,7 +117,7 @@
       </header>
 
       <!-- Backdrop móvil -->
-      <div class="app-backdrop" @click="store.toggleSidebar()"></div>
+      <div class="app-backdrop" @click="store.closeMobileMenu()"></div>
 
       <!-- Contenido -->
       <main class="app-content">
@@ -163,7 +163,14 @@ export default {
     const currentUser     = computed(() => store.currentUser)
     const theme           = computed(() => store.theme)
     const sidebarCollapsed = computed(() => store.sidebarCollapsed)
+    const mobileMenuOpen  = computed(() => store.mobileMenuOpen)
     const dropdownOpen    = ref(false)
+
+    // Navegar y cerrar el drawer móvil
+    const navigate = (to) => {
+      router.push(to)
+      store.closeMobileMenu()
+    }
 
     // ── Hostname del servidor (mostrado en footer del sidebar) ──
     const serverHostname = computed(() => {
@@ -261,7 +268,7 @@ export default {
 
     return {
       store, route, router, notification, isAuthenticated, currentUser, theme,
-      sidebarCollapsed, dropdownOpen, visibleGroups, isActive, currentBreadcrumb,
+      sidebarCollapsed, mobileMenuOpen, navigate, dropdownOpen, visibleGroups, isActive, currentBreadcrumb,
       userInitials, toastIcon, logout, openPalette, serverHostname,
     }
   },
@@ -507,6 +514,10 @@ export default {
    Toast
 ══════════════════════════════════════════════════ */
 .toast-stack { position: fixed; bottom: 24px; right: 24px; z-index: 9999; }
+@media (max-width: 600px) {
+  .toast-stack { left: 12px; right: 12px; bottom: 12px; }
+  .toast { min-width: 0; max-width: 100%; }
+}
 .toast {
   display: flex; align-items: center; gap: 12px;
   min-width: 280px; max-width: 420px;
@@ -533,22 +544,36 @@ export default {
    Responsive
 ══════════════════════════════════════════════════ */
 @media (max-width: 768px) {
+  /* El sidebar es un drawer: oculto por defecto, se desliza al abrir el menú */
   .sb {
     position: fixed; top: 0; bottom: 0; left: 0; z-index: 1100;
-    transform: translateX(-100%); width: 260px !important;
-    box-shadow: var(--shadow-lg); transition: transform .22s ease;
+    transform: translateX(-100%); width: 264px !important;
+    box-shadow: var(--shadow-lg); transition: transform .24s ease;
   }
-  .sb:not(.sb--collapsed) { transform: translateX(0); }
-  .sb--collapsed { transform: translateX(-100%); }
+  .sb--mobile-open { transform: translateX(0); }
+  /* En el drawer siempre se muestran las etiquetas (nunca colapsado) */
+  .sb.sb--collapsed { width: 264px !important; }
+  .sb.sb--collapsed .sb-item { padding: 10px 22px; justify-content: flex-start; }
+  .sb.sb--collapsed .sb-item__label { display: block; }
+  .sb.sb--collapsed .sb-brand__accent::after { content: 'Panel'; }
+  .sb.sb--collapsed .sb-theme-btn span { display: inline; }
+
   .app-content { padding: 14px 16px; }
   .tb-search { display: none; }
   .tb-user__name { display: none; }
   .tb-crumb { display: none; }
+  .topbar { padding: 0 14px; }
+
   .app-backdrop {
     display: block; position: fixed; inset: 0; z-index: 1050;
     background: rgba(0,0,0,.45); opacity: 0; pointer-events: none;
-    transition: opacity .22s ease;
+    transition: opacity .24s ease;
   }
-  .sb:not(.sb--collapsed) ~ .app-main .app-backdrop { opacity: 1; pointer-events: auto; }
+  .mobile-open .app-backdrop { opacity: 1; pointer-events: auto; }
+}
+
+@media (max-width: 480px) {
+  .app-content { padding: 12px 12px; }
+  .topbar { height: 58px; }
 }
 </style>

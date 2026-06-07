@@ -375,4 +375,9 @@ export default {
   .quick-action-btn { gap: 12px; padding: 12px; min-height: auto; }
   .qa-icon { width: 38px; height: 38px; font-size: 18px; }
 }
+@media (max-width: 440px) {
+  .metrics-grid { grid-template-columns: 1fr; }
+  .quick-actions { grid-template-columns: 1fr; }
+  .server-gauges { grid-template-columns: 1fr; }
+}
 </style>

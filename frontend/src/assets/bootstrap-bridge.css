@@ -240,14 +240,26 @@ code { font-family: var(--font-mono); color: var(--danger); background: var(--su
 [data-theme="dark"] .alert-danger  { color: var(--danger) !important; }
 
 /* ── Modals ── */
-.modal { position: fixed; inset: 0; z-index: 1055; display: flex; align-items: center; justify-content: center; background: rgba(0,0,0,.45); }
-.modal-dialog { width: 100%; max-width: 520px; margin: 0 auto; padding: 16px; }
-.modal-dialog-lg { max-width: 800px; }
-.modal-content { background: var(--surface); border: 1px solid var(--border); border-radius: var(--r-xl); box-shadow: var(--shadow-lg); color: var(--text); }
-.modal-header  { display: flex; align-items: center; justify-content: space-between; padding: 14px 20px; border-bottom: 1px solid var(--border); }
+.modal { position: fixed; inset: 0; z-index: 1055; display: flex; align-items: center; justify-content: center; background: rgba(0,0,0,.45); padding: 16px; overflow-y: auto; }
+.modal-dialog { width: 100%; max-width: 520px; margin: auto; display: flex; flex-direction: column; max-height: calc(100vh - 32px); }
+.modal-dialog-lg, .modal-lg { max-width: 800px; }
+.modal-dialog-xl, .modal-xl { max-width: 1120px; }
+.modal-dialog-sm, .modal-sm { max-width: 400px; }
+.modal-content { background: var(--surface); border: 1px solid var(--border); border-radius: var(--r-xl); box-shadow: var(--shadow-lg); color: var(--text); display: flex; flex-direction: column; max-height: 100%; overflow: hidden; width: 100%; }
+.modal-header  { display: flex; align-items: center; justify-content: space-between; padding: 14px 20px; border-bottom: 1px solid var(--border); flex-shrink: 0; }
 .modal-title   { font-size: var(--fs-xl); font-weight: var(--fw-semibold); margin: 0; color: var(--text); }
-.modal-body    { padding: 20px; }
-.modal-footer  { display: flex; align-items: center; justify-content: flex-end; gap: 8px; padding: 14px 20px; border-top: 1px solid var(--border); background: var(--surface-inset); border-radius: 0 0 var(--r-xl) var(--r-xl); }
+.modal-body    { padding: 20px; overflow-y: auto; flex: 1; }
+.modal-footer  { display: flex; align-items: center; justify-content: flex-end; gap: 8px; padding: 14px 20px; border-top: 1px solid var(--border); background: var(--surface-inset); border-radius: 0 0 var(--r-xl) var(--r-xl); flex-shrink: 0; flex-wrap: wrap; }
+
+/* Modal responsive — bottom-sheet en móvil */
+@media (max-width: 600px) {
+  .modal { padding: 0; align-items: flex-end; }
+  .modal-dialog { max-width: 100% !important; max-height: 92vh; }
+  .modal-content { border-radius: var(--r-xl) var(--r-xl) 0 0; }
+  .modal-footer { border-radius: 0; }
+  /* Forzar grids de 2 columnas a 1 columna dentro de modales */
+  .modal-body [style*="grid-template-columns"] { grid-template-columns: 1fr !important; }
+}
 
 /* ── Nav pills / tabs ── */
 .nav { display: flex; flex-wrap: wrap; padding: 0; margin: 0; list-style: none; }

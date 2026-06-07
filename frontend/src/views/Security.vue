@@ -157,7 +157,7 @@
     </div>
 
     <!-- Fail2ban -->
-    <div v-if="tab==='fail2ban'" style="display:grid;grid-template-columns:1fr 1fr;gap:16px">
+    <div v-if="tab==='fail2ban'" class="sec-2col">
       <div class="sec-card">
         <div class="sec-card-head">
           <span class="sec-card-title">Jails</span>
@@ -1157,6 +1157,15 @@ onMounted(async () => {
 /* Empty / loading */
 .sec-empty { display:flex; align-items:center; gap:.75rem; padding:2rem; color:var(--text-muted); font-size:.875rem; justify-content:center; }
 .sec-loading { display:flex; justify-content:center; padding:2rem; }
+
+/* Grid 2 columnas */
+.sec-2col { display:grid; grid-template-columns:1fr 1fr; gap:16px; }
+
+/* Responsive */
+@media (max-width: 820px) {
+  .sec-head-right { width:100%; justify-content:space-between; }
+  .sec-2col { grid-template-columns:1fr; }
+}
 
 .sec-head-right { display: flex; align-items: center; gap: var(--sp-5); flex-wrap: wrap; }
 .sec-score { display: flex; align-items: center; gap: var(--sp-3); }
