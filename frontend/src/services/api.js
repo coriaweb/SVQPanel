@@ -669,6 +669,10 @@ class APIClient {
   previewIpList(id, limit = 50)   {
     return this.get(`/api/firewall/ip-lists/${id}/preview?limit=${limit}`)
   }
+  // Bloqueo por país (geo-blocking)
+  getGeoCatalog()                 { return this.get('/api/firewall/geo/catalog') }
+  geoBlock(cc)                    { return this.post(`/api/firewall/geo/${cc}/block`, {}) }
+  geoUnblock(cc)                  { return this.post(`/api/firewall/geo/${cc}/unblock`, {}) }
 
   // php.ini por dominio
   getDomainPhpConfig(domainId) {

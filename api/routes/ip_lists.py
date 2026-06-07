@@ -214,3 +214,105 @@ def _refresh_and_apply(db: Session, request: Request, user) -> None:
               request=request, success=ok, error=None if ok else msg)
     if not ok:
         raise HTTPException(status_code=500, detail=f"Reload nftables: {msg}")
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Bloqueo geográfico (por país) — atajo sobre el sistema de listas IP
+# ─────────────────────────────────────────────────────────────────────────────
+from api.utils import country_blocklist as geo
+
+
+@router.get("/firewall/geo/catalog")
+async def geo_catalog(db: Session = Depends(get_db), _: dict = Depends(require_admin)):
+    """
+    Catálogo de países bloqueables + cuáles están ya activos. La UI lo usa para
+    mostrar los países con un toggle de "bloquear/desbloquear" por país.
+    """
+    existing = {il.name: il for il in db.query(IpList).all()}
+    out = []
+    for c in geo.catalog():
+        il = existing.get(c["list_name"])
+        out.append({
+            **c,
+            "blocked":     il is not None,
+            "enabled":     bool(il.enabled) if il else False,
+            "entry_count": (il.entry_count_v4 or 0) + (il.entry_count_v6 or 0) if il else 0,
+            "last_error":  il.last_error if il else None,
+        })
+    return {"countries": out}
+
+
+@router.post("/firewall/geo/{cc}/block")
+async def geo_block(
+    cc: str,
+    request: Request,
+    db:   Session = Depends(get_db),
+    user: dict    = Depends(require_admin),
+):
+    """Bloquea un país: crea (si no existe) una lista IP 'block' con su zona CIDR."""
+    cc = cc.lower()
+    if not geo.is_valid_cc(cc):
+        raise HTTPException(status_code=404, detail=f"País '{cc}' no está en el catálogo")
+
+    country = geo.get_country(cc)
+    name = geo.list_name_for(cc)
+
+    il = db.query(IpList).filter(IpList.name == name).first()
+    if il:
+        # Ya existe: asegurar que está habilitada
+        if not il.enabled:
+            il.enabled = True
+            db.commit()
+            _refresh_and_apply(db, request, user)
+        db.refresh(il)
+        return {"status": "ok", "country": cc, "list": name, "already": True}
+
+    url = geo.country_url(cc)
+    ok, msg = ip_list_fetcher.url_resolves_safe(url)
+    if not ok:
+        raise HTTPException(status_code=400, detail=f"URL del país rechazada: {msg}")
+
+    il = IpList(
+        name=name,
+        description=f"Geo-bloqueo: {country['name']} ({cc.upper()})",
+        url=url,
+        action="block",
+        address_family="both",
+        refresh_interval_hours=24,
+        max_entries=500_000,
+        enabled=True,
+        created_by=user.id,
+    )
+    db.add(il)
+    db.commit()
+    db.refresh(il)
+    log_audit(db, user=user, category="iplist", action="geo_block",
+              target=f"{country['name']} ({cc})", request=request)
+
+    _refresh_and_apply(db, request, user)
+    db.refresh(il)
+    return {"status": "ok", "country": cc, "list": name,
+            "entry_count": (il.entry_count_v4 or 0) + (il.entry_count_v6 or 0)}
+
+
+@router.post("/firewall/geo/{cc}/unblock")
+async def geo_unblock(
+    cc: str,
+    request: Request,
+    db:   Session = Depends(get_db),
+    user: dict    = Depends(require_admin),
+):
+    """Desbloquea un país: elimina su lista IP geo_ y reaplica nftables."""
+    cc = cc.lower()
+    name = geo.list_name_for(cc)
+    il = db.query(IpList).filter(IpList.name == name).first()
+    if not il:
+        return {"status": "ok", "country": cc, "removed": False}
+
+    db.delete(il)
+    db.commit()
+    log_audit(db, user=user, category="iplist", action="geo_unblock",
+              target=cc, request=request)
+
+    _refresh_and_apply(db, request, user)
+    return {"status": "ok", "country": cc, "removed": True}

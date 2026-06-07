@@ -224,6 +224,40 @@
 
     <!-- IP Lists -->
     <div v-if="tab==='iplists'">
+
+      <!-- ── Bloqueo por país (geo-blocking) ── -->
+      <div class="sec-card" style="margin-bottom:1rem">
+        <div class="sec-card-head">
+          <span class="sec-card-title"><i class="bi bi-globe-americas"></i> Bloqueo por país</span>
+          <button class="sec-icon-btn" @click="loadGeoCatalog" title="Refrescar"><i class="bi bi-arrow-clockwise"></i></button>
+        </div>
+        <div class="sec-card-body">
+          <p class="sec-hint">
+            Bloquea en el firewall todo el tráfico entrante de un país (rangos IP de
+            <a href="https://www.ipdeny.com" target="_blank" rel="noopener">ipdeny.com</a>,
+            refresco automático cada 24h). Haz clic para activar o desactivar cada país.
+          </p>
+          <div v-if="geoLoading" class="sec-empty"><span class="spinner-border spinner-border-sm"></span></div>
+          <div v-else class="geo-grid">
+            <button v-for="c in geoCountries" :key="c.cc" type="button"
+                    class="geo-chip" :class="{ 'geo-chip--on': c.blocked }"
+                    :disabled="geoBusy === c.cc"
+                    @click="toggleGeo(c)"
+                    :title="c.blocked ? `Bloqueado (${c.entry_count} rangos) — clic para desbloquear` : 'Clic para bloquear'">
+              <span class="geo-flag">{{ c.flag }}</span>
+              <span class="geo-name">{{ c.name }}</span>
+              <span v-if="geoBusy === c.cc" class="spinner-border spinner-border-sm geo-spin"></span>
+              <i v-else-if="c.blocked" class="bi bi-check-circle-fill geo-check"></i>
+              <i v-else class="bi bi-plus-circle geo-plus"></i>
+            </button>
+          </div>
+          <p v-if="geoBlockedCount" class="sec-hint" style="margin-top:.75rem">
+            <i class="bi bi-shield-fill-check" style="color:var(--success)"></i>
+            {{ geoBlockedCount }} {{ geoBlockedCount === 1 ? 'país bloqueado' : 'países bloqueados' }}.
+          </p>
+        </div>
+      </div>
+
       <div class="sec-card">
         <div class="sec-card-head">
           <span class="sec-card-title"><i class="bi bi-list-task"></i> Listas IP desde URL</span>
@@ -775,6 +809,12 @@ const ignoreip = ref([])
 
 const ipLists       = ref([])
 
+// Geo-blocking (bloqueo por país)
+const geoCountries = ref([])
+const geoLoading   = ref(false)
+const geoBusy      = ref(null)   // cc en proceso
+const geoBlockedCount = computed(() => geoCountries.value.filter(c => c.blocked).length)
+
 const connections   = ref([])
 const connListening = ref(true)
 
@@ -863,6 +903,34 @@ async function loadIpLists() {
   catch (e) { alert('Listas IP: ' + e.message) }
 }
 
+async function loadGeoCatalog() {
+  geoLoading.value = true
+  try {
+    const data = await api.getGeoCatalog()
+    geoCountries.value = data.countries || []
+  } catch (e) { alert('Catálogo de países: ' + e.message) }
+  finally { geoLoading.value = false }
+}
+
+async function toggleGeo(c) {
+  if (geoBusy.value) return
+  geoBusy.value = c.cc
+  try {
+    if (c.blocked) {
+      await api.geoUnblock(c.cc)
+    } else {
+      await api.geoBlock(c.cc)
+    }
+    // Refrescar catálogo y listas (la lista geo_ aparece/desaparece)
+    await loadGeoCatalog()
+    await loadIpLists()
+  } catch (e) {
+    alert('Geo-bloqueo (' + c.name + '): ' + e.message)
+  } finally {
+    geoBusy.value = null
+  }
+}
+
 async function loadConnections() {
   try { connections.value = await api.getActiveConnections(connListening.value) }
   catch (e) { alert('Conexiones: ' + e.message) }
@@ -877,7 +945,7 @@ function changeTab(t) {
   tab.value = t
   if (t === 'firewall')    loadFirewall()
   if (t === 'fail2ban')    loadFail2ban()
-  if (t === 'iplists')     loadIpLists()
+  if (t === 'iplists')     { loadIpLists(); loadGeoCatalog() }
   if (t === 'connections') loadConnections()
   if (t === 'audit')       loadAudit()
   if (t === 'crowdsec')    loadCrowdsec()
@@ -1178,6 +1246,23 @@ onMounted(async () => {
 .sec-score__meta { display: flex; flex-direction: column; line-height: 1.25; }
 .sec-score__label { font-weight: var(--fw-semibold); font-size: var(--fs-base); }
 .sec-score__sub { font-size: var(--fs-sm); color: var(--text-muted); }
+
+/* Bloqueo por país (chips) */
+.geo-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: .5rem; }
+.geo-chip {
+  display: flex; align-items: center; gap: .5rem;
+  padding: .5rem .75rem; border: 1px solid var(--border); border-radius: var(--r-md, 10px);
+  background: var(--surface); color: var(--text); cursor: pointer; transition: all .12s;
+  font-size: .85rem; text-align: left;
+}
+.geo-chip:hover:not(:disabled) { border-color: var(--ac); }
+.geo-chip:disabled { opacity: .6; cursor: wait; }
+.geo-chip--on { background: color-mix(in srgb, var(--danger) 10%, transparent); border-color: color-mix(in srgb, var(--danger) 35%, transparent); }
+.geo-flag { font-size: 1.15rem; line-height: 1; flex-shrink: 0; }
+.geo-name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.geo-check { color: var(--danger); flex-shrink: 0; }
+.geo-plus { color: var(--text-muted); flex-shrink: 0; }
+.geo-spin { width: 14px; height: 14px; }
 
 /* Aislamiento PHP */
 .iso-card { border-left: 4px solid var(--border-strong) !important; }
