@@ -8,7 +8,8 @@
         <p class="sec-subtitle">Firewall (nftables), fail2ban, listas IP, conexiones y auditoría</p>
       </div>
       <div class="sec-head-right">
-        <div class="sec-score" v-if="fwStatus || f2bStatus">
+        <button class="sec-score" v-if="fwStatus || f2bStatus" @click="showScoreDetail = !showScoreDetail"
+                :title="showScoreDetail ? 'Ocultar desglose' : 'Ver qué suma cada cosa'">
           <svg viewBox="0 0 60 60" class="sec-score__ring">
             <circle cx="30" cy="30" r="26" class="sec-score__track" />
             <circle cx="30" cy="30" r="26" class="sec-score__fill"
@@ -17,9 +18,9 @@
           </svg>
           <div class="sec-score__meta">
             <span class="sec-score__label" :style="{ color: scoreColor }">Postura {{ scoreLabel }}</span>
-            <span class="sec-score__sub">de 100 puntos</span>
+            <span class="sec-score__sub">de 100 · <u>ver desglose</u></span>
           </div>
-        </div>
+        </button>
         <div style="display:flex;gap:6px;flex-wrap:wrap">
           <span v-if="fwStatus" class="sec-badge" :class="fwStatus.table_present ? 'sec-badge--on' : 'sec-badge--danger'">
             nftables {{ fwStatus.table_present ? 'activo' : 'inactivo' }}
@@ -28,6 +29,39 @@
             fail2ban {{ f2bStatus.running ? 'ok' : 'parado' }}
           </span>
         </div>
+      </div>
+    </div>
+
+    <!-- Desglose de la puntuación de seguridad -->
+    <div v-if="showScoreDetail && (fwStatus || f2bStatus)" class="sec-card score-detail">
+      <div class="sec-card-head">
+        <span class="sec-card-title"><i class="bi bi-clipboard-check"></i> Cómo se calcula tu puntuación</span>
+        <button class="sec-icon-btn" @click="showScoreDetail = false" title="Cerrar"><i class="bi bi-x-lg"></i></button>
+      </div>
+      <div class="sec-card-body">
+        <div class="score-list">
+          <div v-for="f in scoreFactors" :key="f.key" class="score-row" :class="{ 'score-row--off': !f.ok }">
+            <i class="bi score-row__icon" :class="f.ok ? 'bi-check-circle-fill' : 'bi-circle'"></i>
+            <div class="score-row__body">
+              <div class="score-row__label">{{ f.label }}</div>
+              <div v-if="!f.ok" class="score-row__hint">{{ f.hint }}</div>
+            </div>
+            <span class="score-row__pts" :class="f.ok ? 'score-row__pts--ok' : 'score-row__pts--off'">
+              {{ f.ok ? '+' : '' }}{{ f.points }}
+            </span>
+          </div>
+        </div>
+        <div class="score-total">
+          <span>Total</span>
+          <strong :style="{ color: scoreColor }">{{ securityScore }} / 100</strong>
+        </div>
+        <p v-if="scoreMissing > 0" class="sec-hint score-missing">
+          <i class="bi bi-arrow-up-circle"></i>
+          Te faltan <strong>{{ scoreMissing }} puntos</strong>. Activa lo que aparece en gris arriba para subir tu puntuación.
+        </p>
+        <p v-else class="sec-hint" style="color:var(--success)">
+          <i class="bi bi-trophy-fill"></i> ¡Puntuación máxima! Tu servidor cumple todos los factores básicos.
+        </p>
       </div>
     </div>
 
@@ -777,20 +811,35 @@ async function repairIsolation() {
   }
 }
 
-// ─── Score de seguridad (derivado de datos ya cargados) ──────────────────────
-const securityScore = computed(() => {
-  let score = 0
+// ─── Score de seguridad: lista de factores explícita (cada uno con sus puntos)
+// para poder mostrar el desglose y que se vea qué falta para llegar a 100.
+const scoreFactors = computed(() => {
   const fw = fwStatus.value, f2b = f2bStatus.value
-  if (fw?.table_present) score += 35                         // firewall activo
-  // La política por defecto la reporta /firewall/system-ports (sysPorts.policy),
-  // no /firewall/status. 'drop' = cierra todo lo no permitido (más seguro).
-  if (sysPorts.value?.policy === 'drop') score += 15
-  if ((fw?.whitelist_count || 0) > 0) score += 10            // whitelist configurada
-  if ((fw?.rule_count || 0) > 0) score += 10                 // reglas definidas
-  if (f2b?.running) score += 25                              // fail2ban activo
-  if ((f2b?.jails?.length || 0) > 0) score += 5              // jails activos
-  return Math.min(100, score)
+  return [
+    { key: 'fw',        label: 'Firewall nftables activo',      points: 35,
+      ok: !!fw?.table_present,
+      hint: 'La tabla de firewall está cargada y filtrando tráfico.' },
+    { key: 'policy',    label: 'Política «drop» por defecto',   points: 15,
+      ok: sysPorts.value?.policy === 'drop',
+      hint: 'El firewall bloquea todo lo que no esté permitido explícitamente. En Firewall → política por defecto, ponla en «drop».' },
+    { key: 'f2b',       label: 'fail2ban activo',               points: 25,
+      ok: !!f2b?.running,
+      hint: 'fail2ban banea IPs tras varios intentos fallidos (SSH, panel…).' },
+    { key: 'jails',     label: 'Jails de fail2ban activos',     points: 5,
+      ok: (f2b?.jails?.length || 0) > 0,
+      hint: 'Hay al menos un jail vigilando un servicio.' },
+    { key: 'whitelist', label: 'Whitelist de IPs configurada',  points: 10,
+      ok: (fw?.whitelist_count || 0) > 0,
+      hint: 'Tus IPs de confianza (admin) están exentas de baneos. Añádelas en Firewall → whitelist.' },
+    { key: 'rules',     label: 'Reglas de firewall definidas',  points: 10,
+      ok: (fw?.rule_count || 0) > 0,
+      hint: 'Has definido reglas explícitas (puertos permitidos/bloqueados) en la pestaña Firewall.' },
+  ]
 })
+const securityScore = computed(() =>
+  Math.min(100, scoreFactors.value.reduce((s, f) => s + (f.ok ? f.points : 0), 0)))
+const scoreMissing = computed(() =>
+  scoreFactors.value.filter(f => !f.ok).reduce((s, f) => s + f.points, 0))
 const scoreTone = computed(() =>
   securityScore.value >= 80 ? 'success' : securityScore.value >= 50 ? 'warning' : 'danger')
 const scoreLabel = computed(() =>
@@ -810,6 +859,9 @@ const banned   = ref([])
 const ignoreip = ref([])
 
 const ipLists       = ref([])
+
+// Desglose de la puntuación de seguridad (plegable)
+const showScoreDetail = ref(false)
 
 // Geo-blocking (bloqueo por país)
 const geoCountries = ref([])
@@ -1291,6 +1343,28 @@ onMounted(async () => {
 .geo-check { color: var(--danger); flex-shrink: 0; }
 .geo-plus { color: var(--text-muted); flex-shrink: 0; }
 .geo-applying { display: inline-flex; align-items: center; gap: .4rem; font-size: .8rem; color: var(--ac); font-weight: 600; }
+
+/* Score clicable + desglose */
+.sec-score { border: none; background: none; padding: 0; cursor: pointer; }
+.sec-score:hover .sec-score__sub u { color: var(--ac); }
+.sec-score__sub u { text-decoration-style: dotted; }
+
+.score-detail { margin-bottom: 4px; }
+.score-list { display: flex; flex-direction: column; }
+.score-row { display: flex; align-items: flex-start; gap: .75rem; padding: .65rem 0; border-bottom: 1px solid var(--border); }
+.score-row:last-child { border-bottom: none; }
+.score-row__icon { font-size: 1.1rem; margin-top: 1px; flex-shrink: 0; color: var(--success); }
+.score-row--off .score-row__icon { color: var(--text-muted); }
+.score-row__body { flex: 1; min-width: 0; }
+.score-row__label { font-size: .9rem; font-weight: 600; color: var(--text); }
+.score-row--off .score-row__label { color: var(--text-secondary); }
+.score-row__hint { font-size: .8rem; color: var(--text-muted); margin-top: 2px; line-height: 1.4; }
+.score-row__pts { font-family: var(--font-mono); font-weight: 700; font-size: .9rem; flex-shrink: 0; }
+.score-row__pts--ok { color: var(--success); }
+.score-row__pts--off { color: var(--text-muted); opacity: .5; }
+.score-total { display: flex; justify-content: space-between; align-items: center; padding: .75rem 0 .25rem; margin-top: .5rem; border-top: 2px solid var(--border); font-size: 1rem; }
+.score-total strong { font-size: 1.15rem; }
+.score-missing { margin-top: .5rem; }
 
 /* Aislamiento PHP */
 .iso-card { border-left: 4px solid var(--border-strong) !important; }
