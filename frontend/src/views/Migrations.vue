@@ -296,6 +296,18 @@ export default {
 </script>
 
 <style scoped>
+/* Inputs/selects con la estética SVQ (mismas variables que el resto del panel).
+   Se definen aquí porque .svq-input/.svq-select viven scoped en cada vista. */
+.svq-select, .svq-input {
+  height: 38px; padding: 0 var(--sp-3); width: 100%;
+  background: var(--surface); color: var(--text);
+  border: 1px solid var(--border-strong); border-radius: var(--r-md); font-size: var(--fs-base);
+}
+.svq-select { cursor: pointer; }
+.svq-input:focus, .svq-select:focus { outline: none; border-color: var(--color-primary); box-shadow: var(--shadow-focus); }
+textarea.svq-input { height: auto; padding: var(--sp-2) var(--sp-3); line-height: 1.4; }
+input[type="file"].svq-input { padding: var(--sp-2); height: auto; }
+
 .mig { max-width: 1000px; }
 .mig-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: var(--sp-3); }
 .mig-field { display: flex; flex-direction: column; gap: 4px; }
