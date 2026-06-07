@@ -1,18 +1,20 @@
 <template>
-  <div>
-    <div class="page-head-row">
+  <div class="sv-view">
+    <!-- Cabecera page-head -->
+    <div class="page-head">
       <div>
-        <h2><i class="bi bi-hdd-stack"></i> Copias de seguridad</h2>
-        <p class="text-muted mb-0">{{ jobs.length }} {{ jobs.length === 1 ? 'trabajo de backup' : 'trabajos de backup' }}</p>
+        <h1 class="page-head__title">Copias de seguridad</h1>
+        <p class="page-head__sub">{{ jobs.length }} {{ jobs.length === 1 ? 'trabajo de backup' : 'trabajos de backup' }}</p>
       </div>
-      <button class="btn btn-primary" @click="openCreate">
+      <BaseButton variant="primary" size="sm" @click="openCreate">
         <i class="bi bi-plus-circle"></i> Nuevo backup
-      </button>
+      </BaseButton>
     </div>
 
-    <div class="alert alert-info d-flex gap-2 align-items-start mb-3" role="alert">
-      <i class="bi bi-info-circle-fill mt-1"></i>
-      <div class="small">
+    <!-- Aviso informativo -->
+    <div class="bk-info">
+      <i class="bi bi-info-circle-fill"></i>
+      <div>
         Cada backup respalda lo que selecciones (<strong>web</strong>, <strong>bases de datos</strong> y/o
         <strong>correo</strong>) de un dominio. Las copias <strong>incrementales</strong> solo guardan lo que
         cambió usando enlaces duros, y las bases de datos se comprimen para ocupar poco disco. El destino
@@ -21,105 +23,102 @@
     </div>
 
     <!-- Tabla de jobs -->
-    <div class="card">
-      <div class="card-body p-0">
-        <div v-if="loading" class="text-center py-5">
-          <div class="spinner-border" role="status"></div>
-        </div>
-        <div v-else-if="jobs.length === 0" class="alert alert-secondary m-3 mb-0">
-          No tienes backups configurados todavía.
-        </div>
-        <div v-else class="table-responsive">
-          <table class="table table-hover align-middle mb-0">
-            <thead class="table-light">
-              <tr>
-                <th>Nombre</th>
-                <th>Dominio</th>
-                <th>Contenido</th>
-                <th>Tipo</th>
-                <th>Destino</th>
-                <th>Programación</th>
-                <th>Última copia</th>
-                <th>Acciones</th>
-              </tr>
-            </thead>
-            <tbody>
-              <tr v-for="job in jobs" :key="job.id" :class="{'table-secondary text-muted': !job.is_active}">
-                <td>
-                  <div class="fw-semibold">{{ job.name }}</div>
-                  <div v-if="job.description" class="text-muted small">{{ job.description }}</div>
-                </td>
-                <td class="small">{{ job.domain_id ? domainName(job.domain_id) : 'Todos' }}</td>
-                <td>
-                  <span v-if="job.include_files" class="badge bg-primary me-1" title="Archivos web">Web</span>
-                  <span v-if="job.include_databases" class="badge bg-info me-1" title="Bases de datos">BD</span>
-                  <span v-if="job.include_mail" class="badge bg-warning text-dark" title="Correo">Correo</span>
-                </td>
-                <td>
-                  <span class="badge" :class="job.backup_type === 'incremental' ? 'bg-success' : 'bg-secondary'">
-                    {{ job.backup_type === 'incremental' ? 'Incremental' : 'Completa' }}
-                  </span>
-                </td>
-                <td class="small">
-                  <i :class="job.destination_type === 'sftp' ? 'bi bi-hdd-network' : 'bi bi-hdd'"></i>
-                  {{ job.destination_type === 'sftp' ? (job.sftp_host || 'SFTP') : 'Local' }}
-                </td>
-                <td class="small">
-                  <span v-if="job.schedule_enabled" class="text-success" :title="cronSummary(job)">
-                    <i class="bi bi-clock"></i> {{ cronSummary(job) }}
-                  </span>
-                  <span v-else class="text-muted">Manual</span>
-                </td>
-                <td class="small">
-                  <span v-if="runningJobId === job.id" class="text-primary">
-                    <span class="spinner-border spinner-border-sm me-1"></span> En curso…
-                  </span>
-                  <template v-else-if="job.last_record_status">
-                    <span :class="statusBadge(job.last_record_status)">{{ statusLabel(job.last_record_status) }}</span>
-                    <div class="text-muted">
-                      {{ formatDate(job.last_run) }}
-                      <span v-if="job.last_record_size_mb"> · {{ job.last_record_size_mb }} MB</span>
-                    </div>
-                  </template>
-                  <span v-else class="text-muted">Nunca</span>
-                </td>
-                <td>
-                  <div class="btn-group btn-group-sm">
-                    <button class="btn btn-outline-success" title="Ejecutar ahora"
-                            :disabled="runningJobId === job.id || !job.is_active" @click="runJob(job)">
-                      <i class="bi bi-play-fill"></i>
-                    </button>
-                    <button class="btn btn-outline-primary" title="Restaurar una copia"
-                            :disabled="runningJobId === job.id" @click="openRestore(job)">
-                      <i class="bi bi-arrow-counterclockwise"></i>
-                    </button>
-                    <button class="btn btn-outline-secondary" title="Historial" @click="openHistory(job)">
-                      <i class="bi bi-clock-history"></i>
-                    </button>
-                    <button class="btn btn-outline-warning" title="Editar" @click="openEdit(job)">
-                      <i class="bi bi-pencil"></i>
-                    </button>
-                    <button class="btn btn-outline-danger" title="Eliminar" @click="deleteJob(job)">
-                      <i class="bi bi-trash"></i>
-                    </button>
+    <BaseCard title="Trabajos de backup" icon="hdd-stack" flush>
+      <div v-if="loading" class="bk-center"><div class="spinner-border spinner-border-sm"></div></div>
+
+      <EmptyState v-else-if="jobs.length === 0" icon="hdd-stack"
+                  title="Sin backups"
+                  description="No hay backups configurados todavía. Crea el primero con «Nuevo backup»." />
+
+      <div v-else class="bk-table-wrap">
+        <table class="bk-table">
+          <thead>
+            <tr>
+              <th>Nombre</th>
+              <th>Dominio</th>
+              <th>Contenido</th>
+              <th>Tipo</th>
+              <th>Destino</th>
+              <th>Programación</th>
+              <th>Última copia</th>
+              <th class="bk-right">Acciones</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr v-for="job in jobs" :key="job.id" :class="{ 'bk-row--off': !job.is_active }">
+              <td>
+                <div class="bk-name">{{ job.name }}</div>
+                <div v-if="job.description" class="bk-muted">{{ job.description }}</div>
+              </td>
+              <td class="bk-muted">{{ job.domain_id ? domainName(job.domain_id) : 'Todos' }}</td>
+              <td>
+                <span v-if="job.include_files" class="bk-tag bk-tag--web" title="Archivos web">Web</span>
+                <span v-if="job.include_databases" class="bk-tag bk-tag--db" title="Bases de datos">BD</span>
+                <span v-if="job.include_mail" class="bk-tag bk-tag--mail" title="Correo">Correo</span>
+              </td>
+              <td>
+                <span class="bk-tag" :class="job.backup_type === 'incremental' ? 'bk-tag--inc' : 'bk-tag--full'">
+                  {{ job.backup_type === 'incremental' ? 'Incremental' : 'Completa' }}
+                </span>
+              </td>
+              <td class="bk-muted">
+                <i :class="job.destination_type === 'sftp' ? 'bi bi-hdd-network' : 'bi bi-hdd'"></i>
+                {{ job.destination_type === 'sftp' ? (job.sftp_host || 'SFTP') : 'Local' }}
+              </td>
+              <td class="bk-muted">
+                <span v-if="job.schedule_enabled" class="bk-sched" :title="cronSummary(job)">
+                  <i class="bi bi-clock"></i> {{ cronSummary(job) }}
+                </span>
+                <span v-else>Manual</span>
+              </td>
+              <td class="bk-muted">
+                <span v-if="runningJobId === job.id" class="bk-running">
+                  <span class="spinner-border spinner-border-sm"></span> En curso…
+                </span>
+                <template v-else-if="job.last_record_status">
+                  <span class="bk-status" :class="statusClass(job.last_record_status)">{{ statusLabel(job.last_record_status) }}</span>
+                  <div class="bk-muted">
+                    {{ formatDate(job.last_run) }}
+                    <span v-if="job.last_record_size_mb"> · {{ job.last_record_size_mb }} MB</span>
                   </div>
-                </td>
-              </tr>
-            </tbody>
-          </table>
-        </div>
+                </template>
+                <span v-else>Nunca</span>
+              </td>
+              <td class="bk-right">
+                <div class="bk-actions">
+                  <button class="bk-iconbtn" title="Ejecutar ahora"
+                          :disabled="runningJobId === job.id || !job.is_active" @click="runJob(job)">
+                    <i class="bi bi-play-fill"></i>
+                  </button>
+                  <button class="bk-iconbtn" title="Restaurar una copia"
+                          :disabled="runningJobId === job.id" @click="openRestore(job)">
+                    <i class="bi bi-arrow-counterclockwise"></i>
+                  </button>
+                  <button class="bk-iconbtn" title="Historial" @click="openHistory(job)">
+                    <i class="bi bi-clock-history"></i>
+                  </button>
+                  <button class="bk-iconbtn" title="Editar" @click="openEdit(job)">
+                    <i class="bi bi-pencil"></i>
+                  </button>
+                  <button class="bk-iconbtn bk-iconbtn--danger" title="Eliminar" @click="deleteJob(job)">
+                    <i class="bi bi-trash"></i>
+                  </button>
+                </div>
+              </td>
+            </tr>
+          </tbody>
+        </table>
       </div>
-    </div>
+    </BaseCard>
 
     <!-- Modal crear/editar -->
-    <div v-if="showForm" class="modal d-block" tabindex="-1" style="background:rgba(0,0,0,.5)" @click.self="closeForm">
-      <div class="modal-dialog modal-xl modal-dialog-scrollable" style="max-width:900px">
-        <div class="modal-content">
-          <div class="modal-header">
-            <h5 class="modal-title"><i class="bi bi-archive me-2"></i>{{ editing ? 'Editar backup' : 'Nuevo backup' }}</h5>
-            <button type="button" class="btn-close" @click="closeForm"></button>
-          </div>
-          <div class="modal-body" style="display:grid;grid-template-columns:1fr 1fr;gap:1.5rem">
+    <div v-if="showForm" class="bk-modal" @click.self="closeForm">
+      <div class="bk-modal__dialog bk-modal__dialog--xl">
+        <div class="bk-modal__head">
+          <h5 class="bk-modal__title"><i class="bi bi-archive"></i>{{ editing ? 'Editar backup' : 'Nuevo backup' }}</h5>
+          <button type="button" class="bk-modal__close" @click="closeForm"><i class="bi bi-x-lg"></i></button>
+        </div>
+        <div class="bk-modal__body bk-form-grid">
 
             <!-- Columna izquierda -->
             <div style="display:flex;flex-direction:column;gap:1rem">
@@ -306,169 +305,131 @@
 
             </div>
 
-            <!-- Error a ancho completo -->
-            <div v-if="formError" class="alert alert-danger mb-0" style="grid-column:1/-1">{{ formError }}</div>
+          <!-- Error a ancho completo -->
+          <div v-if="formError" class="bk-alert-error" style="grid-column:1/-1">{{ formError }}</div>
 
-          </div>
-          <div class="modal-footer">
-            <button class="btn btn-secondary" @click="closeForm">Cancelar</button>
-            <button class="btn btn-primary" :disabled="saving" @click="submitForm">
-              <span v-if="saving" class="spinner-border spinner-border-sm me-1"></span>
-              {{ editing ? 'Guardar cambios' : 'Crear backup' }}
-            </button>
-          </div>
+        </div>
+        <div class="bk-modal__foot">
+          <BaseButton variant="ghost" size="sm" @click="closeForm">Cancelar</BaseButton>
+          <BaseButton variant="primary" size="sm" :loading="saving" @click="submitForm">
+            {{ editing ? 'Guardar cambios' : 'Crear backup' }}
+          </BaseButton>
         </div>
       </div>
     </div>
 
     <!-- Modal historial -->
-    <div v-if="showHistory" class="modal d-block" tabindex="-1" style="background:rgba(0,0,0,.5)">
-      <div class="modal-dialog modal-lg modal-dialog-scrollable">
-        <div class="modal-content">
-          <div class="modal-header">
-            <h5 class="modal-title">Historial · {{ historyJob?.name }}</h5>
-            <button type="button" class="btn-close" @click="showHistory = false"></button>
-          </div>
-          <div class="modal-body">
-            <div v-if="historyLoading" class="text-center py-4">
-              <div class="spinner-border" role="status"></div>
-            </div>
-            <div v-else-if="records.length === 0" class="alert alert-secondary mb-0">
-              Este backup no se ha ejecutado todavía.
-            </div>
-            <div v-else class="table-responsive">
-              <table class="table table-sm align-middle mb-0">
-                <thead class="table-light">
+    <div v-if="showHistory" class="bk-modal" @click.self="showHistory = false">
+      <div class="bk-modal__dialog bk-modal__dialog--lg">
+        <div class="bk-modal__head">
+          <h5 class="bk-modal__title"><i class="bi bi-clock-history"></i>Historial · {{ historyJob?.name }}</h5>
+          <button type="button" class="bk-modal__close" @click="showHistory = false"><i class="bi bi-x-lg"></i></button>
+        </div>
+        <div class="bk-modal__body">
+          <div v-if="historyLoading" class="bk-center"><div class="spinner-border spinner-border-sm"></div></div>
+          <EmptyState v-else-if="records.length === 0" icon="clock-history"
+                      title="Sin ejecuciones" description="Este backup no se ha ejecutado todavía." />
+          <div v-else class="bk-table-wrap">
+            <table class="bk-table bk-table--sm">
+              <thead>
+                <tr>
+                  <th>Op.</th><th>Fecha</th><th>Estado</th><th>Tipo</th>
+                  <th>Tamaño</th><th>Archivos</th><th>BD</th><th>Duración</th><th></th>
+                </tr>
+              </thead>
+              <tbody>
+                <template v-for="r in records" :key="r.id">
                   <tr>
-                    <th>Op.</th>
-                    <th>Fecha</th>
-                    <th>Estado</th>
-                    <th>Tipo</th>
-                    <th>Tamaño</th>
-                    <th>Archivos</th>
-                    <th>BD</th>
-                    <th>Duración</th>
-                    <th></th>
+                    <td>
+                      <span class="bk-tag" :class="r.kind === 'restore' ? 'bk-tag--full' : 'bk-tag--web'">
+                        {{ r.kind === 'restore' ? 'Restaurar' : 'Copia' }}
+                      </span>
+                    </td>
+                    <td class="bk-muted">{{ formatDateTime(r.started_at) }}</td>
+                    <td><span class="bk-status" :class="statusClass(r.status)">{{ statusLabel(r.status) }}</span></td>
+                    <td class="bk-muted">{{ r.is_incremental ? 'Incremental' : 'Completa' }}</td>
+                    <td class="bk-muted">{{ r.size_mb }} MB</td>
+                    <td class="bk-muted">{{ r.files_transferred }}/{{ r.files_total }}</td>
+                    <td class="bk-muted">{{ r.db_count }}</td>
+                    <td class="bk-muted">{{ r.duration_seconds != null ? r.duration_seconds + 's' : '—' }}</td>
+                    <td>
+                      <button v-if="r.log_output || r.error_message" class="bk-iconbtn"
+                              @click="expanded === r.id ? expanded = null : expanded = r.id">
+                        <i class="bi bi-card-text"></i>
+                      </button>
+                    </td>
                   </tr>
-                </thead>
-                <tbody>
-                  <template v-for="r in records" :key="r.id">
-                    <tr>
-                      <td>
-                        <span class="badge" :class="r.kind === 'restore' ? 'bg-dark' : 'bg-light text-dark border'">
-                          {{ r.kind === 'restore' ? 'Restaurar' : 'Copia' }}
-                        </span>
-                      </td>
-                      <td class="small">{{ formatDateTime(r.started_at) }}</td>
-                      <td><span :class="statusBadge(r.status)">{{ statusLabel(r.status) }}</span></td>
-                      <td class="small">{{ r.is_incremental ? 'Incremental' : 'Completa' }}</td>
-                      <td class="small">{{ r.size_mb }} MB</td>
-                      <td class="small">{{ r.files_transferred }}/{{ r.files_total }}</td>
-                      <td class="small">{{ r.db_count }}</td>
-                      <td class="small">{{ r.duration_seconds != null ? r.duration_seconds + 's' : '—' }}</td>
-                      <td>
-                        <button v-if="r.log_output || r.error_message"
-                                class="btn btn-sm btn-outline-secondary py-0"
-                                @click="expanded === r.id ? expanded = null : expanded = r.id">
-                          <i class="bi bi-card-text"></i>
-                        </button>
-                      </td>
-                    </tr>
-                    <tr v-if="expanded === r.id" :key="'exp-' + r.id">
-                      <td colspan="9" class="bg-light">
-                        <div v-if="r.error_message" class="text-danger small mb-2">{{ r.error_message }}</div>
-                        <pre class="small mb-0" style="max-height:240px;overflow:auto;white-space:pre-wrap">{{ r.log_output || 'Sin log' }}</pre>
-                      </td>
-                    </tr>
-                  </template>
-                </tbody>
-              </table>
-            </div>
+                  <tr v-if="expanded === r.id" :key="'exp-' + r.id">
+                    <td colspan="9" class="bk-logcell">
+                      <div v-if="r.error_message" class="bk-logerr">{{ r.error_message }}</div>
+                      <pre class="bk-log">{{ r.log_output || 'Sin log' }}</pre>
+                    </td>
+                  </tr>
+                </template>
+              </tbody>
+            </table>
           </div>
-          <div class="modal-footer">
-            <button class="btn btn-secondary" @click="showHistory = false">Cerrar</button>
-          </div>
+        </div>
+        <div class="bk-modal__foot">
+          <BaseButton variant="ghost" size="sm" @click="showHistory = false">Cerrar</BaseButton>
         </div>
       </div>
     </div>
 
     <!-- Modal restaurar -->
-    <div v-if="showRestore" class="modal d-block" tabindex="-1" style="background:rgba(0,0,0,.5)">
-      <div class="modal-dialog modal-lg modal-dialog-scrollable">
-        <div class="modal-content">
-          <div class="modal-header">
-            <h5 class="modal-title">Restaurar · {{ restoreJob?.name }}</h5>
-            <button type="button" class="btn-close" @click="showRestore = false"></button>
-          </div>
-          <div class="modal-body">
-            <div class="alert alert-warning d-flex gap-2 align-items-start">
-              <i class="bi bi-exclamation-triangle-fill mt-1"></i>
-              <div class="small">
-                La restauración <strong>sobrescribe</strong> los archivos y tablas con los de la copia
-                elegida. No borra archivos creados después de esa copia (se superpone). Elige qué
-                restaurar y la copia de origen.
-              </div>
+    <div v-if="showRestore" class="bk-modal" @click.self="showRestore = false">
+      <div class="bk-modal__dialog bk-modal__dialog--lg">
+        <div class="bk-modal__head">
+          <h5 class="bk-modal__title"><i class="bi bi-arrow-counterclockwise"></i>Restaurar · {{ restoreJob?.name }}</h5>
+          <button type="button" class="bk-modal__close" @click="showRestore = false"><i class="bi bi-x-lg"></i></button>
+        </div>
+        <div class="bk-modal__body">
+          <div class="bk-warn">
+            <i class="bi bi-exclamation-triangle-fill"></i>
+            <div>
+              La restauración <strong>sobrescribe</strong> los archivos y tablas con los de la copia
+              elegida. No borra archivos creados después de esa copia (se superpone). Elige qué
+              restaurar y la copia de origen.
             </div>
+          </div>
 
-            <label class="form-label fw-semibold d-block">¿Qué restaurar?</label>
-            <div class="d-flex flex-wrap gap-4 mb-3">
-              <div class="form-check">
-                <input class="form-check-input" type="checkbox" id="resFiles" v-model="restoreOpts.files" />
-                <label class="form-check-label" for="resFiles"><i class="bi bi-folder"></i> Archivos web</label>
-              </div>
-              <div class="form-check">
-                <input class="form-check-input" type="checkbox" id="resDb" v-model="restoreOpts.databases" />
-                <label class="form-check-label" for="resDb"><i class="bi bi-database"></i> Bases de datos</label>
-              </div>
-              <div class="form-check">
-                <input class="form-check-input" type="checkbox" id="resMail" v-model="restoreOpts.mail" />
-                <label class="form-check-label" for="resMail"><i class="bi bi-envelope"></i> Correo</label>
-              </div>
-            </div>
+          <label class="bk-sublabel">¿Qué restaurar?</label>
+          <div class="bk-restore-opts">
+            <label class="bk-check"><input type="checkbox" v-model="restoreOpts.files" /><i class="bi bi-folder"></i> Archivos web</label>
+            <label class="bk-check"><input type="checkbox" v-model="restoreOpts.databases" /><i class="bi bi-database"></i> Bases de datos</label>
+            <label class="bk-check"><input type="checkbox" v-model="restoreOpts.mail" /><i class="bi bi-envelope"></i> Correo</label>
+          </div>
 
-            <div v-if="snapshotsLoading" class="text-center py-4">
-              <div class="spinner-border" role="status"></div>
-            </div>
-            <div v-else-if="snapshots.length === 0" class="alert alert-secondary mb-0">
-              No hay copias guardadas en disco para este dominio.
-            </div>
-            <div v-else class="table-responsive">
-              <table class="table table-sm align-middle mb-0">
-                <thead class="table-light">
-                  <tr>
-                    <th>Copia (fecha)</th>
-                    <th>Contenido</th>
-                    <th>Tamaño</th>
-                    <th>Tipo</th>
-                    <th></th>
-                  </tr>
-                </thead>
-                <tbody>
-                  <tr v-for="s in snapshots" :key="s.name">
-                    <td class="small">{{ formatSnapshot(s.name) }}</td>
-                    <td>
-                      <span v-if="s.has_files" class="badge bg-primary me-1">Web</span>
-                      <span v-if="s.has_databases" class="badge bg-info me-1">BD</span>
-                      <span v-if="s.has_mail" class="badge bg-warning text-dark">Correo</span>
-                    </td>
-                    <td class="small">{{ s.size_mb }} MB</td>
-                    <td class="small">{{ s.is_incremental ? 'Incremental' : 'Completa' }}</td>
-                    <td class="text-end">
-                      <button class="btn btn-sm btn-primary"
-                              :disabled="restoringSnap === s.name"
-                              @click="doRestore(s)">
-                        <span v-if="restoringSnap === s.name" class="spinner-border spinner-border-sm me-1"></span>
-                        <i v-else class="bi bi-arrow-counterclockwise"></i> Restaurar
-                      </button>
-                    </td>
-                  </tr>
-                </tbody>
-              </table>
-            </div>
+          <div v-if="snapshotsLoading" class="bk-center"><div class="spinner-border spinner-border-sm"></div></div>
+          <EmptyState v-else-if="snapshots.length === 0" icon="hdd"
+                      title="Sin copias" description="No hay copias guardadas en disco para este dominio." />
+          <div v-else class="bk-table-wrap">
+            <table class="bk-table bk-table--sm">
+              <thead>
+                <tr><th>Copia (fecha)</th><th>Contenido</th><th>Tamaño</th><th>Tipo</th><th class="bk-right"></th></tr>
+              </thead>
+              <tbody>
+                <tr v-for="s in snapshots" :key="s.name">
+                  <td class="bk-muted">{{ formatSnapshot(s.name) }}</td>
+                  <td>
+                    <span v-if="s.has_files" class="bk-tag bk-tag--web">Web</span>
+                    <span v-if="s.has_databases" class="bk-tag bk-tag--db">BD</span>
+                    <span v-if="s.has_mail" class="bk-tag bk-tag--mail">Correo</span>
+                  </td>
+                  <td class="bk-muted">{{ s.size_mb }} MB</td>
+                  <td class="bk-muted">{{ s.is_incremental ? 'Incremental' : 'Completa' }}</td>
+                  <td class="bk-right">
+                    <BaseButton variant="primary" size="sm" :loading="restoringSnap === s.name" @click="doRestore(s)">
+                      <i class="bi bi-arrow-counterclockwise"></i> Restaurar
+                    </BaseButton>
+                  </td>
+                </tr>
+              </tbody>
+            </table>
           </div>
-          <div class="modal-footer">
-            <button class="btn btn-secondary" @click="showRestore = false">Cerrar</button>
-          </div>
+        </div>
+        <div class="bk-modal__foot">
+          <BaseButton variant="ghost" size="sm" @click="showRestore = false">Cerrar</BaseButton>
         </div>
       </div>
     </div>
@@ -480,6 +441,9 @@
 import { ref, watch, onMounted } from 'vue'
 import api from '../services/api.js'
 import { useMainStore } from '../stores/useMainStore.js'
+import BaseCard from '../components/ui/BaseCard.vue'
+import BaseButton from '../components/ui/BaseButton.vue'
+import EmptyState from '../components/ui/EmptyState.vue'
 
 function emptyForm() {
   return {
@@ -510,6 +474,7 @@ function emptyForm() {
 
 export default {
   name: 'Backups',
+  components: { BaseCard, BaseButton, EmptyState },
   setup() {
     const store = useMainStore()
     const jobs = ref([])
@@ -551,10 +516,10 @@ export default {
       failed: 'Fallido', cancelled: 'Cancelado',
     }[s] || s)
 
-    const statusBadge = (s) => 'badge ' + ({
-      success: 'bg-success', failed: 'bg-danger', running: 'bg-primary',
-      pending: 'bg-secondary', cancelled: 'bg-secondary',
-    }[s] || 'bg-secondary')
+    const statusClass = (s) => ({
+      success: 'bk-status--ok', failed: 'bk-status--err', running: 'bk-status--run',
+      pending: 'bk-status--idle', cancelled: 'bk-status--idle',
+    }[s] || 'bk-status--idle')
 
     const loadJobs = async () => {
       loading.value = true
@@ -861,7 +826,7 @@ export default {
       runningJobId,
       showHistory, historyJob, records, historyLoading, expanded,
       showRestore, restoreJob, snapshots, snapshotsLoading, restoreOpts, restoringSnap,
-      domainName, statusLabel, statusBadge,
+      domainName, statusLabel, statusClass,
       openCreate, openEdit, closeForm, submitForm, testSftp,
       runJob, openHistory, deleteJob,
       openRestore, doRestore, formatSnapshot,
@@ -873,6 +838,78 @@ export default {
 </script>
 
 <style scoped>
+/* Cabecera */
+.page-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 1rem; margin-bottom: var(--sp-5); flex-wrap: wrap; }
+.page-head__title { font-size: 1.5rem; font-weight: var(--fw-bold, 700); margin: 0; letter-spacing: -.01em; }
+.page-head__sub { color: var(--text-muted); margin: .25rem 0 0; font-size: var(--fs-sm); }
+
+/* Aviso informativo */
+.bk-info { display: flex; gap: var(--sp-3); padding: var(--sp-3) var(--sp-4); background: var(--info-bg, var(--surface-inset)); border: 1px solid var(--info-border, var(--border)); border-radius: var(--r-md); margin-bottom: var(--sp-4); font-size: var(--fs-sm); color: var(--text-secondary); }
+.bk-info > i { color: var(--info, var(--svq-orange)); font-size: 1.05rem; margin-top: 2px; flex-shrink: 0; }
+
+.bk-center { display: flex; justify-content: center; padding: var(--sp-6) 0; color: var(--text-muted); }
+.bk-muted { color: var(--text-muted); font-size: var(--fs-sm); }
+.bk-name { font-weight: var(--fw-semibold); color: var(--text); }
+
+/* Tabla */
+.bk-table-wrap { overflow-x: auto; }
+.bk-table { width: 100%; border-collapse: collapse; font-size: var(--fs-sm); }
+.bk-table thead th { text-align: left; padding: var(--sp-3) var(--sp-4); font-size: var(--fs-xs); text-transform: uppercase; letter-spacing: .04em; color: var(--text-muted); font-weight: var(--fw-semibold); border-bottom: 1px solid var(--border); white-space: nowrap; }
+.bk-table tbody td { padding: var(--sp-3) var(--sp-4); border-bottom: 1px solid var(--border); vertical-align: middle; }
+.bk-table tbody tr:last-child td { border-bottom: none; }
+.bk-table tbody tr:hover { background: var(--surface-inset); }
+.bk-table--sm thead th, .bk-table--sm tbody td { padding: var(--sp-2) var(--sp-3); }
+.bk-row--off { opacity: .55; }
+.bk-right { text-align: right; }
+
+/* Tags / badges */
+.bk-tag { display: inline-block; font-size: var(--fs-xs); font-weight: var(--fw-semibold); padding: 2px 8px; border-radius: var(--r-pill); margin-right: 4px; background: var(--surface-inset); color: var(--text-secondary); border: 1px solid var(--border); }
+.bk-tag--web  { background: var(--brand-50); color: var(--color-primary); border-color: transparent; }
+.bk-tag--db   { background: var(--info-bg, #e0f2fe); color: var(--info, #0369a1); border-color: transparent; }
+.bk-tag--mail { background: var(--warning-bg); color: var(--warning); border-color: transparent; }
+.bk-tag--inc  { background: var(--success-bg); color: var(--success); border-color: transparent; }
+.bk-tag--full { background: var(--surface-inset); color: var(--text-muted); }
+
+/* Estado */
+.bk-status { display: inline-block; font-size: var(--fs-xs); font-weight: var(--fw-semibold); padding: 2px 9px; border-radius: var(--r-pill); }
+.bk-status--ok   { background: var(--success-bg); color: var(--success); }
+.bk-status--err  { background: var(--danger-bg); color: var(--danger); }
+.bk-status--run  { background: var(--brand-50); color: var(--color-primary); }
+.bk-status--idle { background: var(--surface-inset); color: var(--text-muted); }
+.bk-sched { color: var(--success); }
+.bk-running { color: var(--color-primary); display: inline-flex; align-items: center; gap: 5px; }
+
+/* Botones de acción */
+.bk-actions { display: inline-flex; gap: 4px; }
+.bk-iconbtn { width: 30px; height: 30px; display: inline-grid; place-items: center; border: 1px solid var(--border); background: var(--surface); color: var(--text-secondary); border-radius: var(--r-sm); cursor: pointer; transition: all .12s; }
+.bk-iconbtn:hover:not(:disabled) { background: var(--surface-inset); color: var(--text); border-color: var(--border-strong); }
+.bk-iconbtn:disabled { opacity: .4; cursor: not-allowed; }
+.bk-iconbtn--danger:hover:not(:disabled) { color: var(--danger); border-color: var(--danger); }
+
+/* Modal */
+.bk-modal { position: fixed; inset: 0; z-index: 1050; background: rgba(0,0,0,.5); display: flex; align-items: flex-start; justify-content: center; padding: 4vh 1rem; overflow-y: auto; }
+.bk-modal__dialog { background: var(--surface); border: 1px solid var(--border); border-radius: var(--r-lg); box-shadow: var(--shadow-lg, 0 20px 60px rgba(0,0,0,.3)); width: 100%; max-width: 640px; }
+.bk-modal__dialog--lg { max-width: 800px; }
+.bk-modal__dialog--xl { max-width: 900px; }
+.bk-modal__head { display: flex; align-items: center; justify-content: space-between; padding: var(--sp-4) var(--sp-5); border-bottom: 1px solid var(--border); background: var(--surface-inset); border-radius: var(--r-lg) var(--r-lg) 0 0; }
+.bk-modal__title { margin: 0; font-size: var(--fs-md); font-weight: var(--fw-semibold); display: flex; align-items: center; gap: .5rem; }
+.bk-modal__title .bi { color: var(--svq-orange); }
+.bk-modal__close { background: none; border: none; color: var(--text-muted); cursor: pointer; font-size: 1.1rem; padding: 4px; border-radius: var(--r-sm); }
+.bk-modal__close:hover { background: var(--surface); color: var(--text); }
+.bk-modal__body { padding: var(--sp-5); }
+.bk-modal__foot { display: flex; justify-content: flex-end; gap: var(--sp-2); padding: var(--sp-4) var(--sp-5); border-top: 1px solid var(--border); }
+.bk-form-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 1.5rem; }
+.bk-form-grid > div { display: flex; flex-direction: column; gap: 1rem; }
+
+.bk-warn { display: flex; gap: var(--sp-3); padding: var(--sp-3) var(--sp-4); background: var(--warning-bg); border: 1px solid var(--warning-border); border-radius: var(--r-md); font-size: var(--fs-sm); color: var(--text-secondary); margin-bottom: var(--sp-4); }
+.bk-warn > i { color: var(--warning); font-size: 1.05rem; margin-top: 2px; flex-shrink: 0; }
+.bk-sublabel { display: block; font-size: var(--fs-sm); font-weight: var(--fw-semibold); color: var(--text); margin-bottom: var(--sp-2); }
+.bk-restore-opts { display: flex; flex-wrap: wrap; gap: var(--sp-4); margin-bottom: var(--sp-4); }
+.bk-alert-error { background: var(--danger-bg); color: var(--danger); border: 1px solid var(--danger-border); padding: var(--sp-3) var(--sp-4); border-radius: var(--r-md); font-size: var(--fs-sm); }
+.bk-logcell { background: var(--surface-inset); }
+.bk-logerr { color: var(--danger); font-size: var(--fs-sm); margin-bottom: var(--sp-2); }
+.bk-log { font-size: var(--fs-xs); font-family: var(--font-mono); max-height: 240px; overflow: auto; white-space: pre-wrap; margin: 0; color: var(--text-secondary); }
+
 .bk-section {
   background: var(--surface-2);
   border: 1px solid var(--border);
@@ -915,6 +952,6 @@ export default {
 .bk-check input { cursor: pointer; }
 
 @media (max-width: 768px) {
-  .modal-body { grid-template-columns: 1fr !important; }
+  .bk-form-grid { grid-template-columns: 1fr; }
 }
 </style>
