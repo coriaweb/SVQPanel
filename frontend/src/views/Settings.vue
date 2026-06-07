@@ -305,97 +305,44 @@
             </div>
 
             <div v-else>
-              <div class="table-responsive">
-                <table class="table table-hover mb-0">
-                  <thead class="table-light">
-                    <tr>
-                      <th>Versión</th>
-                      <th>Estado</th>
-                      <th>FPM Socket</th>
-                      <th class="text-end">Acciones</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    <tr v-for="php in phpVersions" :key="php.version">
-                      <td>
-                        <strong class="font-monospace">PHP {{ php.version }}</strong>
-                        <span v-if="php.version === form.php_default_version" class="badge bg-info ms-2 small">por defecto</span>
-                      </td>
-                      <td>
-                        <!-- Installed + Running -->
-                        <span v-if="php.running" class="badge bg-success">
-                          <i class="bi bi-check-circle me-1"></i> Activo
-                        </span>
-                        <!-- Installed but stopped -->
-                        <span v-else-if="php.installed" class="badge bg-warning text-dark">
-                          <i class="bi bi-pause-circle me-1"></i> Detenido
-                        </span>
-                        <!-- Not installed -->
-                        <span v-else class="badge bg-secondary">
-                          <i class="bi bi-x-circle me-1"></i> No instalado
-                        </span>
-                      </td>
-                      <td class="font-monospace small text-muted">
-                        {{ php.socket || '—' }}
-                      </td>
-                      <td class="text-end">
-                        <!-- Not installed → install button -->
-                        <button
-                          v-if="!php.installed"
-                          class="btn btn-sm btn-outline-primary"
-                          @click="installPHP(php.version)"
-                          :disabled="phpActionLoading === php.version"
-                        >
-                          <span v-if="phpActionLoading === php.version" class="spinner-border spinner-border-sm me-1"></span>
-                          <i v-else class="bi bi-download me-1"></i>
-                          Instalar
-                        </button>
-
-                        <!-- Installed + stopped → enable button + uninstall -->
-                        <template v-else-if="!php.running">
-                          <button
-                            class="btn btn-sm btn-outline-success me-1"
-                            @click="enablePHP(php.version)"
-                            :disabled="phpActionLoading === php.version"
-                          >
-                            <span v-if="phpActionLoading === php.version" class="spinner-border spinner-border-sm me-1"></span>
-                            <i v-else class="bi bi-play-circle me-1"></i>
-                            Habilitar
-                          </button>
-                          <button
-                            class="btn btn-sm btn-outline-danger"
-                            @click="confirmUninstall(php.version)"
-                            :disabled="phpActionLoading === php.version"
-                          >
-                            <i class="bi bi-trash me-1"></i>
-                            Desinstalar
-                          </button>
-                        </template>
-
-                        <!-- Installed + running → disable + uninstall -->
-                        <template v-else>
-                          <button
-                            class="btn btn-sm btn-outline-warning me-1"
-                            @click="disablePHP(php.version)"
-                            :disabled="phpActionLoading === php.version"
-                          >
-                            <span v-if="phpActionLoading === php.version" class="spinner-border spinner-border-sm me-1"></span>
-                            <i v-else class="bi bi-pause-circle me-1"></i>
-                            Deshabilitar
-                          </button>
-                          <button
-                            class="btn btn-sm btn-outline-danger"
-                            @click="confirmUninstall(php.version)"
-                            :disabled="phpActionLoading === php.version"
-                          >
-                            <i class="bi bi-trash me-1"></i>
-                            Desinstalar
-                          </button>
-                        </template>
-                      </td>
-                    </tr>
-                  </tbody>
-                </table>
+              <div class="php-list">
+                <div v-for="php in phpVersions" :key="php.version" class="php-row">
+                  <div class="php-row__main">
+                    <div class="php-row__ver">
+                      <strong class="font-monospace">PHP {{ php.version }}</strong>
+                      <span v-if="php.version === form.php_default_version" class="php-tag php-tag--default">por defecto</span>
+                    </div>
+                    <span v-if="php.running" class="php-tag php-tag--on"><i class="bi bi-check-circle"></i> Activo</span>
+                    <span v-else-if="php.installed" class="php-tag php-tag--warn"><i class="bi bi-pause-circle"></i> Detenido</span>
+                    <span v-else class="php-tag php-tag--off"><i class="bi bi-x-circle"></i> No instalado</span>
+                  </div>
+                  <div class="php-row__socket font-monospace">{{ php.socket || '—' }}</div>
+                  <div class="php-row__actions">
+                    <button v-if="!php.installed" class="btn btn-sm btn-outline-primary"
+                      @click="installPHP(php.version)" :disabled="phpActionLoading === php.version">
+                      <span v-if="phpActionLoading === php.version" class="spinner-border spinner-border-sm me-1"></span>
+                      <i v-else class="bi bi-download me-1"></i>Instalar
+                    </button>
+                    <template v-else-if="!php.running">
+                      <button class="btn btn-sm btn-outline-success" @click="enablePHP(php.version)" :disabled="phpActionLoading === php.version">
+                        <span v-if="phpActionLoading === php.version" class="spinner-border spinner-border-sm me-1"></span>
+                        <i v-else class="bi bi-play-circle me-1"></i>Habilitar
+                      </button>
+                      <button class="btn btn-sm btn-outline-danger" @click="confirmUninstall(php.version)" :disabled="phpActionLoading === php.version">
+                        <i class="bi bi-trash me-1"></i>Desinstalar
+                      </button>
+                    </template>
+                    <template v-else>
+                      <button class="btn btn-sm btn-outline-warning" @click="disablePHP(php.version)" :disabled="phpActionLoading === php.version">
+                        <span v-if="phpActionLoading === php.version" class="spinner-border spinner-border-sm me-1"></span>
+                        <i v-else class="bi bi-pause-circle me-1"></i>Deshabilitar
+                      </button>
+                      <button class="btn btn-sm btn-outline-danger" @click="confirmUninstall(php.version)" :disabled="phpActionLoading === php.version">
+                        <i class="bi bi-trash me-1"></i>Desinstalar
+                      </button>
+                    </template>
+                  </div>
+                </div>
               </div>
 
               <div class="p-3 border-top bg-light small text-muted">
@@ -1023,6 +970,41 @@ export default {
 .sv-title { margin: 0 0 4px; font-size: 20px; font-weight: 700; letter-spacing: -.01em; }
 .sv-sub { margin: 0; font-size: 13px; color: var(--text-muted); }
 .sv-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
+
+/* Lista de versiones PHP — fila en desktop, tarjeta apilada en móvil */
+.php-list { display: flex; flex-direction: column; }
+.php-row {
+  display: grid;
+  grid-template-columns: 1fr auto auto;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--border);
+}
+.php-row:last-child { border-bottom: none; }
+.php-row__main { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.php-row__ver { display: flex; align-items: center; gap: 8px; }
+.php-row__socket { font-size: .78rem; color: var(--text-muted); }
+.php-row__actions { display: flex; gap: 6px; justify-content: flex-end; flex-wrap: wrap; }
+
+.php-tag {
+  display: inline-flex; align-items: center; gap: .25rem;
+  padding: .2rem .55rem; border-radius: 999px;
+  font-size: .72rem; font-weight: 600; white-space: nowrap;
+}
+.php-tag--default { background: color-mix(in srgb, var(--ac) 15%, transparent); color: var(--ac); }
+.php-tag--on   { background: color-mix(in srgb, var(--success) 15%, transparent); color: var(--success); }
+.php-tag--warn { background: color-mix(in srgb, var(--warning,#f59e0b) 15%, transparent); color: var(--warning,#d97706); }
+.php-tag--off  { background: var(--surface-2); color: var(--text-muted); border: 1px solid var(--border); }
+
+@media (max-width: 640px) {
+  .php-row {
+    grid-template-columns: 1fr;
+    gap: 8px;
+  }
+  .php-row__socket { font-size: .72rem; }
+  .php-row__actions { justify-content: flex-start; }
+}
 .sv-full { grid-column: 1 / -1; }
 @media (max-width: 768px) { .sv-grid { grid-template-columns: 1fr; } .sv-half { grid-column: 1 / -1; } }
 </style>
