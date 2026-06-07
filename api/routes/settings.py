@@ -626,6 +626,49 @@ async def set_panel_whitelist(data: PanelWhitelistRequest,
     }
 
 
+# ─── Backup del propio panel ─────────────────────────────────────────────────
+
+@router.get("/settings/panel-backup")
+async def list_panel_backups(current_user=Depends(require_admin)):
+    """Lista los backups del panel existentes + último."""
+    try:
+        from scripts.panel_backup_manager import PanelBackupManager
+        backups = PanelBackupManager().list_backups()
+        return {"backups": backups, "last": backups[0] if backups else None}
+    except PermissionError:
+        raise HTTPException(403, "Se necesitan privilegios root")
+    except Exception as e:
+        return {"backups": [], "last": None, "error": str(e)}
+
+
+@router.post("/settings/panel-backup")
+async def run_panel_backup(current_user=Depends(require_admin)):
+    """Ejecuta un backup del panel ahora."""
+    try:
+        from scripts.panel_backup_manager import PanelBackupManager
+        return PanelBackupManager().create()
+    except PermissionError:
+        raise HTTPException(403, "Se necesitan privilegios root")
+    except Exception as e:
+        raise HTTPException(500, f"Error creando backup: {e}")
+
+
+@router.get("/settings/panel-backup/download/{filename}")
+async def download_panel_backup(filename: str, current_user=Depends(require_admin)):
+    """Descarga un fichero de backup del panel."""
+    from fastapi.responses import FileResponse
+    try:
+        from scripts.panel_backup_manager import PanelBackupManager
+        path = PanelBackupManager().get_backup_path(filename)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    except FileNotFoundError:
+        raise HTTPException(404, "Backup no encontrado")
+    except PermissionError:
+        raise HTTPException(403, "Se necesitan privilegios root")
+    return FileResponse(path, filename=filename, media_type="application/gzip")
+
+
 # ─── Timezone ────────────────────────────────────────────────────────────────
 
 @router.get("/settings/timezones")

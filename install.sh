@@ -2511,6 +2511,42 @@ Unit=svqpanel-ssl-check.service
 WantedBy=timers.target
 SSLCTEOF
 
+# ─── Timer diario: backup del propio panel (BD + config) ─────────────────────
+# Red de seguridad: si la BD del panel se corrompe, puedes restaurar usuarios,
+# dominios, DNS, correo y config. Guarda en /var/backups/svqpanel (rota 7 días).
+cat > /etc/systemd/system/svqpanel-backup-panel.service << 'BKPEOF'
+[Unit]
+Description=SVQPanel — backup de la BD y config del propio panel
+After=network.target svqpanel.service postgresql.service
+
+[Service]
+Type=oneshot
+User=root
+WorkingDirectory=/opt/svqpanel
+Environment="PATH=/opt/svqpanel/venv/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+ExecStart=/opt/svqpanel/venv/bin/python -m api.cli backup_panel
+TimeoutStartSec=600
+BKPEOF
+
+cat > /etc/systemd/system/svqpanel-backup-panel.timer << 'BKPTEOF'
+[Unit]
+Description=SVQPanel — timer diario para backup del panel (03:30)
+
+[Timer]
+OnCalendar=*-*-* 03:30:00
+Persistent=true
+Unit=svqpanel-backup-panel.service
+
+[Install]
+WantedBy=timers.target
+BKPTEOF
+
+systemctl enable --now svqpanel-backup-panel.timer >/dev/null 2>&1 || true
+echo -e "${GREEN}✓ systemd timer: svqpanel-backup-panel.timer (backup del panel diario 03:30)${NC}"
+
+# Hacer un primer backup ya, para no esperar al primer disparo del timer.
+/opt/svqpanel/venv/bin/python -m api.cli backup_panel >/dev/null 2>&1 || true
+
 # ─── Timer cada 10 min: salud de sincronización del cluster DNS ──────────────
 # Solo hace trabajo real si hay cluster configurado (si no, sale enseguida).
 cat > /etc/systemd/system/svqpanel-dns-cluster-health.service << 'DCHEOF'

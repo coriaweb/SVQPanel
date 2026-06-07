@@ -639,12 +639,32 @@ def cmd_panel_whitelist_disable() -> int:
         db.close()
 
 
+def cmd_backup_panel() -> int:
+    """
+    Crea un backup del propio panel (BD panel_db + ficheros de config críticos)
+    y rota los antiguos. Lo llama el timer systemd svqpanel-backup-panel a diario.
+    """
+    log = logging.getLogger("svqpanel-cli")
+    try:
+        from scripts.panel_backup_manager import PanelBackupManager
+        res = PanelBackupManager().create()
+        log.info("backup_panel OK: %s (%d B) + %s (%d B)",
+                 res["db_file"], res["db_size"], res["config_file"], res["config_size"])
+        print(f"✓ Backup creado: {res['db_file']} + {res['config_file']}")
+        return 0
+    except Exception as e:
+        log.error("backup_panel error: %s", e)
+        print(f"✗ Error: {e}")
+        return 1
+
+
 def main():
     parser = argparse.ArgumentParser(prog="api.cli", description="SVQPanel CLI")
     sub = parser.add_subparsers(dest="cmd", required=True)
 
     sub.add_parser("sample_metrics", help="Toma muestra de métricas y evalúa alertas")
     sub.add_parser("panel_whitelist_disable", help="RESCATE: desactiva la whitelist de IPs del panel")
+    sub.add_parser("backup_panel", help="Backup de la BD y config del propio panel")
 
     p_refresh = sub.add_parser("refresh_ip_lists", help="Refresca listas IP vencidas")
     p_refresh.add_argument("--force", action="store_true", help="Refresca todas, ignorar interval")
@@ -682,6 +702,8 @@ def main():
         sys.exit(cmd_sample_metrics())
     if args.cmd == "panel_whitelist_disable":
         sys.exit(cmd_panel_whitelist_disable())
+    if args.cmd == "backup_panel":
+        sys.exit(cmd_backup_panel())
 
 
 if __name__ == "__main__":
