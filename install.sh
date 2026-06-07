@@ -2348,17 +2348,32 @@ if [[ "$INSTALL_CROWDSEC" == true ]]; then
         echo -e "  ${GREEN}✓ CrowdSec engine $(cscli version 2>/dev/null | grep -oP 'version:\s*\K\S+' | head -1) instalado${NC}"
 
         # ── 3. Colecciones base ───────────────────────────────────────────────
+        # Las colecciones deben coincidir con los servicios que corren. Base:
+        # linux + sshd. http-dos añade detección de floods HTTP (capa 7).
+        # NOTA: NO instalamos crowdsecurity/iptables — es un parser del log de
+        # iptables/UFW, pero SVQPanel usa nftables sin logging, así que no tendría
+        # nada que parsear (solo añadiría ruido).
         echo -e "  ${YELLOW}→ Instalando colecciones (parsers + escenarios)...${NC}"
         for COL in \
             crowdsecurity/linux \
             crowdsecurity/sshd \
             crowdsecurity/nginx \
             crowdsecurity/base-http-scenarios \
-            crowdsecurity/http-cve; do
+            crowdsecurity/http-cve \
+            crowdsecurity/http-dos; do
             cscli collections install "$COL" > /dev/null 2>&1 \
                 && echo -e "    ${GREEN}✓ $COL${NC}" \
                 || echo -e "    ${YELLOW}⚠ $COL (no disponible)${NC}"
         done
+
+        # Apache: solo si el webserver elegido lo usa (modo apache+nginx). Las
+        # reglas de nginx NO entienden el log de Apache, así que sin esta
+        # colección los dominios servidos por Apache quedarían sin protección.
+        if [[ "$WEBSERVER" == "apache+nginx" || "$WEBSERVER" == "apache" ]]; then
+            cscli collections install crowdsecurity/apache2 > /dev/null 2>&1 \
+                && echo -e "    ${GREEN}✓ crowdsecurity/apache2${NC}" \
+                || echo -e "    ${YELLOW}⚠ crowdsecurity/apache2 (no disponible)${NC}"
+        fi
 
         if [[ "$INSTALL_MAIL" == true ]]; then
             for COL in crowdsecurity/postfix crowdsecurity/dovecot; do

@@ -56,16 +56,56 @@ def get_webserver() -> Literal["nginx", "apache", "apache+nginx"]:
     return "nginx"
 
 
+def ensure_crowdsec_apache_collection() -> bool:
+    """
+    Asegura la colección crowdsecurity/apache2 en CrowdSec. Las reglas de nginx
+    no entienden el log de Apache, así que al pasar a un modo con Apache hay que
+    instalarla o los dominios servidos por Apache quedan sin protección.
+    Idempotente y no bloqueante: si cscli no está, no hace nada.
+    """
+    import shutil
+    import subprocess
+    cscli = shutil.which("cscli") or "/usr/bin/cscli"
+    if not (shutil.which("cscli") or os.path.exists("/usr/bin/cscli")):
+        return False
+    try:
+        # ¿Ya instalada?
+        chk = subprocess.run([cscli, "collections", "list", "-o", "json"],
+                             capture_output=True, text=True, timeout=15)
+        if chk.returncode == 0 and "crowdsecurity/apache2" in (chk.stdout or ""):
+            return True
+        inst = subprocess.run([cscli, "collections", "install", "crowdsecurity/apache2"],
+                              capture_output=True, text=True, timeout=60)
+        if inst.returncode == 0:
+            # Recargar CrowdSec para que cargue la nueva colección
+            subprocess.run(["systemctl", "reload", "crowdsec"],
+                           capture_output=True, text=True, timeout=30)
+            logger.info("Colección CrowdSec crowdsecurity/apache2 instalada")
+            return True
+        logger.warning(f"No se pudo instalar crowdsecurity/apache2: {inst.stderr.strip()}")
+        return False
+    except Exception as e:
+        logger.warning(f"ensure_crowdsec_apache_collection: {e}")
+        return False
+
+
 def set_webserver(mode: Literal["nginx", "apache", "apache+nginx"]) -> bool:
     """
     Guarda la configuración de webserver seleccionada.
     Llamado desde install.sh después de elegir la opción.
+    Si el modo usa Apache, asegura la colección CrowdSec correspondiente.
     """
     try:
         WEBSERVER_CONFIG_FILE.parent.mkdir(parents=True, exist_ok=True)
         with open(WEBSERVER_CONFIG_FILE, "w") as f:
             f.write(mode.lower())
         logger.info(f"Webserver configurado: {mode}")
+        # Al activar Apache, asegurar su colección de CrowdSec (no bloqueante)
+        if mode.lower() in ("apache", "apache+nginx"):
+            try:
+                ensure_crowdsec_apache_collection()
+            except Exception:
+                pass
         return True
     except Exception as e:
         logger.error(f"Error escribiendo {WEBSERVER_CONFIG_FILE}: {e}")
