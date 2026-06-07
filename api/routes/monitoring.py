@@ -232,3 +232,16 @@ async def services_web(current_user=Depends(require_admin), db: Session = Depend
         return data
     except Exception as e:
         raise HTTPException(500, f"No se pudieron obtener estadísticas web: {e}")
+
+
+@router.get("/monitoring/services/db")
+async def services_db(current_user=Depends(require_admin)):
+    """
+    Estadísticas de bases de datos en vivo: MariaDB (conexiones, uptime,
+    queries/s, nº de BDs) y PostgreSQL (conexiones, BDs, tamaño de la BD del panel).
+    """
+    try:
+        from scripts import db_stats
+        return db_stats.collect()
+    except Exception as e:
+        raise HTTPException(500, f"No se pudieron obtener estadísticas de BD: {e}")
