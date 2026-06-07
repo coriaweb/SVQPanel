@@ -22,6 +22,9 @@
       <button class="mon-tab" :class="{'mon-tab--active': tab==='recursos'}" @click="tab='recursos'">
         <i class="bi bi-cpu"></i> Recursos
       </button>
+      <button class="mon-tab" :class="{'mon-tab--active': tab==='web'}" @click="selectWebTab">
+        <i class="bi bi-hdd-network"></i> Web
+      </button>
       <button class="mon-tab" :class="{'mon-tab--active': tab==='correo'}" @click="selectMailTab">
         <i class="bi bi-envelope"></i> Correo
       </button>
@@ -274,6 +277,68 @@
         </div>
       </div>
     </template>
+
+    <!-- ════════════ PESTAÑA WEB ════════════ -->
+    <template v-if="tab==='web'">
+      <div v-if="webLoading && !web" class="mon-loading"><div class="spinner-border spinner-border-sm"></div></div>
+      <div v-else-if="web">
+        <!-- Servicios -->
+        <div class="mail-services">
+          <div class="mail-svc" :class="web.services.nginx ? 'mail-svc--on' : 'mail-svc--off'">
+            <i class="bi" :class="web.services.nginx ? 'bi-check-circle-fill' : 'bi-x-circle-fill'"></i>
+            Nginx <small>servidor web</small>
+          </div>
+          <div v-if="web.services.apache2" class="mail-svc mail-svc--on">
+            <i class="bi bi-check-circle-fill"></i> Apache <small>backend .htaccess</small>
+          </div>
+          <div class="mail-svc mail-svc--on">
+            <i class="bi bi-globe2"></i> {{ web.domains.active }}/{{ web.domains.total }} <small>dominios activos</small>
+          </div>
+        </div>
+
+        <!-- Contadores nginx -->
+        <div class="mail-counters" v-if="web.nginx.available">
+          <div class="mail-counter"><div class="mail-counter__val">{{ web.nginx.active }}</div><div class="mail-counter__lbl">Conexiones activas</div></div>
+          <div class="mail-counter"><div class="mail-counter__val">{{ fmtNum(web.nginx.requests) }}</div><div class="mail-counter__lbl">Peticiones totales</div></div>
+          <div class="mail-counter"><div class="mail-counter__val">{{ web.nginx.req_per_conn }}</div><div class="mail-counter__lbl">Pet./conexión</div></div>
+          <div class="mail-counter"><div class="mail-counter__val">{{ web.nginx.writing }}</div><div class="mail-counter__lbl">Escribiendo</div></div>
+          <div class="mail-counter"><div class="mail-counter__val">{{ web.nginx.waiting }}</div><div class="mail-counter__lbl">En espera (keep-alive)</div></div>
+          <div class="mail-counter"><div class="mail-counter__val" :class="web.nginx.dropped > 0 ? 'mc-err' : ''">{{ web.nginx.dropped }}</div><div class="mail-counter__lbl">Conexiones perdidas</div></div>
+        </div>
+
+        <div class="mon-grid2">
+          <!-- Detalle nginx -->
+          <div class="mon-card">
+            <div class="mon-card-head"><span class="mon-card-title"><i class="bi bi-hdd-network"></i> Nginx en vivo</span></div>
+            <div class="mon-card-body">
+              <div v-if="!web.nginx.available" class="mail-empty">
+                stub_status no disponible. Reinstala o recarga nginx para activarlo.
+              </div>
+              <div v-else class="mail-rspamd">
+                <div class="mail-stat"><span>Conexiones activas</span><strong>{{ web.nginx.active }}</strong></div>
+                <div class="mail-stat"><span>Aceptadas</span><strong>{{ fmtNum(web.nginx.accepted) }}</strong></div>
+                <div class="mail-stat"><span>Gestionadas</span><strong>{{ fmtNum(web.nginx.handled) }}</strong></div>
+                <div class="mail-stat"><span>Peticiones</span><strong>{{ fmtNum(web.nginx.requests) }}</strong></div>
+                <div class="mail-stat"><span>Leyendo</span><strong>{{ web.nginx.reading }}</strong></div>
+                <div class="mail-stat"><span>Escribiendo</span><strong>{{ web.nginx.writing }}</strong></div>
+              </div>
+            </div>
+          </div>
+
+          <!-- PHP-FPM -->
+          <div class="mon-card">
+            <div class="mon-card-head"><span class="mon-card-title"><i class="bi bi-filetype-php"></i> PHP-FPM</span></div>
+            <div class="mon-card-body">
+              <div v-if="!web.php_fpm.length" class="mail-empty">No hay versiones de PHP-FPM activas.</div>
+              <div v-for="p in web.php_fpm" :key="p.version" class="mail-toprow">
+                <span class="mail-topaddr">PHP {{ p.version }} <span class="mon-badge mon-badge--ok" style="margin-left:.4rem">activo</span></span>
+                <span class="mail-topcount">{{ p.workers }} <small style="font-weight:400;color:var(--text-muted)">workers</small></span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </template>
   </div>
 </template>
 
@@ -384,12 +449,30 @@ export default {
       if (!mail.value) loadMail()
     }
 
+    // ── Pestaña Web ──
+    const web = ref(null)
+    const webLoading = ref(false)
+    const fmtNum = (n) => (n == null ? '0' : n.toLocaleString('es-ES'))
+    const loadWeb = async () => {
+      webLoading.value = true
+      try {
+        web.value = await api.get('/api/monitoring/services/web')
+      } catch (e) {
+        store.showNotification('Error al cargar estadísticas web: ' + e.message, 'danger')
+      } finally { webLoading.value = false }
+    }
+    const selectWebTab = () => {
+      tab.value = 'web'
+      if (!web.value) loadWeb()
+    }
+
     onMounted(async () => {
       await Promise.all([loadHistory(), loadConfig(), loadEvents()])
-      // Refresco automático cada 60s
+      // Refresco automático cada 60s según la pestaña activa
       refreshTimer = setInterval(() => {
         if (tab.value === 'recursos') { loadHistory(); loadEvents() }
-        else { loadMail() }
+        else if (tab.value === 'correo') { loadMail() }
+        else if (tab.value === 'web') { loadWeb() }
       }, 60000)
     })
     onUnmounted(() => { if (refreshTimer) clearInterval(refreshTimer) })
@@ -399,6 +482,7 @@ export default {
       seriesCpu, seriesRam, seriesDisk, seriesLoad, seriesRx, seriesTx,
       openAlerts, setRange, saveCfg, sendTest, relTime,
       tab, mail, mailLoading, loadMail, selectMailTab, fmtAge,
+      web, webLoading, loadWeb, selectWebTab, fmtNum,
     }
   },
 }
