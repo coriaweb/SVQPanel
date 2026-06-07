@@ -4,11 +4,11 @@ Apache vhost generator — Apache como BACKEND de Nginx (arquitectura proxy).
 ARQUITECTURA (modo apache+nginx):
     Internet → Nginx (:80, :443)            ← maneja SSL, HTTP/3, headers,
                  │                             bad bots, IPv6/IPv4
-                 └─ proxy_pass → Apache (127.0.0.1:8080)
+                 └─ proxy_pass → Apache (127.0.0.1:8181)
                                    └─ sirve PHP RESPETANDO .htaccess
 
 Por eso este vhost Apache es DELIBERADAMENTE simple:
-  - Escucha solo en 127.0.0.1:8080 (no expuesto a internet).
+  - Escucha solo en 127.0.0.1:8181 (no expuesto a internet).
   - NO lleva SSL, headers de seguridad, bad bots ni redirecciones HTTPS:
     todo eso lo hace Nginx, el front. Duplicarlo causaría doble-header y
     conflictos.
@@ -27,7 +27,7 @@ from typing import Optional
 logger = logging.getLogger(__name__)
 
 # Puerto del backend Apache (debe coincidir con ports.conf del install)
-APACHE_BACKEND_PORT = 8080
+APACHE_BACKEND_PORT = 8181
 APACHE_BACKEND_ADDR = f"127.0.0.1:{APACHE_BACKEND_PORT}"
 
 
@@ -49,7 +49,7 @@ def generate_apache_vhost(
     php_socket_override: Optional[str] = None,
 ) -> str:
     """
-    Genera el vhost Apache BACKEND (127.0.0.1:8080) de un dominio.
+    Genera el vhost Apache BACKEND (127.0.0.1:8181) de un dominio.
 
     Solo sirve PHP + ficheros estáticos respetando .htaccess. Todo lo de cara
     a internet (SSL, headers, bots, redirecciones) lo gestiona el Nginx front,

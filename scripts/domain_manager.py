@@ -395,7 +395,7 @@ class DomainManager(SystemManager):
 
         if webserver == "apache":
             # ── Arquitectura dual: Nginx FRONT + Apache BACKEND ──
-            # 1) Vhost Apache (127.0.0.1:8080): sirve PHP respetando .htaccess.
+            # 1) Vhost Apache (127.0.0.1:8181): sirve PHP respetando .htaccess.
             # 2) Vhost Nginx (front 80/443): SSL/headers/bots + proxy_pass a Apache.
             # Así Apache aporta .htaccess y Nginx aporta todo lo moderno.
             from scripts.apache_vhost_generator import generate_apache_vhost

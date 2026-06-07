@@ -372,10 +372,10 @@ if [[ "$WEBSERVER" == "apache+nginx" ]]; then
     echo -e "${YELLOW}Instalando Apache (backend para .htaccess)...${NC}"
     apt-get install -y -qq apache2
 
-    # ── Arquitectura: Nginx FRONT (80/443) + Apache BACKEND (8080) ──
+    # ── Arquitectura: Nginx FRONT (80/443) + Apache BACKEND (8181) ──
     # Nginx maneja SSL, HTTP/3, headers de seguridad, bad bots y sirve los
     # dominios "nginx" directamente. Para los dominios "apache", Nginx hace
-    # proxy_pass a Apache (127.0.0.1:8080), que sirve el PHP RESPETANDO los
+    # proxy_pass a Apache (127.0.0.1:8181), que sirve el PHP RESPETANDO los
     # ficheros .htaccess (mod_rewrite, deny/allow, auth básica, etc.) — el
     # único motivo real para tener Apache. Apache NO escucha de cara a internet.
 
@@ -388,11 +388,11 @@ if [[ "$WEBSERVER" == "apache+nginx" ]]; then
     a2enmod setenvif
     a2enmod remoteip
 
-    # Apache escucha SOLO en 127.0.0.1:8080 (no expuesto a internet).
+    # Apache escucha SOLO en 127.0.0.1:8181 (no expuesto a internet).
     cat > /etc/apache2/ports.conf << 'APACHEPORTS'
-# SVQPanel — Apache es BACKEND de Nginx. Solo escucha en localhost:8080.
+# SVQPanel — Apache es BACKEND de Nginx. Solo escucha en localhost:8181.
 # Nginx (front) hace proxy_pass aquí para los dominios servidos por Apache.
-Listen 127.0.0.1:8080
+Listen 127.0.0.1:8181
 APACHEPORTS
 
     # RemoteIP: confiar en la X-Forwarded-For que envía nginx (front local),
@@ -406,7 +406,7 @@ APACHEREMOTEIP
     a2enconf svqpanel-remoteip
 
     # Quitar el vhost por defecto de Apache (000-default escucha en *:80 y
-    # chocaría con nginx). Con ports.conf en 8080 ya no escucha en 80, pero
+    # chocaría con nginx). Con ports.conf en 8181 ya no escucha en 80, pero
     # deshabilitamos el default igualmente por limpieza.
     a2dissite 000-default 2>/dev/null || true
     a2dissite default-ssl 2>/dev/null || true
@@ -420,7 +420,7 @@ APACHESEC
     a2enconf svqpanel-security
 
     apache2ctl configtest && systemctl enable apache2 && systemctl restart apache2
-    echo -e "${GREEN}✓ Apache instalado como backend (127.0.0.1:8080)${NC}\n"
+    echo -e "${GREEN}✓ Apache instalado como backend (127.0.0.1:8181)${NC}\n"
 fi
 
 ###############################################################################

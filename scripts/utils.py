@@ -306,7 +306,7 @@ def generate_nginx_config(
     Generate Nginx vhost configuration (Hestia-style paths).
 
     Si proxy_to_apache=True, el bloque que sirve PHP se reemplaza por un
-    proxy_pass a Apache (127.0.0.1:8080), que sirve el sitio respetando los
+    proxy_pass a Apache (127.0.0.1:8181), que sirve el sitio respetando los
     .htaccess. Nginx sigue siendo el front (SSL, headers, bots, HTTP/3); solo
     delega la ejecución del PHP+.htaccess a Apache. El resto del vhost (TLS,
     seguridad, ficheros bloqueados) es idéntico al modo nginx puro.
@@ -400,13 +400,13 @@ def generate_nginx_config(
 
     # ── Bloque que ejecuta la aplicación (location / + PHP) ──
     # Modo nginx puro: try_files + fastcgi_pass a PHP-FPM.
-    # Modo apache (proxy_to_apache): proxy_pass a Apache backend (:8080), que
+    # Modo apache (proxy_to_apache): proxy_pass a Apache backend (:8181), que
     # sirve el sitio respetando .htaccess. Nginx sigue siendo front (SSL, bots,
     # headers); solo delega la ejecución a Apache.
     if proxy_to_apache:
         _proxy = (
             "    location / {\n"
-            "        proxy_pass http://127.0.0.1:8080;\n"
+            "        proxy_pass http://127.0.0.1:8181;\n"
             "        proxy_set_header Host $host;\n"
             "        proxy_set_header X-Real-IP $remote_addr;\n"
             "        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;\n"
