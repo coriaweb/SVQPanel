@@ -191,10 +191,19 @@
                     <span class="mbx__email" :title="mb.full_email">{{ mb.full_email }}</span>
                     <span class="mbx__quota">
                       <i class="bi bi-hdd"></i>
-                      {{ mb.quota_mb === 0 ? 'Sin límite' : mb.quota_mb + ' MB' }}
+                      <template v-if="mb.quota_mb === 0">
+                        {{ fmtMB(mb.disk_usage_mb) }} usado · Sin límite
+                      </template>
+                      <template v-else>
+                        {{ fmtMB(mb.disk_usage_mb) }} / {{ fmtMB(mb.quota_mb) }}
+                        <span class="mbx__pct" :class="usageClass(mb)">({{ usagePct(mb) }}%)</span>
+                      </template>
                       <span style="margin-left:8px"><i class="bi bi-send"></i>
                         {{ mb.send_limit_hour === 0 ? 'envío libre' : mb.send_limit_hour + '/h' }}</span>
                     </span>
+                    <div v-if="mb.quota_mb > 0" class="mbx__bar">
+                      <div class="mbx__bar-fill" :class="usageClass(mb)" :style="{ width: Math.min(usagePct(mb),100) + '%' }"></div>
+                    </div>
                   </div>
                   <span class="mbx__status" :class="mb.is_active ? 'is-on' : 'is-off'">
                     <span class="dot"></span>{{ mb.is_active ? 'Activo' : 'Suspendido' }}
@@ -1581,6 +1590,23 @@ export default {
       }
     }
 
+    // ── Uso de disco del buzón ──
+    const fmtMB = (mb) => {
+      const v = Number(mb) || 0
+      if (v >= 1024) return (v / 1024).toFixed(v % 1024 === 0 ? 0 : 1) + ' GB'
+      return Math.round(v) + ' MB'
+    }
+    const usagePct = (mb) => {
+      if (!mb.quota_mb) return 0
+      return Math.round((Number(mb.disk_usage_mb) || 0) / mb.quota_mb * 100)
+    }
+    const usageClass = (mb) => {
+      const p = usagePct(mb)
+      if (p >= 90) return 'is-danger'
+      if (p >= 75) return 'is-warn'
+      return 'is-ok'
+    }
+
     // ─────────────────────────────────────────────────────────────────
     // Editar buzón (cuota + límite de envío)
     // ─────────────────────────────────────────────────────────────────
@@ -1803,6 +1829,7 @@ export default {
       showForwardModal, forwardTarget, forwardForm, openForwardModal, saveForward, clearForward,
       showAutoreplyModal, autoreplyTarget, autoreplyForm, openAutoreplyModal, saveAutoreply,
       showEditModal, editTarget, editForm, openEditMailbox, saveEditMailbox,
+      fmtMB, usagePct, usageClass,
       // Roundcube
       roundcubeEnabled, roundcubeUrl, openingWebmail,
       // Webmail por dominio
@@ -1940,7 +1967,16 @@ export default {
 }
 .mbx__id { display: flex; flex-direction: column; min-width: 0; flex: 1; }
 .mbx__email { font-weight: var(--fw-semibold); color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.mbx__quota { font-size: var(--fs-sm); color: var(--text-muted); display: flex; align-items: center; gap: 5px; }
+.mbx__quota { font-size: var(--fs-sm); color: var(--text-muted); display: flex; align-items: center; gap: 5px; flex-wrap: wrap; }
+.mbx__pct { font-weight: var(--fw-medium); }
+.mbx__pct.is-ok { color: var(--text-muted); }
+.mbx__pct.is-warn { color: var(--warning); }
+.mbx__pct.is-danger { color: var(--danger); }
+.mbx__bar { height: 4px; border-radius: 999px; background: var(--surface-inset); margin-top: 5px; overflow: hidden; }
+.mbx__bar-fill { height: 100%; border-radius: 999px; transition: width .3s ease; background: var(--svq-orange); }
+.mbx__bar-fill.is-ok { background: var(--success, #2ea043); }
+.mbx__bar-fill.is-warn { background: var(--warning); }
+.mbx__bar-fill.is-danger { background: var(--danger); }
 .mbx__status { display: inline-flex; align-items: center; gap: 5px; font-size: var(--fs-sm); font-weight: var(--fw-medium); flex-shrink: 0; }
 .mbx__status .dot { width: 7px; height: 7px; border-radius: 50%; }
 .mbx__status.is-on { color: var(--success); } .mbx__status.is-on .dot { background: var(--success); }

@@ -440,6 +440,39 @@ class MailManager(SystemManager):
         self._reload_dovecot()
         return {"success": True}
 
+    def get_mailbox_usage(self, panel_username, domain_name, mailbox_username):
+        """Espacio usado por un buzón, en MB.
+
+        Preferimos `doveadm quota get` (lo que Dovecot contabiliza realmente,
+        rápido y exacto). Si no está disponible, caemos a `du -sm` del Maildir.
+        Devuelve un float (MB) o 0.0 si no se puede medir.
+        """
+        email = f"{mailbox_username}@{domain_name}"
+        # 1) doveadm quota get -u email  → tabla con la fila STORAGE (valor en KB)
+        code, out, _ = self.execute_command(
+            ["doveadm", "quota", "get", "-u", email], check=False)
+        if code == 0 and out:
+            for line in out.splitlines():
+                parts = line.split()
+                # Formato: Quota name  Type  Value  Limit  %  (Type=STORAGE en KB)
+                if len(parts) >= 3 and "STORAGE" in line.upper():
+                    for i, tok in enumerate(parts):
+                        if tok.upper() == "STORAGE" and i + 1 < len(parts):
+                            try:
+                                return round(int(parts[i + 1]) / 1024.0, 1)  # KB→MB
+                            except (ValueError, IndexError):
+                                pass
+        # 2) Fallback: du -sm del maildir
+        maildir = self.maildir_path(panel_username, domain_name, mailbox_username)
+        if os.path.isdir(maildir):
+            code, out, _ = self.execute_command(["du", "-sm", maildir], check=False)
+            if code == 0 and out:
+                try:
+                    return float(out.split()[0])
+                except (ValueError, IndexError):
+                    pass
+        return 0.0
+
     # ─────────────────────────────────────────────────────────────────────
     # Alias
     # ─────────────────────────────────────────────────────────────────────

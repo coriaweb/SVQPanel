@@ -124,7 +124,7 @@ def _mail_domain_to_dict(md: MailDomain, current_user) -> dict:
     }
 
 
-def _mailbox_to_dict(mb: Mailbox) -> dict:
+def _mailbox_to_dict(mb: Mailbox, disk_usage_mb: float = 0.0) -> dict:
     return {
         "id":             mb.id,
         "mail_domain_id": mb.mail_domain_id,
@@ -133,7 +133,7 @@ def _mailbox_to_dict(mb: Mailbox) -> dict:
         "send_limit_hour": getattr(mb, "send_limit_hour", 200),
         "is_active":      mb.is_active,
         "full_email":     f"{mb.username}@{mb.mail_domain.domain_name}",
-        "disk_usage_mb":  0.0,
+        "disk_usage_mb":  disk_usage_mb,
         "forward_to":        getattr(mb, "forward_to", None),
         "forward_keep_copy": getattr(mb, "forward_keep_copy", True),
         "autoreply_enabled": getattr(mb, "autoreply_enabled", False),
@@ -1052,10 +1052,27 @@ async def list_mailboxes(
     current_user=Depends(require_auth),
     db: Session = Depends(get_db),
 ):
-    """Lista los buzones de un dominio de correo"""
+    """Lista los buzones de un dominio de correo, con el espacio ocupado real."""
     md = _get_mail_domain_or_404(domain_id, db)
     _require_edit(md, current_user)
-    return [_mailbox_to_dict(mb) for mb in md.mailboxes]
+
+    # Calcular el uso real de cada buzón (doveadm quota get; rápido). Si falla
+    # (entorno sin permisos/dev), devolvemos 0.0 sin romper el listado.
+    panel_username = md.user.username if md.user else current_user.username
+    usage = {}
+    try:
+        from scripts.mail_manager import MailManager
+        mgr = MailManager()
+        for mb in md.mailboxes:
+            try:
+                usage[mb.id] = mgr.get_mailbox_usage(
+                    panel_username, md.domain_name, mb.username)
+            except Exception:
+                usage[mb.id] = 0.0
+    except Exception:
+        pass
+
+    return [_mailbox_to_dict(mb, usage.get(mb.id, 0.0)) for mb in md.mailboxes]
 
 
 @router.post("/mail/domains/{domain_id}/mailboxes",
