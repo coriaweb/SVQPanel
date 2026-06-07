@@ -1533,13 +1533,31 @@ async def get_domain_app(domain_id: int,
 
 @router.get("/domains/{domain_id}/wp/info")
 async def wp_get_info(domain_id: int,
+                      updates: bool = False,
                       current_user: User = Depends(require_auth),
                       db: Session = Depends(get_db)):
+    """Resumen del WordPress. ?updates=1 incluye el chequeo de actualizaciones
+    (consulta a wordpress.org, más lento); por defecto se omite para que la
+    carga inicial sea rápida."""
     _domain, owner, docroot = _resolve_docroot_owner(domain_id, db, current_user)
     _wp_guard(docroot, owner)
     from scripts.wp_manager import wp_info, WpError
     try:
-        return {"status": "success", "data": wp_info(docroot, owner)}
+        return {"status": "success", "data": wp_info(docroot, owner, with_updates=updates)}
+    except WpError as e:
+        raise HTTPException(status_code=422, detail=str(e))
+
+
+@router.get("/domains/{domain_id}/wp/updates")
+async def wp_get_updates(domain_id: int,
+                         current_user: User = Depends(require_auth),
+                         db: Session = Depends(get_db)):
+    """Solo el resumen de actualizaciones pendientes (consulta la red)."""
+    _domain, owner, docroot = _resolve_docroot_owner(domain_id, db, current_user)
+    _wp_guard(docroot, owner)
+    from scripts.wp_manager import wp_updates_summary, WpError
+    try:
+        return {"status": "success", "data": wp_updates_summary(docroot, owner)}
     except WpError as e:
         raise HTTPException(status_code=422, detail=str(e))
 

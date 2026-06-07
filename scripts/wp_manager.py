@@ -104,51 +104,52 @@ def wp_is_installed(docroot: str, owner: str) -> bool:
     return rc == 0
 
 
-def wp_info(docroot: str, owner: str) -> Dict:
-    """Resumen del sitio: versión, URL, conteos y actualizaciones pendientes."""
-    if not wp_is_installed(docroot, owner):
-        raise WpError("No hay un WordPress operativo en este dominio (core no instalado).")
+# Script PHP que se evalúa DENTRO de un único arranque de WordPress (wp eval)
+# para sacar de golpe versión, opciones y conteos. Evita lanzar ~10 procesos
+# wp-cli en serie (cada uno hace bootstrap completo de WP = ~1s). Las
+# actualizaciones (que consultan wordpress.org por red) NO van aquí: son lo más
+# lento y se piden aparte solo cuando se necesitan.
+_INFO_EVAL = r"""
+$d = array(
+  'version'        => get_bloginfo('version'),
+  'siteurl'        => get_option('siteurl'),
+  'home'           => get_option('home'),
+  'title'          => get_option('blogname'),
+  'locale'         => get_locale(),
+  'plugins_total'  => count(get_plugins()),
+  'plugins_active' => count((array) get_option('active_plugins', array())),
+  'themes_total'   => count(wp_get_themes()),
+);
+echo json_encode($d);
+"""
 
-    info: Dict = {"app": "wordpress"}
 
-    rc, out, _ = _wp(docroot, owner, ["core", "version"])
-    info["version"] = out.strip() if rc == 0 else None
+def wp_info(docroot: str, owner: str, with_updates: bool = False) -> Dict:
+    """Resumen del sitio en UNA sola invocación de wp-cli (wp eval).
 
-    rc, out, _ = _wp(docroot, owner, ["option", "get", "siteurl"])
-    info["siteurl"] = out.strip() if rc == 0 else None
-    rc, out, _ = _wp(docroot, owner, ["option", "get", "home"])
-    info["home"] = out.strip() if rc == 0 else None
+    with_updates=False por defecto: el conteo de actualizaciones consulta la red
+    (lento) y se obtiene aparte vía wp_updates_summary cuando se pida.
+    """
+    rc, out, err = _wp(docroot, owner, ["eval", _INFO_EVAL])
+    if rc != 0 or not out.strip():
+        # Fallback: ¿realmente no hay WP o solo falló el eval?
+        if not wp_is_installed(docroot, owner):
+            raise WpError("No hay un WordPress operativo en este dominio (core no instalado).")
+        raise WpError(f"No pude leer la instalación: {err or out}")
+    try:
+        info = json.loads(out)
+    except (ValueError, TypeError):
+        raise WpError("Respuesta de WordPress no válida al leer la información.")
 
-    rc, out, _ = _wp(docroot, owner, ["option", "get", "blogname"])
-    info["title"] = out.strip() if rc == 0 else None
-
-    rc, out, _ = _wp(docroot, owner, ["language", "core", "list",
-                                      "--status=active", "--field=language"])
-    info["locale"] = out.strip().splitlines()[0] if rc == 0 and out.strip() else None
-
-    # Conteos
-    info["plugins_total"] = _count(_wp(docroot, owner,
-        ["plugin", "list", "--field=name"]))
-    info["plugins_active"] = _count(_wp(docroot, owner,
-        ["plugin", "list", "--status=active", "--field=name"]))
-    info["themes_total"] = _count(_wp(docroot, owner,
-        ["theme", "list", "--field=name"]))
-
-    # Actualizaciones pendientes
-    info["updates"] = wp_updates_summary(docroot, owner)
+    info["app"] = "wordpress"
     info["maintenance"] = os.path.exists(os.path.join(docroot, ".maintenance"))
+    info["updates"] = (wp_updates_summary(docroot, owner) if with_updates
+                       else {"core": 0, "plugins": 0, "themes": 0, "checked": False})
     return info
 
 
-def _count(result: Tuple[int, str, str]) -> int:
-    rc, out, _ = result
-    if rc != 0 or not out.strip():
-        return 0
-    return len([l for l in out.splitlines() if l.strip()])
-
-
 def wp_updates_summary(docroot: str, owner: str) -> Dict:
-    """Nº de actualizaciones pendientes de core, plugins y temas."""
+    """Nº de actualizaciones pendientes de core, plugins y temas (consulta red)."""
     core = 0
     rc, out, _ = _wp(docroot, owner, ["core", "check-update", "--format=json"])
     if rc == 0 and out.strip() and out.strip() != "[]":
@@ -160,6 +161,7 @@ def wp_updates_summary(docroot: str, owner: str) -> Dict:
         "core": core,
         "plugins": _count_updatable(docroot, owner, "plugin"),
         "themes": _count_updatable(docroot, owner, "theme"),
+        "checked": True,
     }
 
 
@@ -234,21 +236,22 @@ def wp_flush_permalinks(docroot: str, owner: str) -> Dict:
 
 
 def wp_maintenance(docroot: str, owner: str, enable: bool) -> Dict:
-    """Activa/desactiva el modo mantenimiento (wp-cli maintenance-mode)."""
-    rc, out, err = _wp_full(docroot, owner,
-                            ["maintenance-mode", "activate" if enable else "deactivate"])
-    if rc != 0:
-        # Algunas versiones no traen el subcomando: fallback al fichero .maintenance.
-        flag = os.path.join(docroot, ".maintenance")
-        try:
-            if enable:
-                with open(flag, "w") as f:
-                    f.write("<?php $upgrading = time(); ?>")
-                _run(["chown", f"{owner}:{owner}", flag])
-            elif os.path.exists(flag):
-                os.remove(flag)
-        except OSError as e:
-            raise WpError(f"No pude cambiar el modo mantenimiento: {e}")
+    """Activa/desactiva el modo mantenimiento.
+
+    Lo hacemos manipulando directamente el fichero `.maintenance` (lo mismo que
+    hace WordPress): es instantáneo y no requiere arrancar wp-cli (que tardaría
+    ~1s en bootstrapear WP solo para crear/borrar este fichero).
+    """
+    flag = os.path.join(docroot, ".maintenance")
+    try:
+        if enable:
+            with open(flag, "w") as f:
+                f.write("<?php $upgrading = time(); ?>")
+            _run(["chown", f"{owner}:{owner}", flag])
+        elif os.path.exists(flag):
+            os.remove(flag)
+    except OSError as e:
+        raise WpError(f"No pude cambiar el modo mantenimiento: {e}")
     return {"ok": True, "maintenance": enable}
 
 

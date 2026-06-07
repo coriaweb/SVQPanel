@@ -20,7 +20,10 @@
       </div>
 
       <!-- Avisos de actualización -->
-      <div v-if="totalUpdates > 0" class="wpm-updbanner">
+      <div v-if="loadingUpdates && !info.updates.checked" class="wpm-uptodate">
+        <span class="spinner"></span> Comprobando actualizaciones…
+      </div>
+      <div v-else-if="totalUpdates > 0" class="wpm-updbanner">
         <i class="bi bi-arrow-up-circle"></i>
         <span>Hay <strong>{{ totalUpdates }}</strong> actualización(es) pendiente(s):
           <template v-if="info.updates.core">core, </template>
@@ -28,7 +31,7 @@
           <template v-if="info.updates.themes">{{ info.updates.themes }} tema(s)</template>
         </span>
       </div>
-      <div v-else class="wpm-uptodate"><i class="bi bi-check-circle"></i> Todo está actualizado.</div>
+      <div v-else-if="info.updates.checked" class="wpm-uptodate"><i class="bi bi-check-circle"></i> Todo está actualizado.</div>
 
       <BaseTabs v-model="tab" :tabs="tabs" />
 
@@ -166,6 +169,9 @@ export default {
     })
     const adminUrl = computed(() => (info.value?.siteurl || '').replace(/\/$/, '') + '/wp-admin')
 
+    const loadingUpdates = ref(false)
+
+    // Carga rápida: una sola llamada wp eval (sin consultar la red por updates).
     const loadInfo = async () => {
       if (did.value == null) { loadingInfo.value = false; return }
       loadingInfo.value = true; errorInfo.value = ''
@@ -173,8 +179,20 @@ export default {
         const r = await api.getWpInfo(did.value)
         info.value = r.data
         newUrl.value = r.data.siteurl || ''
+        loadUpdates()  // en segundo plano, no bloquea la vista
       } catch (e) { errorInfo.value = e.message || 'No pude leer la instalación' }
       finally { loadingInfo.value = false }
+    }
+
+    // Actualizaciones aparte (consulta a wordpress.org, lento): no bloquea.
+    const loadUpdates = async () => {
+      if (did.value == null) return
+      loadingUpdates.value = true
+      try {
+        const r = await api.getWpUpdates(did.value)
+        if (info.value) info.value = { ...info.value, updates: r.data }
+      } catch (e) { /* silencioso: el resumen sigue mostrándose sin updates */ }
+      finally { loadingUpdates.value = false }
     }
 
     const loadItems = async () => {
@@ -193,15 +211,23 @@ export default {
       finally { loadingUsers.value = false }
     }
 
-    // Ejecuta una acción genérica; refresca info/listado al terminar.
+    // Ejecuta una acción genérica. Refresca SOLO lo que cambió, sin volver a
+    // leer toda la info (cada lectura completa son varios procesos wp-cli).
     const run = async (action, payload, busyId) => {
       if (did.value == null) return
       busy.value = busyId || action
       try {
         const r = await api.wpAction(did.value, action, payload)
         store.showNotification(r.data?.output || r.data?.note || 'Hecho', 'success')
-        await loadInfo()
-        if (action === 'update-items' || action === 'toggle-item') await loadItems()
+        // Actualización local mínima según la acción:
+        if (action === 'maintenance' && info.value) {
+          info.value = { ...info.value, maintenance: !!payload.enable }
+        } else if (action === 'update-core') {
+          await loadInfo()                 // cambia versión/updates: recargar
+        } else if (action === 'update-items' || action === 'toggle-item') {
+          await loadItems()                // refresca la tabla; updates aparte
+          loadUpdates()
+        }
         return r.data
       } catch (e) {
         store.showNotification('Error: ' + e.message, 'danger')
@@ -243,7 +269,7 @@ export default {
 
     return {
       info, loadingInfo, errorInfo, tab, tabs, busy, items, loadingItems,
-      admins, loadingUsers, resetResult, newUrl, itemKind, totalUpdates, adminUrl,
+      admins, loadingUsers, loadingUpdates, resetResult, newUrl, itemKind, totalUpdates, adminUrl,
       loadInfo, loadItems, loadAdmins, run, toggleMaintenance, confirmSalts,
       resetPw, changeUrl, statusLabel,
     }

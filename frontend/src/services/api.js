@@ -734,7 +734,10 @@ class APIClient {
 
   // ── Detección y gestión de app instalada (WP Toolkit) ──
   getDomainApp(domainId)         { return this.get(`/api/domains/${domainId}/app`) }
-  getWpInfo(domainId)            { return this.get(`/api/domains/${domainId}/wp/info`) }
+  getWpInfo(domainId, updates = false) {
+    return this.get(`/api/domains/${domainId}/wp/info${updates ? '?updates=1' : ''}`)
+  }
+  getWpUpdates(domainId)         { return this.get(`/api/domains/${domainId}/wp/updates`) }
   getWpItems(domainId, kind)     { return this.get(`/api/domains/${domainId}/wp/${kind}s`) }
   wpAction(domainId, action, data = {}) {
     return this.post(`/api/domains/${domainId}/wp/${action}`, data)
