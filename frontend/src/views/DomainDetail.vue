@@ -281,21 +281,18 @@
             </small>
             <BaseButton variant="primary" size="sm" :loading="phpSaving" @click="savePhp">Guardar y aplicar</BaseButton>
           </div>
+        </div>
+      </BaseCard>
 
-          <!-- ===== Tuning de recursos PHP-FPM ===== -->
-          <hr class="dd-sep" />
-          <div class="fpm-block">
-            <div class="fpm-head">
-              <div>
-                <h6 class="fpm-title">Recursos del pool PHP-FPM</h6>
-                <p class="dd-muted" style="margin:.2rem 0 0">
-                  Controla cuántos procesos PHP levanta este dominio (consumo de RAM/CPU).
-                  Elige un perfil o ajústalo a mano.
-                </p>
-              </div>
-            </div>
+      <!-- ===== Recursos del pool PHP-FPM (tarjeta propia) ===== -->
+      <BaseCard v-show="tab === 'php'" title="Recursos del pool PHP-FPM" icon="cpu">
+        <div class="fpm-block">
+          <p class="dd-muted" style="margin:0 0 1rem">
+            Controla cuántos procesos PHP levanta este dominio (consumo de RAM/CPU).
+            Elige un perfil o ajústalo a mano.
+          </p>
 
-            <div v-if="!fpmLoaded" class="svq-skeleton" style="height:90px"></div>
+          <div v-if="!fpmLoaded" class="svq-skeleton" style="height:90px"></div>
             <div v-else>
               <!-- Presets -->
               <div class="fpm-presets">
@@ -364,7 +361,6 @@
                 </BaseButton>
               </div>
             </div>
-          </div>
         </div>
       </BaseCard>
 
@@ -1285,9 +1281,7 @@ export default {
 .dd-form-foot { display: flex; align-items: center; justify-content: space-between; gap: var(--sp-3); margin-top: var(--sp-4); }
 
 /* PHP-FPM tuning */
-.dd-sep { border: none; border-top: 1px solid var(--border); margin: var(--sp-5) 0; }
-.fpm-title { font-size: var(--fs-sm); font-weight: var(--fw-semibold); color: var(--text); margin: 0; }
-.fpm-presets { display: grid; grid-template-columns: repeat(3, 1fr); gap: var(--sp-3); margin: var(--sp-4) 0; }
+.fpm-presets { display: grid; grid-template-columns: repeat(3, 1fr); gap: var(--sp-3); margin: 0 0 var(--sp-4); }
 @media (max-width: 640px) { .fpm-presets { grid-template-columns: 1fr; } }
 .fpm-preset { text-align: left; display: flex; flex-direction: column; gap: 4px; padding: var(--sp-3) var(--sp-4); border: 1px solid var(--border); border-radius: var(--r-md); background: var(--surface); cursor: pointer; transition: all .15s; }
 .fpm-preset:hover { border-color: var(--accent); }
