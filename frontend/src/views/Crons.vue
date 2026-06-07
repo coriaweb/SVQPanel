@@ -405,11 +405,13 @@ export default {
 .cr-modal__foot { display: flex; justify-content: flex-end; gap: var(--sp-2); padding: var(--sp-4) var(--sp-5); border-top: 1px solid var(--border); }
 
 /* Campos */
-.cr-field { display: flex; flex-direction: column; gap: 5px; }
+.cr-field { display: flex; flex-direction: column; gap: 5px; min-width: 0; }
 .cr-field > label { font-size: var(--fs-sm); font-weight: var(--fw-semibold); color: var(--text); }
+/* Los inputs no deben desbordar su contenedor (grid/flex) */
+.cr-field .svq-input { width: 100%; box-sizing: border-box; min-width: 0; }
 .cr-req { color: var(--danger); }
-.cr-timegrid { display: grid; grid-template-columns: repeat(5, 1fr); gap: var(--sp-2); }
-@media (max-width: 560px) { .cr-timegrid { grid-template-columns: repeat(2, 1fr); } }
+.cr-timegrid { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: var(--sp-2); }
+@media (max-width: 560px) { .cr-timegrid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
 
 .cr-presets { display: flex; flex-wrap: wrap; gap: 6px; }
 .cr-preset {
