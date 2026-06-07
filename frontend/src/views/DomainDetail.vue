@@ -212,6 +212,14 @@
                 <input class="svq-input" v-model="appForm.admin_email" type="email" :placeholder="`admin@${domain.domain_name}`" />
               </label>
             </div>
+            <div class="app-install__row" v-if="appForm.app === 'wordpress'">
+              <label class="app-field">
+                <span>Idioma</span>
+                <select class="svq-select" v-model="appForm.locale">
+                  <option v-for="l in wpLocales" :key="l.code" :value="l.code">{{ l.label }}</option>
+                </select>
+              </label>
+            </div>
             <p v-if="appForm.app === 'laravel'" class="dd-muted"><i class="bi bi-info-circle"></i> Laravel se instala sin usuario admin (lo defines en tu app). Servirá desde <code>/public</code> automáticamente.</p>
             <p v-else-if="appForm.app === 'nextcloud'" class="dd-muted"><i class="bi bi-info-circle"></i> Nextcloud se instala desatendido con esta cuenta admin. La primera carga puede tardar unos segundos.</p>
             <p v-else-if="appForm.app === 'prestashop'" class="dd-muted"><i class="bi bi-info-circle"></i> PrestaShop se instala desatendido. Entrarás al back office con tu <strong>email</strong> y contraseña; la URL de admin se mostrará al terminar.</p>
@@ -906,9 +914,20 @@ export default {
     const goFiles = () => router.push({ path: '/files', query: { domain: domainId.value } })
 
     // ── Autoinstalador de apps ──
-    const appForm = ref({ app: 'wordpress', admin_user: 'admin', admin_password: '', admin_email: '' })
+    const appForm = ref({ app: 'wordpress', admin_user: 'admin', admin_password: '', admin_email: '', locale: 'es_ES' })
     const installing = ref(false)
     const installResult = ref(null)
+    // Idiomas de WordPress (los sirve el backend; es_ES por defecto). Fallback
+    // mínimo por si la llamada falla, para no dejar el selector vacío.
+    const wpLocales = ref([{ code: 'es_ES', label: 'Español (España)' }, { code: 'en_US', label: 'English (US)' }])
+    const loadWpLocales = async () => {
+      try {
+        const r = await api.getWordpressLocales()
+        if (r?.locales?.length) wpLocales.value = r.locales
+        if (r?.default) appForm.value.locale = r.default
+      } catch (e) { /* fallback ya cargado */ }
+    }
+    loadWpLocales()
     // wordpress/nextcloud/prestashop tienen cuenta admin; wordpress y prestashop piden email
     const appNeedsAdmin = computed(() => ['wordpress', 'nextcloud', 'prestashop'].includes(appForm.value.app))
     const appNeedsEmail = computed(() => ['wordpress', 'prestashop'].includes(appForm.value.app))
@@ -925,6 +944,7 @@ export default {
       const payload = { app: appForm.value.app, admin_user: appForm.value.admin_user }
       if (appNeedsAdmin.value) payload.admin_password = appForm.value.admin_password
       if (appNeedsEmail.value) payload.admin_email = appForm.value.admin_email
+      if (appForm.value.app === 'wordpress') payload.locale = appForm.value.locale
       installing.value = true
       installResult.value = null
       try {
@@ -1199,7 +1219,7 @@ export default {
       logTab, logLines, logsLoading, logsData, loadLogs, switchLog,
       logSearch, filteredLogLines, logLineClass, highlightLog,
       downloading, downloadSite, suspend, unsuspend, remove, goFiles,
-      appForm, installing, installResult, doInstallApp, appNeedsAdmin, appNeedsEmail,
+      appForm, installing, installResult, doInstallApp, appNeedsAdmin, appNeedsEmail, wpLocales,
       git, gitDeployments, gitLoading, gitSaving, gitDeploying, gitKeyGen, gitRolling, gitForm,
       loadGit, genKey, doSetup, doDeploy, doRollback, doDisableGit, copyText,
       showReadonlyForm, readonlyIps, readonlySaving, saveReadonlyMode, editReadonlyIps,

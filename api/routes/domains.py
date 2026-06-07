@@ -1335,6 +1335,19 @@ class AppInstallRequest(BaseModel):
     # (wordpress, nextcloud). Laravel no los usa. Validamos en el endpoint.
     admin_password: Optional[str] = _Field(None, max_length=128)
     admin_email: Optional[str] = _Field(None, max_length=160)
+    # Idioma de WordPress (locale wp-cli, p. ej. es_ES). Default español; se
+    # valida/normaliza en el instalador. Ignorado por el resto de apps.
+    locale: Optional[str] = _Field(None, max_length=10)
+
+
+@router.get("/apps/wordpress/locales")
+async def wordpress_locales(current_user: User = Depends(require_auth)):
+    """Idiomas disponibles para instalar WordPress (es_ES es el por defecto)."""
+    from scripts.app_installer import WP_LOCALES, WP_DEFAULT_LOCALE
+    return {
+        "default": WP_DEFAULT_LOCALE,
+        "locales": [{"code": c, "label": l} for c, l in WP_LOCALES.items()],
+    }
 
 
 @router.post("/domains/{domain_id}/install-app")
@@ -1387,6 +1400,7 @@ async def install_app(
                 admin_user=payload.admin_user,
                 admin_pass=payload.admin_password,
                 admin_email=payload.admin_email,
+                locale=payload.locale or "es_ES",
             )
         elif app == "laravel":
             result = installer.install_laravel(

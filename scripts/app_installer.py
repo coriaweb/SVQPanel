@@ -160,6 +160,33 @@ def _chown_tree(path: str, user: str):
     _run(["chown", "-R", f"{user}:{user}", path])
 
 
+# Idiomas de WordPress ofrecidos en el instalador (código locale → etiqueta).
+# Español (es_ES) es el primero/por defecto. Lista corta y curada; el usuario
+# puede ampliarla, pero estos cubren la mayoría de casos en es/EU.
+WP_LOCALES = {
+    "es_ES": "Español (España)",
+    "es_MX": "Español (México)",
+    "en_US": "English (US)",
+    "ca":    "Català",
+    "gl_ES": "Galego",
+    "eu":    "Euskara",
+    "pt_PT": "Português (Portugal)",
+    "pt_BR": "Português (Brasil)",
+    "fr_FR": "Français",
+    "de_DE": "Deutsch",
+    "it_IT": "Italiano",
+}
+WP_DEFAULT_LOCALE = "es_ES"
+
+
+def _normalize_wp_locale(locale: Optional[str]) -> str:
+    """Valida el locale recibido; cae a es_ES si es vacío o no soportado."""
+    if not locale:
+        return WP_DEFAULT_LOCALE
+    locale = str(locale).strip()
+    return locale if locale in WP_LOCALES else WP_DEFAULT_LOCALE
+
+
 # Nextcloud: rango de PHP soportado y extensiones requeridas (series 30/31).
 NEXTCLOUD_PHP_MIN = (8, 1)
 NEXTCLOUD_PHP_MAX = (8, 4)
@@ -265,17 +292,22 @@ class AppInstaller:
 
     # ── WordPress ───────────────────────────────────────────────────────────
     def install_wordpress(self, domain: str, owner: str, docroot: str,
-                          admin_user: str, admin_pass: str, admin_email: str) -> Dict:
+                          admin_user: str, admin_pass: str, admin_email: str,
+                          locale: str = "es_ES") -> Dict:
         if not ensure_wp_cli():
             raise RuntimeError("No se pudo instalar wp-cli en el servidor")
         if not _empty_or_safe(docroot):
             raise RequirementsError("El directorio del dominio no está vacío; instala en un dominio limpio")
         _clean_placeholders(docroot)
 
+        locale = _normalize_wp_locale(locale)
+
         db = self._create_db(owner, "wp")
 
-        # Descargar el core
-        rc, _, err = _run([WPCLI_PATH, "core", "download", "--path=" + docroot],
+        # Descargar el core en el idioma elegido (--locale baja los paquetes de
+        # traducción del core ya en la descarga; por defecto es_ES).
+        rc, _, err = _run([WPCLI_PATH, "core", "download",
+                           "--path=" + docroot, "--locale=" + locale],
                           as_user=owner)
         if rc != 0:
             raise RuntimeError(f"wp core download falló: {err}")
@@ -308,6 +340,17 @@ class AppInstaller:
         if rc != 0:
             raise RuntimeError(f"wp core install falló: {err}")
 
+        # Activar el idioma del sitio (admin + frontend). Para en_US no hace
+        # falta (es el idioma base de WP y no hay paquete que instalar).
+        if locale != "en_US":
+            # Instala el paquete de traducción del core y lo deja como idioma
+            # activo del sitio (option WPLANG). Best-effort: si falla, WP queda
+            # usable en inglés y no abortamos la instalación.
+            _run([WPCLI_PATH, "language", "core", "install",
+                  "--path=" + docroot, "--activate", locale], as_user=owner)
+            _run([WPCLI_PATH, "site", "switch-language",
+                  "--path=" + docroot, locale], as_user=owner)
+
         _chown_tree(docroot, owner)
         return {
             "app": "wordpress",
@@ -315,6 +358,7 @@ class AppInstaller:
             "admin_url": f"{url}/wp-admin",
             "admin_user": admin_user,
             "admin_password": admin_pass,
+            "locale": locale,
             "db": db,
         }
 

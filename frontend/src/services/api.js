@@ -727,6 +727,11 @@ class APIClient {
     return this.post(`/api/domains/${domainId}/install-app`, data)
   }
 
+  // Idiomas disponibles para instalar WordPress (es_ES por defecto)
+  getWordpressLocales() {
+    return this.get(`/api/apps/wordpress/locales`)
+  }
+
   // SFTP
   getSftpStatus(userId)           { return this.get(`/api/users/${userId}/sftp`) }
   setSftpEnabled(userId, enabled) {
