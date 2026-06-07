@@ -299,6 +299,65 @@ def _dns_ensure_mail_record(domain_name: str, db: Session) -> bool:
     return True
 
 
+def _dns_add_spf_dmarc(domain_name: str, db: Session) -> bool:
+    """
+    Publica automáticamente SPF y DMARC en la zona DNS del panel (si existe),
+    igual que ya se hace con DKIM. Sin estos registros, el correo del dominio
+    puntua como sospechoso (SPF_NONE) y acaba en spam.
+      - SPF:   TXT @        v=spf1 a mx ip4:<IP> ~all
+      - DMARC: TXT _dmarc   v=DMARC1; p=quarantine; rua=mailto:dmarc@dominio
+    Respeta registros existentes (no los pisa si el admin ya puso uno propio).
+    Devuelve True si había zona en el panel.
+    """
+    zone = db.query(DnsZone).filter(DnsZone.domain_name == domain_name).first()
+    if not zone:
+        return False
+
+    from api.models.models_settings import Settings
+    from api.routes.dns import _sync_zone_to_bind, _bump_serial
+    s = db.query(Settings).filter(Settings.id == 1).first()
+    server_ip = (s.server_ipv4 if s else None) or zone.ip_address
+    changed = False
+
+    # ── SPF (TXT en la raíz @) ──
+    spf_exists = db.query(DnsRecord).filter(
+        DnsRecord.zone_id == zone.id,
+        DnsRecord.record_type == "TXT",
+        DnsRecord.name.in_(["@", domain_name + "."]),
+        DnsRecord.content.ilike("v=spf1%"),
+    ).first()
+    if not spf_exists:
+        ip_part = f" ip4:{server_ip}" if server_ip else ""
+        spf_value = f"v=spf1 a mx{ip_part} ~all"
+        db.add(DnsRecord(zone_id=zone.id, record_type="TXT", name="@",
+                         content=spf_value, ttl=14400, priority=0))
+        changed = True
+        logger.info(f"SPF añadido a zona DNS de {domain_name}: {spf_value}")
+
+    # ── DMARC (TXT en _dmarc) ──
+    dmarc_exists = db.query(DnsRecord).filter(
+        DnsRecord.zone_id == zone.id,
+        DnsRecord.record_type == "TXT",
+        DnsRecord.name == "_dmarc",
+    ).first()
+    if not dmarc_exists:
+        dmarc_value = f"v=DMARC1; p=quarantine; rua=mailto:dmarc@{domain_name}; fo=1"
+        db.add(DnsRecord(zone_id=zone.id, record_type="TXT", name="_dmarc",
+                         content=dmarc_value, ttl=14400, priority=0))
+        changed = True
+        logger.info(f"DMARC añadido a zona DNS de {domain_name}")
+
+    if changed:
+        zone.serial = _bump_serial(zone.serial)
+        db.commit()
+        db.refresh(zone)
+        try:
+            _sync_zone_to_bind(zone, db)
+        except Exception as e:
+            logger.warning(f"No se pudo sincronizar zona tras SPF/DMARC: {e}")
+    return True
+
+
 def _rebuild_mail_tls(db: Session):
     """Regenera la config SNI (Dovecot+Postfix) desde la BD. Tolerante a fallos."""
     try:
@@ -444,6 +503,13 @@ async def create_mail_domain(
     # Webmail por dominio (webmail.{dominio}) — automático al activar correo:
     # registro DNS + vhost nginx que sirve el Roundcube compartido.
     _activate_webmail(data.domain_name, db)
+
+    # SPF + DMARC automáticos en la zona DNS (si existe en el panel). Sin esto el
+    # correo del dominio puntúa como sospechoso (SPF_NONE) y acaba en spam.
+    try:
+        _dns_add_spf_dmarc(data.domain_name, db)
+    except Exception as e:
+        logger.warning(f"No se pudieron añadir SPF/DMARC para {data.domain_name}: {e}")
 
     # Rate-limit de envío (el dominio entra con su send_limit_hour por defecto)
     _rebuild_rspamd(db)
@@ -843,6 +909,26 @@ async def set_mail_tls(domain_id: int, enabled: bool = True,
         "message": f"TLS activado: los clientes ya pueden usar mail.{md.domain_name} "
                    f"con certificado válido.",
     }
+
+
+@router.post("/mail/domains/{domain_id}/dns-fix")
+async def fix_mail_dns(
+    domain_id: int,
+    current_user=Depends(require_auth),
+    db: Session = Depends(get_db),
+):
+    """
+    Publica/repara SPF y DMARC en la zona DNS del dominio de correo. Útil para
+    dominios creados antes de que esto fuera automático, o si faltan registros.
+    """
+    md = _get_mail_domain_or_404(domain_id, db)
+    _require_edit(md, current_user)
+    had_zone = _dns_add_spf_dmarc(md.domain_name, db)
+    if not had_zone:
+        return {"status": "no_zone",
+                "message": "Este dominio no tiene su DNS en el panel; añade SPF/DMARC en tu proveedor."}
+    return {"status": "ok",
+            "message": "SPF y DMARC publicados en la zona DNS. Pueden tardar unos minutos en propagarse."}
 
 
 # ─────────────────────────────────────────────────────────────────────────────
