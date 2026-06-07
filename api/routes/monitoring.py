@@ -213,3 +213,22 @@ async def services_mail(current_user=Depends(require_admin)):
         return mail_stats.collect()
     except Exception as e:
         raise HTTPException(500, f"No se pudieron obtener estadísticas de correo: {e}")
+
+
+@router.get("/monitoring/services/web")
+async def services_web(current_user=Depends(require_admin), db: Session = Depends(get_db)):
+    """
+    Estadísticas web en vivo: nginx (conexiones, peticiones via stub_status),
+    PHP-FPM por versión y nº de dominios alojados.
+    """
+    try:
+        from scripts import web_stats
+        from api.models.models_domain import Domain
+        data = web_stats.collect()
+        data["domains"] = {
+            "total":  db.query(Domain).count(),
+            "active": db.query(Domain).filter(Domain.is_active.is_(True)).count(),
+        }
+        return data
+    except Exception as e:
+        raise HTTPException(500, f"No se pudieron obtener estadísticas web: {e}")

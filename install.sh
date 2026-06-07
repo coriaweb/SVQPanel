@@ -495,6 +495,22 @@ FCGIEOF
 server_tokens off;
 NGINXHARDEOF
 
+    # stub_status: endpoint interno (solo 127.0.0.1) para el monitor del panel.
+    # Expone conexiones activas, accepted/handled/requests, reading/writing/waiting.
+    cat > /etc/nginx/conf.d/svqpanel-status.conf << 'NGINXSTATUSEOF'
+# SVQPanel — métricas internas de nginx (solo localhost)
+server {
+    listen 127.0.0.1:8089;
+    server_name _;
+    access_log off;
+    location = /nginx_status {
+        stub_status;
+        allow 127.0.0.1;
+        deny all;
+    }
+}
+NGINXSTATUSEOF
+
     systemctl start nginx
     echo -e "${GREEN}✓ Nginx $(nginx -v 2>&1) instalado desde repo oficial${NC}\n"
 fi
