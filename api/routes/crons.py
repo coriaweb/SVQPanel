@@ -36,26 +36,35 @@ def _get_username_for_user(user: User) -> str:
     return user.username
 
 
+def _cron_to_response(cron: CronJob, db: Session) -> dict:
+    """Serializa un cron añadiendo el username del propietario (para la vista admin)."""
+    owner = db.query(User).filter(User.id == cron.user_id).first()
+    data = {c.name: getattr(cron, c.name) for c in cron.__table__.columns}
+    data["username"] = owner.username if owner else None
+    return data
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # CRUD
 # ─────────────────────────────────────────────────────────────────────────────
 
 @router.get("/crons", response_model=list[CronJobResponse])
 async def list_crons(
+    user_id: int | None = None,
     current_user: User = Depends(require_auth),
     db: Session = Depends(get_db),
 ):
-    """Lista los crons del usuario actual (admin: todos)."""
+    """Lista los crons del usuario actual. Admin: todos, o los de un usuario
+    concreto si se pasa ?user_id=N (para filtrar por cliente en el panel)."""
+    query = db.query(CronJob)
     if current_user.is_admin:
-        crons = db.query(CronJob).order_by(CronJob.created_at.desc()).all()
+        if user_id is not None:
+            query = query.filter(CronJob.user_id == user_id)
     else:
-        crons = (
-            db.query(CronJob)
-            .filter(CronJob.user_id == current_user.id)
-            .order_by(CronJob.created_at.desc())
-            .all()
-        )
-    return crons
+        # Un usuario normal solo ve los suyos, pase lo que pase en ?user_id
+        query = query.filter(CronJob.user_id == current_user.id)
+    crons = query.order_by(CronJob.created_at.desc()).all()
+    return [_cron_to_response(c, db) for c in crons]
 
 
 @router.post("/crons", response_model=CronJobResponse, status_code=status.HTTP_201_CREATED)
@@ -65,16 +74,31 @@ async def create_cron(
     db: Session = Depends(get_db),
 ):
     """Crea un nuevo cron job."""
-    # Verificar que el dominio pertenece al usuario (si se especificó)
+    # ── Determinar propietario ────────────────────────────────────────────────
+    # Admin/reseller puede asignar el cron a un cliente: entonces se ejecuta BAJO
+    # el usuario de sistema de ese cliente (aislado), no como root. Si no se
+    # indica user_id, el cron es del propio usuario que lo crea.
+    is_admin_or_reseller = current_user.is_admin or getattr(current_user, "role", None) == "reseller"
+    owner = current_user
+    if payload.user_id and is_admin_or_reseller:
+        target = db.query(User).filter(User.id == payload.user_id).first()
+        if not target:
+            raise HTTPException(status_code=404, detail="Usuario propietario no encontrado")
+        # Un reseller solo puede crear crons para sus propios clientes
+        if not current_user.is_admin and target.id != current_user.id and target.parent_id != current_user.id:
+            raise HTTPException(status_code=403, detail="Ese usuario no es tu cliente")
+        owner = target
+
+    # Verificar que el dominio pertenece al propietario (si se especificó)
     if payload.domain_id:
         domain = db.query(Domain).filter(Domain.id == payload.domain_id).first()
         if not domain:
             raise HTTPException(status_code=404, detail="Dominio no encontrado")
-        if not current_user.is_admin and domain.user_id != current_user.id:
+        if not current_user.is_admin and domain.user_id != owner.id:
             raise HTTPException(status_code=403, detail="Ese dominio no te pertenece")
 
     cron = CronJob(
-        user_id   = current_user.id,
+        user_id   = owner.id,
         domain_id = payload.domain_id,
         minute    = payload.minute,
         hour      = payload.hour,
@@ -89,11 +113,11 @@ async def create_cron(
     db.commit()
     db.refresh(cron)
 
-    # Escribir en el crontab del sistema
+    # Escribir en el crontab del sistema (bajo el usuario del PROPIETARIO)
     try:
         from scripts.cron_manager import CronManager
         mgr = CronManager()
-        sys_user = _get_username_for_user(current_user)
+        sys_user = _get_username_for_user(owner)
         mgr.add_cron(
             username=sys_user,
             cron_id=cron.id,
@@ -111,7 +135,7 @@ async def create_cron(
         import logging
         logging.getLogger(__name__).warning(f"No se pudo escribir crontab: {e}")
 
-    return cron
+    return _cron_to_response(cron, db)
 
 
 @router.get("/crons/{cron_id}", response_model=CronJobResponse)
@@ -122,7 +146,7 @@ async def get_cron(
 ):
     cron = _get_cron_or_404(cron_id, db)
     _check_cron_access(current_user, cron)
-    return cron
+    return _cron_to_response(cron, db)
 
 
 @router.put("/crons/{cron_id}", response_model=CronJobResponse)
@@ -167,7 +191,7 @@ async def update_cron(
         import logging
         logging.getLogger(__name__).warning(f"No se pudo actualizar crontab: {e}")
 
-    return cron
+    return _cron_to_response(cron, db)
 
 
 @router.delete("/crons/{cron_id}", status_code=status.HTTP_204_NO_CONTENT)
@@ -224,4 +248,4 @@ async def toggle_cron(
         import logging
         logging.getLogger(__name__).warning(f"No se pudo actualizar crontab: {e}")
 
-    return cron
+    return _cron_to_response(cron, db)

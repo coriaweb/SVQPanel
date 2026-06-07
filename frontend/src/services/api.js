@@ -847,8 +847,8 @@ class APIClient {
   }
 
   // Cron jobs
-  getCrons() {
-    return this.get('/api/crons')
+  getCrons(userId = null) {
+    return this.get(userId ? `/api/crons?user_id=${userId}` : '/api/crons')
   }
 
   createCron(data) {

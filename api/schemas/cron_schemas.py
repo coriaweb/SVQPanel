@@ -23,6 +23,10 @@ def _validate_cron_field(value: str, field_name: str) -> str:
 
 
 class CronJobCreate(BaseModel):
+    # Propietario del cron. Para admin/reseller, opcional: si se indica un cliente,
+    # el cron se ejecuta BAJO ese usuario del sistema (aislado), no como root.
+    # Si se omite, el cron es del propio usuario que lo crea.
+    user_id:   Optional[int] = None
     domain_id: Optional[int] = None
     minute:    str = "*"
     hour:      str = "*"
@@ -134,6 +138,7 @@ class CronJobUpdate(BaseModel):
 class CronJobResponse(BaseModel):
     id:         int
     user_id:    int
+    username:   Optional[str] = None   # username del propietario (para la vista admin)
     domain_id:  Optional[int]
     minute:     str
     hour:       str

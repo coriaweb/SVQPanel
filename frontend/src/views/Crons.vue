@@ -5,18 +5,26 @@
         <h2><i class="bi bi-clock-history"></i> Tareas Cron</h2>
         <p class="text-muted mb-0">{{ crons.length }} {{ crons.length === 1 ? 'tarea programada' : 'tareas programadas' }}</p>
       </div>
-      <button class="btn btn-primary" @click="openCreate">
-        <i class="bi bi-plus-circle"></i> Nueva tarea
-      </button>
+      <div class="d-flex gap-2 align-items-center">
+        <!-- Filtro por usuario (solo admin/reseller) -->
+        <select v-if="isAdminOrReseller" class="form-select form-select-sm" style="width:auto"
+                v-model.number="filterUserId" @change="loadCrons">
+          <option :value="null">Todos los usuarios</option>
+          <option v-for="u in clientUsers" :key="u.id" :value="u.id">{{ u.username }}</option>
+        </select>
+        <button class="btn btn-primary" @click="openCreate">
+          <i class="bi bi-plus-circle"></i> Nueva tarea
+        </button>
+      </div>
     </div>
 
     <!-- Ayuda rápida -->
     <div class="alert alert-info d-flex gap-2 align-items-start mb-3" role="alert">
       <i class="bi bi-info-circle-fill mt-1"></i>
       <div class="small">
-        Las tareas cron se ejecutan con tu usuario del sistema. El formato de tiempo es
-        <strong>minuto hora día mes díaDeSemana</strong> (igual que el comando <code>crontab</code>).
-        Usa <code>*</code> para «cualquier valor».
+        Cada tarea se ejecuta <strong>bajo el usuario de sistema de su propietario</strong> (aislada).
+        El formato de tiempo es <strong>minuto hora día mes díaDeSemana</strong>
+        (igual que el comando <code>crontab</code>). Usa <code>*</code> para «cualquier valor».
       </div>
     </div>
 
@@ -33,6 +41,7 @@
           <table class="table table-hover align-middle mb-0">
             <thead class="table-light">
               <tr>
+                <th v-if="isAdminOrReseller">Usuario</th>
                 <th>Expresión</th>
                 <th>Comando</th>
                 <th>Comentario</th>
@@ -43,6 +52,11 @@
             </thead>
             <tbody>
               <tr v-for="cron in crons" :key="cron.id" :class="{'table-secondary text-muted': !cron.is_active}">
+                <td v-if="isAdminOrReseller" class="small">
+                  <span class="badge bg-light text-dark border">
+                    <i class="bi bi-person"></i> {{ cron.username || '—' }}
+                  </span>
+                </td>
                 <td>
                   <code class="small">{{ cron.minute }} {{ cron.hour }} {{ cron.day }} {{ cron.month }} {{ cron.weekday }}</code>
                   <div class="text-muted small">{{ describeCron(cron) }}</div>
@@ -89,6 +103,21 @@
             <button type="button" class="btn-close" @click="closeForm"></button>
           </div>
           <div class="modal-body">
+
+            <!-- Usuario propietario (admin/reseller, solo al crear) -->
+            <div v-if="isAdminOrReseller && !editing" class="mb-3">
+              <label class="form-label fw-semibold">Usuario propietario</label>
+              <select v-model.number="form.user_id" class="form-select">
+                <option :value="null">Yo (administrador — se ejecuta como root)</option>
+                <option v-for="u in clientUsers" :key="u.id" :value="u.id">
+                  {{ u.username }} ({{ u.email }})
+                </option>
+              </select>
+              <div class="form-text">
+                Si eliges un cliente, la tarea se ejecuta <strong>bajo su usuario</strong> del
+                sistema (aislada), no como root.
+              </div>
+            </div>
 
             <!-- Selector de expresión rápida -->
             <div class="mb-3">
@@ -169,7 +198,7 @@
 </template>
 
 <script>
-import { ref, onMounted } from 'vue'
+import { ref, computed, onMounted } from 'vue'
 import api from '../services/api.js'
 import { useMainStore } from '../stores/useMainStore.js'
 
@@ -196,7 +225,7 @@ function describeCron(c) {
 }
 
 function emptyForm() {
-  return { minute: '*', hour: '*', day: '*', month: '*', weekday: '*', command: '', comment: '' }
+  return { minute: '*', hour: '*', day: '*', month: '*', weekday: '*', command: '', comment: '', user_id: null }
 }
 
 export default {
@@ -211,10 +240,27 @@ export default {
     const formError = ref('')
     const saving   = ref(false)
 
+    // Usuarios (para asignar propietario y filtrar — solo admin/reseller)
+    const users = ref([])
+    const filterUserId = ref(null)
+    const isAdminOrReseller = computed(() =>
+      ['admin', 'reseller'].includes(store.currentUser?.role) || store.currentUser?.is_admin
+    )
+    const clientUsers = computed(() =>
+      users.value.filter(u => u.role !== 'admin' && !u.is_admin)
+    )
+    const loadUsers = async () => {
+      if (!isAdminOrReseller.value) return
+      try {
+        const data = await api.getUsers(0, 1000)
+        users.value = Array.isArray(data) ? data : []
+      } catch (e) { /* no bloqueante */ }
+    }
+
     const loadCrons = async () => {
       loading.value = true
       try {
-        crons.value = await api.getCrons()
+        crons.value = await api.getCrons(filterUserId.value || null)
       } catch (e) {
         store.showNotification('Error cargando crons: ' + e.message, 'danger')
       } finally {
@@ -225,6 +271,8 @@ export default {
     const openCreate = () => {
       editing.value = null
       form.value = emptyForm()
+      // Si hay un usuario filtrado, preasignarlo como propietario por comodidad
+      if (filterUserId.value) form.value.user_id = filterUserId.value
       formError.value = ''
       showForm.value = true
     }
@@ -307,11 +355,12 @@ export default {
       return new Date(dt).toLocaleDateString('es-ES', { day: '2-digit', month: 'short', year: 'numeric' })
     }
 
-    onMounted(loadCrons)
+    onMounted(() => { loadCrons(); loadUsers() })
 
     return {
       crons, loading,
       showForm, editing, form, formError, saving,
+      isAdminOrReseller, clientUsers, filterUserId,
       presets: PRESETS,
       openCreate, openEdit, closeForm,
       applyPreset, submitForm,
