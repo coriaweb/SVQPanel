@@ -99,42 +99,42 @@ def list_decisions() -> List[Dict[str, Any]]:
     if rc != 0 or data is None:
         return []
     out: List[Dict[str, Any]] = []
-    # cscli decisions list devuelve: [{ "id":..., "decisions":[...] }, ...]
-    # Cada item es una IP/range con sus decisiones asociadas. Cuando una IP tiene
-    # VARIAS decisiones (baneada por varios escenarios), las anidadas a menudo
-    # solo traen 'scenario' y heredan el resto (value, type, duration, origin,
-    # country) de la fuente padre. Por eso, si un campo falta en la decisión hija
-    # lo tomamos del padre 'src' — así cada fila queda completa y no con guiones.
+    # cscli decisions list devuelve dos formas:
+    #   - Anidada: [{ "scenario":..., "decisions":[ {...}, ... ], "events":[...] }, ...]
+    #     donde la fuente (alerta) lleva los datos completos en cada item de
+    #     'decisions'. OJO: 'decisions' puede ser [] (alerta SIN decisión activa:
+    #     el ban ya expiró). Esas hay que IGNORARLAS, no convertir la alerta en
+    #     una fila (que saldría con value/type/duration en blanco = guiones).
+    #   - Plana: [ {value, type, duration, ...}, ... ] sin clave 'decisions'.
     for src in data:
-        src_is_dict = isinstance(src, dict)
-        decisions = src.get("decisions") if src_is_dict else None
-        items = decisions if decisions else [src]
-
-        def _pick(d, key):
-            """Valor de la decisión, con fallback a la fuente padre."""
-            v = d.get(key)
-            if (v is None or v == "") and src_is_dict:
-                return src.get(key)
-            return v
-
-        for d in items:
-            if not isinstance(d, dict):
-                continue
-            simulated = d.get("simulated", False) or (src_is_dict and src.get("simulated", False))
-            country = _pick(d, "country") or ""
-            out.append({
-                "id":         d.get("id") or (src.get("id") if src_is_dict else None),
-                "value":      _pick(d, "value"),
-                "scope":      _pick(d, "scope"),
-                "type":       _pick(d, "type"),
-                "scenario":   d.get("scenario"),   # el escenario sí es propio de cada decisión
-                "origin":     _pick(d, "origin"),
-                "duration":   _pick(d, "duration"),
-                "country":    "SIMULATED" if simulated else country,
-                "created_at": _pick(d, "created_at") or _pick(d, "until"),
-                "until":      _pick(d, "until"),
-            })
+        if not isinstance(src, dict):
+            continue
+        if "decisions" in src:
+            # Forma anidada: solo procesamos las decisiones reales; [] se ignora.
+            for d in src.get("decisions") or []:
+                if isinstance(d, dict) and d.get("value"):
+                    out.append(_decision_row(d))
+        elif src.get("value"):
+            # Forma plana: la propia fuente es una decisión.
+            out.append(_decision_row(src))
     return out
+
+
+def _decision_row(d: Dict[str, Any]) -> Dict[str, Any]:
+    """Normaliza una decisión de cscli a la fila que consume el frontend."""
+    simulated = d.get("simulated", False)
+    return {
+        "id":         d.get("id"),
+        "value":      d.get("value"),
+        "scope":      d.get("scope"),
+        "type":       d.get("type"),
+        "scenario":   d.get("scenario"),
+        "origin":     d.get("origin"),
+        "duration":   d.get("duration"),
+        "country":    "SIMULATED" if simulated else (d.get("country") or ""),
+        "created_at": d.get("created_at") or d.get("until"),
+        "until":      d.get("until"),
+    }
 
 
 def add_decision(
