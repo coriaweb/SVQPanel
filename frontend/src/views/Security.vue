@@ -141,13 +141,24 @@
           </span>
         </div>
         <div class="sec-card-body">
-          <p class="sec-hint">Puertos abiertos de serie. Política <strong>DROP</strong> = todo lo demás bloqueado.</p>
+          <p class="sec-hint">
+            Pincha un puerto para abrirlo o cerrarlo. Política <strong>DROP</strong> = todo lo no
+            abierto queda bloqueado. Los puertos con candado <i class="bi bi-lock-fill"></i> son
+            críticos (cerrarlos te deja sin acceso) y piden confirmación.
+          </p>
           <div v-if="!sysPorts.available" class="sec-hint">No se pudo leer el firewall del sistema.</div>
-          <div v-else style="display:flex;flex-wrap:wrap;gap:6px">
-            <span v-for="p in sysPorts.ports" :key="p.proto+p.port" class="sec-badge sec-badge--off">
-              <i class="bi bi-door-open"></i>{{ p.port }}/{{ p.proto }}
-              <span v-if="p.service !== '—'" style="color:var(--text-muted)">· {{ p.service }}</span>
-            </span>
+          <div v-else class="port-grid">
+            <button v-for="p in sysPorts.ports" :key="p.proto+p.port" type="button"
+                    class="port-chip" :class="{ 'port-chip--open': p.open, 'port-chip--crit': p.critical }"
+                    :disabled="portBusy === (p.proto+p.port)"
+                    @click="toggleSystemPort(p)"
+                    :title="(p.open ? 'Abierto' : 'Cerrado') + (p.critical ? ' · crítico' : '') + ' — clic para ' + (p.open ? 'cerrar' : 'abrir')">
+              <i class="bi" :class="p.open ? 'bi-door-open-fill' : 'bi-door-closed'"></i>
+              <span class="port-num">{{ p.port }}/{{ p.proto }}</span>
+              <span class="port-svc">{{ p.service }}</span>
+              <i v-if="p.critical" class="bi bi-lock-fill port-lock"></i>
+              <span v-if="portBusy === (p.proto+p.port)" class="spinner-border spinner-border-sm"></span>
+            </button>
           </div>
         </div>
       </div>
@@ -853,6 +864,7 @@ const scoreDash = computed(() => {
 const rules     = ref([])
 const loadingFw = ref(false)
 const sysPorts  = ref({ available: false, policy: null, ports: [] })
+const portBusy  = ref(null)   // 'tcp443' mientras se aplica
 
 const jails    = ref([])
 const banned   = ref([])
@@ -938,6 +950,31 @@ async function loadFirewall() {
   loadStatus()
   try { sysPorts.value = await api.getFirewallSystemPorts() }
   catch (e) { console.error(e) }
+}
+
+async function toggleSystemPort(p) {
+  if (portBusy.value) return
+  const willOpen = !p.open
+  let confirm = null
+  // Cerrar un puerto crítico → doble confirmación escrita
+  if (!willOpen && p.critical) {
+    const txt = window.prompt(
+      `⚠️ Vas a CERRAR el puerto ${p.port}/${p.proto} (${p.service}).\n` +
+      `Esto puede dejarte SIN ACCESO al servidor o al panel.\n\n` +
+      `Si estás seguro, escribe CERRAR en mayúsculas:`)
+    if ((txt || '').trim().toUpperCase() !== 'CERRAR') return
+    confirm = 'CERRAR'
+  }
+  portBusy.value = p.proto + p.port
+  try {
+    await api.toggleSystemPort(p.proto, p.port, willOpen, confirm)
+    p.open = willOpen   // optimista
+    await loadFirewall()
+  } catch (e) {
+    alert('Puerto ' + p.port + '/' + p.proto + ': ' + e.message)
+  } finally {
+    portBusy.value = null
+  }
 }
 
 async function loadFail2ban() {
@@ -1343,6 +1380,22 @@ onMounted(async () => {
 .geo-check { color: var(--danger); flex-shrink: 0; }
 .geo-plus { color: var(--text-muted); flex-shrink: 0; }
 .geo-applying { display: inline-flex; align-items: center; gap: .4rem; font-size: .8rem; color: var(--ac); font-weight: 600; }
+
+/* Puertos del sistema (chips toggle) */
+.port-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: .5rem; }
+.port-chip {
+  display: flex; align-items: center; gap: .45rem;
+  padding: .5rem .7rem; border: 1px solid var(--border); border-radius: var(--r-md, 10px);
+  background: var(--surface-2); color: var(--text-muted); cursor: pointer; transition: all .12s;
+  font-size: .82rem; text-align: left;
+}
+.port-chip:hover:not(:disabled) { border-color: var(--ac); }
+.port-chip:disabled { opacity: .6; cursor: wait; }
+.port-chip--open { background: color-mix(in srgb, var(--success) 10%, transparent); border-color: color-mix(in srgb, var(--success) 30%, transparent); color: var(--text); }
+.port-chip--open > .bi:first-child { color: var(--success); }
+.port-num { font-family: var(--font-mono); font-weight: 600; }
+.port-svc { flex: 1; color: var(--text-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: .76rem; }
+.port-lock { color: var(--warning, #d97706); flex-shrink: 0; font-size: .75rem; }
 
 /* Score clicable + desglose */
 .sec-score { border: none; background: none; padding: 0; cursor: pointer; }

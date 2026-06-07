@@ -9,6 +9,7 @@ generados por el panel.
 """
 
 import os
+import re
 import subprocess
 import ipaddress
 from typing import List, Tuple, Optional
@@ -17,7 +18,118 @@ NFT_BIN              = "/usr/sbin/nft"
 NFT_TABLE            = "inet svqpanel"
 NFT_RULES_FILE       = "/etc/nftables/svqpanel-rules.nft"
 NFT_IPLISTS_FILE     = "/etc/nftables/svqpanel-iplists.nft"
+NFT_PORTS_FILE       = "/etc/nftables/svqpanel-ports.nft"
 NFT_MAIN_CONF        = "/etc/nftables.conf"
+
+# Puertos abiertos de serie por SVQPanel (servicio amigable + si es crítico).
+# 'critical' = cerrarlo deja el servidor/panel inaccesible (SSH, web, panel).
+# El puerto del panel se resuelve dinámicamente (PANEL_WEB_PORT del entorno).
+def _panel_web_port() -> int:
+    try:
+        return int(os.environ.get("PANEL_WEB_PORT") or 8083)
+    except (ValueError, TypeError):
+        return 8083
+
+
+def base_ports_catalog() -> List[dict]:
+    """Catálogo de puertos base con nombre de servicio y si son críticos."""
+    pw = _panel_web_port()
+    return [
+        {"port": 22,  "proto": "tcp", "service": "SSH",          "critical": True},
+        {"port": 80,  "proto": "tcp", "service": "HTTP",         "critical": True},
+        {"port": 443, "proto": "tcp", "service": "HTTPS",        "critical": True},
+        {"port": pw,  "proto": "tcp", "service": "Panel SVQ",    "critical": True},
+        {"port": pw,  "proto": "udp", "service": "Panel SVQ (HTTP/3)", "critical": True},
+        {"port": 25,  "proto": "tcp", "service": "SMTP",         "critical": False},
+        {"port": 587, "proto": "tcp", "service": "Submission",   "critical": False},
+        {"port": 465, "proto": "tcp", "service": "SMTPS",        "critical": False},
+        {"port": 143, "proto": "tcp", "service": "IMAP",         "critical": False},
+        {"port": 993, "proto": "tcp", "service": "IMAPS",        "critical": False},
+        {"port": 110, "proto": "tcp", "service": "POP3",         "critical": False},
+        {"port": 995, "proto": "tcp", "service": "POP3S",        "critical": False},
+        {"port": 53,  "proto": "tcp", "service": "DNS",          "critical": False},
+        {"port": 53,  "proto": "udp", "service": "DNS",          "critical": False},
+    ]
+
+
+def _set_for_proto(proto: str) -> str:
+    return "base_tcp_ports" if proto == "tcp" else "base_udp_ports"
+
+
+def list_base_ports() -> dict:
+    """
+    Lee del kernel qué puertos están en los sets base_tcp_ports/base_udp_ports
+    y los cruza con el catálogo. Devuelve {available, ports:[{port,proto,service,
+    critical,open}]}.
+    """
+    open_tcp, open_udp = set(), set()
+    try:
+        r = subprocess.run([NFT_BIN, "list", "table", "inet", "svqpanel"],
+                           capture_output=True, text=True, timeout=10)
+        if r.returncode == 0:
+            txt = r.stdout
+            for set_name, dest in (("base_tcp_ports", open_tcp), ("base_udp_ports", open_udp)):
+                m = re.search(rf"set {set_name} \{{(.*?)\}}", txt, re.DOTALL)
+                if m:
+                    for tok in re.findall(r"\d+(?:-\d+)?", m.group(1)):
+                        if "-" in tok:
+                            a, b = tok.split("-")
+                            dest.update(range(int(a), int(b) + 1))
+                        else:
+                            dest.add(int(tok))
+    except Exception as e:
+        return {"available": False, "error": str(e), "ports": []}
+
+    ports = []
+    for c in base_ports_catalog():
+        is_open = c["port"] in (open_tcp if c["proto"] == "tcp" else open_udp)
+        ports.append({**c, "open": is_open})
+    return {"available": True, "ports": ports}
+
+
+def set_base_port(port: int, proto: str, open_: bool) -> Tuple[bool, str]:
+    """Abre o cierra un puerto base (en vivo + persistente). proto: tcp|udp."""
+    if proto not in ("tcp", "udp"):
+        return False, "protocolo inválido"
+    set_name = _set_for_proto(proto)
+    if open_:
+        ok, msg = nft_set_add_element(set_name, str(port))
+    else:
+        ok, msg = nft_set_delete_element(set_name, str(port))
+    if not ok:
+        return False, msg
+    # Persistir el estado actual de ambos sets en un include propio
+    persist_base_ports()
+    return True, "ok"
+
+
+def persist_base_ports() -> None:
+    """
+    Vuelca el estado actual de los sets base_* a /etc/nftables/svqpanel-ports.nft
+    para que sobreviva a reinicios. Usa 'flush set' + 'add element' (idempotente).
+    """
+    state = list_base_ports()
+    if not state.get("available"):
+        return
+    tcp = sorted({p["port"] for p in state["ports"] if p["proto"] == "tcp" and p["open"]})
+    udp = sorted({p["port"] for p in state["ports"] if p["proto"] == "udp" and p["open"]})
+    lines = [
+        "# /etc/nftables/svqpanel-ports.nft",
+        "# Generado por SVQPanel — puertos del sistema abiertos. NO editar a mano.",
+        "",
+        "flush set inet svqpanel base_tcp_ports",
+        "flush set inet svqpanel base_udp_ports",
+    ]
+    if tcp:
+        lines.append(f"add element inet svqpanel base_tcp_ports {{ {', '.join(map(str, tcp))} }}")
+    if udp:
+        lines.append(f"add element inet svqpanel base_udp_ports {{ {', '.join(map(str, udp))} }}")
+    lines.append("")
+    tmp = NFT_PORTS_FILE + ".tmp"
+    os.makedirs(os.path.dirname(NFT_PORTS_FILE), exist_ok=True)
+    with open(tmp, "w") as f:
+        f.write("\n".join(lines))
+    os.replace(tmp, NFT_PORTS_FILE)
 
 
 def _is_ipv6(addr: str) -> bool:

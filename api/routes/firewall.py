@@ -9,6 +9,7 @@ whitelist antes de aplicar.
 import logging
 from typing import List, Optional
 from fastapi import APIRouter, Depends, HTTPException, Request, status
+from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from api.models.database import get_db
@@ -285,57 +286,79 @@ async def firewall_status(
 @router.get("/firewall/system-ports")
 async def firewall_system_ports(_: dict = Depends(require_admin)):
     """
-    Devuelve la política de la cadena input y los puertos abiertos por el
-    esqueleto base del firewall (los que SVQPanel deja abiertos de serie:
-    web, correo, SSH, DNS). Se lee del ruleset activo (nft), así refleja la
-    realidad del kernel aunque no estén en la tabla de reglas del panel.
+    Política de la cadena input + puertos base del sistema (de los sets
+    base_tcp_ports/base_udp_ports), indicando cuáles están abiertos, su servicio
+    y si son críticos (cerrarlos deja el servidor/panel inaccesible).
     """
     import subprocess
     import re
 
-    out = ""
+    # Política de la cadena
+    policy = "unknown"
     try:
         r = subprocess.run(
             ["/usr/sbin/nft", "list", "chain", "inet", "svqpanel", "input"],
             capture_output=True, text=True, timeout=10,
         )
-        out = r.stdout
-    except Exception as e:
-        return {"available": False, "error": str(e), "policy": None, "ports": []}
+        pol = re.search(r"policy\s+(\w+)", r.stdout)
+        if pol:
+            policy = pol.group(1)
+    except Exception:
+        pass
 
-    # Política de la cadena (drop / accept)
-    pol = re.search(r"policy\s+(\w+)", out)
-    policy = pol.group(1) if pol else "unknown"
+    state = nft.list_base_ports()
+    if not state.get("available"):
+        return {"available": False, "error": state.get("error"), "policy": policy, "ports": []}
 
-    # Servicios conocidos por puerto, para mostrar nombre amigable
-    known = {
-        "22": "SSH", "53": "DNS", "80": "HTTP", "443": "HTTPS",
-        "25": "SMTP", "587": "Submission", "465": "SMTPS",
-        "143": "IMAP", "993": "IMAPS", "110": "POP3", "995": "POP3S",
-    }
+    # Orden: abiertos primero útiles arriba, críticos primero
+    ports = state["ports"]
+    ports.sort(key=lambda p: (not p["critical"], p["port"], p["proto"]))
+    return {"available": True, "policy": policy, "ports": ports}
 
-    # Extraer puertos de líneas 'tcp dport ... accept' / 'udp dport ... accept'
-    ports = []
-    seen = set()
-    for m in re.finditer(r"(tcp|udp)\s+dport\s+(\{[^}]*\}|\d+)\s+accept", out):
-        proto = m.group(1)
-        raw = m.group(2).strip("{} ")
-        for p in (x.strip() for x in raw.split(",")):
-            if not p.isdigit():
-                continue
-            key = f"{proto}/{p}"
-            if key in seen:
-                continue
-            seen.add(key)
-            ports.append({
-                "port":    int(p),
-                "proto":   proto,
-                "service": known.get(p, "—"),
-            })
-    ports.sort(key=lambda x: x["port"])
 
-    return {
-        "available": True,
-        "policy":    policy,          # 'drop' = seguro (cierra todo lo no permitido)
-        "ports":     ports,
-    }
+class SystemPortToggle(BaseModel):
+    open: bool
+    confirm: Optional[str] = None   # para puertos críticos: texto de confirmación
+
+
+@router.post("/firewall/system-ports/{proto}/{port}")
+async def toggle_system_port(
+    proto: str,
+    port: int,
+    payload: SystemPortToggle,
+    request: Request,
+    db:   Session = Depends(get_db),
+    user: dict    = Depends(require_admin),
+):
+    """
+    Abre o cierra un puerto base del sistema. Cerrar un puerto crítico (SSH, web,
+    panel) requiere confirmar enviando confirm='CERRAR' (deja el servidor o el
+    panel inaccesible).
+    """
+    proto = proto.lower()
+    if proto not in ("tcp", "udp"):
+        raise HTTPException(status_code=400, detail="Protocolo debe ser tcp o udp")
+
+    # Localizar el puerto en el catálogo (para saber si es crítico)
+    cat = {(c["port"], c["proto"]): c for c in nft.base_ports_catalog()}
+    info = cat.get((port, proto))
+    if not info:
+        raise HTTPException(status_code=404, detail=f"{port}/{proto} no es un puerto base gestionable")
+
+    # Cerrar un puerto crítico → exigir confirmación
+    if not payload.open and info["critical"] and (payload.confirm or "").strip().upper() != "CERRAR":
+        raise HTTPException(
+            status_code=400,
+            detail=(f"Cerrar {port}/{proto} ({info['service']}) dejaría el servidor o el panel "
+                    "inaccesible. Para confirmar, envía confirm='CERRAR'."),
+        )
+
+    ok, msg = nft.set_base_port(port, proto, payload.open)
+    if not ok:
+        raise HTTPException(status_code=500, detail=f"Error en nftables: {msg}")
+
+    log_audit(db, user=user, category="firewall",
+              action="open_port" if payload.open else "close_port",
+              target=f"{port}/{proto} ({info['service']})", request=request)
+
+    return {"status": "ok", "port": port, "proto": proto, "open": payload.open}

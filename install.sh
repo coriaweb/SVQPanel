@@ -2011,6 +2011,20 @@ table inet svqpanel {
     set f2b_v4 { type ipv4_addr; flags timeout; }
     set f2b_v6 { type ipv6_addr; flags timeout; }
 
+    # Puertos abiertos del sistema. Gestionados por el panel (Seguridad →
+    # Puertos del sistema): abrir/cerrar un puerto = añadir/quitar del set.
+    # Incluye el del panel (__PANEL_WEB_PORT__) en TCP y UDP (UDP por HTTP/3).
+    set base_tcp_ports {
+        type inet_service
+        flags interval
+        elements = { 22, 80, 443, 25, 587, 465, 143, 993, 110, 995, 53, __PANEL_WEB_PORT__ }
+    }
+    set base_udp_ports {
+        type inet_service
+        flags interval
+        elements = { 53, __PANEL_WEB_PORT__ }
+    }
+
     chain input {
         # Política DROP: todo lo que no se acepte explícitamente se descarta.
         type filter hook input priority filter; policy drop;
@@ -2033,21 +2047,11 @@ table inet svqpanel {
         ip6 saddr @whitelist_v6 accept
 
         # ── Puertos PÚBLICOS de los servicios del panel ──────────────────
-        # SSH
-        tcp dport 22 accept
-        # Web (nginx)
-        tcp dport { 80, 443 } accept
-        # Panel de control SVQPanel (puerto dedicado). Para máxima seguridad
-        # puedes cerrar este puerto en tu firewall perimetral y dejarlo abierto
-        # solo a tus IPs de administración.
-        tcp dport __PANEL_WEB_PORT__ accept
-        # UDP mismo puerto: necesario para HTTP/3 (QUIC)
-        udp dport __PANEL_WEB_PORT__ accept
-        # Correo: SMTP, submission, IMAP(S), POP3(S)
-        tcp dport { 25, 587, 465, 143, 993, 110, 995 } accept
-        # DNS (BIND) — consultas entrantes a las zonas alojadas
-        tcp dport 53 accept
-        udp dport 53 accept
+        # Gestionados vía sets (el panel los abre/cierra). De serie incluyen:
+        # SSH(22), web(80,443), panel(__PANEL_WEB_PORT__), correo(25,587,465,
+        # 143,993,110,995) y DNS(53). UDP: 53 (DNS) y el panel (HTTP/3).
+        tcp dport @base_tcp_ports accept
+        udp dport @base_udp_ports accept
 
         # NOTA: la API del panel (8001) NO se abre: solo escucha en 127.0.0.1
         # y se sirve por nginx en el puerto del panel. MariaDB/PostgreSQL/Redis/
