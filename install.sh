@@ -554,11 +554,20 @@ APACHEPORTS
 
     # RemoteIP: confiar en la X-Forwarded-For que envía nginx (front local),
     # para que Apache y los .htaccess vean la IP real del visitante, no 127.0.0.1.
+    #
+    # SetEnvIf X-Forwarded-Proto: nginx termina el SSL y habla con Apache por
+    # HTTP plano (127.0.0.1:8181). Sin esto, PHP ve $_SERVER['HTTPS'] vacío y
+    # WordPress/PrestaShop/etc. creen estar en HTTP → redirigen a HTTPS, pero
+    # nginx ya servía HTTPS → bucle ERR_TOO_MANY_REDIRECTS. Traducimos la
+    # cabecera que envía nginx a la variable estándar HTTPS=on para que la app
+    # sepa que la conexión original es segura.
     cat > /etc/apache2/conf-available/svqpanel-remoteip.conf << 'APACHEREMOTEIP'
 RemoteIPHeader X-Forwarded-For
 RemoteIPTrustedProxy 127.0.0.1
 # Log con la IP real (remoteip) en vez de la del proxy
 LogFormat "%a %l %u %t \"%r\" %>s %O \"%{Referer}i\" \"%{User-Agent}i\"" svq_combined
+# Propagar HTTPS desde el front nginx (evita bucles de redirección a HTTPS)
+SetEnvIf X-Forwarded-Proto "https" HTTPS=on
 APACHEREMOTEIP
     a2enconf svqpanel-remoteip
 
