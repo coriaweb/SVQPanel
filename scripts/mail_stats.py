@@ -134,7 +134,7 @@ def log_summary() -> dict:
     summary = {
         "available": False, "received": 0, "delivered": 0, "bounced": 0,
         "deferred": 0, "rejected": 0, "top_senders": [], "top_recipients": [],
-        "recent_errors": [], "since": None,
+        "top_reject_reasons": [], "recent_errors": [], "since": None,
     }
     if not os.path.isfile(MAIL_LOG):
         return summary
@@ -148,6 +148,7 @@ def log_summary() -> dict:
 
     senders = Counter()
     recipients = Counter()
+    reject_reasons = Counter()
     errors = []
 
     for line in so.splitlines():
@@ -157,12 +158,18 @@ def log_summary() -> dict:
         if summary["since"] is None:
             summary["since"] = line[:19]
 
-        if "postfix/smtpd" in line and "client=" in line and "NOQUEUE" not in line:
-            # No siempre es un mensaje aceptado, pero es buena aproximación al tráfico entrante
-            pass
-        if "NOQUEUE: reject:" in line:
+        # Rechazos en la conversación SMTP (spam/relay denegado/etc.)
+        if "NOQUEUE: reject:" in line or "NOQUEUE: milter-reject:" in line:
             summary["rejected"] += 1
+            mr = re.search(r"reject:\s*\w+\s+from\s+\S+:\s*\d+\s+[\d.]+\s+(.+?);", line)
+            if not mr:
+                mr = re.search(r"reject:\s*(.+?)(?:;|$)", line)
+            if mr:
+                reason = re.sub(r"<[^>]*>", "", mr.group(1)).strip()
+                reject_reasons[reason[:80]] += 1
             continue
+
+        # Estados de entrega (postfix/smtp, lmtp, pipe, virtual...)
         if "status=sent" in line:
             summary["delivered"] += 1
         elif "status=bounced" in line:
@@ -172,19 +179,22 @@ def log_summary() -> dict:
         elif "status=deferred" in line:
             summary["deferred"] += 1
 
-        # Remitente / destinatario para los tops
-        mf = re.search(r"from=<([^>]+)>", line)
+        # Remitente / destinatario para los tops (solo en líneas con direcciones)
+        mf = re.search(r"\bfrom=<([^>]+)>", line)
         if mf and mf.group(1):
             senders[mf.group(1)] += 1
-        mt = re.search(r"to=<([^>]+)>", line)
+        mt = re.search(r"\bto=<([^>]+)>", line)
         if mt and mt.group(1):
             recipients[mt.group(1)] += 1
-        if "message-id=" in line and "postfix/cleanup" in line:
+
+        # Mensajes recibidos/inyectados: línea de qmgr con tamaño de mensaje
+        if "postfix/qmgr" in line and "from=<" in line and "size=" in line:
             summary["received"] += 1
 
-    summary["top_senders"]    = [{"addr": a, "count": c} for a, c in senders.most_common(10)]
-    summary["top_recipients"] = [{"addr": a, "count": c} for a, c in recipients.most_common(10)]
-    summary["recent_errors"]  = errors[-10:]
+    summary["top_senders"]        = [{"addr": a, "count": c} for a, c in senders.most_common(10)]
+    summary["top_recipients"]     = [{"addr": a, "count": c} for a, c in recipients.most_common(10)]
+    summary["top_reject_reasons"] = [{"reason": r, "count": c} for r, c in reject_reasons.most_common(8)]
+    summary["recent_errors"]      = errors[-10:]
     return summary
 
 
