@@ -206,6 +206,7 @@
                     <span v-if="openingWebmail === mb.id" class="spinner-border spinner-border-sm"></span>
                     <template v-else><i class="bi bi-envelope-open"></i> Webmail</template>
                   </button>
+                  <button class="mbx__btn" @click="openEditMailbox(mb)" title="Editar cuota y límite de envío"><i class="bi bi-sliders"></i></button>
                   <button class="mbx__btn" @click="openChangePassword(mb)" title="Cambiar contraseña"><i class="bi bi-key"></i></button>
                   <button class="mbx__btn" :class="{ 'mbx__btn--active': mb.forward_to }" @click="openForwardModal(mb)" title="Reenvío">
                     <i class="bi bi-forward"></i>
@@ -824,6 +825,57 @@
       </div>
     </div>
 
+    <!-- ══════════ Modal: Editar buzón (cuota + límite envío) ══════════ -->
+    <div v-if="showEditModal" class="modal d-block" tabindex="-1"
+         style="background:rgba(0,0,0,.5)" @click.self="showEditModal = false">
+      <div class="modal-dialog">
+        <div class="modal-content">
+          <div class="modal-header">
+            <h5 class="modal-title">
+              <i class="bi bi-sliders me-2"></i>Editar buzón
+              <small class="text-muted fw-normal"> — {{ editTarget?.full_email }}</small>
+            </h5>
+            <button class="btn-close" @click="showEditModal = false"></button>
+          </div>
+          <form @submit.prevent="saveEditMailbox">
+            <div class="modal-body">
+              <div class="mb-3">
+                <label class="form-label">Cuota (MB)</label>
+                <select class="form-select" v-model.number="editForm.quota_mb">
+                  <option :value="0">Sin límite</option>
+                  <option :value="256">256 MB</option>
+                  <option :value="512">512 MB</option>
+                  <option :value="1024">1 GB</option>
+                  <option :value="2048">2 GB</option>
+                  <option :value="5120">5 GB</option>
+                  <option :value="10240">10 GB</option>
+                </select>
+              </div>
+              <div class="mb-0">
+                <label class="form-label">Límite de envío (correos/hora)</label>
+                <select class="form-select" v-model.number="editForm.send_limit_hour">
+                  <option :value="0">Sin límite</option>
+                  <option :value="50">50 / hora</option>
+                  <option :value="100">100 / hora</option>
+                  <option :value="200">200 / hora</option>
+                  <option :value="500">500 / hora</option>
+                  <option :value="1000">1000 / hora</option>
+                </select>
+                <div class="form-text">Anti-abuso: si la cuenta se ve comprometida, no podrá enviar spam masivo.</div>
+              </div>
+            </div>
+            <div class="modal-footer">
+              <button type="button" class="btn btn-secondary" @click="showEditModal = false">Cancelar</button>
+              <button type="submit" class="btn btn-primary" :disabled="saving">
+                <span v-if="saving" class="spinner-border spinner-border-sm me-2"></span>
+                Guardar cambios
+              </button>
+            </div>
+          </form>
+        </div>
+      </div>
+    </div>
+
     <!-- ══════════ Modal: Reenvío ══════════ -->
     <div v-if="showForwardModal" class="modal d-block" tabindex="-1"
          style="background:rgba(0,0,0,.5)" @click.self="showForwardModal = false">
@@ -1050,6 +1102,7 @@ export default {
     const showNewAlias     = ref(false)
     const showForwardModal  = ref(false)
     const showAutoreplyModal = ref(false)
+    const showEditModal    = ref(false)
     const deleteTarget     = ref(null)
     const saving           = ref(false)
     const showPwd          = ref(false)
@@ -1064,6 +1117,8 @@ export default {
     const forwardForm     = ref({ forward_to_text: '', forward_keep_copy: true })
     const autoreplyTarget = ref(null)
     const autoreplyForm   = ref({ autoreply_enabled: false, autoreply_subject: '', autoreply_body: '' })
+    const editTarget      = ref(null)
+    const editForm        = ref({ quota_mb: 1024, send_limit_hour: 200 })
 
     // ─────────────────────────────────────────────────────────────────
     // Carga de datos
@@ -1527,6 +1582,35 @@ export default {
     }
 
     // ─────────────────────────────────────────────────────────────────
+    // Editar buzón (cuota + límite de envío)
+    // ─────────────────────────────────────────────────────────────────
+    const openEditMailbox = (mb) => {
+      editTarget.value = mb
+      editForm.value = {
+        quota_mb: mb.quota_mb ?? 1024,
+        send_limit_hour: mb.send_limit_hour ?? 200,
+      }
+      showEditModal.value = true
+    }
+
+    const saveEditMailbox = async () => {
+      saving.value = true
+      try {
+        await api.updateMailbox(selectedDomain.value.id, editTarget.value.id, {
+          quota_mb: editForm.value.quota_mb,
+          send_limit_hour: editForm.value.send_limit_hour,
+        })
+        showEditModal.value = false
+        store.showNotification('Buzón actualizado', 'success')
+        await loadMailboxes(selectedDomain.value.id)
+      } catch (e) {
+        store.showNotification('Error: ' + e.message, 'danger')
+      } finally {
+        saving.value = false
+      }
+    }
+
+    // ─────────────────────────────────────────────────────────────────
     // Reenvío
     // ─────────────────────────────────────────────────────────────────
 
@@ -1718,6 +1802,7 @@ export default {
       newDomainForm, newMailboxForm, newAliasForm, passwordTarget, newPassword,
       showForwardModal, forwardTarget, forwardForm, openForwardModal, saveForward, clearForward,
       showAutoreplyModal, autoreplyTarget, autoreplyForm, openAutoreplyModal, saveAutoreply,
+      showEditModal, editTarget, editForm, openEditMailbox, saveEditMailbox,
       // Roundcube
       roundcubeEnabled, roundcubeUrl, openingWebmail,
       // Webmail por dominio
