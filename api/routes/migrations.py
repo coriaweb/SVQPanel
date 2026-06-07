@@ -223,15 +223,18 @@ async def hestia_analyze(
     ssh_key: Optional[str] = Form(None),
     ssh_port: Optional[int] = Form(None),
     hestia_user: Optional[str] = Form(None),
+    scope: str = Form("web,db,mail,dns"),
     db: Session = Depends(get_db),
     current_user: User = Depends(require_admin),
 ):
     """Analiza un backup de Hestia y devuelve manifiesto + conflictos.
 
     No crea nada en el sistema; solo lee el backup y compara con la BD del panel.
+    Los conflictos se comprueban SOLO para lo que se va a importar (`scope`).
     """
     from scripts.hestia_import import HestiaBackup, find_conflicts, HestiaImportError, has_zstd
 
+    scope_list = [s for s in scope.split(",") if s]
     ssh = _ssh_from_form(ssh_host, ssh_user, ssh_password, ssh_key, ssh_port, hestia_user)
     from scripts.hestia_import import build_dns_proposal
 
@@ -256,7 +259,7 @@ async def hestia_analyze(
     try:
         with HestiaBackup(tar_path) as backup:
             manifest = backup.analyze()
-            conflicts = find_conflicts(manifest, db)
+            conflicts = find_conflicts(manifest, db, scope_list)
             # Propuesta DNS por zona (clasifica reescrituras) — dentro del with
             # porque necesita los _records antes de limpiar el tmp.
             dns_proposals = {}
@@ -405,11 +408,12 @@ async def hestia_import(
     tar_path = await _receive_backup(file, path, url, ssh)
     cleanup_tar = _is_temp_upload(tar_path)
 
-    # Preflight: analizar y comprobar conflictos. Si hay, abortar.
+    # Preflight: analizar y comprobar conflictos SOLO de lo que se importa.
+    scope_list = [s for s in (scope or "").split(",") if s]
     try:
         with HestiaBackup(tar_path) as backup:
             manifest = backup.analyze()
-            conflicts = find_conflicts(manifest, db)
+            conflicts = find_conflicts(manifest, db, scope_list)
     except HestiaImportError as e:
         if cleanup_tar and os.path.exists(tar_path):
             os.remove(tar_path)

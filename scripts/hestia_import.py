@@ -419,39 +419,46 @@ def _php_from_backend(backend: str) -> Optional[str]:
 # ─────────────────────────────────────────────────────────────────────────────
 # Detección de conflictos contra el panel (sin tocar nada)
 # ─────────────────────────────────────────────────────────────────────────────
-def find_conflicts(manifest: Dict, db) -> List[str]:
+def find_conflicts(manifest: Dict, db, scope: Optional[List[str]] = None) -> List[str]:
     """Devuelve una lista de conflictos legibles (recursos que YA existen).
 
-    `db` es una Session de SQLAlchemy del panel. Comprueba dominios, BDs y
-    dominios de correo/zonas DNS contra las tablas existentes.
+    `db` es una Session de SQLAlchemy del panel. `scope` limita las comprobaciones
+    a lo que realmente se va a importar (web/db/mail/dns); si es None, comprueba
+    todo. Así, si solo importas «Webs», no te bloquean las BD/correo/DNS que ya
+    existan (porque no se van a tocar).
     """
     from api.models.models_domain import Domain
     from api.models.models_client_db import ClientDatabase
     conflicts: List[str] = []
+    scope = scope if scope is not None else ["web", "db", "mail", "dns"]
 
-    for w in manifest.get("web", []):
-        if db.query(Domain).filter(Domain.domain_name == w["domain"]).first():
-            conflicts.append(f"El dominio web «{w['domain']}» ya existe en el panel.")
+    if "web" in scope:
+        for w in manifest.get("web", []):
+            if db.query(Domain).filter(Domain.domain_name == w["domain"]).first():
+                conflicts.append(f"El dominio web «{w['domain']}» ya existe en el panel.")
 
-    for d in manifest.get("db", []):
-        if db.query(ClientDatabase).filter(ClientDatabase.db_name == d["db"]).first():
-            conflicts.append(f"La base de datos «{d['db']}» ya existe en el panel.")
+    if "db" in scope:
+        for d in manifest.get("db", []):
+            if db.query(ClientDatabase).filter(ClientDatabase.db_name == d["db"]).first():
+                conflicts.append(f"La base de datos «{d['db']}» ya existe en el panel.")
 
     # Mail y DNS: comprobar si los modelos existen (import defensivo).
-    try:
-        from api.models.models_mail import MailDomain
-        for m in manifest.get("mail", []):
-            if db.query(MailDomain).filter(MailDomain.domain_name == m["domain"]).first():
-                conflicts.append(f"El dominio de correo «{m['domain']}» ya existe.")
-    except ImportError:
-        pass
-    try:
-        from api.models.models_dns import DnsZone
-        for z in manifest.get("dns", []):
-            if db.query(DnsZone).filter(DnsZone.domain_name == z["domain"]).first():
-                conflicts.append(f"La zona DNS «{z['domain']}» ya existe.")
-    except ImportError:
-        pass
+    if "mail" in scope:
+        try:
+            from api.models.models_mail import MailDomain
+            for m in manifest.get("mail", []):
+                if db.query(MailDomain).filter(MailDomain.domain_name == m["domain"]).first():
+                    conflicts.append(f"El dominio de correo «{m['domain']}» ya existe.")
+        except ImportError:
+            pass
+    if "dns" in scope:
+        try:
+            from api.models.models_dns import DnsZone
+            for z in manifest.get("dns", []):
+                if db.query(DnsZone).filter(DnsZone.domain_name == z["domain"]).first():
+                    conflicts.append(f"La zona DNS «{z['domain']}» ya existe.")
+        except ImportError:
+            pass
 
     return conflicts
 
