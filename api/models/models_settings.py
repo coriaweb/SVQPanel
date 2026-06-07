@@ -56,6 +56,19 @@ class Settings(Base):
     relay_port     = Column(Integer, default=587)
     relay_username = Column(String(255), nullable=True)       # vacío = sin auth
 
+    # ── SMTP saliente del PANEL (avisos, alertas, notificaciones) ──────────
+    # Independiente del relay de clientes: lo usa el propio panel para enviar
+    # sus correos (recuperación, avisos de cuota, expiración SSL, etc.) desde
+    # un From real en lugar de root@localhost. La contraseña se guarda cifrada.
+    panel_smtp_enabled    = Column(Boolean, default=False)
+    panel_smtp_host       = Column(String(255), nullable=True)   # smtp.dominio.com
+    panel_smtp_port       = Column(Integer, default=587)
+    panel_smtp_security   = Column(String(16), default="starttls")  # none | starttls | ssl
+    panel_smtp_username   = Column(String(255), nullable=True)
+    panel_smtp_password   = Column(Text, nullable=True)          # cifrada con Fernet
+    panel_smtp_from_email = Column(String(255), nullable=True)   # avisos@dominio.com
+    panel_smtp_from_name  = Column(String(255), default="SVQPanel")
+
     # Cluster DNS — clave TSIG compartida master↔slave (ver models_dns_node.py)
     dns_tsig_name   = Column(String(64), nullable=True)       # nombre de la clave, ej: svq-xfer
     dns_tsig_secret = Column(String(128), nullable=True)      # secreto base64

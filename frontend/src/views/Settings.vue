@@ -11,10 +11,24 @@
       <div class="spinner-border"></div>
     </div>
 
-    <div v-else class="sv-grid">
+    <!-- Pestañas -->
+    <div v-if="!loading" class="set-tabs">
+      <button v-for="t in [
+        {key:'red',     icon:'hdd-network', label:'Red'},
+        {key:'php',     icon:'filetype-php', label:'PHP'},
+        {key:'archivos',icon:'file-arrow-up', label:'Archivos'},
+        {key:'email',   icon:'envelope-at', label:'Email'},
+        {key:'sistema', icon:'sliders', label:'SSL y Sistema'},
+      ]" :key="t.key" class="set-tab" :class="{'set-tab--active': tab===t.key}" @click="tab=t.key">
+        <i :class="'bi bi-'+t.icon"></i> {{ t.label }}
+      </button>
+    </div>
 
+    <div v-if="!loading" class="sv-grid">
+
+      <!-- ══ RED ══ -->
       <!-- IPv6 - ancho completo -->
-      <div class="sv-full">
+      <div class="sv-full" v-show="tab==='red'">
         <div class="card" style="border-color:var(--ac)">
           <div class="card-header" style="background:var(--ac);color:#fff">
             <i class="bi bi-diagram-3 me-2"></i> Red IPv6
@@ -150,7 +164,7 @@
       </div>
 
       <!-- Red IPv4 -->
-      <div class="sv-half">
+      <div class="sv-half" v-show="tab==='red'">
         <div class="card">
           <div class="card-header"><i class="bi bi-hdd-network me-1"></i> Red IPv4</div>
           <div class="card-body">
@@ -209,8 +223,9 @@
         </div>
       </div>
 
+      <!-- ══ PHP ══ -->
       <!-- PHP Default -->
-      <div class="sv-half">
+      <div class="sv-half" v-show="tab==='php'">
         <div class="card">
           <div class="card-header"><i class="bi bi-filetype-php me-1"></i> PHP por defecto</div>
           <div class="card-body">
@@ -229,8 +244,9 @@
         </div>
       </div>
 
+      <!-- ══ ARCHIVOS ══ -->
       <!-- File Manager - Límites de upload -->
-      <div class="sv-full">
+      <div class="sv-full" v-show="tab==='archivos'">
         <div class="card">
           <div class="card-header"><i class="bi bi-file-arrow-up me-2"></i> Gestor de Archivos - Límites</div>
           <div class="card-body">
@@ -283,7 +299,7 @@
       </div>
 
       <!-- PHP Versions Management -->
-      <div class="sv-full">
+      <div class="sv-full" v-show="tab==='php'">
         <div class="card">
           <div class="card-header d-flex justify-content-between align-items-center">
             <span><i class="bi bi-filetype-php me-2"></i> Versiones PHP instaladas</span>
@@ -356,8 +372,9 @@
         </div>
       </div>
 
+      <!-- ══ SSL Y SISTEMA ══ -->
       <!-- SSL del Panel -->
-      <div class="sv-full">
+      <div class="sv-full" v-show="tab==='sistema'">
         <div class="card border-success">
           <div class="card-header bg-success text-white d-flex justify-content-between align-items-center">
             <span><i class="bi bi-shield-lock me-2"></i> SSL del Panel</span>
@@ -472,7 +489,7 @@
       </div>
 
       <!-- Zona Horaria del Servidor -->
-      <div class="sv-half">
+      <div class="sv-half" v-show="tab==='sistema'">
         <div class="card">
           <div class="card-header d-flex justify-content-between align-items-center">
             <span><i class="bi bi-clock-history me-1"></i> Zona Horaria del Servidor</span>
@@ -506,7 +523,7 @@
       </div>
 
       <!-- Panel info -->
-      <div class="sv-half">
+      <div class="sv-half" v-show="tab==='sistema'">
         <div class="card">
           <div class="card-header"><i class="bi bi-info-circle me-1"></i> Información del panel</div>
           <div class="card-body p-0">
@@ -532,13 +549,121 @@
         </div>
       </div>
 
-      <!-- Guardar configuración general -->
-      <div class="sv-full">
+      <!-- ══ EMAIL (SMTP del panel) ══ -->
+      <div class="sv-full" v-show="tab==='email'">
+        <div class="card">
+          <div class="card-header d-flex justify-content-between align-items-center">
+            <span><i class="bi bi-envelope-at me-2"></i> Email saliente del panel (SMTP)</span>
+            <span class="badge" :class="smtp.enabled ? 'bg-success' : 'bg-light text-muted border'">
+              {{ smtp.enabled ? 'Activo' : 'Desactivado' }}
+            </span>
+          </div>
+          <div class="card-body">
+            <p class="text-muted small mb-3">
+              Configura un SMTP externo para que <strong>todos los avisos del panel</strong>
+              (recuperación de contraseña, alertas de cuota, expiración de SSL, etc.) se envíen
+              desde un remitente real en lugar de <code>root@localhost</code>.
+            </p>
+
+            <div class="form-check form-switch mb-3">
+              <input class="form-check-input" type="checkbox" role="switch" id="smtpSw" v-model="smtp.enabled">
+              <label class="form-check-label" for="smtpSw">Activar envío por SMTP externo</label>
+            </div>
+
+            <div :class="{ 'opacity-50': !smtp.enabled }">
+              <div class="row g-3">
+                <div class="col-md-8">
+                  <label class="form-label small mb-1">Servidor SMTP <span class="text-danger">*</span></label>
+                  <input v-model="smtp.host" class="form-control form-control-sm font-monospace"
+                         placeholder="smtp.tudominio.com" :disabled="!smtp.enabled">
+                </div>
+                <div class="col-md-2">
+                  <label class="form-label small mb-1">Puerto</label>
+                  <input v-model.number="smtp.port" type="number" class="form-control form-control-sm"
+                         placeholder="587" :disabled="!smtp.enabled">
+                </div>
+                <div class="col-md-2">
+                  <label class="form-label small mb-1">Seguridad</label>
+                  <select v-model="smtp.security" class="form-select form-select-sm" :disabled="!smtp.enabled">
+                    <option value="starttls">STARTTLS</option>
+                    <option value="ssl">SSL/TLS</option>
+                    <option value="none">Ninguna</option>
+                  </select>
+                </div>
+
+                <div class="col-md-6">
+                  <label class="form-label small mb-1">Usuario <span class="text-muted">(vacío = sin auth)</span></label>
+                  <input v-model="smtp.username" class="form-control form-control-sm" autocomplete="off"
+                         placeholder="avisos@tudominio.com" :disabled="!smtp.enabled">
+                </div>
+                <div class="col-md-6">
+                  <label class="form-label small mb-1">Contraseña</label>
+                  <input v-model="smtp.password" type="password" class="form-control form-control-sm"
+                         autocomplete="new-password" :disabled="!smtp.enabled"
+                         :placeholder="smtp.has_password ? '(sin cambios)' : ''">
+                </div>
+
+                <div class="col-md-7">
+                  <label class="form-label small mb-1">Dirección "From" <span class="text-danger">*</span></label>
+                  <input v-model="smtp.from_email" type="email" class="form-control form-control-sm font-monospace"
+                         placeholder="avisos@tudominio.com" :disabled="!smtp.enabled">
+                </div>
+                <div class="col-md-5">
+                  <label class="form-label small mb-1">Nombre del remitente</label>
+                  <input v-model="smtp.from_name" class="form-control form-control-sm"
+                         placeholder="SVQPanel" :disabled="!smtp.enabled">
+                </div>
+              </div>
+
+              <div class="d-flex gap-2 align-items-center mt-3 flex-wrap">
+                <button class="btn btn-primary btn-sm" @click="saveSmtp" :disabled="smtpSaving">
+                  <span v-if="smtpSaving" class="spinner-border spinner-border-sm me-1"></span>
+                  <i v-else class="bi bi-save me-1"></i>Guardar configuración
+                </button>
+                <button class="btn btn-outline-secondary btn-sm" @click="openSmtpTest" :disabled="!smtp.enabled || smtpTesting">
+                  <span v-if="smtpTesting" class="spinner-border spinner-border-sm me-1"></span>
+                  <i v-else class="bi bi-send me-1"></i>Enviar email de prueba
+                </button>
+                <span v-if="smtpTestMsg" :class="smtpTestOk ? 'text-success' : 'text-danger'" class="small">
+                  {{ smtpTestMsg }}
+                </span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Guardar configuración general (solo pestañas con campos del form) -->
+      <div class="sv-full" v-show="['red','php','archivos'].includes(tab)">
         <button class="btn btn-primary px-4" @click="saveSettings" :disabled="saving">
           <span v-if="saving" class="spinner-border spinner-border-sm me-2"></span>
           <i v-else class="bi bi-floppy me-2"></i>
           Guardar configuración
         </button>
+      </div>
+    </div>
+
+    <!-- Modal: email de prueba -->
+    <div v-if="showSmtpTest" class="modal d-block" tabindex="-1" style="background:rgba(0,0,0,.5)" @click.self="showSmtpTest=false">
+      <div class="modal-dialog modal-dialog-centered modal-sm">
+        <div class="modal-content">
+          <div class="modal-header">
+            <h5 class="modal-title"><i class="bi bi-send me-2"></i>Email de prueba</h5>
+            <button type="button" class="btn-close" @click="showSmtpTest=false"></button>
+          </div>
+          <div class="modal-body">
+            <label class="form-label small">Enviar a</label>
+            <input v-model="smtpTestTo" type="email" class="form-control" placeholder="tu@email.com" autofocus>
+            <p class="text-muted small mt-2 mb-0">Se usará la configuración actual (guárdala primero si la cambiaste).</p>
+          </div>
+          <div class="modal-footer">
+            <button class="btn btn-secondary btn-sm" @click="showSmtpTest=false">Cancelar</button>
+            <button class="btn btn-primary btn-sm" @click="sendSmtpTest" :disabled="smtpTesting || !smtpTestTo">
+              <span v-if="smtpTesting" class="spinner-border spinner-border-sm me-1"></span>
+              Enviar
+            </button>
+          </div>
+        </div>
       </div>
     </div>
 
@@ -612,6 +737,85 @@ export default {
     const loading = ref(true)
     const saving = ref(false)
     const settings = ref(null)
+    const tab = ref('red')
+
+    // ─── SMTP del panel ───
+    const smtp = reactive({
+      enabled: false, host: '', port: 587, security: 'starttls',
+      username: '', password: '', from_email: '', from_name: 'SVQPanel',
+      has_password: false,
+    })
+    const smtpSaving  = ref(false)
+    const smtpTesting = ref(false)
+    const smtpTestMsg = ref('')
+    const smtpTestOk  = ref(false)
+    const showSmtpTest = ref(false)
+    const smtpTestTo  = ref('')
+
+    const loadSmtp = async () => {
+      try {
+        const r = await api.get('/api/settings/panel-smtp')
+        smtp.enabled = r.enabled
+        smtp.host = r.host || ''
+        smtp.port = r.port || 587
+        smtp.security = r.security || 'starttls'
+        smtp.username = r.username || ''
+        smtp.password = ''
+        smtp.from_email = r.from_email || ''
+        smtp.from_name = r.from_name || 'SVQPanel'
+        smtp.has_password = r.has_password || false
+      } catch { /* silencioso */ }
+    }
+
+    const saveSmtp = async () => {
+      if (smtp.enabled && (!smtp.host || !smtp.from_email)) {
+        store.showNotification('Indica al menos el host y la dirección From', 'danger'); return
+      }
+      smtpSaving.value = true
+      try {
+        await api.post('/api/settings/panel-smtp', {
+          enabled: smtp.enabled, host: smtp.host, port: smtp.port,
+          security: smtp.security, username: smtp.username, password: smtp.password,
+          from_email: smtp.from_email, from_name: smtp.from_name,
+        })
+        store.showNotification('Configuración SMTP guardada', 'success')
+        smtp.password = ''
+        await loadSmtp()
+      } catch (e) {
+        store.showNotification('Error: ' + (e.message || e), 'danger')
+      } finally {
+        smtpSaving.value = false
+      }
+    }
+
+    const openSmtpTest = () => {
+      smtpTestMsg.value = ''
+      smtpTestTo.value = smtp.from_email || ''
+      showSmtpTest.value = true
+    }
+
+    const sendSmtpTest = async () => {
+      smtpTesting.value = true
+      smtpTestMsg.value = ''
+      try {
+        await api.post('/api/settings/panel-smtp/test', {
+          to: smtpTestTo.value,
+          host: smtp.host, port: smtp.port, security: smtp.security,
+          username: smtp.username, password: smtp.password || null,
+          from_email: smtp.from_email, from_name: smtp.from_name,
+        })
+        smtpTestOk.value = true
+        smtpTestMsg.value = `✓ Email enviado a ${smtpTestTo.value}`
+        showSmtpTest.value = false
+        store.showNotification('Email de prueba enviado correctamente', 'success')
+      } catch (e) {
+        smtpTestOk.value = false
+        smtpTestMsg.value = '✕ ' + (e.message || 'Error al enviar')
+        store.showNotification('Error al enviar: ' + (e.message || e), 'danger')
+      } finally {
+        smtpTesting.value = false
+      }
+    }
 
     // SSL del panel
     const sslLoading = ref(false)
@@ -945,9 +1149,13 @@ export default {
       loadTimezones()
       loadCurrentTimezone()
       loadRelay()
+      loadSmtp()
     })
 
     return {
+      tab,
+      smtp, smtpSaving, smtpTesting, smtpTestMsg, smtpTestOk,
+      showSmtpTest, smtpTestTo, saveSmtp, openSmtpTest, sendSmtpTest,
       loading, saving, settings, form, parsedRange, saveSettings,
       phpVersions, phpLoading, phpError, phpActionLoading,
       uninstallTarget,
@@ -970,6 +1178,12 @@ export default {
 .sv-title { margin: 0 0 4px; font-size: 20px; font-weight: 700; letter-spacing: -.01em; }
 .sv-sub { margin: 0; font-size: 13px; color: var(--text-muted); }
 .sv-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
+
+/* Pestañas */
+.set-tabs { display:flex; gap:2px; flex-wrap:wrap; padding:.5rem; background:var(--surface-2); border-radius:var(--r-md,10px); }
+.set-tab { display:inline-flex; align-items:center; gap:6px; padding:.45rem .9rem; border-radius:var(--r-sm,6px); font-size:.85rem; font-weight:500; cursor:pointer; border:none; background:none; color:var(--text-muted); transition:all .15s; }
+.set-tab:hover { background:var(--surface); color:var(--text); }
+.set-tab--active { background:var(--surface); color:var(--text); box-shadow:0 1px 3px rgba(0,0,0,.08); }
 
 /* Lista de versiones PHP — fila en desktop, tarjeta apilada en móvil */
 .php-list { display: flex; flex-direction: column; }

@@ -370,6 +370,28 @@ class GlobalRelayRequest(_BM):
     password: str = _F("", max_length=255)
 
 
+class PanelSmtpRequest(_BM):
+    enabled:    bool = False
+    host:       str = _F("", max_length=255)
+    port:       int = _F(587, ge=1, le=65535)
+    security:   str = _F("starttls", max_length=16)   # none | starttls | ssl
+    username:   str = _F("", max_length=255)
+    password:   str = _F("", max_length=255)          # vacío = no cambiar
+    from_email: str = _F("", max_length=255)
+    from_name:  str = _F("SVQPanel", max_length=255)
+
+
+class PanelSmtpTestRequest(_BM):
+    to:         str | None = None
+    host:       str | None = None
+    port:       int | None = None
+    security:   str | None = None
+    username:   str | None = None
+    password:   str | None = None
+    from_email: str | None = None
+    from_name:  str | None = None
+
+
 @router.get("/settings/relay")
 async def get_global_relay(current_user=Depends(require_admin), db: Session = Depends(get_db)):
     """Configuración del relay SMTP global del servidor (sin la contraseña)."""
@@ -422,6 +444,90 @@ async def set_global_relay(data: GlobalRelayRequest,
         raise HTTPException(502, f"Error configurando el relay: {e}")
 
     return {"status": "success", "enabled": True, "host": data.host, "port": data.port}
+
+
+# ─── SMTP saliente del panel (avisos/notificaciones) ────────────────────────
+
+@router.get("/settings/panel-smtp")
+async def get_panel_smtp(current_user=Depends(require_admin), db: Session = Depends(get_db)):
+    """Configuración del SMTP del panel (sin exponer la contraseña)."""
+    s = get_or_create_settings(db)
+    return {
+        "enabled":    bool(s.panel_smtp_enabled),
+        "host":       s.panel_smtp_host or "",
+        "port":       s.panel_smtp_port or 587,
+        "security":   s.panel_smtp_security or "starttls",
+        "username":   s.panel_smtp_username or "",
+        "from_email": s.panel_smtp_from_email or "",
+        "from_name":  s.panel_smtp_from_name or "SVQPanel",
+        "has_password": bool(s.panel_smtp_password),
+    }
+
+
+@router.post("/settings/panel-smtp")
+async def set_panel_smtp(data: PanelSmtpRequest,
+                         current_user=Depends(require_admin),
+                         db: Session = Depends(get_db)):
+    """Guarda la configuración del SMTP del panel. La contraseña se cifra."""
+    from scripts.panel_mailer import encrypt_password
+    s = get_or_create_settings(db)
+
+    s.panel_smtp_enabled    = bool(data.enabled)
+    s.panel_smtp_host       = (data.host or "").strip() or None
+    s.panel_smtp_port       = data.port or 587
+    s.panel_smtp_security   = (data.security or "starttls").lower()
+    s.panel_smtp_username   = (data.username or "").strip() or None
+    s.panel_smtp_from_email = (data.from_email or "").strip() or None
+    s.panel_smtp_from_name  = (data.from_name or "SVQPanel").strip()
+
+    # Solo actualizar la contraseña si se envía una nueva (no vacía)
+    if data.password:
+        s.panel_smtp_password = encrypt_password(data.password)
+
+    db.commit()
+    return {"status": "success", "enabled": s.panel_smtp_enabled}
+
+
+@router.post("/settings/panel-smtp/test")
+async def test_panel_smtp(data: PanelSmtpTestRequest,
+                          current_user=Depends(require_admin),
+                          db: Session = Depends(get_db)):
+    """
+    Envía un correo de prueba. Usa la config guardada, pero si el body trae
+    campos los usa en su lugar (para probar antes de guardar).
+    """
+    from scripts.panel_mailer import send_test_email, encrypt_password
+    s = get_or_create_settings(db)
+
+    # Construir un objeto Settings efímero con overrides del body (si vienen)
+    class _Cfg:
+        pass
+    cfg = _Cfg()
+    cfg.panel_smtp_enabled    = True
+    cfg.panel_smtp_host       = (data.host or s.panel_smtp_host or "").strip()
+    cfg.panel_smtp_port       = data.port or s.panel_smtp_port or 587
+    cfg.panel_smtp_security   = (data.security or s.panel_smtp_security or "starttls").lower()
+    cfg.panel_smtp_username   = (data.username if data.username is not None else s.panel_smtp_username) or ""
+    cfg.panel_smtp_from_email = (data.from_email or s.panel_smtp_from_email or "").strip()
+    cfg.panel_smtp_from_name  = (data.from_name or s.panel_smtp_from_name or "SVQPanel").strip()
+    # Contraseña: la del body si viene; si no, la guardada (cifrada)
+    if data.password:
+        cfg.panel_smtp_password = encrypt_password(data.password)
+    else:
+        cfg.panel_smtp_password = s.panel_smtp_password
+
+    to = (data.to or current_user.email or "").strip()
+    if not to:
+        raise HTTPException(400, "Indica un email de destino para la prueba.")
+
+    try:
+        send_test_email(cfg, to)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    except Exception as e:
+        raise HTTPException(502, f"No se pudo enviar: {e}")
+
+    return {"status": "success", "to": to}
 
 
 # ─── Timezone ────────────────────────────────────────────────────────────────
