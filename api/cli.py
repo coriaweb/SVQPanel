@@ -581,9 +581,40 @@ def cmd_run_scheduled_backups() -> int:
         db.close()
 
 
+def cmd_sample_metrics() -> int:
+    """
+    Toma una muestra de métricas del sistema, la guarda en el histórico y evalúa
+    las alertas configuradas (disco/servicios/carga/SSL). Lo llama el timer
+    systemd svqpanel-metrics cada 5 minutos.
+    """
+    log = logging.getLogger("svqpanel-cli")
+    db = SessionLocal()
+    try:
+        from scripts.metrics_collector import collect_sample
+        from scripts.alerts_manager import evaluate_alerts
+        from scripts.services_manager import get_system_stats
+
+        sample = collect_sample(db)
+        log.info("metrics sample: cpu=%.1f%% ram=%.1f%% disk=%.1f%%",
+                 sample["cpu_percent"], sample["ram_percent"], sample["disk_percent"])
+
+        # Evaluar alertas con el snapshot completo
+        fired = evaluate_alerts(db, get_system_stats())
+        if fired:
+            log.info("metrics: %d alertas nuevas disparadas", fired)
+        return 0
+    except Exception as e:
+        log.error("sample_metrics error: %s", e)
+        return 1
+    finally:
+        db.close()
+
+
 def main():
     parser = argparse.ArgumentParser(prog="api.cli", description="SVQPanel CLI")
     sub = parser.add_subparsers(dest="cmd", required=True)
+
+    sub.add_parser("sample_metrics", help="Toma muestra de métricas y evalúa alertas")
 
     p_refresh = sub.add_parser("refresh_ip_lists", help="Refresca listas IP vencidas")
     p_refresh.add_argument("--force", action="store_true", help="Refresca todas, ignorar interval")
@@ -617,6 +648,8 @@ def main():
         sys.exit(cmd_migrate_php_pools(dry_run=args.dry_run, only_domain=args.domain, force=args.force))
     if args.cmd == "run_scheduled_backups":
         sys.exit(cmd_run_scheduled_backups())
+    if args.cmd == "sample_metrics":
+        sys.exit(cmd_sample_metrics())
 
 
 if __name__ == "__main__":

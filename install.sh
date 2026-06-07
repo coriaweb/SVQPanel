@@ -2471,6 +2471,41 @@ Unit=svqpanel-dns-cluster-health.service
 WantedBy=timers.target
 DCHTEOF
 
+# ─── Timer cada 5 min: muestreo de métricas + evaluación de alertas ──────────
+# Guarda una muestra de CPU/RAM/disco/load/red en el histórico (retención 30d)
+# y evalúa las alertas configuradas (disco/servicio/carga/SSL), enviando email
+# si alguna se dispara (vía el SMTP del panel).
+cat > /etc/systemd/system/svqpanel-metrics.service << 'METEOF'
+[Unit]
+Description=SVQPanel — muestreo de métricas y evaluación de alertas
+After=network.target svqpanel.service
+
+[Service]
+Type=oneshot
+User=root
+WorkingDirectory=/opt/svqpanel
+Environment="PATH=/opt/svqpanel/venv/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+ExecStart=/opt/svqpanel/venv/bin/python -m api.cli sample_metrics
+TimeoutStartSec=120
+METEOF
+
+cat > /etc/systemd/system/svqpanel-metrics.timer << 'METTEOF'
+[Unit]
+Description=SVQPanel — timer cada 5 min para métricas y alertas
+
+[Timer]
+OnBootSec=3min
+OnUnitActiveSec=5min
+Persistent=true
+Unit=svqpanel-metrics.service
+
+[Install]
+WantedBy=timers.target
+METTEOF
+
+systemctl enable --now svqpanel-metrics.timer >/dev/null 2>&1 || true
+echo -e "${GREEN}✓ systemd timer: svqpanel-metrics.timer (métricas + alertas cada 5 min)${NC}"
+
 # ─── Timer cada minuto: ejecutar backups programados ─────────────────────────
 # Los backups se lanzan desde cli.py (proceso independiente que termina),
 # en vez de un hilo de fondo en el panel (causa fuga de memoria).
