@@ -3195,6 +3195,9 @@ echo "  • Las credenciales se guardaron en: /opt/svqpanel/.credentials/admin.t
 echo "  • Cambia la contraseña después de la primera sesión"
 echo "  • Cambia las credenciales de BD en .env antes de ir a producción"
 echo "  • Asegúrate de usar HTTPS en producción"
+echo -e "\n${YELLOW}¿Perdiste el acceso de administrador?${NC} (ejecutar como root)"
+echo "  • Listar admins:    /opt/svqpanel/venv/bin/python -m api.cli admin_recover --list"
+echo "  • Resetear clave:   /opt/svqpanel/venv/bin/python -m api.cli admin_recover --username USUARIO --password NUEVA"
 if [[ "$INSTALL_MAIL" == true ]]; then
     echo "  • Correo: sustituye el certificado snakeoil por uno real (Let's Encrypt)"
 fi
