@@ -245,3 +245,23 @@ async def services_db(current_user=Depends(require_admin)):
         return db_stats.collect()
     except Exception as e:
         raise HTTPException(500, f"No se pudieron obtener estadísticas de BD: {e}")
+
+
+@router.get("/monitoring/services/dns")
+async def services_dns(current_user=Depends(require_admin), db: Session = Depends(get_db)):
+    """
+    Estadísticas DNS (BIND9) en vivo: estado, versión, uptime, nº de zonas,
+    clientes recursivos/tcp y queries por tipo (rndc status + stats).
+    """
+    try:
+        from scripts import dns_stats
+        data = dns_stats.collect()
+        # Nº de zonas que gestiona el panel (de su BD)
+        try:
+            from api.models.models_dns import DnsZone
+            data["panel_zones"] = db.query(DnsZone).count()
+        except Exception:
+            data["panel_zones"] = None
+        return data
+    except Exception as e:
+        raise HTTPException(500, f"No se pudieron obtener estadísticas de DNS: {e}")
