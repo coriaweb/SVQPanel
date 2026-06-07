@@ -53,25 +53,16 @@ export default {
   justify-content: space-between;
   gap: var(--sp-3);
   padding: var(--sp-4) var(--sp-5);
-  /* Marca SVQ: cabecera con fondo navy oscuro y título/icono naranja,
-     igual en tema claro y oscuro. */
-  background: var(--svq-navy);
-  border-bottom: 1px solid var(--svq-navy);
+  /* Cabecera destacada con un fondo sutilmente distinto al cuerpo (no oscuro)
+     para separarla visualmente. Funciona en claro y oscuro. */
+  background: var(--surface-inset);
+  border-bottom: 1px solid var(--border);
 }
 .card__title-wrap { display: flex; align-items: center; gap: var(--sp-2); min-width: 0; }
+/* Solo el icono lleva un toque de naranja SVQ; el título en color normal. */
 .card__title-wrap .bi { color: var(--svq-orange); font-size: 16px; }
-.card__title { font-size: var(--fs-md); font-weight: var(--fw-semibold); color: var(--svq-orange); }
+.card__title { font-size: var(--fs-md); font-weight: var(--fw-semibold); color: var(--text); }
 .card__actions { display: flex; align-items: center; gap: var(--sp-2); flex-shrink: 0; }
-/* Botones de la cabecera sobre el fondo navy: legibles en claro y oscuro.
-   :deep porque los BaseButton son componentes hijos con estilos scoped propios. */
-.card__actions :deep(.btn--ghost) { color: rgba(255, 255, 255, .82); }
-.card__actions :deep(.btn--ghost:hover) { background: rgba(255, 255, 255, .12); color: #fff; }
-.card__actions :deep(.btn--secondary) {
-  background: rgba(255, 255, 255, .1);
-  color: #fff;
-  border-color: rgba(255, 255, 255, .22);
-}
-.card__actions :deep(.btn--secondary:hover) { background: rgba(255, 255, 255, .18); }
 .card__body { padding: var(--sp-5); }
 .card__body--flush { padding: 0; }
 .card__footer {
