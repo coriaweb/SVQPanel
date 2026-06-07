@@ -33,12 +33,19 @@ MAX_BACKUP_MB = 5120  # 5 GB
 # ─────────────────────────────────────────────────────────────────────────────
 # Obtención del .tar según el origen (upload / path local). URL y SSH: fase 6.
 # ─────────────────────────────────────────────────────────────────────────────
-async def _receive_backup(upload: Optional[UploadFile], local_path: Optional[str]
+async def _receive_backup(upload: Optional[UploadFile], local_path: Optional[str],
+                          url: Optional[str] = None, ssh: Optional[dict] = None
                           ) -> str:
     """Deja el .tar en un fichero temporal del servidor y devuelve su ruta.
 
-    El llamador es responsable de borrarlo. Acepta un UploadFile (subida) o una
-    ruta local ya presente en el servidor (p. ej. /backups/user.tar).
+    Orígenes soportados:
+      - upload:     UploadFile (subida del navegador)
+      - local_path: ruta ya presente en el servidor (p. ej. /backups/user.tar)
+      - url:        http(s) desde donde descargar el .tar
+      - ssh:        {host, user, password|key, hestia_user} → ejecuta
+                    v-backup-user en el Hestia remoto y trae el .tar por scp
+    El llamador es responsable de borrar los temporales (los que empiezan por
+    el prefijo svq_hestia_up_).
     """
     if upload is not None and upload.filename:
         fd, tmp = tempfile.mkstemp(prefix="svq_hestia_up_", suffix=".tar")
@@ -58,6 +65,12 @@ async def _receive_backup(upload: Optional[UploadFile], local_path: Optional[str
             raise
         return tmp
 
+    if url:
+        return _download_url(url)
+
+    if ssh:
+        return _fetch_via_ssh(ssh)
+
     if local_path:
         if not os.path.isfile(local_path):
             raise HTTPException(status_code=404,
@@ -65,11 +78,135 @@ async def _receive_backup(upload: Optional[UploadFile], local_path: Optional[str
         return local_path  # NO se borra (es del usuario); el analyze no lo mueve
 
     raise HTTPException(status_code=400,
-        detail="Indica un archivo de backup (súbelo o da una ruta del servidor).")
+        detail="Indica un archivo de backup (súbelo, da una ruta, una URL o SSH).")
+
+
+def _download_url(url: str) -> str:
+    """Descarga un .tar desde una URL http(s) a un temporal."""
+    import urllib.request
+    if not url.lower().startswith(("http://", "https://")):
+        raise HTTPException(status_code=400, detail="La URL debe ser http(s).")
+    fd, tmp = tempfile.mkstemp(prefix="svq_hestia_up_", suffix=".tar")
+    os.close(fd)
+    max_bytes = MAX_BACKUP_MB * 1024 * 1024
+    try:
+        req = urllib.request.Request(url, headers={"User-Agent": "SVQPanel-Migrator"})
+        with urllib.request.urlopen(req, timeout=60) as resp, open(tmp, "wb") as fh:
+            written = 0
+            while True:
+                chunk = resp.read(4 * 1024 * 1024)
+                if not chunk:
+                    break
+                written += len(chunk)
+                if written > max_bytes:
+                    raise HTTPException(status_code=413,
+                        detail=f"El backup supera el límite de {MAX_BACKUP_MB} MB")
+                fh.write(chunk)
+        return tmp
+    except HTTPException:
+        os.path.exists(tmp) and os.remove(tmp)
+        raise
+    except Exception as e:
+        os.path.exists(tmp) and os.remove(tmp)
+        raise HTTPException(status_code=502, detail=f"No pude descargar el backup: {e}")
+
+
+def _fetch_via_ssh(cfg: dict) -> str:
+    """Genera el backup en un Hestia remoto y lo trae por scp.
+
+    cfg: {host, port?, user, password?, key?, hestia_user}. Ejecuta
+    `v-backup-user <hestia_user>` por SSH y descarga el .tar resultante de
+    /backup/ en el remoto. Usa ssh/scp por subprocess (patrón de dns_cluster);
+    si hay password, requiere sshpass instalado.
+    """
+    import subprocess, shlex
+    host = (cfg.get("host") or "").strip()
+    user = (cfg.get("user") or "root").strip()
+    port = str(cfg.get("port") or 22)
+    password = cfg.get("password")
+    key = cfg.get("key")
+    hestia_user = (cfg.get("hestia_user") or "").strip()
+    if not host or not hestia_user:
+        raise HTTPException(status_code=400,
+            detail="Para SSH indica al menos host y usuario de Hestia a exportar.")
+
+    opts = ["-o", "StrictHostKeyChecking=no", "-o", "UserKnownHostsFile=/dev/null",
+            "-o", "ConnectTimeout=15", "-p", port]
+
+    def ssh_prefix(binary):
+        base = []
+        env = dict(os.environ)
+        if key:
+            opts2 = opts + ["-i", "__KEYFILE__"]
+            base = [binary] + opts2
+        elif password:
+            env["SSHPASS"] = password
+            base = ["sshpass", "-e", binary] + opts
+        else:
+            base = [binary] + opts
+        return base, env
+
+    keyfile = None
+    if key:
+        kfd, keyfile = tempfile.mkstemp(prefix="svq_sshkey_")
+        with os.fdopen(kfd, "w") as f:
+            f.write(key)
+        os.chmod(keyfile, 0o600)
+
+    def _sub(lst, env):
+        return [keyfile if x == "__KEYFILE__" else x for x in lst], env
+
+    fd, tmp = tempfile.mkstemp(prefix="svq_hestia_up_", suffix=".tar")
+    os.close(fd)
+    try:
+        # 1) Generar el backup en el remoto
+        sshb, env = ssh_prefix("ssh")
+        remote = f"{user}@{host}"
+        gen_cmd, env = _sub(sshb + [remote, f"v-backup-user {shlex.quote(hestia_user)}"], env)
+        r = subprocess.run(gen_cmd, capture_output=True, text=True, env=env, timeout=1800)
+        if r.returncode != 0:
+            raise HTTPException(status_code=502,
+                detail=f"v-backup-user falló en el remoto: {(r.stderr or r.stdout)[:300]}")
+
+        # 2) Localizar el .tar más reciente del usuario en /backup/
+        find_cmd, env = _sub(sshb + [remote,
+            f"ls -t /backup/{shlex.quote(hestia_user)}.*.tar 2>/dev/null | head -1"], env)
+        r = subprocess.run(find_cmd, capture_output=True, text=True, env=env, timeout=60)
+        remote_tar = (r.stdout or "").strip().splitlines()[0] if r.stdout.strip() else ""
+        if not remote_tar:
+            raise HTTPException(status_code=502,
+                detail="No encontré el .tar generado en /backup/ del servidor remoto.")
+
+        # 3) Traerlo por scp
+        scpb, env = ssh_prefix("scp")
+        scp_cmd, env = _sub(scpb + [f"{remote}:{remote_tar}", tmp], env)
+        r = subprocess.run(scp_cmd, capture_output=True, text=True, env=env, timeout=1800)
+        if r.returncode != 0:
+            raise HTTPException(status_code=502,
+                detail=f"scp del backup falló: {(r.stderr or r.stdout)[:300]}")
+        return tmp
+    except HTTPException:
+        os.path.exists(tmp) and os.remove(tmp)
+        raise
+    except FileNotFoundError as e:
+        os.path.exists(tmp) and os.remove(tmp)
+        raise HTTPException(status_code=500,
+            detail=f"Falta una herramienta (ssh/scp/sshpass): {e}")
+    finally:
+        if keyfile and os.path.exists(keyfile):
+            os.remove(keyfile)
 
 
 def _is_temp_upload(path: str) -> bool:
     return os.path.basename(path).startswith("svq_hestia_up_")
+
+
+def _ssh_from_form(host, user, password, key, port, hestia_user) -> Optional[dict]:
+    """Construye el dict ssh si se aportaron los datos mínimos, o None."""
+    if host and hestia_user:
+        return {"host": host, "user": user or "root", "password": password or None,
+                "key": key or None, "port": port or 22, "hestia_user": hestia_user}
+    return None
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -79,6 +216,13 @@ def _is_temp_upload(path: str) -> bool:
 async def hestia_analyze(
     file: Optional[UploadFile] = File(None),
     path: Optional[str] = Form(None),
+    url: Optional[str] = Form(None),
+    ssh_host: Optional[str] = Form(None),
+    ssh_user: Optional[str] = Form(None),
+    ssh_password: Optional[str] = Form(None),
+    ssh_key: Optional[str] = Form(None),
+    ssh_port: Optional[int] = Form(None),
+    hestia_user: Optional[str] = Form(None),
     db: Session = Depends(get_db),
     current_user: User = Depends(require_admin),
 ):
@@ -88,7 +232,8 @@ async def hestia_analyze(
     """
     from scripts.hestia_import import HestiaBackup, find_conflicts, HestiaImportError, has_zstd
 
-    tar_path = await _receive_backup(file, path)
+    ssh = _ssh_from_form(ssh_host, ssh_user, ssh_password, ssh_key, ssh_port, hestia_user)
+    tar_path = await _receive_backup(file, path, url, ssh)
     cleanup = _is_temp_upload(tar_path)
     try:
         with HestiaBackup(tar_path) as backup:
@@ -184,6 +329,13 @@ async def hestia_import(
     background_tasks: BackgroundTasks,
     file: Optional[UploadFile] = File(None),
     path: Optional[str] = Form(None),
+    url: Optional[str] = Form(None),
+    ssh_host: Optional[str] = Form(None),
+    ssh_user: Optional[str] = Form(None),
+    ssh_password: Optional[str] = Form(None),
+    ssh_key: Optional[str] = Form(None),
+    ssh_port: Optional[int] = Form(None),
+    hestia_user: Optional[str] = Form(None),
     target_user_id: int = Form(...),
     scope: str = Form("web,db,mail,dns"),
     db: Session = Depends(get_db),
@@ -207,7 +359,8 @@ async def hestia_import(
         raise HTTPException(status_code=403,
             detail="El destino debe ser una cuenta de cliente, no un administrador.")
 
-    tar_path = await _receive_backup(file, path)
+    ssh = _ssh_from_form(ssh_host, ssh_user, ssh_password, ssh_key, ssh_port, hestia_user)
+    tar_path = await _receive_backup(file, path, url, ssh)
     cleanup_tar = _is_temp_upload(tar_path)
 
     # Preflight: analizar y comprobar conflictos. Si hay, abortar.

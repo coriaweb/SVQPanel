@@ -13,6 +13,8 @@
           <select class="svq-select" v-model="source">
             <option value="upload">Subir archivo .tar</option>
             <option value="path">Ruta en el servidor</option>
+            <option value="url">Descargar desde URL</option>
+            <option value="ssh">SSH al servidor Hestia</option>
           </select>
         </label>
 
@@ -20,11 +22,33 @@
           <span>Archivo de backup (.tar)</span>
           <input type="file" accept=".tar" class="svq-input" @change="onFile" />
         </label>
-        <label class="mig-field" v-else>
+        <label class="mig-field" v-else-if="source === 'path'">
           <span>Ruta del .tar en el servidor</span>
           <input class="svq-input mono" v-model="serverPath" placeholder="/backups/usuario.YYYY-MM-DD.tar" />
         </label>
+        <label class="mig-field" v-else-if="source === 'url'">
+          <span>URL del backup (.tar)</span>
+          <input class="svq-input mono" v-model="url" placeholder="https://servidor/backup/usuario.tar" />
+        </label>
+      </div>
 
+      <!-- Campos SSH (origen = ssh) -->
+      <div v-if="source === 'ssh'" class="mig-grid mig-ssh">
+        <label class="mig-field"><span>Host del Hestia origen</span>
+          <input class="svq-input mono" v-model="ssh.host" placeholder="1.2.3.4" /></label>
+        <label class="mig-field"><span>Usuario SSH</span>
+          <input class="svq-input mono" v-model="ssh.user" placeholder="root" /></label>
+        <label class="mig-field"><span>Puerto SSH</span>
+          <input class="svq-input mono" v-model="ssh.port" placeholder="22" /></label>
+        <label class="mig-field"><span>Usuario de Hestia a exportar</span>
+          <input class="svq-input mono" v-model="ssh.hestia_user" placeholder="cliente1" /></label>
+        <label class="mig-field"><span>Contraseña SSH (o usa clave)</span>
+          <input type="password" class="svq-input" v-model="ssh.password" /></label>
+        <label class="mig-field mig-field--wide"><span>Clave privada SSH (opcional)</span>
+          <textarea class="svq-input mono" rows="3" v-model="ssh.key" placeholder="-----BEGIN OPENSSH PRIVATE KEY-----"></textarea></label>
+      </div>
+
+      <div class="mig-grid">
         <label class="mig-field">
           <span>Cliente destino</span>
           <select class="svq-select" v-model="targetUserId">
@@ -162,6 +186,8 @@ export default {
     const source = ref('upload')
     const file = ref(null)
     const serverPath = ref('')
+    const url = ref('')
+    const ssh = ref({ host: '', user: 'root', port: '22', hestia_user: '', password: '', key: '' })
     const targetUserId = ref(null)
     const clientUsers = ref([])
     const scope = ref(['web', 'db', 'mail', 'dns'])
@@ -175,9 +201,14 @@ export default {
     const job = ref(null)
     let pollTimer = null
 
-    const canAnalyze = computed(() =>
-      targetUserId.value != null &&
-      (source.value === 'upload' ? !!file.value : !!serverPath.value.trim()))
+    const canAnalyze = computed(() => {
+      if (targetUserId.value == null) return false
+      if (source.value === 'upload') return !!file.value
+      if (source.value === 'path') return !!serverPath.value.trim()
+      if (source.value === 'url') return !!url.value.trim()
+      if (source.value === 'ssh') return !!ssh.value.host.trim() && !!ssh.value.hestia_user.trim()
+      return false
+    })
     const mailAccounts = computed(() =>
       (manifest.value?.mail || []).reduce((n, m) => n + (m.accounts_count || 0), 0))
     const targetUsername = computed(() =>
@@ -196,7 +227,16 @@ export default {
     const _formData = () => {
       const fd = new FormData()
       if (source.value === 'upload' && file.value) fd.append('file', file.value)
-      if (source.value === 'path') fd.append('path', serverPath.value.trim())
+      else if (source.value === 'path') fd.append('path', serverPath.value.trim())
+      else if (source.value === 'url') fd.append('url', url.value.trim())
+      else if (source.value === 'ssh') {
+        fd.append('ssh_host', ssh.value.host.trim())
+        fd.append('ssh_user', ssh.value.user.trim() || 'root')
+        if (ssh.value.port) fd.append('ssh_port', String(ssh.value.port).trim())
+        fd.append('hestia_user', ssh.value.hestia_user.trim())
+        if (ssh.value.password) fd.append('ssh_password', ssh.value.password)
+        if (ssh.value.key) fd.append('ssh_key', ssh.value.key)
+      }
       fd.append('target_user_id', String(targetUserId.value))
       fd.append('scope', scope.value.join(','))
       return fd
@@ -247,7 +287,7 @@ export default {
     loadUsers()
 
     return {
-      source, file, serverPath, targetUserId, clientUsers, scope, scopeOptions,
+      source, file, serverPath, url, ssh, targetUserId, clientUsers, scope, scopeOptions,
       analyzing, importing, manifest, job, canAnalyze, mailAccounts, targetUsername,
       onFile, analyze, startImport,
     }
@@ -260,6 +300,9 @@ export default {
 .mig-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: var(--sp-3); }
 .mig-field { display: flex; flex-direction: column; gap: 4px; }
 .mig-field > span { font-size: var(--fs-sm); color: var(--text-secondary); font-weight: var(--fw-medium); }
+.mig-field--wide { grid-column: 1 / -1; }
+.mig-ssh { margin-top: var(--sp-3); padding-top: var(--sp-3); border-top: 1px solid var(--border); }
+.mig-ssh textarea { resize: vertical; }
 .mig-scope { display: flex; align-items: center; gap: var(--sp-3); flex-wrap: wrap; margin-top: var(--sp-3); }
 .mig-scope__label { font-size: var(--fs-sm); color: var(--text-muted); }
 .mig-check { display: inline-flex; align-items: center; gap: 6px; font-size: var(--fs-sm); }
