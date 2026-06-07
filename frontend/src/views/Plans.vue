@@ -269,6 +269,7 @@ onMounted(load)
 
 .pl-head { display:flex; justify-content:space-between; align-items:flex-start; gap:1rem; flex-wrap:wrap; }
 .pl-title { font-size:1.5rem; font-weight:700; margin:0 0 .25rem; display:flex; align-items:center; gap:.5rem; }
+.pl-title > .bi:first-child { color:var(--svq-orange); }
 .pl-subtitle { font-size:.875rem; color:var(--text-muted); margin:0; max-width:640px; }
 
 .pl-btn { display:inline-flex; align-items:center; gap:6px; padding:.5rem 1rem; border-radius:var(--r-sm,6px); font-size:.9rem; font-weight:500; cursor:pointer; border:1px solid transparent; transition:all .15s; }

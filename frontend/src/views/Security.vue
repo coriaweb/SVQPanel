@@ -1095,6 +1095,7 @@ onMounted(async () => {
 /* Cabecera */
 .sec-head { display:flex; justify-content:space-between; align-items:flex-start; gap:1rem; flex-wrap:wrap; }
 .sec-title { font-size:1.5rem; font-weight:700; margin:0 0 .25rem; display:flex; align-items:center; gap:.5rem; }
+.sec-title > .bi:first-child { color:var(--svq-orange); }
 .sec-subtitle { font-size:.875rem; color:var(--text-muted); margin:0; }
 .sec-hint { font-size:.82rem; color:var(--text-muted); margin:0 0 .75rem; }
 
@@ -1107,8 +1108,9 @@ onMounted(async () => {
 
 /* Cards */
 .sec-card { background:var(--surface); border:1px solid var(--border); border-radius:var(--r-md,10px); overflow:hidden; }
-.sec-card-head { display:flex; align-items:center; justify-content:space-between; padding:.875rem 1.25rem; border-bottom:1px solid var(--border); flex-wrap:wrap; gap:.5rem; }
+.sec-card-head { display:flex; align-items:center; justify-content:space-between; padding:.875rem 1.25rem; border-bottom:1px solid var(--border); flex-wrap:wrap; gap:.5rem; background:var(--surface-inset); }
 .sec-card-title { font-weight:600; font-size:.95rem; display:flex; align-items:center; gap:.5rem; }
+.sec-card-title > .bi:first-child { color:var(--svq-orange); }
 .sec-card-body { padding:1rem 1.25rem; }
 
 /* Botones */

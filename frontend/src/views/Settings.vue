@@ -29,8 +29,8 @@
       <!-- ══ RED ══ -->
       <!-- IPv6 - ancho completo -->
       <div class="sv-full" v-show="tab==='red'">
-        <div class="card" style="border-color:var(--ac)">
-          <div class="card-header" style="background:var(--ac);color:#fff">
+        <div class="card">
+          <div class="card-header">
             <i class="bi bi-diagram-3 me-2"></i> Red IPv6
           </div>
           <div class="card-body">
@@ -386,8 +386,8 @@
       <!-- ══ SSL Y SISTEMA ══ -->
       <!-- SSL del Panel -->
       <div class="sv-full" v-show="tab==='sistema'">
-        <div class="card border-success">
-          <div class="card-header bg-success text-white d-flex justify-content-between align-items-center">
+        <div class="card">
+          <div class="card-header d-flex justify-content-between align-items-center">
             <span><i class="bi bi-shield-lock me-2"></i> SSL del Panel</span>
             <span v-if="settings?.ssl_panel_enabled" class="badge bg-light text-success">
               <i class="bi bi-check-circle-fill me-1"></i> Activo
@@ -1430,9 +1430,36 @@ export default {
 <style scoped>
 .sv-view { display: flex; flex-direction: column; gap: 20px; }
 .sv-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; flex-wrap: wrap; }
-.sv-title { margin: 0 0 4px; font-size: 20px; font-weight: 700; letter-spacing: -.01em; }
+.sv-title { margin: 0 0 4px; font-size: 1.5rem; font-weight: 700; letter-spacing: -.01em; display:flex; align-items:center; gap:.5rem; }
+.sv-title .bi { color: var(--svq-orange); }
 .sv-sub { margin: 0; font-size: 13px; color: var(--text-muted); }
 .sv-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
+
+/* Tarjetas con look SVQ (esta vista usa markup .card de Bootstrap) */
+.sv-grid :deep(.card),
+.sv-full :deep(.card) {
+  background: var(--surface);
+  border: 1px solid var(--border) !important;
+  border-radius: var(--r-lg, 12px);
+  box-shadow: var(--shadow-sm);
+  overflow: hidden;
+}
+.sv-grid :deep(.card-header),
+.sv-full :deep(.card-header) {
+  background: var(--surface-inset) !important;
+  color: var(--text) !important;
+  border-bottom: 1px solid var(--border);
+  font-weight: var(--fw-semibold, 600);
+  font-size: var(--fs-md, .95rem);
+  padding: var(--sp-4, .9rem) var(--sp-5, 1.25rem);
+}
+.sv-grid :deep(.card-header .bi),
+.sv-full :deep(.card-header .bi) { color: var(--svq-orange); }
+.sv-grid :deep(.card-body),
+.sv-full :deep(.card-body) { padding: var(--sp-5, 1.25rem); }
+/* Conserva los badges de estado dentro de las cabeceras con su color propio */
+.sv-grid :deep(.card-header .badge),
+.sv-full :deep(.card-header .badge) { color: inherit; }
 
 /* Pestañas */
 .set-tabs { display:flex; gap:2px; flex-wrap:wrap; padding:.5rem; background:var(--surface-2); border-radius:var(--r-md,10px); }

@@ -356,7 +356,8 @@ export default {
 <style scoped>
 .sv-view { display: flex; flex-direction: column; gap: 20px; }
 .sv-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; flex-wrap: wrap; }
-.sv-title { margin: 0 0 4px; font-size: 20px; font-weight: 700; letter-spacing: -.01em; }
+.sv-title { margin: 0 0 4px; font-size: 1.5rem; font-weight: 700; letter-spacing: -.01em; display:flex; align-items:center; gap:.5rem; }
+.sv-title .bi { color: var(--svq-orange); }
 .sv-sub { margin: 0; font-size: 13px; color: var(--text-muted); }
 
 .sv-server-banner {

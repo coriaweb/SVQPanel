@@ -1,9 +1,9 @@
 <template>
-  <div class="container-fluid py-4">
-    <div class="d-flex align-items-center mb-3">
+  <div class="sv-view">
+    <div class="page-head">
       <div>
-        <h2 class="mb-1"><i class="bi bi-folder-symlink me-2"></i>Acceso SFTP</h2>
-        <p class="text-muted mb-0">
+        <h1 class="page-head__title">Acceso SFTP</h1>
+        <p class="page-head__sub">
           Gestiona tu acceso SFTP y crea cuentas adicionales para dar acceso a
           carpetas concretas (por ejemplo, a un desarrollador).
         </p>

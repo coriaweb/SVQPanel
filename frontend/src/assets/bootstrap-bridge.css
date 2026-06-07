@@ -44,12 +44,16 @@ code { font-family: var(--font-mono); color: var(--danger); background: var(--su
   color: var(--text);
 }
 .card-header {
-  background: var(--surface) !important;
+  /* Cabecera destacada estilo SVQ (igual que el componente BaseCard): fondo
+     inset + icono de acento naranja. Armoniza todas las vistas con markup .card. */
+  background: var(--surface-inset) !important;
   border-bottom: 1px solid var(--border) !important;
   color: var(--text) !important;
   font-weight: var(--fw-semibold);
   padding: 11px 16px;
 }
+.card-header > .bi:first-child,
+.card-header .bi:first-child { color: var(--svq-orange); }
 .card-footer {
   background: var(--surface-inset) !important;
   border-top: 1px solid var(--border) !important;
@@ -66,7 +70,17 @@ code { font-family: var(--font-mono); color: var(--danger); background: var(--su
   display: flex; align-items: flex-start; justify-content: space-between;
   gap: var(--sp-4); margin-bottom: 20px; flex-wrap: wrap;
 }
-.page-head-row h2 { margin: 0 0 4px; font-size: 20px; font-weight: 700; letter-spacing: -.01em; }
+.page-head-row h2 { margin: 0 0 4px; font-size: 1.5rem; font-weight: 700; letter-spacing: -.01em; }
+.page-head-row h2 > .bi:first-child { color: var(--svq-orange); }
+
+/* Patrón page-head del sistema SVQ (título grande + subtítulo). Global para que
+   todas las vistas lo compartan sin redefinirlo en cada una. */
+.page-head {
+  display: flex; align-items: flex-start; justify-content: space-between;
+  gap: 1rem; margin-bottom: var(--sp-5, 20px); flex-wrap: wrap;
+}
+.page-head__title { margin: 0; font-size: 1.5rem; font-weight: 700; letter-spacing: -.01em; }
+.page-head__sub { margin: .25rem 0 0; font-size: var(--fs-sm, 13px); color: var(--text-muted); }
 .app-content h2, .main-content h2 {
   font-size: 20px; font-weight: 700; letter-spacing: -.01em;
 }

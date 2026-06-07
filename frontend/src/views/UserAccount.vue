@@ -584,7 +584,7 @@ export default {
 
 /* Layout */
 .ua-head { display:flex; justify-content:space-between; align-items:center; gap:1rem; flex-wrap:wrap; }
-.ua-title { font-size:1.4rem; font-weight:700; margin:0 0 .15rem; display:flex; align-items:center; gap:.5rem; flex-wrap:wrap; }
+.ua-title { font-size:1.5rem; font-weight:700; margin:0 0 .15rem; display:flex; align-items:center; gap:.5rem; flex-wrap:wrap; }
 .ua-subtitle { font-size:.875rem; color:var(--text-muted); margin:0; }
 .ua-layout { display:grid; grid-template-columns:240px 1fr; gap:20px; align-items:start; }
 .ua-sidebar { display:flex; flex-direction:column; gap:16px; }
@@ -606,10 +606,13 @@ export default {
 
 /* Cards */
 .ua-card { background:var(--surface); border:1px solid var(--border); border-radius:var(--r-md,10px); overflow:hidden; }
-.ua-card-head { display:flex; align-items:center; justify-content:space-between; padding:.875rem 1.25rem; border-bottom:1px solid var(--border); }
+/* Cabecera estilo SVQ: fondo destacado (inset) + icono naranja, como BaseCard */
+.ua-card-head { display:flex; align-items:center; justify-content:space-between; padding:.875rem 1.25rem; border-bottom:1px solid var(--border); background:var(--surface-inset); }
 .ua-card-title { font-weight:600; font-size:.95rem; display:flex; align-items:center; gap:.5rem; }
+.ua-card-head .ua-card-title > .bi:first-child,
+.ua-card > .ua-card-title > .bi:first-child { color:var(--svq-orange); }
 /* Cuando el título va suelto (tarjeta de disco), darle el padding del head */
-.ua-card > .ua-card-title { padding:.875rem 1.25rem; border-bottom:1px solid var(--border); }
+.ua-card > .ua-card-title { padding:.875rem 1.25rem; border-bottom:1px solid var(--border); background:var(--surface-inset); }
 
 /* Barra de uso de disco */
 .ua-bar { height:8px; background:var(--surface-2); border-radius:999px; overflow:hidden; }
