@@ -2227,6 +2227,88 @@ if [[ -n "$INSTALLER_IP" ]]; then
 fi
 
 ###############################################################################
+# 12B-bis. HARDENING DEL SISTEMA OPERATIVO
+#   - Kernel/red (sysctl): anti-spoofing, anti-redirect/MITM, log de marcianos.
+#   - SSH: desactivar X11Forwarding (inútil en servidor). Se MANTIENE el login
+#     de root por contraseña (decisión del operador); fail2ban cubre la fuerza
+#     bruta (5 intentos → ban 1h) + svqpanel-auth + recidive.
+#   - Deshabilitar servicios innecesarios en un servidor de hosting (rpcbind,
+#     avahi, cups, telnet) → menos superficie de ataque.
+#   - Desactivar LLMNR (resolución multicast, vector de envenenamiento).
+###############################################################################
+echo -e "${YELLOW}Aplicando hardening del sistema operativo...${NC}"
+
+# ── Kernel / red (sysctl) ──────────────────────────────────────────────────
+cat > /etc/sysctl.d/99-svqpanel-security.conf << 'SYSCTLEOF'
+# SVQPanel — hardening de red/kernel
+# Anti-spoofing: descarta paquetes cuya ruta de retorno no cuadra con la interfaz
+net.ipv4.conf.all.rp_filter = 1
+net.ipv4.conf.default.rp_filter = 1
+# No aceptar ni enviar ICMP redirects (previene MITM por redirección de rutas)
+net.ipv4.conf.all.accept_redirects = 0
+net.ipv4.conf.default.accept_redirects = 0
+net.ipv6.conf.all.accept_redirects = 0
+net.ipv6.conf.default.accept_redirects = 0
+net.ipv4.conf.all.send_redirects = 0
+net.ipv4.conf.default.send_redirects = 0
+# No aceptar source routing (paquetes que dictan su propia ruta)
+net.ipv4.conf.all.accept_source_route = 0
+net.ipv6.conf.all.accept_source_route = 0
+# SYN cookies (mitiga SYN flood)
+net.ipv4.tcp_syncookies = 1
+# Ignorar broadcast ICMP (evita ser amplificador de smurf attacks)
+net.ipv4.icmp_echo_ignore_broadcasts = 1
+# Ignorar respuestas ICMP erróneas (bogus)
+net.ipv4.icmp_ignore_bogus_error_responses = 1
+# Loguear paquetes con direcciones imposibles ("martians")
+net.ipv4.conf.all.log_martians = 1
+# ASLR completo (aleatorización del espacio de memoria) — ya suele estar a 2
+kernel.randomize_va_space = 2
+# Protección contra ataques de hardlink/symlink en directorios world-writable
+fs.protected_hardlinks = 1
+fs.protected_symlinks = 1
+SYSCTLEOF
+sysctl --system >/dev/null 2>&1 || true
+echo -e "  ${GREEN}✓ sysctl de seguridad aplicado (/etc/sysctl.d/99-svqpanel-security.conf)${NC}"
+
+# ── SSH: quitar X11Forwarding (se mantiene root+password) ──────────────────
+SSHD_HARDEN="/etc/ssh/sshd_config.d/99-svqpanel.conf"
+cat > "$SSHD_HARDEN" << 'SSHDEOF'
+# SVQPanel — hardening SSH (mínimo, no rompe el acceso por contraseña de root)
+X11Forwarding no
+# No permitir contraseñas vacías (por si acaso)
+PermitEmptyPasswords no
+# Límite de intentos de auth por conexión
+MaxAuthTries 4
+SSHDEOF
+# Validar la config antes de recargar para no romper el SSH
+if sshd -t 2>/dev/null; then
+    systemctl reload ssh 2>/dev/null || systemctl reload sshd 2>/dev/null || true
+    echo -e "  ${GREEN}✓ SSH endurecido (X11 off, sin passwords vacías). Root por contraseña: SIGUE activo.${NC}"
+else
+    rm -f "$SSHD_HARDEN"
+    echo -e "  ${YELLOW}⚠ La config SSH no validó; se omite el hardening de SSH${NC}"
+fi
+
+# ── Deshabilitar servicios innecesarios en un servidor de hosting ──────────
+for _svc in rpcbind.service rpcbind.socket avahi-daemon.service avahi-daemon.socket cups.service cups.socket cups-browsed.service telnet.socket; do
+    if systemctl list-unit-files 2>/dev/null | grep -q "^${_svc}"; then
+        systemctl disable --now "$_svc" >/dev/null 2>&1 || true
+    fi
+done
+echo -e "  ${GREEN}✓ Servicios innecesarios deshabilitados (rpcbind, avahi, cups, telnet)${NC}"
+
+# ── Desactivar LLMNR (resolución multicast, vector de envenenamiento) ──────
+mkdir -p /etc/systemd/resolved.conf.d
+cat > /etc/systemd/resolved.conf.d/99-svqpanel.conf << 'RESOLVEDEOF'
+[Resolve]
+LLMNR=no
+MulticastDNS=no
+RESOLVEDEOF
+systemctl restart systemd-resolved >/dev/null 2>&1 || true
+echo -e "  ${GREEN}✓ LLMNR/mDNS desactivados${NC}\n"
+
+###############################################################################
 # 12C. CROWDSEC (IPS colaborativo)
 #
 # CrowdSec analiza logs (sshd, nginx, postfix...) y genera decisiones de ban
