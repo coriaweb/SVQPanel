@@ -28,6 +28,9 @@
       <button class="mon-tab" :class="{'mon-tab--active': tab==='correo'}" @click="selectMailTab">
         <i class="bi bi-envelope"></i> Correo
       </button>
+      <button class="mon-tab" :class="{'mon-tab--active': tab==='bbdd'}" @click="selectDbTab">
+        <i class="bi bi-database"></i> BBDD
+      </button>
     </div>
 
     <!-- ════════════ PESTAÑA RECURSOS ════════════ -->
@@ -339,6 +342,61 @@
         </div>
       </div>
     </template>
+
+    <!-- ════════════ PESTAÑA BBDD ════════════ -->
+    <template v-if="tab==='bbdd'">
+      <div v-if="dbLoading && !dbStats" class="mon-loading"><div class="spinner-border spinner-border-sm"></div></div>
+      <div v-else-if="dbStats" class="mon-grid2">
+
+        <!-- MariaDB -->
+        <div class="mon-card">
+          <div class="mon-card-head">
+            <span class="mon-card-title"><i class="bi bi-database"></i> MariaDB <small style="color:var(--text-muted);font-weight:400">clientes</small></span>
+            <span class="mon-badge" :class="dbStats.mariadb.running ? 'mon-badge--ok' : 'mon-badge--danger'">
+              {{ dbStats.mariadb.running ? 'activo' : 'parado' }}
+            </span>
+          </div>
+          <div class="mon-card-body">
+            <div v-if="!dbStats.mariadb.available" class="mail-empty">
+              {{ dbStats.mariadb.running ? 'MariaDB activo pero sin credenciales del panel (MARIADB_ENABLED).' : 'MariaDB no está en ejecución.' }}
+            </div>
+            <div v-else class="mail-rspamd">
+              <div class="mail-stat"><span>Versión</span><strong style="font-size:.78rem">{{ dbStats.mariadb.version }}</strong></div>
+              <div class="mail-stat"><span>Uptime</span><strong>{{ dbStats.mariadb.uptime }}</strong></div>
+              <div class="mail-stat"><span>Conexiones</span><strong>{{ dbStats.mariadb.connections_now }} / {{ dbStats.mariadb.connections_max }}</strong></div>
+              <div class="mail-stat"><span>Pico conexiones</span><strong>{{ dbStats.mariadb.connections_peak }}</strong></div>
+              <div class="mail-stat"><span>Consultas/seg</span><strong>{{ dbStats.mariadb.queries_per_sec }}</strong></div>
+              <div class="mail-stat"><span>En ejecución</span><strong>{{ dbStats.mariadb.threads_running }}</strong></div>
+              <div class="mail-stat"><span>Bases de datos</span><strong>{{ dbStats.mariadb.databases ?? '—' }}</strong></div>
+              <div class="mail-stat"><span>Consultas lentas</span><strong :class="dbStats.mariadb.slow_queries > 0 ? 'mc-warn' : ''">{{ dbStats.mariadb.slow_queries }}</strong></div>
+            </div>
+          </div>
+        </div>
+
+        <!-- PostgreSQL -->
+        <div class="mon-card">
+          <div class="mon-card-head">
+            <span class="mon-card-title"><i class="bi bi-database-fill"></i> PostgreSQL <small style="color:var(--text-muted);font-weight:400">panel</small></span>
+            <span class="mon-badge" :class="dbStats.postgresql.running ? 'mon-badge--ok' : 'mon-badge--danger'">
+              {{ dbStats.postgresql.running ? 'activo' : 'parado' }}
+            </span>
+          </div>
+          <div class="mon-card-body">
+            <div v-if="!dbStats.postgresql.available" class="mail-empty">
+              {{ dbStats.postgresql.running ? 'PostgreSQL activo pero no se pudo consultar.' : 'PostgreSQL no está en ejecución.' }}
+            </div>
+            <div v-else class="mail-rspamd">
+              <div class="mail-stat"><span>Versión</span><strong>{{ dbStats.postgresql.version }}</strong></div>
+              <div class="mail-stat"><span>Uptime</span><strong>{{ dbStats.postgresql.uptime }}</strong></div>
+              <div class="mail-stat"><span>Conexiones</span><strong>{{ dbStats.postgresql.connections_now }} / {{ dbStats.postgresql.connections_max }}</strong></div>
+              <div class="mail-stat"><span>Activas ahora</span><strong>{{ dbStats.postgresql.connections_active }}</strong></div>
+              <div class="mail-stat"><span>Bases de datos</span><strong>{{ dbStats.postgresql.databases }}</strong></div>
+              <div class="mail-stat"><span>Tamaño panel_db</span><strong>{{ dbStats.postgresql.panel_db_size }}</strong></div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </template>
   </div>
 </template>
 
@@ -466,6 +524,22 @@ export default {
       if (!web.value) loadWeb()
     }
 
+    // ── Pestaña BBDD ──
+    const dbStats = ref(null)
+    const dbLoading = ref(false)
+    const loadDb = async () => {
+      dbLoading.value = true
+      try {
+        dbStats.value = await api.get('/api/monitoring/services/db')
+      } catch (e) {
+        store.showNotification('Error al cargar estadísticas de BD: ' + e.message, 'danger')
+      } finally { dbLoading.value = false }
+    }
+    const selectDbTab = () => {
+      tab.value = 'bbdd'
+      if (!dbStats.value) loadDb()
+    }
+
     onMounted(async () => {
       await Promise.all([loadHistory(), loadConfig(), loadEvents()])
       // Refresco automático cada 60s según la pestaña activa
@@ -473,6 +547,7 @@ export default {
         if (tab.value === 'recursos') { loadHistory(); loadEvents() }
         else if (tab.value === 'correo') { loadMail() }
         else if (tab.value === 'web') { loadWeb() }
+        else if (tab.value === 'bbdd') { loadDb() }
       }, 60000)
     })
     onUnmounted(() => { if (refreshTimer) clearInterval(refreshTimer) })
@@ -483,6 +558,7 @@ export default {
       openAlerts, setRange, saveCfg, sendTest, relTime,
       tab, mail, mailLoading, loadMail, selectMailTab, fmtAge,
       web, webLoading, loadWeb, selectWebTab, fmtNum,
+      dbStats, dbLoading, loadDb, selectDbTab,
     }
   },
 }
