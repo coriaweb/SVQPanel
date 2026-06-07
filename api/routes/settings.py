@@ -654,9 +654,24 @@ async def run_panel_backup(current_user=Depends(require_admin)):
 
 
 @router.get("/settings/panel-backup/download/{filename}")
-async def download_panel_backup(filename: str, current_user=Depends(require_admin)):
-    """Descarga un fichero de backup del panel."""
+async def download_panel_backup(filename: str, token: str = "", db: Session = Depends(get_db)):
+    """
+    Descarga un fichero de backup del panel. Como es una descarga directa por
+    <a href> (sin header Authorization), el token JWT se pasa por query param y
+    se valida aquí exigiendo rol admin.
+    """
     from fastapi.responses import FileResponse
+    from api.models.models_user import User
+
+    # Validar el token del query param y exigir admin
+    try:
+        payload = User.verify_token(token)
+        user = db.query(User).filter(User.id == int(payload.get("sub"))).first()
+    except Exception:
+        raise HTTPException(401, "Token inválido")
+    if not user or not user.is_admin:
+        raise HTTPException(403, "Solo administradores pueden descargar backups")
+
     try:
         from scripts.panel_backup_manager import PanelBackupManager
         path = PanelBackupManager().get_backup_path(filename)

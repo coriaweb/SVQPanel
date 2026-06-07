@@ -499,6 +499,57 @@
         </div>
       </div>
 
+      <!-- Backup del propio panel -->
+      <div class="sv-full" v-show="tab==='sistema'">
+        <div class="card">
+          <div class="card-header d-flex justify-content-between align-items-center">
+            <span><i class="bi bi-database-fill-down me-2"></i> Backup del panel</span>
+            <button class="btn btn-primary btn-sm" @click="runPanelBackup" :disabled="pbRunning">
+              <span v-if="pbRunning" class="spinner-border spinner-border-sm me-1"></span>
+              <i v-else class="bi bi-play-circle me-1"></i> Backup ahora
+            </button>
+          </div>
+          <div class="card-body">
+            <p class="text-muted small mb-3">
+              Copia de seguridad de la base de datos del panel (usuarios, dominios, DNS, correo,
+              planes, configuración) y los ficheros críticos (<code>.env</code>, claves DKIM, etc.).
+              Se ejecuta <strong>automáticamente cada día a las 03:30</strong> y se conservan los 7 más recientes.
+            </p>
+
+            <div v-if="!panelBackups.length" class="text-muted small">
+              No hay backups todavía. Pulsa «Backup ahora» para crear el primero.
+            </div>
+            <div v-else class="pb-list">
+              <div class="pb-row pb-row--head">
+                <span>Fecha</span><span>Tamaño</span><span class="text-end">Descargar</span>
+              </div>
+              <div v-for="b in panelBackups" :key="b.timestamp" class="pb-row">
+                <span>{{ formatBackupDate(b.created_at) }}</span>
+                <span>{{ fmtBytes(b.size) }}</span>
+                <span class="text-end">
+                  <a v-if="b.db_file" :href="downloadUrl(b.db_file)" class="pb-dl" title="Base de datos">
+                    <i class="bi bi-filetype-sql"></i> BD
+                  </a>
+                  <a v-if="b.config_file" :href="downloadUrl(b.config_file)" class="pb-dl ms-2" title="Configuración">
+                    <i class="bi bi-file-zip"></i> Config
+                  </a>
+                </span>
+              </div>
+            </div>
+
+            <details class="mt-3">
+              <summary class="small text-muted" style="cursor:pointer">¿Cómo restaurar un backup?</summary>
+              <div class="alert alert-secondary py-2 small mt-2 mb-0 font-monospace">
+                # Por SSH, en el servidor:<br>
+                gunzip -c panel_db_FECHA.sql.gz | psql -U panel_user panel_db<br>
+                tar xzf config_FECHA.tar.gz -C /   # revisa antes de sobrescribir<br>
+                systemctl restart svqpanel
+              </div>
+            </details>
+          </div>
+        </div>
+      </div>
+
       <!-- Whitelist de IPs del panel -->
       <div class="sv-full" v-show="tab==='sistema'">
         <div class="card" :class="wl.enabled ? 'border-warning' : ''">
@@ -843,6 +894,47 @@ export default {
     const smtpTestMsg = ref('')
     const smtpTestOk  = ref(false)
     const showSmtpTest = ref(false)
+
+    // ─── Backup del panel ───
+    const panelBackups = ref([])
+    const pbRunning = ref(false)
+
+    const loadPanelBackups = async () => {
+      try {
+        const r = await api.get('/api/settings/panel-backup')
+        panelBackups.value = r.backups || []
+      } catch { /* silencioso */ }
+    }
+    const runPanelBackup = async () => {
+      pbRunning.value = true
+      try {
+        await api.post('/api/settings/panel-backup', {})
+        store.showNotification('Backup del panel creado', 'success')
+        await loadPanelBackups()
+      } catch (e) {
+        store.showNotification('Error: ' + (e.message || e), 'danger')
+      } finally {
+        pbRunning.value = false
+      }
+    }
+    const downloadUrl = (filename) => {
+      const token = localStorage.getItem('token') || ''
+      return `/api/settings/panel-backup/download/${filename}?token=${encodeURIComponent(token)}`
+    }
+    const fmtBytes = (b) => {
+      if (!b) return '—'
+      if (b >= 1048576) return (b / 1048576).toFixed(1) + ' MB'
+      if (b >= 1024) return (b / 1024).toFixed(0) + ' KB'
+      return b + ' B'
+    }
+    const formatBackupDate = (iso) => {
+      if (!iso) return '—'
+      try {
+        return new Date(iso).toLocaleString('es-ES', {
+          day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit',
+        })
+      } catch { return iso }
+    }
 
     // ─── Whitelist de IPs del panel ───
     const wl = reactive({ enabled: false, ips: '', your_ip: '' })
@@ -1309,6 +1401,7 @@ export default {
       loadRelay()
       loadSmtp()
       loadWhitelist()
+      loadPanelBackups()
     })
 
     return {
@@ -1316,6 +1409,7 @@ export default {
       smtp, smtpSaving, smtpTesting, smtpTestMsg, smtpTestOk,
       showSmtpTest, smtpTestTo, saveSmtp, openSmtpTest, sendSmtpTest,
       wl, wlSaving, showWlConfirm, previewIps, confirmSaveWhitelist, saveWhitelist,
+      panelBackups, pbRunning, runPanelBackup, downloadUrl, fmtBytes, formatBackupDate,
       loading, saving, settings, form, parsedRange, saveSettings,
       installedPhpVersions, recommendedPhp, defaultPhpNotInstalled,
       phpVersions, phpLoading, phpError, phpActionLoading,
@@ -1345,6 +1439,15 @@ export default {
 .set-tab { display:inline-flex; align-items:center; gap:6px; padding:.45rem .9rem; border-radius:var(--r-sm,6px); font-size:.85rem; font-weight:500; cursor:pointer; border:none; background:none; color:var(--text-muted); transition:all .15s; }
 .set-tab:hover { background:var(--surface); color:var(--text); }
 .set-tab--active { background:var(--surface); color:var(--text); box-shadow:0 1px 3px rgba(0,0,0,.08); }
+
+/* Lista de backups del panel */
+.pb-list { display:flex; flex-direction:column; border:1px solid var(--border); border-radius:var(--r-sm,6px); overflow:hidden; }
+.pb-row { display:grid; grid-template-columns:1fr auto 130px; gap:1rem; padding:.55rem .85rem; align-items:center; font-size:.85rem; border-bottom:1px solid var(--border); }
+.pb-row:last-child { border-bottom:none; }
+.pb-row--head { background:var(--surface-2); font-size:.72rem; font-weight:600; text-transform:uppercase; letter-spacing:.04em; color:var(--text-muted); }
+.pb-dl { display:inline-flex; align-items:center; gap:3px; font-size:.78rem; color:var(--ac); text-decoration:none; }
+.pb-dl:hover { text-decoration:underline; }
+@media (max-width:560px) { .pb-row { grid-template-columns:1fr auto; } .pb-row span:nth-child(2) { display:none; } }
 
 /* Lista de versiones PHP — fila en desktop, tarjeta apilada en móvil */
 .php-list { display: flex; flex-direction: column; }
