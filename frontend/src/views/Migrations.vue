@@ -20,10 +20,10 @@
         <label class="mig-field">
           <span>Origen</span>
           <select class="svq-select" v-model="source">
-            <option value="upload">Subir archivo .tar</option>
+            <option value="upload">Subir archivo</option>
             <option value="path">Ruta en el servidor</option>
             <option value="url">Descargar desde URL</option>
-            <option value="ssh">SSH al servidor Hestia</option>
+            <option v-if="sourcePanel === 'hestia'" value="ssh">SSH al servidor remoto</option>
           </select>
         </label>
 
@@ -51,9 +51,9 @@
         </template>
       </p>
 
-      <!-- Campos SSH (origen = ssh) -->
+      <!-- Campos SSH (origen = ssh, solo Hestia) -->
       <div v-if="source === 'ssh'" class="mig-grid mig-ssh">
-        <label class="mig-field"><span>Host del Hestia origen</span>
+        <label class="mig-field"><span>Host del servidor Hestia origen</span>
           <input class="svq-input mono" v-model="ssh.host" placeholder="1.2.3.4" /></label>
         <label class="mig-field"><span>Usuario SSH</span>
           <input class="svq-input mono" v-model="ssh.user" placeholder="root" /></label>
@@ -234,7 +234,7 @@
 </template>
 
 <script>
-import { ref, computed, onUnmounted } from 'vue'
+import { ref, computed, onUnmounted, watch } from 'vue'
 import api from '../services/api'
 import { useMainStore } from '../stores/useMainStore'
 import BaseCard from '../components/ui/BaseCard.vue'
@@ -316,7 +316,7 @@ export default {
     const analyze = async () => {
       analyzing.value = true; manifest.value = null; job.value = null; dnsZones.value = []
       try {
-        const r = await api.hestiaAnalyze(_formData())
+        const r = await api.migrationAnalyze(_formData())
         manifest.value = r.data
         // Clonar las zonas DNS para edición local (registros + estado abierto).
         dnsZones.value = (r.data.dns || []).map((z, i) => ({
@@ -335,7 +335,7 @@ export default {
       if (!confirm(`¿Importar el backup a la cuenta «${targetUsername.value}»? Se crearán los recursos en el servidor.`)) return
       importing.value = true
       try {
-        const r = await api.hestiaImport(_formData(true))
+        const r = await api.migrationImport(_formData(true))
         const jobId = r.data.job_id
         job.value = { status: 'pending', report: null }
         _poll(jobId)
@@ -361,6 +361,14 @@ export default {
       }
       tick()
     }
+
+    // El origen SSH (v-backup-user) solo aplica a Hestia; si se cambia a cPanel
+    // con SSH activo, volvemos a "subir archivo". Además, al cambiar de panel se
+    // limpia el análisis previo (es de otro formato).
+    watch(sourcePanel, () => {
+      if (source.value === 'ssh') source.value = 'upload'
+      manifest.value = null; dnsZones.value = []; job.value = null
+    })
 
     onUnmounted(() => { if (pollTimer) clearTimeout(pollTimer) })
     loadUsers()

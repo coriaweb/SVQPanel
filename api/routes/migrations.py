@@ -212,8 +212,8 @@ def _ssh_from_form(host, user, password, key, port, hestia_user) -> Optional[dic
 # ─────────────────────────────────────────────────────────────────────────────
 # Análisis (preflight) — NO toca el sistema
 # ─────────────────────────────────────────────────────────────────────────────
-@router.post("/migrations/hestia/analyze")
-async def hestia_analyze(
+@router.post("/migrations/analyze")
+async def migration_analyze(
     file: Optional[UploadFile] = File(None),
     path: Optional[str] = Form(None),
     url: Optional[str] = Form(None),
@@ -360,8 +360,8 @@ def _run_import_job(job_id: int, tar_path: str, cleanup_tar: bool,
                 pass
 
 
-@router.post("/migrations/hestia/import")
-async def hestia_import(
+@router.post("/migrations/import")
+async def migration_import(
     background_tasks: BackgroundTasks,
     file: Optional[UploadFile] = File(None),
     path: Optional[str] = Form(None),

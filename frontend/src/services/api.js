@@ -763,11 +763,11 @@ class APIClient {
       xhr.send(formData)
     })
   }
-  hestiaAnalyze(formData, onProgress = null) {
-    return this._multipart('/api/migrations/hestia/analyze', formData, onProgress)
+  migrationAnalyze(formData, onProgress = null) {
+    return this._multipart('/api/migrations/analyze', formData, onProgress)
   }
-  hestiaImport(formData, onProgress = null) {
-    return this._multipart('/api/migrations/hestia/import', formData, onProgress)
+  migrationImport(formData, onProgress = null) {
+    return this._multipart('/api/migrations/import', formData, onProgress)
   }
   getMigrationJob(jobId) {
     return this.get(`/api/migrations/jobs/${jobId}`)
