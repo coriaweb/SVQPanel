@@ -312,12 +312,17 @@ async def run_system_upgrade(
                 cmd = ["sudo", apt_get_path, "upgrade", "-y", "-o", "Dpkg::Options::=--force-confold"]
 
         result = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
+        stderr = result.stderr or ""
+        # Detectar el caso "dpkg interrumpido": apt no puede continuar hasta que
+        # se ejecute 'dpkg --configure -a'. La UI ofrece un botón de reparar.
+        dpkg_interrupted = "dpkg was interrupted" in stderr or "dpkg --configure -a" in stderr
         return {
             "success":   result.returncode == 0,
             "package":   package or "all",
             "stdout":    result.stdout[-4000:] if result.stdout else "",
-            "stderr":    result.stderr[-2000:] if result.stderr else "",
+            "stderr":    stderr[-2000:],
             "returncode": result.returncode,
+            "dpkg_interrupted": dpkg_interrupted,
         }
     except HTTPException:
         raise
@@ -325,6 +330,38 @@ async def run_system_upgrade(
         raise HTTPException(status_code=504, detail="Tiempo de espera agotado (apt-get)")
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error actualizando: {str(e)}")
+
+
+@router.post("/system/updates/repair-dpkg")
+async def repair_dpkg(current_user=Depends(require_admin)):
+    """
+    Repara un dpkg en estado interrumpido ejecutando 'dpkg --configure -a'.
+    Caso típico: una actualización previa se cortó a medias y bloquea apt con el
+    error "dpkg was interrupted, you must manually run 'dpkg --configure -a'".
+    Es una operación segura e idempotente (solo termina de configurar paquetes
+    ya descargados).
+    """
+    import subprocess
+    import os
+    import shutil
+
+    try:
+        dpkg_path = shutil.which("dpkg") or "/usr/bin/dpkg"
+        is_root = os.getuid() == 0
+        base = [dpkg_path, "--configure", "-a"]
+        cmd = base if is_root else ["sudo"] + base
+        env = {**os.environ, "DEBIAN_FRONTEND": "noninteractive"}
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=300, env=env)
+        return {
+            "success":    result.returncode == 0,
+            "stdout":     (result.stdout or "")[-4000:],
+            "stderr":     (result.stderr or "")[-2000:],
+            "returncode": result.returncode,
+        }
+    except subprocess.TimeoutExpired:
+        raise HTTPException(status_code=504, detail="Tiempo de espera agotado (dpkg --configure -a)")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error reparando dpkg: {str(e)}")
 
 
 # ─────────────────────────────────────────────────────────────────────────────

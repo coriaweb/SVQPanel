@@ -966,6 +966,10 @@ class APIClient {
     return this.post('/api/system/updates/upgrade', packageName ? { package: packageName } : {})
   }
 
+  repairDpkg() {
+    return this.post('/api/system/updates/repair-dpkg', {})
+  }
+
   getNotifications(onlyUnread = false) {
     return this.get(`/api/notifications?only_unread=${onlyUnread ? 'true' : 'false'}`)
   }
