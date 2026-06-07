@@ -226,6 +226,27 @@ service auth {
 }
 DOVESASLEOF
 
+# Plugin de cuota: sin esto Dovecot NI aplica las cuotas por buzón NI permite
+# consultarlas (doveadm quota get). El backend escribe quota_rule en
+# /etc/dovecot/users; aquí activamos el plugin que lo hace efectivo y expone el
+# uso real para mostrarlo en el panel.
+cat > /etc/dovecot/conf.d/90-svqpanel-quota.conf << 'DOVEQUOTAEOF'
+# SVQPanel: cuotas por buzón (backend maildir, por usuario vía userdb quota_rule)
+mail_plugins = $mail_plugins quota
+plugin {
+  quota = maildir:User quota
+}
+DOVEQUOTAEOF
+
+# Asegurar que el servicio imap también carga el plugin quota.
+if ! grep -q 'mail_plugins.*quota' /etc/dovecot/conf.d/20-imap.conf 2>/dev/null; then
+  cat >> /etc/dovecot/conf.d/20-imap.conf << 'DOVEIMAPQUOTAEOF'
+protocol imap {
+  mail_plugins = $mail_plugins quota imap_quota
+}
+DOVEIMAPQUOTAEOF
+fi
+
 systemctl enable dovecot
 systemctl restart dovecot
 echo -e "${GREEN}✓ Dovecot configurado (IMAP 143/993, POP3 110/995)${NC}"
