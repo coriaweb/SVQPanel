@@ -978,6 +978,15 @@ class APIClient {
     return this.post('/api/system/updates/repair-dpkg', {})
   }
 
+  // Visor de logs del servidor
+  getLogsCatalog() {
+    return this.get('/api/system/logs/catalog')
+  }
+  readSystemLog(key, { lines = 300, search = '', regex = false } = {}) {
+    const q = new URLSearchParams({ key, lines, search, regex })
+    return this.get(`/api/system/logs?${q.toString()}`)
+  }
+
   getNotifications(onlyUnread = false) {
     return this.get(`/api/notifications?only_unread=${onlyUnread ? 'true' : 'false'}`)
   }

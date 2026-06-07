@@ -14,6 +14,7 @@ const DNS            = () => import('../views/DNS.vue')
 const Mail           = () => import('../views/Mail.vue')
 const Settings       = () => import('../views/Settings.vue')
 const SystemServices = () => import('../views/SystemServices.vue')
+const Logs           = () => import('../views/Logs.vue')
 const Security       = () => import('../views/Security.vue')
 const Monitoring     = () => import('../views/Monitoring.vue')
 const FileManager    = () => import('../views/FileManager.vue')
@@ -117,6 +118,12 @@ const routes = [
     path: '/system',
     name: 'SystemServices',
     component: SystemServices,
+    meta: { requiresAuth: true, requiresAdmin: true }
+  },
+  {
+    path: '/logs',
+    name: 'Logs',
+    component: Logs,
     meta: { requiresAuth: true, requiresAdmin: true }
   },
   {
