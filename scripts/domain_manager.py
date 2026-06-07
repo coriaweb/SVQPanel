@@ -167,33 +167,46 @@ class DomainManager(SystemManager):
                 raise RuntimeError(f"No se pudo crear el pool PHP-FPM: {msg}")
             php_socket = phpini.pool_socket_path(domain_name)
 
-            # Crear configuración según webserver
+            # Crear configuración según webserver.
+            # IMPORTANTE (modo apache+nginx): nginx es SIEMPRE el front que
+            # escucha 80/443, hace SSL y proxy_pass a Apache (127.0.0.1:8181),
+            # que sirve el PHP respetando .htaccess. Por tanto, en modo "apache"
+            # hay que crear AMBOS vhosts (Apache backend + nginx front), no solo
+            # el de Apache. Antes solo se creaba el de Apache y el dominio quedaba
+            # sin vhost nginx activo → nginx servía la página por defecto y el
+            # cert del panel (ERR_CERT_COMMON_NAME_INVALID).
             if webserver == "apache":
                 from scripts.apache_vhost_generator import generate_apache_vhost
                 from scripts.webserver_config import get_apache_vhost_path
-                config_path = get_apache_vhost_path(domain_name)
-                config_content = generate_apache_vhost(
-                    domain_name,
-                    username,
-                    php_version,
-                    ssl_enabled=False,
-                )
-                with open(config_path, "w") as f:
-                    f.write(config_content)
-                logger.info(f"Created Apache vhost: {config_path}")
 
-                # Habilitar sitio
-                self.execute_command(
-                    ["a2ensite", domain_name],
-                    check=False  # No fallar si ya está habilitado
-                )
-                # Reload Apache
+                # 1) Vhost Apache BACKEND (127.0.0.1:8181)
+                apache_path = get_apache_vhost_path(domain_name)
+                with open(apache_path, "w") as f:
+                    f.write(generate_apache_vhost(
+                        domain_name, username, php_version, ssl_enabled=False,
+                    ))
+                logger.info(f"Created Apache vhost: {apache_path}")
+                self.execute_command(["a2ensite", domain_name], check=False)
                 try:
                     self.execute_command(["systemctl", "reload", "apache2"])
-                except:
+                except Exception:
                     raise RuntimeError("Apache reload failed")
 
-            else:  # nginx
+                # 2) Vhost Nginx FRONT (80/443) que hace proxy a Apache
+                config_path = get_nginx_config_path(domain_name)
+                with open(config_path, "w") as f:
+                    f.write(generate_nginx_config(
+                        domain_name, username, php_version,
+                        ssl_enabled=False,
+                        proxy_to_apache=True,
+                    ))
+                logger.info(f"Created Nginx front vhost (proxy→Apache): {config_path}")
+                enabled_link = f"/etc/nginx/sites-enabled/{domain_name}"
+                self.execute_command(["ln", "-sf", config_path, enabled_link])
+                if not reload_nginx():
+                    raise RuntimeError("Nginx configuration test failed")
+
+            else:  # nginx solo
                 config_path = get_nginx_config_path(domain_name)
                 config_content = generate_nginx_config(
                     domain_name,
@@ -453,6 +466,11 @@ class DomainManager(SystemManager):
             )
             with open(config_path, "w") as f:
                 f.write(config_content)
+            # Asegurar que el vhost nginx FRONT está activo (symlink en
+            # sites-enabled). Sin esto, nginx no carga el vhost del dominio y
+            # sirve la página/cert por defecto del panel.
+            enabled_link = f"/etc/nginx/sites-enabled/{domain_name}"
+            self.execute_command(["ln", "-sf", config_path, enabled_link])
             if not reload_nginx():
                 raise RuntimeError("Nginx reload failed tras regenerar vhost (modo apache)")
 
