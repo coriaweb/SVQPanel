@@ -584,6 +584,10 @@ class APIClient {
     return this.get(`/api/mail/domains/${domainId}/mailboxes`)
   }
 
+  getMailSendUsage(domainId) {
+    return this.get(`/api/mail/domains/${domainId}/send-usage`)
+  }
+
   createMailbox(domainId, data) {
     return this.post(`/api/mail/domains/${domainId}/mailboxes`, data)
   }

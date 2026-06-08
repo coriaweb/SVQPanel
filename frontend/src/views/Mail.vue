@@ -198,11 +198,24 @@
                         {{ fmtMB(mb.disk_usage_mb) }} / {{ fmtMB(mb.quota_mb) }}
                         <span class="mbx__pct" :class="usageClass(mb)">({{ usagePct(mb) }}%)</span>
                       </template>
-                      <span style="margin-left:8px"><i class="bi bi-send"></i>
-                        {{ mb.send_limit_hour === 0 ? 'envío libre' : mb.send_limit_hour + '/h' }}</span>
+                      <span style="margin-left:8px">
+                        <i class="bi bi-send"></i>
+                        <template v-if="mb.send_limit_hour === 0">envío libre</template>
+                        <template v-else-if="sendUsage[mb.id] != null">
+                          {{ sendUsage[mb.id].sent }}/{{ mb.send_limit_hour }} /h
+                          <span class="mbx__pct" :class="sendClass(mb)">({{ sendPct(mb) }}%)</span>
+                        </template>
+                        <template v-else>
+                          {{ mb.send_limit_hour }}/h
+                          <button class="mbx__inline-link" :disabled="loadingSend" @click="loadSendUsage(mb.mail_domain_id)">ver uso</button>
+                        </template>
+                      </span>
                     </span>
                     <div v-if="mb.quota_mb > 0" class="mbx__bar">
                       <div class="mbx__bar-fill" :class="usageClass(mb)" :style="{ width: Math.min(usagePct(mb),100) + '%' }"></div>
+                    </div>
+                    <div v-if="mb.send_limit_hour > 0 && sendUsage[mb.id] != null" class="mbx__bar">
+                      <div class="mbx__bar-fill" :class="sendClass(mb)" :style="{ width: Math.min(sendPct(mb),100) + '%' }"></div>
                     </div>
                   </div>
                   <span class="mbx__status" :class="mb.is_active ? 'is-on' : 'is-off'">
@@ -1161,6 +1174,7 @@ export default {
 
     const loadMailboxes = async (domainId) => {
       loadingMailboxes.value = true
+      sendUsage.value = {}   // el uso de envío es por dominio; resetear al recargar
       try {
         mailboxes.value = await api.getMailboxes(domainId)
       } catch (e) {
@@ -1607,6 +1621,34 @@ export default {
       return 'is-ok'
     }
 
+    // ── Uso de envío en la última hora (bajo demanda) ──
+    const sendUsage = ref({})       // { mailbox_id: {sent, limit} }
+    const loadingSend = ref(false)
+    const loadSendUsage = async (domainId) => {
+      const did = domainId || selectedDomain.value?.id
+      if (!did) return
+      loadingSend.value = true
+      try {
+        const r = await api.getMailSendUsage(did)
+        const map = {}
+        for (const it of (r.data || [])) map[it.mailbox_id] = { sent: it.sent_last_hour, limit: it.send_limit_hour }
+        sendUsage.value = map
+      } catch (e) {
+        store.showNotification('No pude leer el uso de envío: ' + e.message, 'danger')
+      } finally { loadingSend.value = false }
+    }
+    const sendPct = (mb) => {
+      const u = sendUsage.value[mb.id]
+      if (!u || !mb.send_limit_hour) return 0
+      return Math.round(u.sent / mb.send_limit_hour * 100)
+    }
+    const sendClass = (mb) => {
+      const p = sendPct(mb)
+      if (p >= 90) return 'is-danger'
+      if (p >= 75) return 'is-warn'
+      return 'is-ok'
+    }
+
     // ─────────────────────────────────────────────────────────────────
     // Editar buzón (cuota + límite de envío)
     // ─────────────────────────────────────────────────────────────────
@@ -1830,6 +1872,7 @@ export default {
       showAutoreplyModal, autoreplyTarget, autoreplyForm, openAutoreplyModal, saveAutoreply,
       showEditModal, editTarget, editForm, openEditMailbox, saveEditMailbox,
       fmtMB, usagePct, usageClass,
+      sendUsage, loadingSend, loadSendUsage, sendPct, sendClass,
       // Roundcube
       roundcubeEnabled, roundcubeUrl, openingWebmail,
       // Webmail por dominio
@@ -1977,6 +2020,8 @@ export default {
 .mbx__bar-fill.is-ok { background: var(--success, #2ea043); }
 .mbx__bar-fill.is-warn { background: var(--warning); }
 .mbx__bar-fill.is-danger { background: var(--danger); }
+.mbx__inline-link { background: none; border: none; padding: 0 0 0 4px; color: var(--accent, var(--svq-orange)); cursor: pointer; font-size: inherit; text-decoration: underline; }
+.mbx__inline-link:disabled { opacity: .5; cursor: default; }
 .mbx__status { display: inline-flex; align-items: center; gap: 5px; font-size: var(--fs-sm); font-weight: var(--fw-medium); flex-shrink: 0; }
 .mbx__status .dot { width: 7px; height: 7px; border-radius: 50%; }
 .mbx__status.is-on { color: var(--success); } .mbx__status.is-on .dot { background: var(--success); }

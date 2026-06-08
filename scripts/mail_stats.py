@@ -206,6 +206,73 @@ def _extract_bounce_reason(line: str) -> str:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# Correos enviados por buzón en la última hora (para la barra de límite de envío)
+# ─────────────────────────────────────────────────────────────────────────────
+def sent_last_hour(emails=None) -> dict:
+    """Cuenta los correos ENVIADOS por cada buzón autenticado en los últimos 60 min.
+
+    En Postfix el envío autenticado deja `sasl_username=<email>` en la línea de
+    `smtpd` (al recibir el mensaje del cliente) y el `status=sent` aparece después
+    en una línea de `smtp`/`lmtp`; ambas se enlazan por el QUEUE-ID. Aquí
+    correlacionamos: queue-id → sasl_username, y contamos los que acabaron en
+    status=sent dentro de la última hora.
+
+    `emails`: lista opcional para filtrar (solo cuenta esos buzones). Devuelve
+    {email: nº enviado}.
+    """
+    result = {}
+    if not os.path.isfile(MAIL_LOG):
+        return result
+    rc, so, _ = _run(["tail", "-n", str(_LOG_TAIL_LINES), MAIL_LOG], timeout=20)
+    if rc != 0 or not so:
+        return result
+
+    wanted = set(e.lower() for e in emails) if emails else None
+    cutoff = datetime.utcnow().timestamp() - 3600
+
+    qid_user = {}      # queue-id → sasl_username (remitente autenticado)
+    counts = Counter()
+
+    for line in so.splitlines():
+        ts = _line_ts(line)
+        if ts is not None and ts < cutoff:
+            # Línea antigua: si ya guardamos su qid, podemos olvidarlo luego.
+            continue
+
+        # 1) Línea smtpd con sasl_username: asociar queue-id ↔ usuario.
+        if "sasl_username=" in line and "postfix/smtpd" in line:
+            mu = re.search(r"sasl_username=([^\s,]+)", line)
+            mq = re.search(r"postfix/smtpd\[\d+\]:\s+([0-9A-F]{6,}):", line)
+            if mu and mq:
+                user = mu.group(1).lower()
+                if user and user != "(unavailable)":
+                    qid_user[mq.group(1)] = user
+            continue
+
+        # 2) Línea de entrega con status=sent: contar contra el usuario del qid.
+        if "status=sent" in line:
+            mq = re.search(r"postfix/(?:smtp|lmtp|pipe|virtual)\[\d+\]:\s+([0-9A-F]{6,}):", line)
+            if mq:
+                user = qid_user.get(mq.group(1))
+                if user and (wanted is None or user in wanted):
+                    counts[user] += 1
+
+    result = dict(counts)
+    return result
+
+
+def _line_ts(line: str):
+    """Timestamp epoch de una línea de mail.log (ISO8601 al inicio), o None."""
+    try:
+        # 2026-06-08T03:44:31.189840+00:00 …
+        iso = line[:19]
+        dt = datetime.strptime(iso, "%Y-%m-%dT%H:%M:%S")
+        return dt.timestamp()
+    except (ValueError, IndexError):
+        return None
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # Agregador
 # ─────────────────────────────────────────────────────────────────────────────
 def collect() -> dict:

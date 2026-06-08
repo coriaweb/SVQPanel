@@ -1075,6 +1075,44 @@ async def list_mailboxes(
     return [_mailbox_to_dict(mb, usage.get(mb.id, 0.0)) for mb in md.mailboxes]
 
 
+@router.get("/mail/domains/{domain_id}/send-usage")
+async def mailboxes_send_usage(
+    domain_id: int,
+    current_user=Depends(require_auth),
+    db: Session = Depends(get_db),
+):
+    """Correos enviados por cada buzón del dominio en los últimos 60 min.
+
+    Se calcula bajo demanda (lee el mail.log) para no penalizar el listado. Cada
+    item: {mailbox_id, full_email, sent_last_hour, send_limit_hour, pct}.
+    """
+    md = _get_mail_domain_or_404(domain_id, db)
+    _require_edit(md, current_user)
+
+    emails = [f"{mb.username}@{md.domain_name}" for mb in md.mailboxes]
+    sent = {}
+    try:
+        from scripts.mail_stats import sent_last_hour
+        sent = sent_last_hour(emails)
+    except Exception:
+        sent = {}
+
+    out = []
+    for mb in md.mailboxes:
+        email = f"{mb.username}@{md.domain_name}"
+        n = int(sent.get(email.lower(), 0))
+        limit = int(getattr(mb, "send_limit_hour", 0) or 0)
+        pct = round(n / limit * 100) if limit > 0 else 0
+        out.append({
+            "mailbox_id": mb.id,
+            "full_email": email,
+            "sent_last_hour": n,
+            "send_limit_hour": limit,
+            "pct": pct,
+        })
+    return {"status": "success", "data": out}
+
+
 @router.post("/mail/domains/{domain_id}/mailboxes",
              response_model=MailboxResponse,
              status_code=status.HTTP_201_CREATED)
