@@ -40,3 +40,4 @@ exit 0
 | 0001 | Nginx desde repo oficial + HTTP/3    | 2026-06-04 |
 | 0002 | PostgreSQL PGDG (PG15 → PG18)        | 2026-06-04 |
 | 0003 | Terminal web — jaula chroot clientes | 2026-06-08 |
+| 0004 | Terminal web — fix jaula (pts/binarios) | 2026-06-08 |

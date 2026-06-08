@@ -126,12 +126,13 @@ else
   # puede recorrer el resto del servidor. terminal_jail prepara el bind-mount y
   # devuelve el comando jk_chrootlaunch. Si la jaula no está disponible, NO
   # caemos a una shell sin enjaular (sería fuga de info): cerramos.
-  CMD="$(/opt/svqpanel/venv/bin/python -m scripts.terminal_jail "$TARGET" 2>/dev/null)"
+  CMD="$(cd /opt/svqpanel && /opt/svqpanel/venv/bin/python -m scripts.terminal_jail "$TARGET" 2>/dev/null)"
   if [[ -z "$CMD" ]]; then
     echo "La jaula de seguridad no está disponible. Contacta con el administrador."
     exit 1
   fi
-  exec $CMD
+  # El comando incluye comillas (chroot ... bash -lc '...'): usar eval+exec.
+  eval "exec $CMD"
 fi
 '''
     tmp = LAUNCHER + ".tmp"
