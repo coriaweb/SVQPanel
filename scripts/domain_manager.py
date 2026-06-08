@@ -400,6 +400,7 @@ class DomainManager(SystemManager):
         webserver: str = None,
         custom_nginx_config: str = None,
         custom_apache_config: str = None,
+        httpauth: dict = None,
     ) -> dict:
         """
         Regenera la vhost completa del dominio con TODO el estado actual
@@ -441,6 +442,7 @@ class DomainManager(SystemManager):
                 allowed_mutation_ips=allowed_mutation_ips,
                 php_socket_override=php_socket_override,
                 custom_apache_config=custom_apache_config,
+                httpauth=httpauth,
             )
             with open(apache_path, "w") as f:
                 f.write(apache_content)
@@ -479,6 +481,7 @@ class DomainManager(SystemManager):
                 http3_enabled=http3_enabled,
                 proxy_to_apache=True,
                 custom_nginx_config=custom_nginx_config,
+                httpauth=httpauth,
             )
             with open(config_path, "w") as f:
                 f.write(config_content)
@@ -527,6 +530,7 @@ class DomainManager(SystemManager):
                 security_headers_enabled=security_headers_enabled,
                 http3_enabled=http3_enabled,
                 custom_nginx_config=custom_nginx_config,
+                httpauth=httpauth,
             )
             with open(config_path, "w") as f:
                 f.write(config_content)
@@ -535,6 +539,49 @@ class DomainManager(SystemManager):
                 raise RuntimeError("Nginx reload failed tras regenerar vhost")
 
         return {"success": True, "domain": domain_name}
+
+    # ── Protección con contraseña (.htpasswd) ──────────────────────────────────
+    def htpasswd_path(self, username: str, domain_name: str) -> str:
+        """Ruta del .htpasswd del dominio (fuera del docroot público)."""
+        return f"/home/{username}/web/{domain_name}/.htpasswd"
+
+    def write_htpasswd(self, username: str, domain_name: str,
+                       auth_user: str, password: str) -> str:
+        """Crea/actualiza el .htpasswd con un usuario. Devuelve el hash apr1.
+
+        Usa `openssl passwd -apr1 -stdin` (la contraseña va por stdin, no por la
+        línea de comandos → no visible en `ps`).
+        """
+        rc, out, err = self.execute_with_input(
+            ["openssl", "passwd", "-apr1", "-stdin"], password + "\n", check=False)
+        if rc != 0 or not out.strip():
+            raise RuntimeError(f"No pude generar el hash de contraseña: {err}")
+        pass_hash = out.strip()
+        path = self.htpasswd_path(username, domain_name)
+        with open(path, "w") as f:
+            f.write(f"{auth_user}:{pass_hash}\n")
+        # 640 y owner www-data:{user}: el webserver (www-data) lo lee, el usuario
+        # del dominio no puede modificarlo a su antojo, y no es servible por HTTP.
+        self.execute_command(["chown", f"www-data:{username}", path], check=False)
+        self.execute_command(["chmod", "640", path], check=False)
+        return pass_hash
+
+    def write_htpasswd_hash(self, username: str, domain_name: str,
+                            auth_user: str, pass_hash: str) -> None:
+        """Reescribe el .htpasswd con un hash ya existente (sin regenerarlo)."""
+        path = self.htpasswd_path(username, domain_name)
+        with open(path, "w") as f:
+            f.write(f"{auth_user}:{pass_hash}\n")
+        self.execute_command(["chown", f"www-data:{username}", path], check=False)
+        self.execute_command(["chmod", "640", path], check=False)
+
+    def remove_htpasswd(self, username: str, domain_name: str) -> None:
+        path = self.htpasswd_path(username, domain_name)
+        if os.path.exists(path):
+            try:
+                os.remove(path)
+            except OSError:
+                pass
 
     def set_fastcgi_cache(
         self,

@@ -453,6 +453,10 @@ def _run_migrations():
         # Directivas personalizadas por dominio (nginx/apache extra del cliente)
         "ALTER TABLE domains ADD COLUMN IF NOT EXISTS custom_nginx_config TEXT",
         "ALTER TABLE domains ADD COLUMN IF NOT EXISTS custom_apache_config TEXT",
+        # Protección con contraseña (auth básica HTTP)
+        "ALTER TABLE domains ADD COLUMN IF NOT EXISTS httpauth_enabled BOOLEAN DEFAULT FALSE",
+        "ALTER TABLE domains ADD COLUMN IF NOT EXISTS httpauth_user VARCHAR(64)",
+        "ALTER TABLE domains ADD COLUMN IF NOT EXISTS httpauth_pass_hash VARCHAR(255)",
         # Redirección 301 y docroot personalizado (Fase 16)
         "ALTER TABLE domains ADD COLUMN IF NOT EXISTS redirect_to VARCHAR(512)",
         "ALTER TABLE domains ADD COLUMN IF NOT EXISTS custom_docroot VARCHAR(512)",

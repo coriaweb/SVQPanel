@@ -302,6 +302,7 @@ def generate_nginx_config(
     http3_enabled: bool = False,
     proxy_to_apache: bool = False,
     custom_nginx_config: Optional[str] = None,
+    httpauth: Optional[dict] = None,
 ) -> str:
     """
     Generate Nginx vhost configuration (Hestia-style paths).
@@ -359,6 +360,15 @@ def generate_nginx_config(
     tpl_extra = ("\n" + template_nginx_extra.rstrip()) if template_nginx_extra else ""
     if custom_nginx_config and custom_nginx_config.strip():
         tpl_extra += "\n    # ── Directivas personalizadas del dominio ──\n" + custom_nginx_config.rstrip() + "\n"
+    # Protección con contraseña (auth básica) a nivel de server → protege todo
+    # el sitio. .well-known/acme-challenge se exime para no romper Let's Encrypt.
+    if httpauth and httpauth.get("file"):
+        _realm = (httpauth.get("realm") or "Zona restringida").replace('"', "'")
+        tpl_extra += (
+            f'\n    # ── Protección con contraseña ──\n'
+            f'    auth_basic "{_realm}";\n'
+            f'    auth_basic_user_file {httpauth["file"]};\n'
+            f'    location ^~ /.well-known/acme-challenge/ {{ auth_basic off; allow all; }}\n')
 
 
     ipv4_listen_http  = f"{ipv4}:80" if ipv4 else "80"

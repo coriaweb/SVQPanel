@@ -723,6 +723,23 @@ class APIClient {
     return this.put(`/api/domains/${domainId}/custom-config`, data)
   }
 
+  // Protección con contraseña (auth básica)
+  updateDomainHttpauth(domainId, data) {
+    return this.put(`/api/domains/${domainId}/httpauth`, data)
+  }
+
+  // Estadísticas de visitas (GoAccess) — devuelve el HTML del informe
+  async getDomainStats(domainId) {
+    const url = `${this.baseURL}/api/domains/${domainId}/stats`
+    const resp = await fetch(url, { headers: { 'Authorization': `Bearer ${localStorage.getItem('token') || this.token}` } })
+    if (!resp.ok) {
+      let msg = `Error ${resp.status}`
+      try { const j = await resp.json(); msg = j.detail || j.message || msg } catch { /* */ }
+      const err = new Error(msg); err.status = resp.status; throw err
+    }
+    return await resp.text()
+  }
+
   // Logs y disk por dominio
   getDomainLogs(domainId, type = 'access', lines = 200) {
     return this.get(`/api/domains/${domainId}/logs?type=${type}&lines=${lines}`)

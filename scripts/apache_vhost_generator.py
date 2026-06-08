@@ -48,6 +48,7 @@ def generate_apache_vhost(
     allowed_mutation_ips: Optional[str] = None,
     php_socket_override: Optional[str] = None,
     custom_apache_config: Optional[str] = None,
+    httpauth: Optional[dict] = None,
 ) -> str:
     """
     Genera el vhost Apache BACKEND (127.0.0.1:8181) de un dominio.

@@ -49,6 +49,12 @@ class Domain(Base):
     custom_nginx_config   = Column(Text, nullable=True)
     custom_apache_config  = Column(Text, nullable=True)
 
+    # Protección con contraseña (auth básica HTTP). El hash (apr1) va al
+    # .htpasswd; aquí guardamos solo metadatos (nunca la contraseña en claro).
+    httpauth_enabled    = Column(Boolean, default=False)
+    httpauth_user       = Column(String(64), nullable=True)
+    httpauth_pass_hash  = Column(String(255), nullable=True)
+
     # Redirección 301 y docroot personalizado (Fase 16)
     redirect_to    = Column(String(512), nullable=True)   # ej: https://otro.com
     custom_docroot = Column(String(512), nullable=True)   # ej: /home/user/web/domain/app/public

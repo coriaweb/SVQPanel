@@ -114,3 +114,67 @@ def collect() -> dict:
         "nginx":   nginx_status(),
         "php_fpm": php_fpm_pools(),
     }
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Informe de visitas por dominio (GoAccess) — bajo demanda
+# ─────────────────────────────────────────────────────────────────────────────
+class WebStatsError(RuntimeError):
+    """Error legible al generar el informe de estadísticas."""
+
+
+def goaccess_available() -> bool:
+    import shutil
+    return shutil.which("goaccess") is not None
+
+
+def _domain_access_logs(username: str, domain: str) -> list:
+    """Logs de acceso del dominio, del más reciente al más antiguo (incluye .1)."""
+    from scripts.utils import get_domain_logs
+    logs_dir = get_domain_logs(username, domain)
+    candidates = []
+    for base in ("nginx.access.log", "apache.access.log"):
+        p = os.path.join(logs_dir, base)
+        if os.path.isfile(p) and os.path.getsize(p) > 0:
+            candidates.append(p)
+        # Log rotado del día anterior
+        p1 = p + ".1"
+        if os.path.isfile(p1) and os.path.getsize(p1) > 0:
+            candidates.append(p1)
+    return candidates
+
+
+def generate_goaccess_report(username: str, domain: str) -> str:
+    """Genera un informe HTML de GoAccess del access.log del dominio.
+
+    Devuelve la ruta de un fichero HTML temporal (el caller lo sirve y lo borra).
+    Lanza WebStatsError si GoAccess no está, o no hay logs con datos.
+    """
+    if not goaccess_available():
+        raise WebStatsError("GoAccess no está instalado en el servidor "
+                            "(apt install goaccess).")
+    logs = _domain_access_logs(username, domain)
+    if not logs:
+        raise WebStatsError("Todavía no hay registros de visitas para este "
+                            "dominio (el access.log está vacío).")
+
+    import tempfile
+    fd, tmp_html = tempfile.mkstemp(prefix="svq_goaccess_", suffix=".html")
+    os.close(fd)
+    # COMBINED es el formato estándar de nginx/apache. --no-global-config evita
+    # depender de un goaccess.conf del sistema. -o genera HTML autocontenido.
+    cmd = ["goaccess", *logs,
+           "-o", tmp_html,
+           "--log-format=COMBINED",
+           "--no-global-config",
+           "--html-report-title=" + domain,
+           "--html-prefs={\"theme\":\"darkBlue\"}"]
+    try:
+        r = subprocess.run(cmd, capture_output=True, text=True, timeout=60, env=_ENV)
+    except subprocess.TimeoutExpired:
+        os.path.exists(tmp_html) and os.remove(tmp_html)
+        raise WebStatsError("GoAccess tardó demasiado (log muy grande).")
+    if r.returncode != 0 or not os.path.isfile(tmp_html) or os.path.getsize(tmp_html) == 0:
+        os.path.exists(tmp_html) and os.remove(tmp_html)
+        raise WebStatsError(f"GoAccess falló: {(r.stderr or r.stdout)[:300]}")
+    return tmp_html

@@ -1184,7 +1184,15 @@ def _regenerate_domain_vhost(domain, owner):
     """
     import json as _json
     from scripts import php_ini_manager as _phpini
-    return DomainManager().regenerate_vhost(
+    _mgr = DomainManager()
+    _httpauth = None
+    if getattr(domain, "httpauth_enabled", False) and domain.httpauth_user:
+        _httpauth = {
+            "user": domain.httpauth_user,
+            "realm": "Zona restringida",
+            "file": _mgr.htpasswd_path(owner.username, domain.domain_name),
+        }
+    return _mgr.regenerate_vhost(
         username=owner.username,
         domain_name=domain.domain_name,
         php_version=domain.php_version or "8.2",
@@ -1209,6 +1217,7 @@ def _regenerate_domain_vhost(domain, owner):
         blocked_user_agents=_json.loads(domain.blocked_user_agents) if domain.blocked_user_agents else [],
         security_headers_enabled=domain.security_headers_enabled or False,
         http3_enabled=domain.http3_enabled or False,
+        httpauth=_httpauth,
     )
 
 
@@ -1284,6 +1293,94 @@ async def update_custom_config(
     }}
 
 
+class HttpauthRequest(BaseModel):
+    enabled:  bool = False
+    user:     Optional[str] = _Field(None, max_length=64)
+    password: Optional[str] = _Field(None, max_length=128)
+
+
+@router.put("/domains/{domain_id}/httpauth")
+async def update_httpauth(
+    domain_id:    int,
+    payload:      HttpauthRequest,
+    current_user: User = Depends(require_auth),
+    db:           Session = Depends(get_db),
+):
+    """Activa/desactiva la protección con contraseña (auth básica) del dominio.
+
+    Gestiona el fichero .htpasswd y regenera el vhost (valida y revierte si falla).
+    """
+    import re as _re
+    domain = _get_owned_domain(domain_id, db, current_user)
+    owner = db.query(User).filter(User.id == domain.user_id).first()
+    if not owner:
+        raise HTTPException(status_code=409, detail="El dominio no tiene propietario")
+
+    mgr = DomainManager()
+    prev = {
+        "enabled": domain.httpauth_enabled,
+        "user": domain.httpauth_user,
+        "hash": domain.httpauth_pass_hash,
+    }
+
+    if payload.enabled:
+        user = (payload.user or "").strip()
+        if not _re.match(r"^[A-Za-z0-9._-]{2,64}$", user):
+            raise HTTPException(status_code=400,
+                detail="Usuario no válido (2-64 caracteres: letras, números, . _ -).")
+        if payload.password:
+            if len(payload.password) < 4:
+                raise HTTPException(status_code=400,
+                    detail="La contraseña debe tener al menos 4 caracteres.")
+            try:
+                pass_hash = mgr.write_htpasswd(owner.username, domain.domain_name, user, payload.password)
+            except Exception as e:
+                raise HTTPException(status_code=500, detail=f"No pude crear el .htpasswd: {e}")
+        else:
+            # Sin password nuevo: conservar el hash existente (cambio de usuario o
+            # re-activación). Si no hay hash previo, es obligatorio.
+            if not domain.httpauth_pass_hash:
+                raise HTTPException(status_code=400, detail="Indica una contraseña.")
+            pass_hash = domain.httpauth_pass_hash
+            try:
+                mgr.write_htpasswd_hash(owner.username, domain.domain_name, user, pass_hash)
+            except Exception as e:
+                raise HTTPException(status_code=500, detail=f"No pude actualizar el .htpasswd: {e}")
+        domain.httpauth_enabled = True
+        domain.httpauth_user = user
+        domain.httpauth_pass_hash = pass_hash
+    else:
+        domain.httpauth_enabled = False
+        mgr.remove_htpasswd(owner.username, domain.domain_name)
+        # Conservamos user/hash en BD por si reactiva (no recordar la pass otra vez).
+
+    db.commit()
+    db.refresh(domain)
+
+    try:
+        _regenerate_domain_vhost(domain, owner)
+    except Exception as e:
+        # Revertir estado y vhost.
+        domain.httpauth_enabled = prev["enabled"]
+        domain.httpauth_user = prev["user"]
+        domain.httpauth_pass_hash = prev["hash"]
+        if prev["enabled"] and prev["hash"] and prev["user"]:
+            mgr.write_htpasswd_hash(owner.username, domain.domain_name, prev["user"], prev["hash"])
+        else:
+            mgr.remove_htpasswd(owner.username, domain.domain_name)
+        db.commit()
+        try:
+            _regenerate_domain_vhost(domain, owner)
+        except Exception:
+            pass
+        raise HTTPException(status_code=422, detail=f"No se pudo aplicar la protección: {e}")
+
+    return {"status": "success", "data": {
+        "httpauth_enabled": domain.httpauth_enabled,
+        "httpauth_user": domain.httpauth_user,
+    }}
+
+
 @router.get("/domains/{domain_id}/disk")
 async def get_domain_disk(
     domain_id:   int,
@@ -1337,6 +1434,40 @@ async def get_domain_disk(
 # ─────────────────────────────────────────────────────────────────────────────
 # Suspensión individual de dominio
 # ─────────────────────────────────────────────────────────────────────────────
+
+@router.get("/domains/{domain_id}/stats")
+async def domain_stats(
+    domain_id:    int,
+    current_user: User = Depends(require_auth),
+    db:           Session = Depends(get_db),
+):
+    """Informe de visitas (GoAccess) del dominio, generado bajo demanda.
+
+    Devuelve un HTML autocontenido (el frontend lo embebe en un iframe). El
+    temporal se borra tras el envío.
+    """
+    domain = _get_owned_domain(domain_id, db, current_user)
+    if not domain:
+        raise HTTPException(status_code=404, detail="Dominio no encontrado")
+    _check_access(current_user, domain, db)
+    owner = db.query(User).filter(User.id == domain.user_id).first()
+    if not owner:
+        raise HTTPException(status_code=404, detail="Propietario del dominio no encontrado")
+
+    from scripts.web_stats import generate_goaccess_report, WebStatsError
+    try:
+        html_path = generate_goaccess_report(owner.username, domain.domain_name)
+    except WebStatsError as e:
+        raise HTTPException(status_code=422, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error generando estadísticas: {e}")
+
+    return FileResponse(
+        html_path,
+        media_type="text/html",
+        background=BackgroundTask(lambda: os.path.exists(html_path) and os.remove(html_path)),
+    )
+
 
 @router.get("/domains/{domain_id}/download")
 async def download_domain_site(

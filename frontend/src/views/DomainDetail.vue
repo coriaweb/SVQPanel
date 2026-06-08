@@ -472,6 +472,20 @@
         </div>
       </BaseCard>
 
+      <!-- ===== Estadísticas (GoAccess) ===== -->
+      <BaseCard v-show="tab === 'stats'" title="Estadísticas de visitas" icon="bar-chart">
+        <template #actions>
+          <BaseButton variant="ghost" size="sm" icon="arrow-clockwise" :loading="statsLoading" @click="loadStats">Actualizar</BaseButton>
+        </template>
+        <p class="dd-muted">Informe de tráfico de este dominio (GoAccess), generado al momento desde su registro de accesos.</p>
+        <div v-if="statsLoading" class="stats-state"><span class="spinner"></span> Generando informe…</div>
+        <div v-else-if="statsError" class="stats-state stats-state--err"><i class="bi bi-exclamation-triangle"></i> {{ statsError }}</div>
+        <iframe v-else-if="statsHtml" :srcdoc="statsHtml" class="stats-frame" title="Estadísticas"></iframe>
+        <div v-else class="stats-state">
+          <BaseButton variant="primary" icon="bar-chart" @click="loadStats">Ver estadísticas</BaseButton>
+        </div>
+      </BaseCard>
+
       <!-- ===== Git deploy ===== -->
       <BaseCard v-show="tab === 'git'" title="Despliegue Git" icon="git">
         <template #actions v-if="git && git.enabled">
@@ -663,6 +677,31 @@
         </div>
       </BaseCard>
 
+      <!-- ===== Protección con contraseña (httpauth) ===== -->
+      <BaseCard v-show="tab === 'advanced'" title="Protección con contraseña" icon="lock">
+        <p class="dd-muted">
+          Pide usuario y contraseña (autenticación básica HTTP) para acceder a toda la web.
+          Útil para entornos de pruebas o zonas privadas.
+        </p>
+        <label class="adv-switch">
+          <input type="checkbox" v-model="authEnabled" /> Activar protección con contraseña
+        </label>
+        <div v-if="authEnabled" class="mig-grid" style="margin-top:var(--sp-3)">
+          <label class="adv-field"><span class="adv-label">Usuario</span>
+            <input class="svq-input" v-model="authUser" placeholder="usuario" /></label>
+          <label class="adv-field"><span class="adv-label">Contraseña</span>
+            <input class="svq-input" v-model="authPass" type="text"
+              :placeholder="domain && domain.httpauth_user ? '(dejar vacío para no cambiarla)' : 'mín. 4 caracteres'" /></label>
+        </div>
+        <div v-if="authError" class="adv-error"><i class="bi bi-exclamation-triangle"></i> {{ authError }}</div>
+        <div class="adv-actions">
+          <BaseButton variant="primary" icon="check2" :loading="authSaving" @click="saveHttpauth">Guardar</BaseButton>
+          <small v-if="domain && domain.httpauth_enabled" class="dd-muted">
+            <i class="bi bi-lock-fill"></i> Activa actualmente (usuario: <strong>{{ domain.httpauth_user }}</strong>)
+          </small>
+        </div>
+      </BaseCard>
+
       <!-- ===== Logs ===== -->
       <BaseCard v-show="tab === 'logs'" title="Registros" icon="journal-text" flush>
         <template #actions>
@@ -759,6 +798,7 @@ export default {
       { key: 'php',      label: 'PHP',     icon: 'filetype-php' },
       { key: 'ipv6',     label: 'IPv6',    icon: 'diagram-3' },
       { key: 'bots',     label: 'Bots',    icon: 'robot' },
+      { key: 'stats',    label: 'Estadísticas', icon: 'bar-chart' },
       { key: 'git',      label: 'Git',     icon: 'git' },
       { key: 'advanced', label: 'Avanzado',icon: 'sliders' },
       { key: 'logs',     label: 'Logs',    icon: 'journal-text' },
@@ -853,9 +893,32 @@ location @maintenance {
       const ref_ = which === 'nginx' ? advNginx : advApache
       ref_.value = (ref_.value.trimEnd() + (ref_.value.trim() ? '\n\n' : '') + code + '\n')
     }
+    // ── Protección con contraseña (httpauth) ──
+    const authEnabled = ref(false)
+    const authUser = ref('')
+    const authPass = ref('')
+    const authSaving = ref(false)
+    const authError = ref('')
+
+    // ── Estadísticas (GoAccess) ──
+    const statsHtml = ref('')
+    const statsLoading = ref(false)
+    const statsError = ref('')
+    const loadStats = async () => {
+      statsLoading.value = true; statsError.value = ''
+      try {
+        statsHtml.value = await api.getDomainStats(domainId.value)
+      } catch (e) {
+        statsError.value = e.message || 'No se pudo generar el informe'
+      } finally { statsLoading.value = false }
+    }
+
     const _syncAdv = () => {
       advNginx.value  = domain.value?.custom_nginx_config  || ''
       advApache.value = domain.value?.custom_apache_config || ''
+      authEnabled.value = !!domain.value?.httpauth_enabled
+      authUser.value = domain.value?.httpauth_user || ''
+      authPass.value = ''
     }
     const saveCustomConfig = async () => {
       advSaving.value = true; advError.value = ''
@@ -869,6 +932,21 @@ location @maintenance {
       } catch (e) {
         advError.value = e.message || 'No se pudo aplicar la configuración'
       } finally { advSaving.value = false }
+    }
+    const saveHttpauth = async () => {
+      authSaving.value = true; authError.value = ''
+      try {
+        await api.updateDomainHttpauth(domainId.value, {
+          enabled: authEnabled.value,
+          user: authUser.value,
+          password: authPass.value || null,
+        })
+        store.showNotification(authEnabled.value ? 'Protección activada' : 'Protección desactivada', 'success')
+        authPass.value = ''
+        await reloadDomain()
+      } catch (e) {
+        authError.value = e.message || 'No se pudo aplicar la protección'
+      } finally { authSaving.value = false }
     }
 
     const loadDomain = async () => {
@@ -1417,6 +1495,8 @@ location @maintenance {
       downloading, downloadSite, suspend, unsuspend, remove, goFiles,
       advNginx, advApache, advSaving, advError, saveCustomConfig,
       showNginxEx, showApacheEx, nginxExamples, apacheExamples, insertExample,
+      authEnabled, authUser, authPass, authSaving, authError, saveHttpauth,
+      statsHtml, statsLoading, statsError, loadStats,
       appForm, installing, installResult, doInstallApp, appNeedsAdmin, appNeedsEmail, wpLocales,
       detectedApp, appLabel,
       git, gitDeployments, gitLoading, gitSaving, gitDeploying, gitKeyGen, gitRolling, gitForm,
@@ -1508,6 +1588,12 @@ location @maintenance {
 .adv-example__btn { background: none; border: 1px solid var(--border-strong); border-radius: var(--r-sm); padding: 2px 8px; font-size: var(--fs-xs); cursor: pointer; color: var(--color-primary); display: inline-flex; align-items: center; gap: 3px; white-space: nowrap; }
 .adv-example__btn:hover { background: var(--surface); }
 .adv-example__code { margin: 0; padding: var(--sp-3); font-size: 12px; line-height: 1.45; white-space: pre; overflow-x: auto; color: var(--text); }
+.adv-switch { display: inline-flex; align-items: center; gap: 8px; font-weight: var(--fw-medium); cursor: pointer; }
+
+/* Estadísticas (GoAccess) */
+.stats-state { display: flex; align-items: center; gap: .5rem; padding: var(--sp-4) 0; color: var(--text-muted); }
+.stats-state--err { color: var(--danger); }
+.stats-frame { width: 100%; height: 75vh; border: 1px solid var(--border); border-radius: var(--r-md); background: #fff; }
 
 /* PHP table */
 .php-table { display: flex; flex-direction: column; border: 1px solid var(--border); border-radius: var(--r-md); overflow: hidden; }

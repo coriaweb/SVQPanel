@@ -474,6 +474,9 @@ PINEOF
     apt-get install -y -qq nginx
     systemctl enable nginx
 
+    # GoAccess: informes de visitas por dominio (estadísticas web del panel).
+    apt-get install -y -qq goaccess 2>/dev/null || true
+
     # El nginx del repo oficial NO incluye sites-enabled por defecto y
     # corre los workers como 'nginx' en vez de 'www-data' (Debian).
     # Ambas cosas deben corregirse para compatibilidad con la estructura SVQPanel.
