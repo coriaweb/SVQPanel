@@ -116,7 +116,9 @@ else
     echo "Usuario inexistente. Cerrando."; exit 1
   fi
   echo "── Sesión SVQPanel ($TARGET) ──"
-  exec su - "$TARGET"
+  # -s /bin/bash: los usuarios de hosting suelen tener shell nologin (solo SFTP);
+  # forzamos bash para la sesión web sin cambiar su shell de login real.
+  exec su - "$TARGET" -s /bin/bash
 fi
 '''
     tmp = LAUNCHER + ".tmp"
