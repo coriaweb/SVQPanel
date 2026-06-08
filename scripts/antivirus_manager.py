@@ -177,21 +177,28 @@ def milter_enabled() -> bool:
 # Firmas de virus (freshclam)
 # ─────────────────────────────────────────────────────────────────────────────
 def _db_version(path: str):
-    """Lee versión y fecha de una base de firmas .cvd/.cld con sigtool."""
+    """Lee versión, fecha y nº de firmas del HEADER de una base .cvd/.cld.
+
+    El header es una cabecera de texto de 512 bytes con campos separados por ':':
+      ClamAV-VDB:<fecha>:<version>:<nsigs>:<flevel>:<md5>:<dsig>:<builder>:<stime>
+    Leerlo es instantáneo; evitamos `sigtool --info`, que descomprime y verifica
+    el fichero entero (main.cvd ~89 MB → varios segundos).
+    """
     if not os.path.exists(path):
         return None
     info = {"version": None, "sigs": None, "built": None}
     try:
-        r = subprocess.run(["sigtool", "--info", path], capture_output=True,
-                           text=True, timeout=15)
-        for line in r.stdout.splitlines():
-            line = line.strip()
-            if line.lower().startswith("version:"):
-                info["version"] = line.split(":", 1)[1].strip()
-            elif line.lower().startswith("signatures:"):
-                info["sigs"] = line.split(":", 1)[1].strip()
-            elif line.lower().startswith("build time:"):
-                info["built"] = line.split(":", 1)[1].strip()
+        with open(path, "rb") as f:
+            header = f.read(512).decode("latin-1", "ignore")
+        if header.startswith("ClamAV-VDB:"):
+            parts = header.split(":")
+            # parts[0]='ClamAV-VDB', [1]=fecha, [2]=version, [3]=nsigs
+            if len(parts) > 1:
+                info["built"] = parts[1].strip()
+            if len(parts) > 2:
+                info["version"] = parts[2].strip()
+            if len(parts) > 3:
+                info["sigs"] = parts[3].strip()
     except Exception:
         pass
     return info

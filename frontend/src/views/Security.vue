@@ -1369,9 +1369,10 @@ async function deleteIpList(l) {
 }
 
 // ─── Mount ───────────────────────────────────────────────────────────────────
-onMounted(async () => {
-  await loadStatus()
-  await loadFirewall()
+// Lanzamos las cargas en paralelo (no en serie): cada bloque muestra su propio
+// spinner y aparece en cuanto su endpoint responde, sin bloquearse entre sí.
+onMounted(() => {
+  loadFirewall()   // incluye loadStatus() + system-ports
   loadIsolation()
   loadAntivirus()
 })
