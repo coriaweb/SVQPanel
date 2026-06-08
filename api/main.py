@@ -13,7 +13,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from api.models.database import create_tables, get_db
 from config.config import PANEL_NAME, PANEL_VERSION
 
-from api.routes import users, domains, php, ssl, ipv6, auth, settings, dns, system, mail, databases, firewall, fail2ban, security_monitor, ip_lists, file_manager, crowdsec, plans, sftp, crons, server_ips, backups, templates, notifications, dns_cluster, git, git_webhook, monitoring, db_tuner, migrations
+from api.routes import users, domains, php, ssl, ipv6, auth, settings, dns, system, mail, databases, firewall, fail2ban, security_monitor, ip_lists, file_manager, crowdsec, plans, sftp, crons, server_ips, backups, templates, notifications, dns_cluster, git, git_webhook, monitoring, db_tuner, migrations, terminal
 
 # Crear app FastAPI
 app = FastAPI(
@@ -697,6 +697,7 @@ app.include_router(sftp.router,             prefix="/api", tags=["SFTP"])
 app.include_router(crons.router,            prefix="/api", tags=["Crons"])
 app.include_router(server_ips.router,       prefix="/api", tags=["Server IPs"])
 app.include_router(backups.router,          prefix="/api", tags=["Backups"])
+app.include_router(terminal.router,         prefix="/api", tags=["Terminal web"])
 app.include_router(templates.router,        prefix="/api", tags=["Templates"])
 app.include_router(file_manager.router,     prefix="/api", tags=["File Manager"])
 app.include_router(notifications.router,     prefix="/api", tags=["Notifications"])

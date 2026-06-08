@@ -1015,6 +1015,20 @@ class APIClient {
     return this.post(`/api/backups/${jobId}/test-s3`, {})
   }
 
+  // Terminal web (ttyd)
+  getTerminalStatus() {
+    return this.get(`/api/terminal/status`)
+  }
+  installTerminal() {
+    return this.post(`/api/terminal/install`, {})
+  }
+  uninstallTerminal() {
+    return this.post(`/api/terminal/uninstall`, {})
+  }
+  openTerminalSession(target) {
+    return this.post(`/api/terminal/session`, target ? { target } : {})
+  }
+
   getBackupSnapshots(jobId) {
     return this.get(`/api/backups/${jobId}/snapshots`)
   }

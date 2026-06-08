@@ -1866,6 +1866,20 @@ server {
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
     }
 
+    # Terminal web (ttyd) — consola SSH en el navegador. ttyd escucha solo en
+    # localhost; la autorización la da un token de un solo uso emitido por el
+    # panel (ver scripts/terminal_manager.py). Necesita WebSocket.
+    location /terminal/ {
+        include snippets/svqpanel-whitelist.conf;
+        proxy_pass http://127.0.0.1:7681/terminal/;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection "upgrade";
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_read_timeout 86400s;
+    }
+
     # Frontend → servir archivos estáticos, fallback a index.html (SPA)
     location / {
         include snippets/svqpanel-whitelist.conf;

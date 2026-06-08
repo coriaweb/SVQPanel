@@ -23,6 +23,7 @@ const Plans          = () => import('../views/Plans.vue')
 const MySftp         = () => import('../views/MySftp.vue')
 const Crons          = () => import('../views/Crons.vue')
 const Backups        = () => import('../views/Backups.vue')
+const Terminal       = () => import('../views/Terminal.vue')
 const ServerIPs      = () => import('../views/ServerIPs.vue')
 const SystemUpdates  = () => import('../views/SystemUpdates.vue')
 
@@ -161,6 +162,12 @@ const routes = [
     path: '/backups',
     name: 'Backups',
     component: Backups,
+    meta: { requiresAuth: true }
+  },
+  {
+    path: '/terminal',
+    name: 'Terminal',
+    component: Terminal,
     meta: { requiresAuth: true }
   },
   {
