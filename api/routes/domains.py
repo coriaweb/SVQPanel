@@ -10,6 +10,7 @@ from typing import Optional
 from datetime import datetime
 from fastapi import APIRouter, Depends, HTTPException, status, Query
 from fastapi.responses import FileResponse
+from pydantic import BaseModel, Field as _Field
 from starlette.background import BackgroundTask
 from sqlalchemy.orm import Session
 from sqlalchemy.exc import IntegrityError
@@ -1445,7 +1446,6 @@ async def unsuspend_domain(
 # ─────────────────────────────────────────────────────────────────────────────
 # Autoinstalador de aplicaciones (WordPress, …)
 # ─────────────────────────────────────────────────────────────────────────────
-from pydantic import BaseModel, Field as _Field
 
 
 class AppInstallRequest(BaseModel):
