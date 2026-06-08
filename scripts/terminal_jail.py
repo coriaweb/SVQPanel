@@ -248,6 +248,31 @@ def _write_user_etc(jail: str, username: str) -> None:
             except Exception:
                 pass
 
+    # /etc/profile: prompt con color + nombre, y bienvenida. Sin esto el prompt
+    # sale como 'bash-5.2$' (la jaula no hereda el profile del host).
+    profile = (
+        '# SVQPanel — perfil de la terminal enjaulada. Generado automáticamente.\n'
+        'export PS1="\\[\\e[1;32m\\]\\u@svqpanel\\[\\e[0m\\]:\\[\\e[1;34m\\]\\w\\[\\e[0m\\]\\$ "\n'
+        'export TERM="${TERM:-xterm-256color}"\n'
+        'export PATH="/usr/local/bin:/usr/bin:/bin"\n'
+        'export LANG="${LANG:-C.UTF-8}"\n'
+        'alias ll="ls -la"\n'
+        'alias la="ls -A"\n'
+        'umask 022\n'
+        'if [ -z "$SVQ_WELCOMED" ]; then\n'
+        '  export SVQ_WELCOMED=1\n'
+        '  echo ""\n'
+        '  echo "  Bienvenido a tu terminal SVQPanel."\n'
+        '  echo "  Estás en tu espacio aislado. Tus archivos están en ~ (web, tmp)."\n'
+        '  echo ""\n'
+        'fi\n'
+    )
+    with open(os.path.join(etc, "profile"), "w") as f:
+        f.write(profile)
+    # bash interactivo no-login lee bash.bashrc; lo apuntamos al profile.
+    with open(os.path.join(etc, "bash.bashrc"), "w") as f:
+        f.write('[ -r /etc/profile ] && . /etc/profile\n')
+
 
 def chroot_command(username: str) -> str:
     """Comando (string para eval+exec) que abre la shell enjaulada del usuario
