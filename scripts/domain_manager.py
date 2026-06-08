@@ -398,6 +398,8 @@ class DomainManager(SystemManager):
         security_headers_enabled: bool = False,
         http3_enabled: bool = False,
         webserver: str = None,
+        custom_nginx_config: str = None,
+        custom_apache_config: str = None,
     ) -> dict:
         """
         Regenera la vhost completa del dominio con TODO el estado actual
@@ -438,6 +440,7 @@ class DomainManager(SystemManager):
                 readonly_mode_enabled=readonly_mode_enabled,
                 allowed_mutation_ips=allowed_mutation_ips,
                 php_socket_override=php_socket_override,
+                custom_apache_config=custom_apache_config,
             )
             with open(apache_path, "w") as f:
                 f.write(apache_content)
@@ -475,6 +478,7 @@ class DomainManager(SystemManager):
                 security_headers_enabled=security_headers_enabled,
                 http3_enabled=http3_enabled,
                 proxy_to_apache=True,
+                custom_nginx_config=custom_nginx_config,
             )
             with open(config_path, "w") as f:
                 f.write(config_content)
@@ -522,6 +526,7 @@ class DomainManager(SystemManager):
                 blocked_user_agents=blocked_user_agents or [],
                 security_headers_enabled=security_headers_enabled,
                 http3_enabled=http3_enabled,
+                custom_nginx_config=custom_nginx_config,
             )
             with open(config_path, "w") as f:
                 f.write(config_content)

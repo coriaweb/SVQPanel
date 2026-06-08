@@ -107,6 +107,9 @@ class DomainResponse(BaseModel):
     http3_enabled: Optional[bool] = False
     # Bots bloqueados por dominio (JSON array)
     blocked_user_agents: Optional[str] = None
+    # Directivas personalizadas por dominio (nginx/apache extra)
+    custom_nginx_config:  Optional[str] = None
+    custom_apache_config: Optional[str] = None
     created_at: Optional[datetime] = None
     updated_at: Optional[datetime] = None
 

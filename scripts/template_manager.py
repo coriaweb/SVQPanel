@@ -329,6 +329,225 @@ BUILTIN_TEMPLATES = [
 """,
     },
     {
+        "name": "Moodle",
+        "slug": "moodle",
+        "description": "Plataforma de e-learning Moodle. Protege /config.php y rutas internas; sube límites para subir contenidos.",
+        "category": "cms",
+        "fastcgi_cache_default": False,
+        "php_ini_overrides": json.dumps({
+            "memory_limit":        "512M",
+            "upload_max_filesize": "256M",
+            "post_max_size":       "256M",
+            "max_execution_time":  "300",
+            "max_input_vars":      "5000",
+        }),
+        "nginx_extra": """
+    # ── Moodle ──────────────────────────────────────────────────────────
+    add_header X-Content-Type-Options "nosniff" always;
+    location ~ ^/(config|lib/setup|install)\\.php { deny all; }
+    location ~ ^/(vendor|node_modules)/ { deny all; }
+    location ~* /\\.(git|svn|env) { deny all; }
+    # Moodle sirve archivos vía script; cachear estáticos reales
+    location ~* \\.(jpg|jpeg|png|gif|ico|css|js|woff2|svg)$ {
+        expires 7d; add_header Cache-Control "public"; access_log off;
+    }
+""",
+    },
+    {
+        "name": "MediaWiki",
+        "slug": "mediawiki",
+        "description": "MediaWiki (la wiki de Wikipedia). URLs amigables, protección de /cache y /includes.",
+        "category": "cms",
+        "fastcgi_cache_default": False,
+        "php_ini_overrides": json.dumps({
+            "memory_limit":        "256M",
+            "upload_max_filesize": "128M",
+            "post_max_size":       "128M",
+            "max_execution_time":  "120",
+        }),
+        "nginx_extra": """
+    # ── MediaWiki ───────────────────────────────────────────────────────
+    add_header X-Content-Type-Options "nosniff" always;
+    location ~ ^/(cache|includes|languages|maintenance|serialized)/ { deny all; }
+    location ~ /\\.(ht|git|svn) { deny all; }
+    # URLs cortas /wiki/Pagina
+    location /wiki/ { rewrite ^/wiki/(.*)$ /index.php?title=$1&$args last; }
+    location ~* \\.(jpg|jpeg|png|gif|ico|css|js|woff2|svg)$ {
+        expires 30d; add_header Cache-Control "public, immutable"; access_log off;
+    }
+""",
+    },
+    {
+        "name": "phpBB",
+        "slug": "phpbb",
+        "description": "Foro phpBB. Protege /cache, /store, /files y /config.php.",
+        "category": "cms",
+        "fastcgi_cache_default": False,
+        "php_ini_overrides": json.dumps({
+            "memory_limit":        "256M",
+            "upload_max_filesize": "32M",
+            "post_max_size":       "32M",
+            "max_execution_time":  "60",
+        }),
+        "nginx_extra": """
+    # ── phpBB ───────────────────────────────────────────────────────────
+    add_header X-Content-Type-Options "nosniff" always;
+    location ~ ^/(config\\.php|common\\.php|cache|files|store|images/avatars/upload)/ { deny all; }
+    location ~ /\\.(ht|git|svn) { deny all; }
+    location ~* \\.(jpg|jpeg|png|gif|ico|css|js|woff2|svg)$ {
+        expires 30d; add_header Cache-Control "public"; access_log off;
+    }
+""",
+    },
+    {
+        "name": "Symfony",
+        "slug": "symfony",
+        "description": "Framework Symfony. Sirve desde /public con front controller index.php.",
+        "category": "framework",
+        "fastcgi_cache_default": False,
+        "docroot_subdir": "public",
+        "php_ini_overrides": json.dumps({
+            "memory_limit":        "256M",
+            "upload_max_filesize": "32M",
+            "post_max_size":       "32M",
+            "max_execution_time":  "60",
+        }),
+        "nginx_extra": """
+    # ── Symfony (front controller) ──────────────────────────────────────
+    add_header X-Content-Type-Options "nosniff" always;
+    location / { try_files $uri /index.php$is_args$args; }
+    # Solo index.php es ejecutable (Symfony best practice)
+    location ~ ^/index\\.php(/|$) {
+        fastcgi_pass $phpfpm_backend;
+        fastcgi_split_path_info ^(.+\\.php)(/.*)$;
+        include fastcgi_params;
+        fastcgi_param SCRIPT_FILENAME $document_root$fastcgi_script_name;
+        internal;
+    }
+    location ~ \\.php$ { return 404; }
+""",
+    },
+    {
+        "name": "CodeIgniter",
+        "slug": "codeigniter",
+        "description": "Framework CodeIgniter 4. Sirve desde /public con front controller.",
+        "category": "framework",
+        "fastcgi_cache_default": False,
+        "docroot_subdir": "public",
+        "php_ini_overrides": json.dumps({
+            "memory_limit":        "256M",
+            "upload_max_filesize": "32M",
+            "post_max_size":       "32M",
+        }),
+        "nginx_extra": """
+    # ── CodeIgniter 4 ───────────────────────────────────────────────────
+    add_header X-Content-Type-Options "nosniff" always;
+    location / { try_files $uri $uri/ /index.php$is_args$args; }
+    location ~ /\\.(ht|git|env) { deny all; }
+""",
+    },
+    {
+        "name": "Yii Framework",
+        "slug": "yii",
+        "description": "Framework Yii 2. Sirve desde /web con clean URLs.",
+        "category": "framework",
+        "fastcgi_cache_default": False,
+        "docroot_subdir": "web",
+        "php_ini_overrides": json.dumps({
+            "memory_limit":        "256M",
+            "upload_max_filesize": "32M",
+            "post_max_size":       "32M",
+        }),
+        "nginx_extra": """
+    # ── Yii 2 ───────────────────────────────────────────────────────────
+    add_header X-Content-Type-Options "nosniff" always;
+    location / { try_files $uri $uri/ /index.php$is_args$args; }
+    location ~ /\\.(ht|git|env) { deny all; }
+    location ~ ^/(protected|framework|themes/\\w+/views) { deny all; }
+""",
+    },
+    {
+        "name": "Ghost",
+        "slug": "ghost",
+        "description": "Blog Ghost (Node.js). Nginx hace proxy al puerto local de Ghost (por defecto 2368).",
+        "category": "cms",
+        "fastcgi_cache_default": False,
+        "php_ini_overrides": None,
+        "nginx_extra": """
+    # ── Ghost (proxy a Node.js) ─────────────────────────────────────────
+    # Ghost corre como servicio Node en 127.0.0.1:2368. Ajusta el puerto si usas otro.
+    location / {
+        proxy_pass http://127.0.0.1:2368;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+""",
+    },
+    {
+        "name": "Matomo",
+        "slug": "matomo",
+        "description": "Analítica web Matomo (ex Piwik). Protege rutas internas y config.",
+        "category": "other",
+        "fastcgi_cache_default": False,
+        "php_ini_overrides": json.dumps({
+            "memory_limit":        "512M",
+            "upload_max_filesize": "64M",
+            "post_max_size":       "64M",
+            "max_execution_time":  "120",
+        }),
+        "nginx_extra": """
+    # ── Matomo ──────────────────────────────────────────────────────────
+    add_header X-Content-Type-Options "nosniff" always;
+    location ~ ^/(config|tmp|core|lang)/ { deny all; }
+    location ~ \\.(git|svn) { deny all; }
+    location ~ ^/(libs|vendor|plugins|misc/user)/.*\\.(twig|tpl|php)$ { deny all; }
+    location ~* \\.(jpg|jpeg|png|gif|ico|css|js|woff2|svg)$ {
+        expires 30d; add_header Cache-Control "public"; access_log off;
+    }
+""",
+    },
+    {
+        "name": "OpenCart",
+        "slug": "opencart",
+        "description": "Tienda OpenCart. Protege /system y /storage, cachea estáticos.",
+        "category": "ecommerce",
+        "fastcgi_cache_default": False,
+        "php_ini_overrides": json.dumps({
+            "memory_limit":        "256M",
+            "upload_max_filesize": "64M",
+            "post_max_size":       "64M",
+            "max_execution_time":  "120",
+        }),
+        "nginx_extra": """
+    # ── OpenCart ────────────────────────────────────────────────────────
+    add_header X-Content-Type-Options "nosniff" always;
+    location ~ ^/(system|storage)/ { deny all; }
+    location ~ /\\.(ht|git|env) { deny all; }
+    location ~* \\.(jpg|jpeg|png|gif|ico|css|js|woff2|svg)$ {
+        expires 30d; add_header Cache-Control "public"; access_log off;
+    }
+""",
+    },
+    {
+        "name": "Sitio estático / SPA",
+        "slug": "static-spa",
+        "description": "Sitio estático o SPA (React/Vue/Angular). try_files a index.html, sin PHP.",
+        "category": "other",
+        "fastcgi_cache_default": False,
+        "php_ini_overrides": None,
+        "nginx_extra": """
+    # ── Estático / SPA ──────────────────────────────────────────────────
+    add_header X-Content-Type-Options "nosniff" always;
+    # Rutas de cliente (history API) → index.html
+    location / { try_files $uri $uri/ /index.html; }
+    location ~* \\.(jpg|jpeg|png|gif|ico|css|js|woff2|woff|ttf|svg|map)$ {
+        expires 30d; add_header Cache-Control "public, immutable"; access_log off;
+    }
+""",
+    },
+    {
         "name": "PHP Estándar",
         "slug": "default-php",
         "description": "Configuración PHP estándar sin modificaciones extra. Útil para apps personalizadas.",

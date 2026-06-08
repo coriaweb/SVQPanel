@@ -47,6 +47,7 @@ def generate_apache_vhost(
     readonly_mode_enabled: bool = False,         # ignorado: readonly lo hace Nginx
     allowed_mutation_ips: Optional[str] = None,
     php_socket_override: Optional[str] = None,
+    custom_apache_config: Optional[str] = None,
 ) -> str:
     """
     Genera el vhost Apache BACKEND (127.0.0.1:8181) de un dominio.
@@ -91,6 +92,12 @@ def generate_apache_vhost(
         # defensa en profundidad por si alguien apunta directo al backend.
         readonly_block = _readonly_block(allowed_mutation_ips)
 
+    # Directivas Apache personalizadas del dominio (dentro del VirtualHost).
+    custom_block = ""
+    if custom_apache_config and custom_apache_config.strip():
+        custom_block = ("\n    # ── Directivas personalizadas del dominio ──\n"
+                        + custom_apache_config.rstrip() + "\n")
+
     return f"""# SVQPanel — backend Apache de {domain_name} (front: Nginx)
 # Apache solo sirve PHP + .htaccess; SSL/headers/bots los hace Nginx.
 <VirtualHost {APACHE_BACKEND_ADDR}>
@@ -112,7 +119,7 @@ def generate_apache_vhost(
         AllowOverride All
         Require all granted
     </Directory>
-{readonly_block}
+{readonly_block}{custom_block}
     # Proteger ficheros sensibles aunque el .htaccess del cliente no lo haga
     <FilesMatch "(^\\.|\\.(env|git|sql|bak|old|log|sh)$)">
         Require all denied

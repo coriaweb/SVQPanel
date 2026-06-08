@@ -44,6 +44,11 @@ class Domain(Base):
     applied_template_name = Column(String(64), nullable=True)
     template_nginx_extra  = Column(Text, nullable=True)
 
+    # Directivas personalizadas por dominio (se inyectan en el vhost, además de
+    # la plantilla). Validadas con nginx -t / apache configtest al guardar.
+    custom_nginx_config   = Column(Text, nullable=True)
+    custom_apache_config  = Column(Text, nullable=True)
+
     # Redirección 301 y docroot personalizado (Fase 16)
     redirect_to    = Column(String(512), nullable=True)   # ej: https://otro.com
     custom_docroot = Column(String(512), nullable=True)   # ej: /home/user/web/domain/app/public

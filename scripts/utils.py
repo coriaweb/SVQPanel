@@ -301,6 +301,7 @@ def generate_nginx_config(
     security_headers_enabled: bool = False,
     http3_enabled: bool = False,
     proxy_to_apache: bool = False,
+    custom_nginx_config: Optional[str] = None,
 ) -> str:
     """
     Generate Nginx vhost configuration (Hestia-style paths).
@@ -353,7 +354,11 @@ def generate_nginx_config(
     if ipv6:
         server_names += f" {ipv6}"   # nginx acepta IPv6 sin corchetes en server_name
 
+    # Inyección dentro del server{}: primero la plantilla, luego las directivas
+    # personalizadas del dominio (pueden complementar/sobrescribir a la plantilla).
     tpl_extra = ("\n" + template_nginx_extra.rstrip()) if template_nginx_extra else ""
+    if custom_nginx_config and custom_nginx_config.strip():
+        tpl_extra += "\n    # ── Directivas personalizadas del dominio ──\n" + custom_nginx_config.rstrip()
 
 
     ipv4_listen_http  = f"{ipv4}:80" if ipv4 else "80"

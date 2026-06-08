@@ -604,6 +604,35 @@
         </template>
       </BaseCard>
 
+      <!-- ===== Avanzado: directivas nginx/apache personalizadas ===== -->
+      <BaseCard v-show="tab === 'advanced'" title="Directivas personalizadas" icon="sliders">
+        <p class="dd-muted">
+          Reglas extra que se inyectan <strong>dentro</strong> del bloque del dominio (además de la plantilla).
+          No incluyas <code>server {'{'}</code> ni <code>&lt;VirtualHost&gt;</code>: pega solo directivas
+          (p. ej. <code>location</code>, <code>add_header</code>, <code>rewrite</code>…). Se valida antes de aplicar;
+          si hay un error, se descarta y el sitio sigue intacto.
+        </p>
+
+        <div class="adv-field">
+          <label class="adv-label"><i class="bi bi-hdd-network"></i> Nginx</label>
+          <textarea class="svq-input mono adv-textarea" rows="10" v-model="advNginx"
+            placeholder="location /healthz { return 200 'ok'; }"></textarea>
+        </div>
+
+        <div class="adv-field">
+          <label class="adv-label"><i class="bi bi-feather"></i> Apache <span class="dd-muted">(solo si el dominio usa Apache+Nginx)</span></label>
+          <textarea class="svq-input mono adv-textarea" rows="8" v-model="advApache"
+            placeholder="Header set X-Mi-Cabecera 'valor'"></textarea>
+        </div>
+
+        <div v-if="advError" class="adv-error"><i class="bi bi-exclamation-triangle"></i> {{ advError }}</div>
+
+        <div class="adv-actions">
+          <BaseButton variant="primary" icon="check2" :loading="advSaving" @click="saveCustomConfig">Guardar y aplicar</BaseButton>
+          <small class="dd-muted">Se ejecuta <code>nginx -t</code> / <code>apachectl configtest</code> antes de recargar.</small>
+        </div>
+      </BaseCard>
+
       <!-- ===== Logs ===== -->
       <BaseCard v-show="tab === 'logs'" title="Registros" icon="journal-text" flush>
         <template #actions>
@@ -701,6 +730,7 @@ export default {
       { key: 'ipv6',     label: 'IPv6',    icon: 'diagram-3' },
       { key: 'bots',     label: 'Bots',    icon: 'robot' },
       { key: 'git',      label: 'Git',     icon: 'git' },
+      { key: 'advanced', label: 'Avanzado',icon: 'sliders' },
       { key: 'logs',     label: 'Logs',    icon: 'journal-text' },
     ]
 
@@ -711,10 +741,34 @@ export default {
     }
     const formatDate = (d) => d ? new Date(d).toLocaleDateString('es-ES', { day: '2-digit', month: 'short', year: 'numeric' }) : '—'
 
+    // ── Directivas personalizadas (tab Avanzado) ──
+    const advNginx  = ref('')
+    const advApache = ref('')
+    const advSaving = ref(false)
+    const advError  = ref('')
+    const _syncAdv = () => {
+      advNginx.value  = domain.value?.custom_nginx_config  || ''
+      advApache.value = domain.value?.custom_apache_config || ''
+    }
+    const saveCustomConfig = async () => {
+      advSaving.value = true; advError.value = ''
+      try {
+        await api.updateDomainCustomConfig(domainId.value, {
+          custom_nginx_config:  advNginx.value,
+          custom_apache_config: advApache.value,
+        })
+        store.showNotification('Directivas aplicadas', 'success')
+        await reloadDomain()
+      } catch (e) {
+        advError.value = e.message || 'No se pudo aplicar la configuración'
+      } finally { advSaving.value = false }
+    }
+
     const loadDomain = async () => {
       loading.value = true
       try {
         domain.value = await api.getDomain(domainId.value)
+        _syncAdv()
       } catch (e) {
         store.showNotification('Error al cargar el dominio', 'danger')
         domain.value = null
@@ -722,6 +776,7 @@ export default {
     }
     const reloadDomain = async () => {
       domain.value = await api.getDomain(domainId.value)
+      _syncAdv()
       loadSslState()
     }
 
@@ -1253,6 +1308,7 @@ export default {
       logTab, logLines, logsLoading, logsData, loadLogs, switchLog,
       logSearch, filteredLogLines, logLineClass, highlightLog,
       downloading, downloadSite, suspend, unsuspend, remove, goFiles,
+      advNginx, advApache, advSaving, advError, saveCustomConfig,
       appForm, installing, installResult, doInstallApp, appNeedsAdmin, appNeedsEmail, wpLocales,
       detectedApp, appLabel,
       git, gitDeployments, gitLoading, gitSaving, gitDeploying, gitKeyGen, gitRolling, gitForm,
@@ -1327,6 +1383,14 @@ export default {
 .svq-select { cursor: pointer; }
 .svq-select--sm { height: 32px; width: auto; font-size: var(--fs-sm); }
 .svq-input:focus, .svq-select:focus { outline: none; border-color: var(--color-primary); box-shadow: var(--shadow-focus); }
+
+/* Tab Avanzado — directivas personalizadas */
+.adv-field { margin-bottom: var(--sp-4); }
+.adv-label { display: flex; align-items: center; gap: 6px; font-weight: var(--fw-medium); margin-bottom: 6px; }
+.adv-label .bi { color: var(--svq-orange); }
+.adv-textarea { height: auto; padding: var(--sp-3); line-height: 1.5; resize: vertical; }
+.adv-actions { display: flex; align-items: center; gap: var(--sp-3); flex-wrap: wrap; }
+.adv-error { color: var(--danger); font-size: var(--fs-sm); margin-bottom: var(--sp-3); display: flex; align-items: center; gap: 6px; white-space: pre-wrap; }
 
 /* PHP table */
 .php-table { display: flex; flex-direction: column; border: 1px solid var(--border); border-radius: var(--r-md); overflow: hidden; }

@@ -450,6 +450,9 @@ def _run_migrations():
         "ALTER TABLE domains ADD COLUMN IF NOT EXISTS applied_template_id INTEGER REFERENCES web_templates(id) ON DELETE SET NULL",
         "ALTER TABLE domains ADD COLUMN IF NOT EXISTS applied_template_name VARCHAR(64)",
         "ALTER TABLE domains ADD COLUMN IF NOT EXISTS template_nginx_extra TEXT",
+        # Directivas personalizadas por dominio (nginx/apache extra del cliente)
+        "ALTER TABLE domains ADD COLUMN IF NOT EXISTS custom_nginx_config TEXT",
+        "ALTER TABLE domains ADD COLUMN IF NOT EXISTS custom_apache_config TEXT",
         # Redirección 301 y docroot personalizado (Fase 16)
         "ALTER TABLE domains ADD COLUMN IF NOT EXISTS redirect_to VARCHAR(512)",
         "ALTER TABLE domains ADD COLUMN IF NOT EXISTS custom_docroot VARCHAR(512)",

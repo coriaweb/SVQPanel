@@ -445,6 +445,8 @@ async def update_domain(
                         fastcgi_cache_ttl_minutes=db_domain.fastcgi_cache_ttl_minutes or 60,
                         php_socket_override=php_sock,
                         template_nginx_extra=db_domain.template_nginx_extra,
+                        custom_nginx_config=db_domain.custom_nginx_config,
+                        custom_apache_config=db_domain.custom_apache_config,
                         redirect_to=db_domain.redirect_to,
                         custom_docroot=db_domain.custom_docroot,
                         ipv4=db_domain.ipv4,
@@ -749,6 +751,8 @@ async def set_domain_rate_limit(
             fastcgi_cache_ttl_minutes=domain.fastcgi_cache_ttl_minutes,
             php_socket_override=php_socket,
             template_nginx_extra=domain.template_nginx_extra,
+            custom_nginx_config=domain.custom_nginx_config,
+            custom_apache_config=domain.custom_apache_config,
             redirect_to=domain.redirect_to,
             custom_docroot=domain.custom_docroot,
             ipv4=domain.ipv4,
@@ -818,6 +822,8 @@ async def set_domain_bad_bots(
             fastcgi_cache_ttl_minutes=domain.fastcgi_cache_ttl_minutes,
             php_socket_override=php_socket,
             template_nginx_extra=domain.template_nginx_extra,
+            custom_nginx_config=domain.custom_nginx_config,
+            custom_apache_config=domain.custom_apache_config,
             redirect_to=domain.redirect_to,
             custom_docroot=domain.custom_docroot,
             ipv4=domain.ipv4,
@@ -961,6 +967,8 @@ async def set_domain_php_config(
             fastcgi_cache_ttl_minutes=domain.fastcgi_cache_ttl_minutes,
             php_socket_override=php_socket,
             template_nginx_extra=domain.template_nginx_extra,
+            custom_nginx_config=domain.custom_nginx_config,
+            custom_apache_config=domain.custom_apache_config,
             redirect_to=domain.redirect_to,
             custom_docroot=domain.custom_docroot,
             ipv4=domain.ipv4,
@@ -1139,6 +1147,8 @@ async def set_domain_php_hardening(
             fastcgi_cache_ttl_minutes=domain.fastcgi_cache_ttl_minutes,
             php_socket_override=phpini.pool_socket_path(domain.domain_name),
             template_nginx_extra=domain.template_nginx_extra,
+            custom_nginx_config=domain.custom_nginx_config,
+            custom_apache_config=domain.custom_apache_config,
             redirect_to=domain.redirect_to,
             custom_docroot=domain.custom_docroot,
             ipv4=domain.ipv4,
@@ -1161,6 +1171,116 @@ async def set_domain_php_hardening(
         "domain": domain.domain_name,
         "php_hardening_relaxed": domain.php_hardening_relaxed,
     }
+
+
+def _regenerate_domain_vhost(domain, owner):
+    """Regenera el vhost del dominio preservando TODO su estado actual.
+
+    Punto único para reconstruir el vhost desde el objeto Domain (incluye las
+    directivas personalizadas). Lanza la excepción de regenerate_vhost si falla
+    la validación (nginx -t / apache configtest), para que el endpoint pueda
+    revertir.
+    """
+    import json as _json
+    from scripts import php_ini_manager as _phpini
+    return DomainManager().regenerate_vhost(
+        username=owner.username,
+        domain_name=domain.domain_name,
+        php_version=domain.php_version or "8.2",
+        ssl_enabled=domain.ssl_enabled or False,
+        ipv6=domain.ipv6,
+        fastcgi_cache_enabled=domain.fastcgi_cache_enabled or False,
+        fastcgi_cache_ttl_minutes=domain.fastcgi_cache_ttl_minutes or 60,
+        php_socket_override=_phpini.pool_socket_path(domain.domain_name),
+        template_nginx_extra=domain.template_nginx_extra,
+        custom_nginx_config=domain.custom_nginx_config,
+        custom_apache_config=domain.custom_apache_config,
+        redirect_to=domain.redirect_to,
+        custom_docroot=domain.custom_docroot,
+        ipv4=domain.ipv4,
+        force_https=domain.force_https or False,
+        hsts=domain.hsts_enabled or False,
+        rate_limit_enabled=domain.rate_limit_enabled or False,
+        rate_limit_rps=domain.rate_limit_rps or 10,
+        rate_limit_burst=domain.rate_limit_burst or 20,
+        readonly_mode_enabled=domain.readonly_mode_enabled or False,
+        allowed_mutation_ips=domain.allowed_mutation_ips,
+        blocked_user_agents=_json.loads(domain.blocked_user_agents) if domain.blocked_user_agents else [],
+        security_headers_enabled=domain.security_headers_enabled or False,
+        http3_enabled=domain.http3_enabled or False,
+    )
+
+
+class CustomConfigRequest(BaseModel):
+    custom_nginx_config:  Optional[str] = _Field(None, max_length=20000)
+    custom_apache_config: Optional[str] = _Field(None, max_length=20000)
+
+
+# Tokens que delatan que el usuario pegó un vhost completo (no un fragmento):
+# nuestras directivas se inyectan DENTRO del server{}/VirtualHost.
+_FORBIDDEN_NGINX = ("server ", "server{", "http ", "http{")
+_FORBIDDEN_APACHE = ("<virtualhost", "</virtualhost")
+
+
+@router.put("/domains/{domain_id}/custom-config")
+async def update_custom_config(
+    domain_id:    int,
+    payload:      CustomConfigRequest,
+    current_user: User = Depends(require_auth),
+    db:           Session = Depends(get_db),
+):
+    """Guarda directivas nginx/apache personalizadas del dominio y regenera el
+    vhost. Valida (nginx -t / apache configtest vía regenerate_vhost); si falla,
+    revierte al valor anterior y devuelve 422 con el error."""
+    domain = _get_owned_domain(domain_id, db, current_user)
+    owner = db.query(User).filter(User.id == domain.user_id).first()
+    if not owner:
+        raise HTTPException(status_code=409, detail="El dominio no tiene propietario")
+
+    nginx_cfg = (payload.custom_nginx_config or "").strip() or None
+    apache_cfg = (payload.custom_apache_config or "").strip() or None
+
+    # Sanitización: no permitir pegar un vhost completo (solo fragmentos).
+    if nginx_cfg:
+        low = nginx_cfg.lower()
+        if any(tok in low for tok in _FORBIDDEN_NGINX):
+            raise HTTPException(status_code=400, detail=(
+                "No incluyas bloques 'server {' ni 'http {': pega solo directivas "
+                "(p. ej. location, add_header…), se inyectan dentro del server del dominio."))
+    if apache_cfg:
+        low = apache_cfg.lower()
+        if any(tok in low for tok in _FORBIDDEN_APACHE):
+            raise HTTPException(status_code=400, detail=(
+                "No incluyas <VirtualHost>: pega solo directivas, se inyectan dentro "
+                "del VirtualHost del dominio."))
+
+    # Guardar valores anteriores para poder revertir si la validación falla.
+    prev_nginx = domain.custom_nginx_config
+    prev_apache = domain.custom_apache_config
+
+    domain.custom_nginx_config = nginx_cfg
+    domain.custom_apache_config = apache_cfg
+    db.commit()
+    db.refresh(domain)
+
+    try:
+        _regenerate_domain_vhost(domain, owner)
+    except Exception as e:
+        # Revertir: restaurar los valores anteriores y regenerar con ellos.
+        domain.custom_nginx_config = prev_nginx
+        domain.custom_apache_config = prev_apache
+        db.commit()
+        try:
+            _regenerate_domain_vhost(domain, owner)
+        except Exception:
+            pass
+        raise HTTPException(status_code=422, detail=(
+            f"La configuración no es válida y se ha descartado: {e}"))
+
+    return {"status": "success", "data": {
+        "custom_nginx_config": domain.custom_nginx_config,
+        "custom_apache_config": domain.custom_apache_config,
+    }}
 
 
 @router.get("/domains/{domain_id}/disk")

@@ -718,6 +718,11 @@ class APIClient {
     return this.post(`/api/domains/${domainId}/cache/purge`, {})
   }
 
+  // Directivas nginx/apache personalizadas del dominio
+  updateDomainCustomConfig(domainId, data) {
+    return this.put(`/api/domains/${domainId}/custom-config`, data)
+  }
+
   // Logs y disk por dominio
   getDomainLogs(domainId, type = 'access', lines = 200) {
     return this.get(`/api/domains/${domainId}/logs?type=${type}&lines=${lines}`)
