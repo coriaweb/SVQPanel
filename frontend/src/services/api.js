@@ -1095,6 +1095,17 @@ class APIClient {
     return this.post('/api/system/updates/repair-dpkg', {})
   }
 
+  // Auto-actualización del PANEL (git pull + build + restart)
+  checkPanelUpdate() {
+    return this.get('/api/system/panel-update')
+  }
+  applyPanelUpdate() {
+    return this.post('/api/system/panel-update', {})
+  }
+  setPanelAutoUpdate(enabled, hour = 4) {
+    return this.post(`/api/system/panel-update/auto?enabled=${enabled ? 'true' : 'false'}&hour=${hour}`, {})
+  }
+
   // Visor de logs del servidor
   getLogsCatalog() {
     return this.get('/api/system/logs/catalog')

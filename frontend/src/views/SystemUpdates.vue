@@ -8,6 +8,42 @@
       </div>
     </div>
 
+    <!-- Actualización del propio panel SVQPanel -->
+    <BaseCard :title="'Panel SVQPanel'" icon="rocket-takeoff" style="margin-bottom:16px">
+      <template #actions>
+        <BaseButton variant="ghost" size="sm" :loading="panelChecking" @click="loadPanelUpdate">
+          <i class="bi bi-arrow-repeat"></i> Comprobar
+        </BaseButton>
+      </template>
+      <div v-if="panel" style="display:flex;justify-content:space-between;align-items:center;gap:1rem;flex-wrap:wrap">
+        <div>
+          <div style="display:flex;align-items:center;gap:.5rem;flex-wrap:wrap">
+            <span style="font-weight:600">Versión {{ panel.current }}</span>
+            <span v-if="panel.update_available" class="su-badge su-badge--warn">
+              <i class="bi bi-arrow-up-circle"></i> Disponible {{ panel.latest }}
+            </span>
+            <span v-else class="su-badge su-badge--ok"><i class="bi bi-check-circle"></i> Al día</span>
+          </div>
+          <ul v-if="panel.update_available && panel.changelog && panel.changelog.length"
+              style="margin:.5rem 0 0;padding-left:1.1rem;font-size:.82rem;color:var(--text-muted)">
+            <li v-for="(c, i) in panel.changelog.slice(0, 6)" :key="i">{{ c }}</li>
+          </ul>
+          <label style="display:flex;align-items:center;gap:.5rem;margin-top:.75rem;font-size:.85rem;cursor:pointer">
+            <input type="checkbox" :checked="panel.auto_update" :disabled="panelAutoSaving"
+                   @change="togglePanelAuto($event.target.checked)" />
+            Actualizar automáticamente cada noche (4:00)
+          </label>
+        </div>
+        <BaseButton v-if="panel.update_available" variant="primary"
+                    :loading="panelUpdating" @click="applyPanelUpdate">
+          <i class="bi bi-download"></i> Actualizar ahora
+        </BaseButton>
+      </div>
+      <p v-if="panelMsg" :style="{color: panelError ? 'var(--danger)' : 'var(--success)', fontSize:'.85rem', marginTop:'.5rem'}">
+        {{ panelMsg }}
+      </p>
+    </BaseCard>
+
     <BaseTabs v-model="activeTab" :tabs="tabs" class="su-tabs" />
 
     <!-- ===== TAB: Versiones ===== -->
@@ -188,7 +224,49 @@ export default {
       }
     }
 
-    onMounted(loadVersions)
+    // ── Actualización del panel ──
+    const panel = ref(null)
+    const panelChecking = ref(false)
+    const panelUpdating = ref(false)
+    const panelAutoSaving = ref(false)
+    const panelMsg = ref('')
+    const panelError = ref(false)
+
+    const loadPanelUpdate = async () => {
+      panelChecking.value = true
+      panelMsg.value = ''
+      try { panel.value = await api.checkPanelUpdate() }
+      catch (e) { panelError.value = true; panelMsg.value = 'Error comprobando: ' + (e.message || e) }
+      finally { panelChecking.value = false }
+    }
+    const applyPanelUpdate = async () => {
+      if (!confirm('Se actualizará el panel (git pull + build + reinicio). El panel se reiniciará y tardará unos segundos en volver. ¿Continuar?')) return
+      panelUpdating.value = true
+      panelMsg.value = ''
+      panelError.value = false
+      try {
+        await api.applyPanelUpdate()
+        panelMsg.value = 'Actualización lanzada. El panel se está reiniciando; recarga la página en unos segundos.'
+      } catch (e) {
+        panelError.value = true
+        panelMsg.value = 'Error: ' + (e.message || e)
+      } finally {
+        panelUpdating.value = false
+      }
+    }
+    const togglePanelAuto = async (enabled) => {
+      panelAutoSaving.value = true
+      try {
+        await api.setPanelAutoUpdate(enabled)
+        await loadPanelUpdate()
+      } catch (e) {
+        panelError.value = true; panelMsg.value = 'Error: ' + (e.message || e)
+      } finally {
+        panelAutoSaving.value = false
+      }
+    }
+
+    onMounted(() => { loadVersions(); loadPanelUpdate() })
 
     const checkUpdates = async () => {
       checking.value  = true
@@ -272,6 +350,8 @@ export default {
       upgrading, upgradingPkg, upgradeLog,
       statusMsg, statusError, dpkgInterrupted, repairing,
       checkUpdates, upgradeAll, upgradePkg, repairDpkg,
+      panel, panelChecking, panelUpdating, panelAutoSaving, panelMsg, panelError,
+      loadPanelUpdate, applyPanelUpdate, togglePanelAuto,
     }
   }
 }
@@ -334,4 +414,10 @@ export default {
   font-size: var(--fs-xs); font-family: var(--font-mono);
   max-height: 400px; overflow: auto; white-space: pre-wrap; margin: 0;
 }
+.su-badge {
+  display: inline-flex; align-items: center; gap: 4px;
+  font-size: .72rem; font-weight: 600; padding: 2px 8px; border-radius: 999px;
+}
+.su-badge--ok   { background: var(--success-bg, #dcfce7); color: var(--success, #16a34a); }
+.su-badge--warn { background: var(--warning-bg, #fef3c7); color: var(--warning, #d97706); }
 </style>

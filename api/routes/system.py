@@ -619,3 +619,34 @@ async def read_domain_log(
     res["which"] = which
     return res
 
+
+
+# 
+# Auto-actualizacion del PANEL (git pull + build + restart)
+# 
+@router.get("/system/panel-update")
+async def panel_update_check(current_user: User = Depends(require_admin)):
+    """Comprueba si hay una version nueva del panel (sin aplicar nada)."""
+    from scripts import panel_updater
+    return panel_updater.check()
+
+
+@router.post("/system/panel-update")
+async def panel_update_apply(current_user: User = Depends(require_admin)):
+    """Aplica la actualizacion del panel: git pull + deps + build + restart."""
+    from scripts import panel_updater
+    info = panel_updater.check()
+    if not info["update_available"]:
+        return {"status": "noop", "message": "El panel ya esta en la ultima version.", **info}
+    res = panel_updater.apply_update()
+    if not res.get("ok"):
+        raise HTTPException(500, detail=f"Fallo en la actualizacion (paso: {res.get('step', '?')}). Revisa el log.")
+    return {"status": "success", **res}
+
+
+@router.post("/system/panel-update/auto")
+async def panel_update_auto(enabled: bool = True, hour: int = 4, current_user: User = Depends(require_admin)):
+    """Activa/desactiva la auto-actualizacion diaria del panel por cron."""
+    from scripts import panel_updater
+    state = panel_updater.set_autoupdate(enabled, hour)
+    return {"status": "success", "auto_update": state}
