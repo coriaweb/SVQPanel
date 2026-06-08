@@ -35,6 +35,50 @@ Patrón recomendado: el install **no hardcodea** la lógica, sino que invoca el
 mismo código del panel (p. ej. `python -m api.cli migrate_php_pools --force`),
 de modo que un único cambio en el código se propaga a runtime y a install.
 
+## 🔄 REGLA IMPORTANTE: sistema de actualizaciones (update.sh + updates/)
+
+Hay un sistema de actualizaciones **ya construido** que es **el único camino**
+para actualizar un servidor ya instalado. No crear mecanismos paralelos.
+
+**Cómo funciona:**
+- `update.sh` (raíz) es el orquestador: hace `git pull` → aplica los
+  `updates/NNNN-*.sh` **pendientes** (lleva registro en
+  `/etc/svqpanel/applied_updates`, así cada uno se aplica **una sola vez** por
+  servidor) → reinstala deps Python / rebuild frontend **solo si cambiaron** →
+  reinicia `svqpanel`. Loguea en `/var/log/svqpanel-update.log`.
+- Se ejecuta por **dos vías que hacen lo mismo**:
+  1. **Cron** a las 3am (`0 3 * * * root bash /opt/svqpanel/update.sh`), instalado
+     por `install.sh`.
+  2. **Botón "Actualizar ahora"** del panel (Sistema → Actualizaciones).
+     `scripts/panel_updater.apply_update()` **delega en `update.sh`** (no duplica
+     la lógica). `check()` compara `VERSION` local vs `origin/main:VERSION`.
+
+**⚠️ REGLA: todo cambio que requiera tocar el SERVIDOR de una instalación ya
+existente (no solo el código del panel) DEBE ir como un `updates/NNNN-*.sh`.**
+El `git pull` solo trae código: no reinstala launchers en `/usr/local/bin`, no
+crea jaulas chroot, no instala paquetes del SO, no reescribe configs de nginx,
+etc. Si el cambio no tiene su `updates/NNNN.sh`, los servidores ya instalados
+quedarán con el código nuevo pero **sin** el cambio de sistema aplicado.
+
+**Cómo añadir un update** (ver `updates/README.md`):
+1. Crea `updates/NNNN-descripcion.sh` (NNNN = siguiente número libre, 4 dígitos).
+2. **Idempotente** (seguro de re-ejecutar) y **no interactivo** (corre a las 3am
+   sin terminal: nada de `read`/prompts).
+3. `exit 0` si todo fue bien; cualquier otro código detiene la cadena.
+4. Registra la fila en la tabla de `updates/README.md`.
+5. Commit + push: los servidores lo aplican en la siguiente ejecución (cron o botón).
+
+Patrón recomendado (igual que install): el `updates/NNNN.sh` **invoca el código
+del panel** en vez de reimplementar la lógica. Ej. `0003-terminal-jail.sh` llama
+a `terminal_manager.install()` (idempotente) en vez de recrear el launcher a mano.
+
+**Resumen de las tres fuentes de verdad que deben converger en cada cambio:**
+- Cambio de **código** → commit (lo trae el `git pull`).
+- Cambio en **instalación limpia** → reflejar en `install.sh`.
+- Cambio en **servidores ya instalados** → un `updates/NNNN-*.sh`.
+- Cambio de **esquema de BD** → `ALTER TABLE ... IF NOT EXISTS` en `api/main.py`
+  (se aplica al arrancar).
+
 ## 🌐 Soporte Dual Apache + Nginx (Fase 15)
 
 El panel soporta dos configuraciones de instalación:
