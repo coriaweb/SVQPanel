@@ -358,7 +358,7 @@ def generate_nginx_config(
     # personalizadas del dominio (pueden complementar/sobrescribir a la plantilla).
     tpl_extra = ("\n" + template_nginx_extra.rstrip()) if template_nginx_extra else ""
     if custom_nginx_config and custom_nginx_config.strip():
-        tpl_extra += "\n    # ── Directivas personalizadas del dominio ──\n" + custom_nginx_config.rstrip()
+        tpl_extra += "\n    # ── Directivas personalizadas del dominio ──\n" + custom_nginx_config.rstrip() + "\n"
 
 
     ipv4_listen_http  = f"{ipv4}:80" if ipv4 else "80"
