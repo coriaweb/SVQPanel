@@ -61,8 +61,14 @@ def ttyd_active() -> bool:
 
 
 def status() -> dict:
+    jail_ready = False
+    try:
+        from scripts import terminal_jail
+        jail_ready = terminal_jail.jail_ready()
+    except Exception:
+        pass
     return {"installed": ttyd_installed(), "active": ttyd_active(),
-            "port": TTYD_PORT}
+            "port": TTYD_PORT, "jail_ready": jail_ready}
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -116,9 +122,16 @@ else
     echo "Usuario inexistente. Cerrando."; exit 1
   fi
   echo "── Sesión SVQPanel ($TARGET) ──"
-  # -s /bin/bash: los usuarios de hosting suelen tener shell nologin (solo SFTP);
-  # forzamos bash para la sesión web sin cambiar su shell de login real.
-  exec su - "$TARGET" -s /bin/bash
+  # Sesión ENJAULADA (chroot jailkit): el cliente solo ve su propio home; no
+  # puede recorrer el resto del servidor. terminal_jail prepara el bind-mount y
+  # devuelve el comando jk_chrootlaunch. Si la jaula no está disponible, NO
+  # caemos a una shell sin enjaular (sería fuga de info): cerramos.
+  CMD="$(/opt/svqpanel/venv/bin/python -m scripts.terminal_jail "$TARGET" 2>/dev/null)"
+  if [[ -z "$CMD" ]]; then
+    echo "La jaula de seguridad no está disponible. Contacta con el administrador."
+    exit 1
+  fi
+  exec $CMD
 fi
 '''
     tmp = LAUNCHER + ".tmp"
@@ -175,6 +188,12 @@ def install() -> dict:
     subprocess.run(["systemctl", "enable", "svqpanel-ttyd"], timeout=15)
     subprocess.run(["systemctl", "restart", "svqpanel-ttyd"], check=True, timeout=20)
     ensure_nginx_block()
+    # Construir la jaula chroot (jailkit) para las sesiones de cliente.
+    try:
+        from scripts import terminal_jail
+        terminal_jail.build_jail()
+    except Exception as e:
+        logger.warning("No se pudo construir la jaula chroot: %s", e)
     return status()
 
 
