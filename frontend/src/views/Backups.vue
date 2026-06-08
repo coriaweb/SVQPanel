@@ -17,8 +17,10 @@
       <div>
         Cada backup respalda lo que selecciones (<strong>web</strong>, <strong>bases de datos</strong> y/o
         <strong>correo</strong>) de un dominio. Las copias <strong>incrementales</strong> solo guardan lo que
-        cambió usando enlaces duros, y las bases de datos se comprimen para ocupar poco disco. El destino
-        puede ser local (<code>/backups</code>) o un servidor remoto por <strong>SFTP</strong>.
+        cambió usando enlaces duros, y las bases de datos se comprimen para ocupar poco disco. Puedes guardar
+        las copias en <strong>este servidor</strong>, en <strong>otro servidor</strong> (SFTP) o en la
+        <strong>nube</strong> (S3 / Backblaze). Para no perderlas ante un fallo de disco, lo ideal es tener
+        al menos una copia <strong>fuera</strong> del servidor.
       </div>
     </div>
 
@@ -191,62 +193,112 @@
 
               <!-- Destino -->
               <div class="bk-section">
-                <div class="bk-section-title">Destino</div>
-                <div style="display:flex;gap:1.5rem;margin-bottom:.75rem">
+                <div class="bk-section-title">¿Dónde se guarda la copia?</div>
+                <div style="display:flex;gap:1.5rem;margin-bottom:.6rem;flex-wrap:wrap">
                   <label class="bk-check">
                     <input type="radio" value="local" v-model="form.destination_type" />
-                    <i class="bi bi-hdd"></i> Local
+                    <i class="bi bi-hdd"></i> Este servidor
                   </label>
                   <label class="bk-check">
                     <input type="radio" value="sftp" v-model="form.destination_type" />
-                    <i class="bi bi-hdd-network"></i> Remoto (SFTP)
+                    <i class="bi bi-hdd-network"></i> Otro servidor (SFTP)
                   </label>
                   <label class="bk-check">
                     <input type="radio" value="s3" v-model="form.destination_type" />
-                    <i class="bi bi-cloud-arrow-up"></i> S3 / Backblaze
+                    <i class="bi bi-cloud-arrow-up"></i> Nube (S3 / Backblaze)
                   </label>
                 </div>
+                <!-- Explicación según el destino elegido -->
+                <p class="bk-dest-explain">
+                  <template v-if="form.destination_type === 'local'">
+                    <i class="bi bi-info-circle"></i> La copia se guarda en el <strong>disco de este mismo servidor</strong>.
+                    Es lo más rápido, pero <strong>si el servidor o su disco fallan, pierdes también las copias</strong>.
+                    Recomendado combinarlo con un destino externo.
+                  </template>
+                  <template v-else-if="form.destination_type === 'sftp'">
+                    <i class="bi bi-info-circle"></i> La copia se envía por <strong>SSH/SFTP a otro servidor tuyo</strong>
+                    (por ejemplo un NAS o un VPS de respaldo). Necesitas los datos de acceso de ese otro servidor.
+                  </template>
+                  <template v-else>
+                    <i class="bi bi-info-circle"></i> La copia se sube a un <strong>almacenamiento en la nube</strong>
+                    (fuera de este servidor). Es la opción más segura ante desastres. Si nunca lo has usado,
+                    <a href="#" @click.prevent="showS3Help = !showS3Help">{{ showS3Help ? 'ocultar la guía' : 'lee la guía rápida 👇' }}</a>.
+                  </template>
+                </p>
 
                 <div v-if="form.destination_type === 'local'" class="bk-field">
-                  <label>Ruta local</label>
+                  <label>Carpeta en el servidor</label>
                   <input v-model="form.local_path" class="form-control form-control-sm font-monospace" placeholder="/backups" />
+                  <span class="bk-hint">Ruta donde se guardarán las copias. Por defecto <code>/backups</code> está bien.</span>
                 </div>
 
                 <!-- S3 / compatible -->
                 <div v-else-if="form.destination_type === 's3'" style="display:flex;flex-direction:column;gap:.75rem">
+
+                  <!-- Guía rápida desplegable -->
+                  <div v-if="showS3Help" class="bk-s3-guide">
+                    <div class="bk-s3-guide__title"><i class="bi bi-lightbulb"></i> ¿Qué es esto y cómo lo consigo? (en 2 minutos)</div>
+                    <p>
+                      «S3» es un estándar para guardar archivos en la nube. Muchas empresas lo ofrecen; la más
+                      <strong>barata y sencilla para empezar es Backblaze B2</strong> (10&nbsp;GB gratis).
+                    </p>
+                    <ol>
+                      <li>Crea una cuenta en <strong>backblaze.com</strong> → entra en <em>B2 Cloud Storage</em>.</li>
+                      <li>Pulsa <strong>«Create a Bucket»</strong>, ponle un nombre (ej. <code>misuper-backups</code>) y guárdalo.
+                          → ese nombre es el campo <strong>Bucket</strong> de abajo.</li>
+                      <li>En la pantalla del bucket verás <strong>«Endpoint»</strong> (algo como
+                          <code>s3.us-west-002.backblazeb2.com</code>). Cópialo al campo <strong>Endpoint</strong>.
+                          La parte <code>us-west-002</code> es la <strong>Región</strong>.</li>
+                      <li>Ve a <strong>«App Keys»</strong> → <strong>«Add a New Application Key»</strong>. Te dará dos
+                          códigos: <em>keyID</em> y <em>applicationKey</em>. Son el <strong>Access Key</strong> y el
+                          <strong>Secret Key</strong>. <u>Copia el Secret en el momento</u>: solo se muestra una vez.</li>
+                    </ol>
+                    <p style="margin:0">
+                      Con AWS, DigitalOcean Spaces, Wasabi, etc. el proceso es equivalente (bucket + endpoint + 2 claves).
+                      Cuando lo tengas, rellena los campos y pulsa <strong>«Probar conexión»</strong>.
+                    </p>
+                  </div>
+
                   <div style="display:grid;grid-template-columns:1fr 1fr;gap:.5rem">
                     <div class="bk-field">
                       <label>Bucket <span class="text-danger">*</span></label>
-                      <input v-model="form.s3_bucket" class="form-control form-control-sm" placeholder="mis-backups" />
+                      <input v-model="form.s3_bucket" class="form-control form-control-sm" placeholder="misuper-backups" />
+                      <span class="bk-hint">El nombre del «cubo» que creaste en tu proveedor.</span>
                     </div>
                     <div class="bk-field">
-                      <label>Carpeta (prefijo)</label>
+                      <label>Carpeta (opcional)</label>
                       <input v-model="form.s3_prefix" class="form-control form-control-sm font-monospace" placeholder="svqpanel/" />
+                      <span class="bk-hint">Subcarpeta dentro del bucket. Puedes dejarlo vacío.</span>
                     </div>
                   </div>
                   <div style="display:grid;grid-template-columns:1fr 1fr;gap:.5rem">
                     <div class="bk-field">
-                      <label>Endpoint <span class="bk-hint">(vacío = AWS)</span></label>
+                      <label>Endpoint <span class="bk-hint">(en blanco si usas AWS)</span></label>
                       <input v-model="form.s3_endpoint" class="form-control form-control-sm" placeholder="s3.us-west-002.backblazeb2.com" />
+                      <span class="bk-hint">La «dirección» del servicio. Te la da tu proveedor.</span>
                     </div>
                     <div class="bk-field">
                       <label>Región</label>
-                      <input v-model="form.s3_region" class="form-control form-control-sm" placeholder="us-west-002 / eu-west-1" />
+                      <input v-model="form.s3_region" class="form-control form-control-sm" placeholder="us-west-002" />
+                      <span class="bk-hint">Suele ser parte del endpoint (ej. <code>us-west-002</code>).</span>
                     </div>
                   </div>
                   <div style="display:grid;grid-template-columns:1fr 1fr;gap:.5rem">
                     <div class="bk-field">
-                      <label>Access Key <span class="text-danger">*</span></label>
-                      <input v-model="form.s3_access_key" class="form-control form-control-sm font-monospace" placeholder="AKIA… / keyID" />
+                      <label>Access Key (keyID) <span class="text-danger">*</span></label>
+                      <input v-model="form.s3_access_key" class="form-control form-control-sm font-monospace" placeholder="000abc..." />
+                      <span class="bk-hint">El identificador de tu clave de acceso.</span>
                     </div>
                     <div class="bk-field">
                       <label>Secret Key</label>
                       <input v-model="form.s3_secret_key" type="password" class="form-control form-control-sm"
-                             :placeholder="editing ? 'Sin cambios' : ''" />
+                             :placeholder="editing ? 'Sin cambios' : 'La clave secreta'" />
+                      <span class="bk-hint">La clave secreta (solo se muestra una vez al crearla).</span>
                     </div>
                   </div>
                   <p class="bk-hint" style="margin:0">
-                    Compatible con AWS S3, Backblaze B2, Wasabi, MinIO… El backup se sube comprimido (.tar.gz). La retención también se aplica en el bucket.
+                    <i class="bi bi-shield-check"></i> La copia se sube comprimida (.tar.gz) y la clave secreta se guarda cifrada.
+                    Funciona con AWS S3, Backblaze B2, Wasabi, DigitalOcean Spaces, MinIO…
                   </p>
                   <div v-if="editing" style="display:flex;align-items:center;gap:.75rem">
                     <button class="btn btn-sm btn-outline-info" :disabled="testingS3" @click="testS3">
@@ -257,6 +309,9 @@
                       {{ s3TestMsg }}
                     </span>
                   </div>
+                  <p v-if="!editing" class="bk-hint" style="margin:0">
+                    <i class="bi bi-info-circle"></i> Guarda primero el backup y luego podrás usar «Probar conexión» para comprobar las credenciales.
+                  </p>
                 </div>
 
                 <!-- SFTP -->
@@ -551,6 +606,7 @@ export default {
     const testingS3 = ref(false)
     const s3TestMsg = ref('')
     const s3TestOk = ref(false)
+    const showS3Help = ref(false)
 
     const runningJobId = ref(null)
 
@@ -910,7 +966,7 @@ export default {
       jobs, domains, loading,
       showForm, editing, form, formError, saving,
       testingSftp, sftpTestMsg, sftpTestOk,
-      testingS3, s3TestMsg, s3TestOk, testS3,
+      testingS3, s3TestMsg, s3TestOk, testS3, showS3Help,
       runningJobId,
       showHistory, historyJob, records, historyLoading, expanded,
       showRestore, restoreJob, snapshots, snapshotsLoading, restoreOpts, restoringSnap,
@@ -926,6 +982,20 @@ export default {
 </script>
 
 <style scoped>
+/* Explicación del destino elegido */
+.bk-dest-explain { font-size: var(--fs-sm); color: var(--text-secondary); margin: 0 0 .9rem; line-height: 1.5; }
+.bk-dest-explain > i { color: var(--info, var(--svq-orange)); margin-right: 4px; }
+.bk-dest-explain a { color: var(--svq-orange, #e8590c); font-weight: 600; }
+
+/* Guía rápida de S3 */
+.bk-s3-guide { background: var(--surface-inset, #f8fafc); border: 1px solid var(--border); border-left: 3px solid var(--svq-orange, #e8590c); border-radius: var(--r-md); padding: var(--sp-3) var(--sp-4); font-size: var(--fs-sm); color: var(--text-secondary); line-height: 1.55; }
+.bk-s3-guide__title { font-weight: 700; color: var(--text); margin-bottom: .4rem; }
+.bk-s3-guide__title > i { color: var(--svq-orange, #e8590c); }
+.bk-s3-guide p { margin: .35rem 0; }
+.bk-s3-guide ol { margin: .4rem 0 .4rem 0; padding-left: 1.2rem; }
+.bk-s3-guide li { margin: .3rem 0; }
+.bk-s3-guide code { background: var(--surface, #fff); padding: 1px 5px; border-radius: 4px; border: 1px solid var(--border); font-size: .82em; }
+
 /* Cabecera */
 .page-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 1rem; margin-bottom: var(--sp-5); flex-wrap: wrap; }
 .page-head__title { font-size: 1.5rem; font-weight: var(--fw-bold, 700); margin: 0; letter-spacing: -.01em; }
