@@ -31,6 +31,12 @@ class RspamdManager:
     RATELIMIT_DOMAIN_MAP = "/etc/rspamd/maps/domain_ratelimit.map"
     RSPAMD_API      = "http://127.0.0.1:11334"
 
+    # Antivirus por dominio: ClamAV escanea todo (símbolo CLAM_VIRUS); el Lua
+    # rechaza solo si el dominio del destinatario está en el mapa.
+    ANTIVIRUS_LUA        = "/etc/rspamd/lua.local.d/svqpanel_antivirus.lua"
+    ANTIVIRUS_DOMAIN_MAP = "/etc/rspamd/maps/antivirus_domains.map"
+    CLAMD_SOCKET         = "/var/run/clamav/clamd.ctl"
+
     # ─── Helpers ──────────────────────────────────────────────────────────
 
     def _safe_name(self, domain):
@@ -478,3 +484,75 @@ custom_keywords = "{self.RATELIMIT_LUA}";
 
     def rspamd_available(self):
         return os.path.exists("/etc/rspamd")
+
+    # ─── Antivirus ClamAV por dominio ─────────────────────────────────────────
+    def clamav_available(self) -> bool:
+        """True si clamd está disponible (socket presente o servicio activo)."""
+        if os.path.exists(self.CLAMD_SOCKET):
+            return True
+        try:
+            r = subprocess.run(["systemctl", "is-active", "clamav-daemon"],
+                               capture_output=True, text=True, timeout=4)
+            return r.stdout.strip() == "active"
+        except Exception:
+            return False
+
+    def _build_antivirus_lua(self) -> str:
+        """Lua (postfilter) que rechaza el correo con virus SOLO si el dominio del
+        destinatario está en el mapa. ClamAV ya añadió el símbolo CLAM_VIRUS.
+
+        Carga automática: Rspamd hace dofile de /etc/rspamd/lua.local.d/*.lua.
+        """
+        return f"""-- SVQPanel — antivirus por dominio. Generado automáticamente. NO editar.
+local av_map = rspamd_config:add_map({{
+  url = '{self.ANTIVIRUS_DOMAIN_MAP}',
+  type = 'set',
+  description = 'SVQPanel: dominios con antivirus (rechazo) activado',
+}})
+
+rspamd_config:register_symbol({{
+  name = 'SVQ_ANTIVIRUS_REJECT',
+  type = 'postfilter',
+  priority = 10,
+  callback = function(task)
+    if not av_map then return end
+    -- Solo actúa si ClamAV marcó virus
+    local sym = task:get_symbol('CLAM_VIRUS')
+    if not sym then return end
+    -- ¿Algún destinatario pertenece a un dominio con antivirus activado?
+    local rcpts = task:get_recipients('smtp') or task:get_recipients('mime') or {{}}
+    for _, r in ipairs(rcpts) do
+      local dom = (r['domain'] or ''):lower()
+      if dom ~= '' and av_map:get_key(dom) then
+        local vname = 'desconocido'
+        if sym[1] and sym[1]['options'] and sym[1]['options'][1] then
+          vname = sym[1]['options'][1]
+        end
+        task:set_pre_result('reject', 'Mensaje rechazado: virus detectado (' .. vname .. ')')
+        return
+      end
+    end
+  end,
+}})
+"""
+
+    def rebuild_antivirus_from_db(self, mail_domains, reload=True):
+        """Reescribe el mapa de dominios con antivirus activado + el Lua, y recarga.
+
+        mail_domains: lista de MailDomain. Escribe un dominio por línea (set map).
+        """
+        lines = []
+        for md in mail_domains:
+            if getattr(md, "antivirus_enabled", False):
+                lines.append(md.domain_name.lower())
+        self._write_map(self.ANTIVIRUS_DOMAIN_MAP, lines)
+
+        # El Lua es idempotente; lo (re)escribimos siempre por si cambió.
+        os.makedirs(os.path.dirname(self.ANTIVIRUS_LUA), exist_ok=True)
+        tmp = self.ANTIVIRUS_LUA + ".tmp"
+        with open(tmp, "w") as f:
+            f.write(self._build_antivirus_lua())
+        os.replace(tmp, self.ANTIVIRUS_LUA)
+
+        if reload:
+            self._reload_rspamd()

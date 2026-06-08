@@ -533,6 +533,13 @@ class APIClient {
     return this.post(`/api/mail/domains/${domainId}/tls?enabled=${enabled ? 'true' : 'false'}`, {})
   }
 
+  getMailAntivirus(domainId) {
+    return this.get(`/api/mail/domains/${domainId}/antivirus`)
+  }
+  setMailAntivirus(domainId, enabled) {
+    return this.post(`/api/mail/domains/${domainId}/antivirus?enabled=${enabled ? 'true' : 'false'}`, {})
+  }
+
   // Git deploy por dominio
   getGitStatus(domainId) {
     return this.get(`/api/git/domains/${domainId}`)

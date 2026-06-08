@@ -313,9 +313,30 @@ RSPAMDBAYESEOF
 enabled = true;
 RSPAMDGREYEOF
 
+    # ── Antivirus ClamAV (escaneo de adjuntos) ──────────────────────────────
+    # Se instala siempre; el escaneo es global pero el RECHAZO se aplica por
+    # dominio (lo decide svqpanel_antivirus.lua según el mapa que gestiona el
+    # panel). El correo de los dominios sin antivirus activado no se rechaza.
+    echo -e "${YELLOW}→ Instalando ClamAV (antivirus de correo)...${NC}"
+    apt-get install -y -qq clamav clamav-daemon 2>/dev/null || true
+    # Descargar firmas en segundo plano (freshclam tarda; no bloquear el install).
+    systemctl stop clamav-freshclam 2>/dev/null || true
+    (freshclam >/dev/null 2>&1; systemctl start clamav-freshclam 2>/dev/null;
+     systemctl enable --now clamav-daemon 2>/dev/null) &
+    cat > /etc/rspamd/local.d/antivirus.conf << 'RSPAMDAVEOF'
+# SVQPanel — escaneo antivirus con ClamAV. El rechazo selectivo por dominio lo
+# decide svqpanel_antivirus.lua (lee el mapa de dominios con antivirus activado).
+clamav {
+  type = "clamav";
+  symbol = "CLAM_VIRUS";
+  servers = "/var/run/clamav/clamd.ctl";
+  scan_mime_parts = true;
+}
+RSPAMDAVEOF
+
     systemctl enable rspamd
     systemctl restart rspamd
-    echo -e "${GREEN}✓ Rspamd configurado (antispam + DKIM + greylisting + Bayes)${NC}"
+    echo -e "${GREEN}✓ Rspamd configurado (antispam + DKIM + greylisting + Bayes + ClamAV)${NC}"
 else
     echo -e "${YELLOW}⚠ Rspamd y Redis omitidos (CPU sin SSSE3)${NC}"
     echo -e "  ${YELLOW}El servidor de correo funcionará sin antispam ni firma DKIM automática${NC}"

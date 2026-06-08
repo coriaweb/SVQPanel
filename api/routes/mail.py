@@ -116,6 +116,7 @@ def _mail_domain_to_dict(md: MailDomain, current_user) -> dict:
         "catch_all":     md.catch_all,
         "max_mailboxes": md.max_mailboxes,
         "send_limit_hour": getattr(md, "send_limit_hour", 1000),
+        "antivirus_enabled": bool(getattr(md, "antivirus_enabled", False)),
         "mailbox_count": len(md.mailboxes),
         "alias_count":   len(md.aliases),
         "created_at":    md.created_at,
@@ -254,6 +255,7 @@ def _rebuild_rspamd(db: Session):
         )
         mgr.rebuild_from_db(all_domains)
         mgr.rebuild_ratelimit_from_db(all_domains)
+        mgr.rebuild_antivirus_from_db(all_domains)
     except PermissionError:
         logger.warning("Sin permisos para actualizar Rspamd (¿entorno dev?)")
     except Exception as e:
@@ -909,6 +911,56 @@ async def set_mail_tls(domain_id: int, enabled: bool = True,
         "message": f"TLS activado: los clientes ya pueden usar mail.{md.domain_name} "
                    f"con certificado válido.",
     }
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Antivirus ClamAV por dominio
+# ─────────────────────────────────────────────────────────────────────────────
+@router.get("/mail/domains/{domain_id}/antivirus")
+async def get_mail_antivirus(domain_id: int, current_user=Depends(require_auth),
+                             db: Session = Depends(get_db)):
+    """Estado del antivirus del dominio + disponibilidad de ClamAV en el servidor."""
+    md = _get_mail_domain_or_404(domain_id, db)
+    _require_edit(md, current_user)
+    available = False
+    try:
+        from scripts.rspamd_manager import RspamdManager
+        available = RspamdManager().clamav_available()
+    except Exception:
+        available = False
+    return {
+        "domain": md.domain_name,
+        "enabled": bool(getattr(md, "antivirus_enabled", False)),
+        "available": available,
+    }
+
+
+@router.post("/mail/domains/{domain_id}/antivirus")
+async def set_mail_antivirus(domain_id: int, enabled: bool = True,
+                             current_user=Depends(require_auth),
+                             db: Session = Depends(get_db)):
+    """Activa/desactiva el antivirus (rechazo de correo con virus) del dominio."""
+    md = _get_mail_domain_or_404(domain_id, db)
+    _require_edit(md, current_user)
+
+    if enabled:
+        try:
+            from scripts.rspamd_manager import RspamdManager
+            if not RspamdManager().clamav_available():
+                raise HTTPException(status_code=422, detail=(
+                    "ClamAV no está disponible en el servidor. Instálalo/arráncalo "
+                    "(clamav-daemon) antes de activar el antivirus."))
+        except HTTPException:
+            raise
+        except Exception:
+            pass
+
+    md.antivirus_enabled = bool(enabled)
+    db.commit()
+    db.refresh(md)
+    _rebuild_rspamd(db)
+    return {"status": "success", "domain": md.domain_name,
+            "enabled": md.antivirus_enabled}
 
 
 @router.post("/mail/domains/{domain_id}/dns-fix")

@@ -66,6 +66,10 @@ class MailDomain(Base):
     whitelist_senders     = Column(Text, default="")     # emails/dominios permitidos (uno por línea)
     blacklist_senders     = Column(Text, default="")     # emails/dominios bloqueados (uno por línea)
 
+    # ── Antivirus (ClamAV vía Rspamd) ─────────────────────────────────────
+    # Si está activo, el correo entrante a este dominio con virus se RECHAZA.
+    antivirus_enabled     = Column(Boolean, default=False)
+
     # ── Timestamps ────────────────────────────────────────────────────────
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)

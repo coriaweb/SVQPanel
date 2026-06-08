@@ -94,6 +94,7 @@ class MailDomainResponse(BaseModel):
     catch_all:      Optional[str]  = None
     max_mailboxes:  int
     send_limit_hour: int           = 1000
+    antivirus_enabled: bool        = False
     mailbox_count:  int            = 0
     alias_count:    int            = 0
     created_at:     Optional[datetime] = None
@@ -113,6 +114,7 @@ class MailDomainListItem(BaseModel):
     dkim_selector: str
     catch_all:     Optional[str] = None
     max_mailboxes: int
+    antivirus_enabled: bool       = False
     mailbox_count: int           = 0
     alias_count:   int           = 0
     created_at:    Optional[datetime] = None

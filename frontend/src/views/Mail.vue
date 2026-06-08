@@ -673,6 +673,32 @@
               </div>
             </div>
 
+            <!-- Antivirus ClamAV -->
+            <div style="margin-top:1.5rem">
+              <h6 style="font-weight:600;font-size:.95rem;margin-bottom:1rem"><i class="bi bi-bug" style="color:var(--svq-orange)"></i> Antivirus de correo (ClamAV)</h6>
+              <div v-if="antivirus" class="sv-info-box">
+                <div style="display:flex;justify-content:space-between;align-items:flex-start">
+                  <div>
+                    <div style="font-weight:600">Escaneo de adjuntos</div>
+                    <p style="font-size:.85rem;color:var(--text-muted);margin:.25rem 0 0">
+                      Analiza los adjuntos del correo entrante y <strong>rechaza</strong> los que contengan malware.
+                    </p>
+                  </div>
+                  <label class="form-switch" style="margin:0;flex-shrink:0">
+                    <input class="form-check-input" type="checkbox" :checked="antivirus.enabled"
+                           :disabled="antivirusSaving || !antivirus.available"
+                           @change="toggleAntivirus($event.target.checked)" style="width:3em;height:1.5em;cursor:pointer">
+                  </label>
+                </div>
+                <p v-if="!antivirus.available" style="font-size:.85rem;color:var(--warning);margin:.5rem 0 0">
+                  <i class="bi bi-exclamation-triangle"></i> ClamAV no está disponible en el servidor.
+                </p>
+                <p v-if="antivirusSaving" style="font-size:.85rem;color:var(--text-muted);margin:.5rem 0 0">
+                  <span class="spinner-border spinner-border-sm"></span> Aplicando…
+                </p>
+              </div>
+            </div>
+
           </div>
 
         </div>
@@ -1232,6 +1258,7 @@ export default {
       webmail.value = null
       relay.value = null
       mailtls.value = null
+      antivirus.value = null
       mailLogs.value = null
       logFilter.value = 'all'
       settingsForm.value = {
@@ -1257,6 +1284,7 @@ export default {
           await loadSpamSettings(selectedDomain.value.id)
         }
         await loadMailTls(selectedDomain.value.id)
+        await loadAntivirus(selectedDomain.value.id)
       }
       if (tab === 'webmail') {
         await loadWebmail(selectedDomain.value.id)
@@ -1350,6 +1378,30 @@ export default {
         await loadMailTls(selectedDomain.value.id)
       } finally {
         mailtlsSaving.value = false
+      }
+    }
+
+    // ── Antivirus ClamAV por dominio ──
+    const antivirus       = ref(null)
+    const antivirusSaving = ref(false)
+    const loadAntivirus = async (domainId) => {
+      try {
+        antivirus.value = await api.getMailAntivirus(domainId)
+      } catch (e) {
+        antivirus.value = null
+      }
+    }
+    const toggleAntivirus = async (enabled) => {
+      antivirusSaving.value = true
+      try {
+        await api.setMailAntivirus(selectedDomain.value.id, enabled)
+        store.showNotification(enabled ? 'Antivirus activado' : 'Antivirus desactivado', 'success')
+        await loadAntivirus(selectedDomain.value.id)
+      } catch (e) {
+        store.showNotification('Error: ' + (e.message || e), 'danger')
+        await loadAntivirus(selectedDomain.value.id)
+      } finally {
+        antivirusSaving.value = false
       }
     }
 
@@ -1894,6 +1946,7 @@ export default {
       loadWebmail, toggleWebmail, issueWebmailSsl,
       relay, relayForm, loadingRelay, relaySaving, loadRelay, saveDomainRelay,
       mailtls, mailtlsSaving, toggleMailTls,
+      antivirus, antivirusSaving, toggleAntivirus,
       // Monitoreo de envío
       mailLogs, loadingLogs, logFilter, logFilters,
       loadMailLogs, filteredLogEvents, logBadge, logLabel,
