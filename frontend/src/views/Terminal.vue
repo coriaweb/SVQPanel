@@ -66,6 +66,10 @@
         </button>
       </div>
       <iframe v-if="iframeUrl" :src="iframeUrl" class="sv-terminal-frame"></iframe>
+      <p style="margin:0;padding:.4rem .9rem;font-size:.78rem;color:var(--text-muted);border-top:1px solid var(--border)">
+        <i class="bi bi-info-circle"></i>
+        Si la consola no responde, cierra y vuelve a abrirla (el token de acceso caduca a los {{ ttl }} s).
+      </p>
     </BaseCard>
   </div>
 </template>
@@ -93,6 +97,7 @@ export default {
     const sessionOpen = ref(false)
     const sessionTarget = ref('')
     const iframeUrl = ref('')
+    const ttl = ref(30)
 
     const loadStatus = async () => {
       if (!isAdmin.value) { status.value = { active: true, installed: true }; return }
@@ -125,6 +130,7 @@ export default {
       try {
         const res = await api.openTerminalSession(isAdmin.value ? target.value : null)
         sessionTarget.value = res.target
+        ttl.value = res.ttl_seconds || 30
         // ttyd con -a permite pasar el token como argumento al launcher vía ?arg=
         iframeUrl.value = `${res.url}?arg=${encodeURIComponent(res.token)}`
         sessionOpen.value = true
@@ -148,7 +154,7 @@ export default {
 
     return {
       isAdmin, status, users, target, installing, opening, error,
-      sessionOpen, sessionTarget, iframeUrl,
+      sessionOpen, sessionTarget, iframeUrl, ttl,
       install, openSession, closeSession,
     }
   },
