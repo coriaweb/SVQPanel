@@ -93,54 +93,43 @@ def check() -> dict:
     }
 
 
+UPDATE_SCRIPT = os.path.join(PANEL_DIR, "update.sh")
+UPDATE_LOG = "/var/log/svqpanel-update.log"
+
+
 def apply_update() -> dict:
-    """Aplica la actualización: git pull + deps + build + restart.
+    """Aplica la actualización delegando en `update.sh`.
 
-    El restart de svqpanel reinicia este propio proceso, así que la respuesta se
-    devuelve ANTES del restart si es posible; en la práctica la UI vuelve a
-    consultar /system/panel-update tras unos segundos.
+    IMPORTANTE: NO duplicamos aquí la lógica de actualización. `update.sh` es el
+    único camino de actualización del panel: hace git pull + aplica los
+    `updates/NNNN-*.sh` PENDIENTES (con registro en /etc/svqpanel/applied_updates,
+    así cada cambio de sistema —jaulas, launchers, nginx…— se aplica una sola vez)
+    + actualiza deps/frontend si cambiaron + reinicia. Es el mismo script que
+    corre el cron a las 3am, de modo que el botón de la web y el cron hacen
+    EXACTAMENTE lo mismo.
+
+    Como update.sh reinicia svqpanel (nos mata), lo lanzamos en background y la
+    UI vuelve a consultar /system/panel-update tras unos segundos.
     """
-    log = []
+    if not os.path.exists(UPDATE_SCRIPT):
+        # Fallback defensivo (instalaciones antiguas sin update.sh): pull mínimo.
+        _run(["git", "checkout", "--", "frontend/package-lock.json"], timeout=30)
+        rc, out = _run(["git", "pull", "origin", "main"], timeout=120)
+        subprocess.Popen(["bash", "-c", "sleep 1; systemctl restart svqpanel"],
+                         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        return {"ok": rc == 0, "version": local_version(),
+                "log": out[-2000:], "fallback": True}
 
-    def step(name, cmd, **kw):
-        rc, out = _run(cmd, **kw)
-        log.append(f"$ {' '.join(cmd)}\n{out[-1500:]}")
-        return rc
-
-    # 1) git pull (descarta cambios locales de package-lock que ensucian el árbol)
-    _run(["git", "checkout", "--", "frontend/package-lock.json"], timeout=30)
-    if step("pull", ["git", "pull", "origin", "main"], timeout=120) != 0:
-        return {"ok": False, "step": "git pull", "log": "\n".join(log)}
-
-    # 2) dependencias Python (en el venv del panel)
-    pip = os.path.join(PANEL_DIR, "venv", "bin", "pip")
-    if os.path.exists(pip):
-        step("pip", [pip, "install", "-q", "-r", "requirements.txt"], timeout=300)
-
-    # 3) build del frontend (si hay node/npm)
-    frontend = os.path.join(PANEL_DIR, "frontend")
-    if os.path.isdir(frontend) and os.path.exists(os.path.join(frontend, "package.json")):
-        step("build", ["npm", "run", "build"], cwd=frontend, timeout=600)
-
-    # 3b) reinstalar componentes con artefactos FUERA del repo que el git pull no
-    #     actualiza solo (p. ej. el launcher del terminal en /usr/local/bin, el
-    #     servicio systemd y la jaula chroot). Idempotente y tolerante a fallos.
-    try:
-        from scripts import terminal_manager
-        if terminal_manager.ttyd_installed():
-            terminal_manager.install()
-            log.append("→ Terminal web reinstalado (launcher + jaula).")
-    except Exception as e:
-        log.append(f"Aviso: no se pudo reinstalar el terminal web: {e}")
-
-    # 4) reiniciar el servicio (aplica migraciones al arrancar). En background
-    #    para poder devolver la respuesta antes de que nos reinicie.
+    # Lanzar update.sh en background, logueando a su fichero habitual.
     subprocess.Popen(
-        ["bash", "-c", "sleep 1; systemctl restart svqpanel"],
+        ["bash", "-c",
+         f"sleep 1; bash {UPDATE_SCRIPT} >> {UPDATE_LOG} 2>&1"],
         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
-    log.append("→ Reiniciando svqpanel…")
-    return {"ok": True, "version": local_version(), "log": "\n".join(log)}
+    return {"ok": True, "version": local_version(),
+            "log": f"Actualización lanzada vía update.sh "
+                   f"(aplica migraciones pendientes y reinicia). "
+                   f"Log: {UPDATE_LOG}"}
 
 
 # ─────────────────────────────────────────────────────────────────────────────
