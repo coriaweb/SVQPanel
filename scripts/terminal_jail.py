@@ -199,9 +199,16 @@ def _ensure_user_dev(jail: str) -> None:
         subprocess.run(["mount", "-t", "devpts", "devpts", pts,
                         "-o", "rw,nosuid,noexec,gid=5,mode=620,ptmxmode=666"],
                        check=False, timeout=10)
+    # /proc con hidepid=2: el cliente solo ve SUS procesos, no los del resto del
+    # servidor (sin esto, `ps aux` listaba TODOS los procesos del host → fuga de
+    # info: comandos de otros clientes, posibles credenciales en argv…).
     proc = os.path.join(jail, "proc")
     if not _is_mounted(proc):
-        subprocess.run(["mount", "-t", "proc", "proc", proc], check=False, timeout=10)
+        rc = subprocess.run(["mount", "-t", "proc", "proc", proc,
+                             "-o", "hidepid=2"], check=False, timeout=10).returncode
+        if rc != 0:
+            # Fallback por si el kernel no acepta hidepid en el mount de proc
+            subprocess.run(["mount", "-t", "proc", "proc", proc], check=False, timeout=10)
 
 
 def _write_user_etc(jail: str, username: str) -> None:

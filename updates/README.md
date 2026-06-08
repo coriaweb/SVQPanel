@@ -43,3 +43,4 @@ exit 0
 | 0004 | Terminal web — fix jaula (pts/binarios) | 2026-06-08 |
 | 0005 | Terminal web — jaula por usuario        | 2026-06-08 |
 | 0006 | Terminal web — prompt + bienvenida      | 2026-06-08 |
+| 0007 | Terminal web — /proc hidepid (procesos) | 2026-06-08 |
