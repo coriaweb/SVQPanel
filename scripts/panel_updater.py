@@ -122,6 +122,17 @@ def apply_update() -> dict:
     if os.path.isdir(frontend) and os.path.exists(os.path.join(frontend, "package.json")):
         step("build", ["npm", "run", "build"], cwd=frontend, timeout=600)
 
+    # 3b) reinstalar componentes con artefactos FUERA del repo que el git pull no
+    #     actualiza solo (p. ej. el launcher del terminal en /usr/local/bin, el
+    #     servicio systemd y la jaula chroot). Idempotente y tolerante a fallos.
+    try:
+        from scripts import terminal_manager
+        if terminal_manager.ttyd_installed():
+            terminal_manager.install()
+            log.append("→ Terminal web reinstalado (launcher + jaula).")
+    except Exception as e:
+        log.append(f"Aviso: no se pudo reinstalar el terminal web: {e}")
+
     # 4) reiniciar el servicio (aplica migraciones al arrancar). En background
     #    para poder devolver la respuesta antes de que nos reinicie.
     subprocess.Popen(
