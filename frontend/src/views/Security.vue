@@ -114,6 +114,55 @@
       </div>
     </div>
 
+    <!-- Antivirus de correo (ClamAV) -->
+    <div v-if="av && av.available" class="sec-card iso-card" style="margin-top:16px">
+      <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:1rem;flex-wrap:wrap">
+        <div style="display:flex;gap:.75rem;align-items:flex-start">
+          <div class="iso-icon" :class="avFresh ? 'iso-icon--ok' : 'iso-icon--warn'">
+            <i class="bi bi-bug-fill"></i>
+          </div>
+          <div>
+            <div style="font-weight:600;font-size:1rem;margin-bottom:.25rem">
+              Antivirus de correo (ClamAV)
+              <span v-if="av.method==='rspamd'" class="sec-badge sec-badge--on" style="margin-left:.4rem">por dominio</span>
+              <span v-else-if="av.method==='milter'" class="sec-badge sec-badge--warn" style="margin-left:.4rem">global</span>
+            </div>
+            <p style="font-size:.82rem;color:var(--text-muted);margin:0 0 .5rem;max-width:600px">
+              <template v-if="av.method==='rspamd'">
+                Escaneo de adjuntos con rechazo de virus, activable <strong>por dominio</strong> desde Correo → Ajustes.
+              </template>
+              <template v-else-if="av.method==='milter'">
+                Esta CPU no soporta el modo por dominio (falta SSSE3). El antivirus funciona de forma <strong>global</strong> vía clamav-milter.
+              </template>
+            </p>
+            <div v-if="av.signatures" style="display:flex;gap:6px;flex-wrap:wrap;align-items:center">
+              <span class="sec-badge sec-badge--off">{{ avSignaturesCount }} firmas</span>
+              <span class="sec-badge" :class="avFresh ? 'sec-badge--on' : 'sec-badge--warn'">
+                Actualizadas {{ avUpdatedAgo }}
+              </span>
+              <span class="sec-badge" :class="av.signatures.auto_update ? 'sec-badge--on' : 'sec-badge--danger'">
+                <i class="bi" :class="av.signatures.auto_update ? 'bi-arrow-repeat' : 'bi-x-circle'"></i>
+                Auto {{ av.signatures.auto_update ? 'activo' : 'inactivo' }}
+              </span>
+            </div>
+          </div>
+        </div>
+        <div style="display:flex;gap:6px;flex-shrink:0;align-items:center">
+          <!-- Interruptor global (solo modo milter) -->
+          <label v-if="av.method==='milter'" class="form-switch" style="margin:0 .25rem 0 0;display:flex;align-items:center;gap:.4rem">
+            <input class="form-check-input" type="checkbox" :checked="av.milter_enabled"
+                   :disabled="avMilterSaving" @change="toggleAvMilter($event.target.checked)"
+                   style="width:3em;height:1.5em;cursor:pointer">
+            <span style="font-size:.82rem;color:var(--text-muted)">{{ av.milter_enabled ? 'Activo' : 'Inactivo' }}</span>
+          </label>
+          <button class="sec-btn sec-btn--ghost sec-btn--sm" @click="updateAvSignatures" :disabled="avUpdating">
+            <span v-if="avUpdating" class="spinner-border spinner-border-sm"></span>
+            <i v-else class="bi bi-arrow-down-circle"></i> Actualizar firmas
+          </button>
+        </div>
+      </div>
+    </div>
+
     <!-- Tabs -->
     <div class="sec-tabs">
       <button v-for="t in [
@@ -822,6 +871,59 @@ async function repairIsolation() {
   }
 }
 
+// ─── Antivirus de correo (ClamAV) ─────────────────────────────────────────────
+const av = ref(null)
+const avUpdating = ref(false)
+const avMilterSaving = ref(false)
+
+const avSignaturesCount = computed(() => {
+  const n = av.value?.signatures?.total_signatures || 0
+  return n >= 1000000 ? (n / 1000000).toFixed(1) + 'M'
+       : n >= 1000 ? Math.round(n / 1000) + 'k' : String(n)
+})
+const avUpdatedAgo = computed(() => {
+  const iso = av.value?.signatures?.updated_at
+  if (!iso) return '—'
+  const diff = (Date.now() - new Date(iso).getTime()) / 1000
+  if (diff < 3600) return 'hace ' + Math.max(1, Math.round(diff / 60)) + ' min'
+  if (diff < 86400) return 'hace ' + Math.round(diff / 3600) + ' h'
+  return 'hace ' + Math.round(diff / 86400) + ' días'
+})
+const avFresh = computed(() => {
+  const iso = av.value?.signatures?.updated_at
+  if (!iso) return false
+  return (Date.now() - new Date(iso).getTime()) < 2 * 86400 * 1000  // < 2 días
+})
+
+async function loadAntivirus() {
+  try { av.value = await api.getAntivirusStatus() }
+  catch (e) { av.value = null }
+}
+async function updateAvSignatures() {
+  avUpdating.value = true
+  try {
+    const r = await api.updateAntivirusSignatures()
+    alert(r.status === 'success' ? 'Firmas de virus actualizadas.' : (r.message || 'Las firmas ya estaban al día.'))
+    await loadAntivirus()
+  } catch (e) {
+    alert('Error actualizando firmas: ' + (e.message || e))
+  } finally {
+    avUpdating.value = false
+  }
+}
+async function toggleAvMilter(enabled) {
+  avMilterSaving.value = true
+  try {
+    await api.setAntivirusMilter(enabled)
+    await loadAntivirus()
+  } catch (e) {
+    alert('Error: ' + (e.message || e))
+    await loadAntivirus()
+  } finally {
+    avMilterSaving.value = false
+  }
+}
+
 // ─── Score de seguridad: lista de factores explícita (cada uno con sus puntos)
 // para poder mostrar el desglose y que se vea qué falta para llegar a 100.
 const scoreFactors = computed(() => {
@@ -1271,6 +1373,7 @@ onMounted(async () => {
   await loadStatus()
   await loadFirewall()
   loadIsolation()
+  loadAntivirus()
 })
 </script>
 

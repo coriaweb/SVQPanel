@@ -919,19 +919,26 @@ async def set_mail_tls(domain_id: int, enabled: bool = True,
 @router.get("/mail/domains/{domain_id}/antivirus")
 async def get_mail_antivirus(domain_id: int, current_user=Depends(require_auth),
                              db: Session = Depends(get_db)):
-    """Estado del antivirus del dominio + disponibilidad de ClamAV en el servidor."""
+    """Estado del antivirus del dominio + método del servidor.
+
+    `method`: 'rspamd' (control por dominio), 'milter' (global, este toggle no
+    aplica) o 'none' (ClamAV no disponible). La UI usa esto para mostrar el
+    switch por dominio o remitir al interruptor global.
+    """
     md = _get_mail_domain_or_404(domain_id, db)
     _require_edit(md, current_user)
-    available = False
+    method = "none"
     try:
-        from scripts.rspamd_manager import RspamdManager
-        available = RspamdManager().clamav_available()
+        from scripts import antivirus_manager as av
+        method = av.detect_method()
     except Exception:
-        available = False
+        method = "none"
     return {
         "domain": md.domain_name,
         "enabled": bool(getattr(md, "antivirus_enabled", False)),
-        "available": available,
+        "available": method != "none",
+        "method": method,
+        "per_domain": method == "rspamd",
     }
 
 
@@ -961,6 +968,61 @@ async def set_mail_antivirus(domain_id: int, enabled: bool = True,
     _rebuild_rspamd(db)
     return {"status": "success", "domain": md.domain_name,
             "enabled": md.antivirus_enabled}
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Antivirus — estado global del servidor, firmas y modo milter (admin)
+# ─────────────────────────────────────────────────────────────────────────────
+@router.get("/mail/antivirus/status")
+async def antivirus_status(current_user=Depends(require_auth)):
+    """Estado global del antivirus del servidor: método, firmas y, en modo
+    milter, si el escaneo global está activo."""
+    from scripts import antivirus_manager as av
+    method = av.detect_method()
+    out = {
+        "method": method,                 # rspamd | milter | none
+        "available": method != "none",
+        "ssse3": av.cpu_has_ssse3(),
+        "signatures": av.signatures_status(),
+    }
+    if method == "milter":
+        out["milter_enabled"] = av.milter_enabled()
+    return out
+
+
+@router.post("/mail/antivirus/update-signatures")
+async def antivirus_update_signatures(current_user=Depends(require_admin)):
+    """Fuerza una actualización de las firmas de virus (botón 'Actualizar ahora').
+    Solo admin."""
+    from scripts import antivirus_manager as av
+    if not av.clamav_available():
+        raise HTTPException(status_code=422,
+                            detail="ClamAV no está disponible en el servidor.")
+    res = av.update_signatures()
+    if not res.get("ok"):
+        # No abortamos con 500: devolvemos el mensaje (p. ej. 'up-to-date' o error)
+        return {"status": "warning", **res}
+    return {"status": "success", **res}
+
+
+@router.post("/mail/antivirus/milter")
+async def antivirus_set_milter(enabled: bool = True,
+                               current_user=Depends(require_admin)):
+    """Activa/desactiva el antivirus GLOBAL vía clamav-milter. Solo aplica en
+    servidores en modo 'milter' (sin SSSE3). Solo admin."""
+    from scripts import antivirus_manager as av
+    if av.detect_method() == "none":
+        raise HTTPException(status_code=422,
+                            detail="ClamAV no está disponible en el servidor.")
+    try:
+        if enabled:
+            av.enable_milter()
+        else:
+            av.disable_milter()
+    except Exception as e:
+        raise HTTPException(status_code=500,
+                            detail=f"Error configurando clamav-milter: {e}")
+    return {"status": "success", "enabled": av.milter_enabled()}
 
 
 @router.post("/mail/domains/{domain_id}/dns-fix")

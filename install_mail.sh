@@ -326,16 +326,9 @@ RSPAMDBAYESEOF
 enabled = true;
 RSPAMDGREYEOF
 
-    # ── Antivirus ClamAV (escaneo de adjuntos) ──────────────────────────────
-    # Se instala siempre; el escaneo es global pero el RECHAZO se aplica por
-    # dominio (lo decide svqpanel_antivirus.lua según el mapa que gestiona el
-    # panel). El correo de los dominios sin antivirus activado no se rechaza.
-    echo -e "${YELLOW}→ Instalando ClamAV (antivirus de correo)...${NC}"
-    apt-get install -y -qq clamav clamav-daemon 2>/dev/null || true
-    # Descargar firmas en segundo plano (freshclam tarda; no bloquear el install).
-    systemctl stop clamav-freshclam 2>/dev/null || true
-    (freshclam >/dev/null 2>&1; systemctl start clamav-freshclam 2>/dev/null;
-     systemctl enable --now clamav-daemon 2>/dev/null) &
+    # ── Antivirus por dominio vía Rspamd (requiere SSSE3, ya garantizado aquí) ─
+    # El escaneo ClamAV es global; el RECHAZO se aplica por dominio (lo decide
+    # svqpanel_antivirus.lua según el mapa que gestiona el panel).
     cat > /etc/rspamd/local.d/antivirus.conf << 'RSPAMDAVEOF'
 # SVQPanel — escaneo antivirus con ClamAV. El rechazo selectivo por dominio lo
 # decide svqpanel_antivirus.lua (lee el mapa de dominios con antivirus activado).
@@ -352,7 +345,58 @@ RSPAMDAVEOF
     echo -e "${GREEN}✓ Rspamd configurado (antispam + DKIM + greylisting + Bayes + ClamAV)${NC}"
 else
     echo -e "${YELLOW}⚠ Rspamd y Redis omitidos (CPU sin SSSE3)${NC}"
-    echo -e "  ${YELLOW}El servidor de correo funcionará sin antispam ni firma DKIM automática${NC}"
+    echo -e "  ${YELLOW}El correo funcionará sin antispam ni DKIM automático;${NC}"
+    echo -e "  ${YELLOW}el antivirus se aplicará de forma GLOBAL vía clamav-milter.${NC}"
+fi
+
+# ── 5b. ANTIVIRUS CLAMAV (siempre, con o sin Rspamd) ──────────────────────────
+# ClamAV se instala SIEMPRE para tener antivirus de correo. Hay dos modos:
+#   • Con SSSE3 (Rspamd)  → escaneo por Rspamd, rechazo POR DOMINIO (lo gestiona
+#                           el panel con su mapa+Lua). antivirus.conf ya escrito.
+#   • Sin SSSE3 (milter)  → clamav-milter enganchado a Postfix, GLOBAL. No depende
+#                           de Rspamd ni de SSSE3, así que funciona en cualquier CPU.
+echo -e "${YELLOW}→ Instalando ClamAV (antivirus de correo)...${NC}"
+apt-get install -y -qq clamav clamav-daemon 2>/dev/null || true
+
+# Auto-actualización de firmas: el servicio freshclam (24×/día, sobrevive
+# reinicios). Lo habilitamos en background tras una primera descarga de firmas
+# (freshclam tarda; no bloquear el install).
+systemctl stop clamav-freshclam 2>/dev/null || true
+(freshclam >/dev/null 2>&1
+ systemctl enable --now clamav-daemon 2>/dev/null
+ systemctl enable --now clamav-freshclam 2>/dev/null) &
+
+if [[ "$INSTALL_RSPAMD" != true ]]; then
+    # Modo milter global (CPU sin SSSE3). El panel puede activarlo/desactivarlo
+    # luego desde Administración → Seguridad; aquí lo dejamos instalado y listo.
+    echo -e "${YELLOW}→ Configurando clamav-milter (antivirus global)...${NC}"
+    apt-get install -y -qq clamav-milter 2>/dev/null || true
+    cat > /etc/clamav/clamav-milter.conf << 'MILTEREOF'
+# SVQPanel — clamav-milter (antivirus global). Generado automáticamente.
+PidFile /var/run/clamav/clamav-milter.pid
+MilterSocket inet:7357@127.0.0.1
+FixStaleSocket true
+User clamav
+ClamdSocket unix:/var/run/clamav/clamd.ctl
+OnInfected Reject
+OnClean Accept
+OnFail Defer
+AddHeader Replace
+LogSyslog true
+LogInfected Full
+MaxFileSize 50M
+RejectMsg Mensaje rechazado: virus detectado (%v)
+MILTEREOF
+    systemctl enable clamav-milter 2>/dev/null || true
+    systemctl restart clamav-milter 2>/dev/null || true
+    # Enganchar a Postfix (TCP porque Postfix corre chrooted y no ve el socket unix)
+    EXISTING_MILTERS="$(postconf -h smtpd_milters 2>/dev/null)"
+    if ! echo "$EXISTING_MILTERS" | grep -q '7357'; then
+        postconf -e "smtpd_milters = ${EXISTING_MILTERS} inet:localhost:7357"
+        postconf -e "non_smtpd_milters = $(postconf -h non_smtpd_milters 2>/dev/null) inet:localhost:7357"
+        systemctl reload postfix 2>/dev/null || true
+    fi
+    echo -e "${GREEN}✓ Antivirus global (clamav-milter) configurado${NC}"
 fi
 
 # ── 6. ACTIVAR EN .env ────────────────────────────────────────────────────────

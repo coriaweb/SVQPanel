@@ -539,6 +539,16 @@ class APIClient {
   setMailAntivirus(domainId, enabled) {
     return this.post(`/api/mail/domains/${domainId}/antivirus?enabled=${enabled ? 'true' : 'false'}`, {})
   }
+  // Antivirus — estado global del servidor, firmas y modo milter
+  getAntivirusStatus() {
+    return this.get(`/api/mail/antivirus/status`)
+  }
+  updateAntivirusSignatures() {
+    return this.post(`/api/mail/antivirus/update-signatures`, {})
+  }
+  setAntivirusMilter(enabled) {
+    return this.post(`/api/mail/antivirus/milter?enabled=${enabled ? 'true' : 'false'}`, {})
+  }
 
   // Git deploy por dominio
   getGitStatus(domainId) {
