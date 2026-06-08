@@ -77,50 +77,17 @@ def build_jail() -> dict:
         subprocess.run(["jk_cp", "-j", JAIL_ROOT, *present],
                        check=False, timeout=180)
 
-    # La jaula debe ser root:root (requisito del chroot)
+    # La plantilla debe ser root:root (requisito del chroot)
     os.chown(JAIL_ROOT, 0, 0)
     os.chmod(JAIL_ROOT, 0o755)
 
-    # Directorios de runtime dentro de la jaula
-    for d in ("etc", "home", "tmp", "dev/pts", "proc"):
-        p = os.path.join(JAIL_ROOT, d)
-        os.makedirs(p, exist_ok=True)
-    os.chmod(os.path.join(JAIL_ROOT, "tmp"), 0o1777)
-
-    # /dev/ptmx → pts/ptmx (necesario para el pseudo-terminal interactivo).
-    ptmx = os.path.join(JAIL_ROOT, "dev", "ptmx")
-    if not os.path.islink(ptmx) and not os.path.exists(ptmx):
-        os.symlink("pts/ptmx", ptmx)
-
-    # /etc mínimo: resolv.conf y hosts para que funcione la red dentro de la jaula
+    # La plantilla solo aporta binarios; los homes, /dev, /proc y /etc van por
+    # usuario en su propia jaula (ver prepare_user). Aun así dejamos un /etc con
+    # la red por si algún binario la necesita al copiarse.
     _copy_into_jail("/etc/resolv.conf")
     _copy_into_jail("/etc/hosts")
 
-    # Montar /dev/pts y /proc (la shell interactiva de ttyd los necesita).
-    ensure_dev_mounts()
-
     return {"ready": jail_ready(), "path": JAIL_ROOT}
-
-
-def ensure_dev_mounts() -> None:
-    """Monta /dev/pts y /proc dentro de la jaula si no lo están. Sin esto, la
-    shell interactiva de ttyd no obtiene su pseudo-terminal y la sesión se cierra
-    nada más abrir ('Press Enter to Reconnect'). Idempotente; tolerante a fallos.
-    """
-    pts = os.path.join(JAIL_ROOT, "dev", "pts")
-    proc = os.path.join(JAIL_ROOT, "proc")
-    os.makedirs(pts, exist_ok=True)
-    os.makedirs(proc, exist_ok=True)
-    try:
-        if not _is_mounted(pts):
-            subprocess.run(["mount", "-t", "devpts", "devpts", pts,
-                            "-o", "rw,nosuid,noexec,gid=5,mode=620,ptmxmode=666"],
-                           check=False, timeout=15)
-        if not _is_mounted(proc):
-            subprocess.run(["mount", "-t", "proc", "proc", proc],
-                           check=False, timeout=15)
-    except Exception as e:
-        logger.warning("No se pudieron montar pts/proc en la jaula: %s", e)
 
 
 def _copy_into_jail(src: str) -> None:
@@ -136,10 +103,20 @@ def _copy_into_jail(src: str) -> None:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Preparar la sesión de un usuario (bind-mount + passwd) — idempotente
+# Jaula POR USUARIO (cada cliente ve SOLO su home, nunca a los demás)
 # ─────────────────────────────────────────────────────────────────────────────
-def _jail_home(username: str) -> str:
-    return os.path.join(JAIL_ROOT, "home", username)
+# La plantilla compartida (JAIL_ROOT) tiene solo los binarios (read-only). Cada
+# usuario tiene su propia jaula en USER_JAILS/<user> que monta la plantilla
+# (bin/lib/usr… en ro) + únicamente SU home. Así es imposible que un cliente vea
+# el nombre de otro en /home.
+USER_JAILS = "/var/lib/svqpanel/jails"
+
+# Subdirectorios de la plantilla que se exponen (solo lectura) en cada jaula.
+_TEMPLATE_DIRS = ["bin", "lib", "lib64", "usr", "sbin"]
+
+
+def _user_jail(username: str) -> str:
+    return os.path.join(USER_JAILS, username)
 
 
 def _is_mounted(path: str) -> bool:
@@ -147,35 +124,92 @@ def _is_mounted(path: str) -> bool:
     return r.returncode == 0
 
 
-def prepare_user(username: str) -> None:
-    """Deja la jaula lista para `username`: bind-mount de su home + entrada en
-    el passwd de la jaula. Idempotente. Llamar antes de jk_chrootlaunch."""
+def prepare_user(username: str) -> str:
+    """Prepara (idempotente) la jaula PROPIA de `username` y devuelve su ruta.
+
+    Estructura de la jaula del usuario:
+      <jail>/bin,lib,lib64,usr,sbin → bind ro de la plantilla (binarios)
+      <jail>/home/<user>            → bind de SU /home/<user> (solo el suyo)
+      <jail>/dev/pts, /proc         → montados (terminal interactivo)
+      <jail>/etc/passwd,group       → solo root + este usuario
+    """
     if not re.fullmatch(r"[a-z_][a-z0-9_-]*", username or ""):
         raise ValueError("Nombre de usuario inválido")
-
     real_home = f"/home/{username}"
     if not os.path.isdir(real_home):
         raise ValueError("El usuario no tiene home")
+    if not jail_ready():
+        build_jail()
 
-    jhome = _jail_home(username)
+    jail = _user_jail(username)
+    os.makedirs(jail, exist_ok=True)
+
+    # 1) Binarios de la plantilla (read-only) por bind-mount
+    for d in _TEMPLATE_DIRS:
+        src = os.path.join(JAIL_ROOT, d)
+        if not os.path.exists(src):
+            continue
+        dst = os.path.join(jail, d)
+        os.makedirs(dst, exist_ok=True)
+        if not _is_mounted(dst):
+            subprocess.run(["mount", "--bind", "-o", "ro", src, dst],
+                           check=True, timeout=15)
+
+    # 2) Solo SU home
+    jhome = os.path.join(jail, "home", username)
     os.makedirs(jhome, exist_ok=True)
     if not _is_mounted(jhome):
-        subprocess.run(["mount", "--bind", real_home, jhome],
-                       check=True, timeout=15)
+        subprocess.run(["mount", "--bind", real_home, jhome], check=True, timeout=15)
 
-    # /dev/pts y /proc se pierden al reiniciar el servidor; remontarlos aquí
-    # garantiza la sesión interactiva en cada apertura de terminal.
-    ensure_dev_mounts()
+    # 3) /dev (null, tty, urandom, pts) y /proc
+    _ensure_user_dev(jail)
 
-    _sync_jail_passwd(username)
+    # 4) /etc mínimo con SOLO root + este usuario
+    _write_user_etc(jail, username)
+
+    # 5) /tmp propio
+    jtmp = os.path.join(jail, "tmp")
+    os.makedirs(jtmp, exist_ok=True)
+    os.chmod(jtmp, 0o1777)
+
+    return jail
 
 
-def _sync_jail_passwd(username: str) -> None:
-    """Asegura que el passwd/group de la jaula tienen al usuario con shell bash."""
-    jail_passwd = os.path.join(JAIL_ROOT, "etc", "passwd")
-    jail_group = os.path.join(JAIL_ROOT, "etc", "group")
+def _ensure_user_dev(jail: str) -> None:
+    """Crea /dev (con nodos básicos) + /dev/pts + /proc en la jaula del usuario."""
+    dev = os.path.join(jail, "dev")
+    os.makedirs(os.path.join(dev, "pts"), exist_ok=True)
+    os.makedirs(os.path.join(jail, "proc"), exist_ok=True)
+    # Nodos básicos por bind-mount desde el /dev real (no requiere mknod)
+    for node in ("null", "zero", "tty", "urandom", "random"):
+        src = f"/dev/{node}"
+        dst = os.path.join(dev, node)
+        if os.path.exists(src):
+            if not os.path.exists(dst):
+                open(dst, "w").close()
+            if not _is_mounted(dst):
+                subprocess.run(["mount", "--bind", src, dst], check=False, timeout=10)
+    # ptmx → pts/ptmx
+    ptmx = os.path.join(dev, "ptmx")
+    if not os.path.islink(ptmx) and not os.path.exists(ptmx):
+        os.symlink("pts/ptmx", ptmx)
+    # pts y proc
+    pts = os.path.join(dev, "pts")
+    if not _is_mounted(pts):
+        subprocess.run(["mount", "-t", "devpts", "devpts", pts,
+                        "-o", "rw,nosuid,noexec,gid=5,mode=620,ptmxmode=666"],
+                       check=False, timeout=10)
+    proc = os.path.join(jail, "proc")
+    if not _is_mounted(proc):
+        subprocess.run(["mount", "-t", "proc", "proc", proc], check=False, timeout=10)
 
-    # Línea del usuario en el passwd real, forzando shell /bin/bash
+
+def _write_user_etc(jail: str, username: str) -> None:
+    """Escribe <jail>/etc con passwd/group de SOLO root + este usuario, y red."""
+    etc = os.path.join(jail, "etc")
+    os.makedirs(etc, exist_ok=True)
+
+    # passwd del usuario (shell forzada a bash)
     line = None
     with open("/etc/passwd") as f:
         for ln in f:
@@ -186,55 +220,43 @@ def _sync_jail_passwd(username: str) -> None:
                 break
     if not line:
         raise ValueError("Usuario no encontrado en /etc/passwd")
+    with open(os.path.join(etc, "passwd"), "w") as f:
+        f.write("root:x:0:0:root:/root:/bin/bash\n")
+        f.write(line)
 
-    _ensure_line(jail_passwd, username + ":", line, header="root:x:0:0:root:/root:/bin/bash\n")
-
-    # Grupo del usuario
+    # group del usuario
     gid = line.split(":")[3]
-    grp_line = None
+    grp_line = ""
     with open("/etc/group") as f:
         for ln in f:
             flds = ln.split(":")
             if len(flds) > 2 and flds[2] == gid:
                 grp_line = ln if ln.endswith("\n") else ln + "\n"
                 break
-    if grp_line:
-        gname = grp_line.split(":")[0]
-        _ensure_line(jail_group, gname + ":", grp_line, header="root:x:0:\n")
+    with open(os.path.join(etc, "group"), "w") as f:
+        f.write("root:x:0:\n")
+        if grp_line:
+            f.write(grp_line)
 
-
-def _ensure_line(path: str, key_prefix: str, line: str, header: str) -> None:
-    """Garantiza que `line` (identificada por key_prefix) está en `path`."""
-    os.makedirs(os.path.dirname(path), exist_ok=True)
-    existing = ""
-    if os.path.exists(path):
-        with open(path) as f:
-            existing = f.read()
-    out_lines = [l for l in existing.splitlines(keepends=True)
-                 if not l.startswith(key_prefix)]
-    if not any(l.startswith("root:") for l in out_lines):
-        out_lines.insert(0, header)
-    out_lines.append(line)
-    tmp = path + ".tmp"
-    with open(tmp, "w") as f:
-        f.writelines(out_lines)
-    os.chmod(tmp, 0o644)
-    os.replace(tmp, path)
+    # Red dentro de la jaula
+    for fname in ("resolv.conf", "hosts", "nsswitch.conf"):
+        src = f"/etc/{fname}"
+        if os.path.exists(src):
+            try:
+                import shutil
+                shutil.copyfile(src, os.path.join(etc, fname))
+            except Exception:
+                pass
 
 
 def chroot_command(username: str) -> str:
-    """Devuelve el comando (string para `exec` en bash) que abre la shell
-    enjaulada del usuario.
-
-    Usamos `chroot --userspec` en vez de `jk_chrootlaunch`: este último no
-    conecta bien el pseudo-terminal de ttyd (la sesión se cerraba al instante,
-    "Press Enter to Reconnect"). chroot directo SÍ mantiene la shell interactiva.
-    Arranca bash de login (-l) y nos posicionamos en el home del usuario.
-    """
+    """Comando (string para eval+exec) que abre la shell enjaulada del usuario
+    en SU PROPIA jaula. chroot directo (no jk_chrootlaunch, que no conecta bien
+    el pty de ttyd). Arranca bash de login en su home."""
     grp = _user_group(username)
-    # cd al home dentro de la jaula y abrir bash de login interactivo.
+    jail = _user_jail(username)
     inner = f"cd /home/{username} 2>/dev/null; exec /bin/bash -l"
-    return (f"chroot --userspec={username}:{grp} {JAIL_ROOT} "
+    return (f"chroot --userspec={username}:{grp} {jail} "
             f"/bin/bash -lc {shlex_quote(inner)}")
 
 
