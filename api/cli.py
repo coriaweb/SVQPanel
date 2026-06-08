@@ -572,7 +572,9 @@ def cmd_run_scheduled_backups() -> int:
                 count += 1
         for t in threads:
             t.join(timeout=3600)  # esperar máx 1h por job
-        logging.getLogger("svqpanel-cli").info("run_scheduled_backups: %d jobs ejecutados", count)
+        # Solo loguear si hubo algo que hacer (evita ruido cada minuto con 0 jobs).
+        if count:
+            logging.getLogger("svqpanel-cli").info("run_scheduled_backups: %d jobs ejecutados", count)
         return 0
     except Exception as e:
         logging.getLogger("svqpanel-cli").error("run_scheduled_backups error: %s", e)

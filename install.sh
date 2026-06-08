@@ -2786,46 +2786,25 @@ METTEOF
 systemctl enable --now svqpanel-metrics.timer >/dev/null 2>&1 || true
 echo -e "${GREEN}✓ systemd timer: svqpanel-metrics.timer (métricas + alertas cada 5 min)${NC}"
 
-# ─── Timer cada minuto: ejecutar backups programados ─────────────────────────
-# Los backups se lanzan desde cli.py (proceso independiente que termina),
-# en vez de un hilo de fondo en el panel (causa fuga de memoria).
-cat > /etc/systemd/system/svqpanel-backup-scheduler.service << 'BKSEOF'
-[Unit]
-Description=SVQPanel — ejecuta backups programados (cron)
-After=network.target svqpanel.service
-
-[Service]
-Type=oneshot
-User=root
-WorkingDirectory=/opt/svqpanel
-Environment="PATH=/opt/svqpanel/venv/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
-ExecStart=/opt/svqpanel/venv/bin/python -m api.cli run_scheduled_backups
-TimeoutStartSec=3600
-BKSEOF
-
-cat > /etc/systemd/system/svqpanel-backup-scheduler.timer << 'BKTEOF'
-[Unit]
-Description=SVQPanel — timer cada minuto para backups programados
-
-[Timer]
-OnBootSec=2min
-OnUnitActiveSec=1min
-Persistent=false
-
-[Install]
-WantedBy=timers.target
-BKTEOF
+# Nota: los backups programados los gestiona un hilo de fondo DENTRO del panel
+# (scripts/backup_scheduler.py, arrancado en api/main.py startup). Ya NO se usa
+# un timer systemd cada minuto (arrancaba un proceso Python entero 1440 veces/día
+# para 0 jobs casi siempre → ruido en el log y CPU desperdiciada). La fuga de
+# memoria que motivó el timer ya está resuelta (imports a nivel de módulo).
 
 systemctl daemon-reload
 systemctl enable --now svqpanel-domain-stats.timer          >/dev/null 2>&1 || true
 systemctl enable --now svqpanel-ssl-check.timer             >/dev/null 2>&1 || true
 systemctl enable --now svqpanel-dns-cluster-health.timer    >/dev/null 2>&1 || true
-systemctl enable --now svqpanel-backup-scheduler.timer      >/dev/null 2>&1 || true
+# Por si una instalación previa dejó el timer de backups, lo retiramos.
+systemctl disable --now svqpanel-backup-scheduler.timer     >/dev/null 2>&1 || true
+rm -f /etc/systemd/system/svqpanel-backup-scheduler.timer \
+      /etc/systemd/system/svqpanel-backup-scheduler.service 2>/dev/null || true
 
 echo -e "${GREEN}✓ systemd timer: svqpanel-domain-stats.timer (cada 4h)${NC}"
 echo -e "${GREEN}✓ systemd timer: svqpanel-ssl-check.timer (diario 05:15)${NC}"
 echo -e "${GREEN}✓ systemd timer: svqpanel-dns-cluster-health.timer (cada 10 min)${NC}"
-echo -e "${GREEN}✓ systemd timer: svqpanel-backup-scheduler.timer (cada minuto)${NC}"
+echo -e "${GREEN}✓ Backups programados: hilo interno del panel (sin timer)${NC}"
 echo ""
 
 ###############################################################################

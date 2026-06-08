@@ -72,9 +72,16 @@ if _cors_origins:
 async def startup():
     create_tables()
     _run_migrations()
-    # Los backups programados se ejecutan vía systemd timer (svqpanel-backup-scheduler)
-    # en vez de un hilo de fondo — evita la fuga de memoria que ocurría al tener
-    # el loop de SQLAlchemy corriendo permanentemente dentro del proceso del panel.
+    # Backups programados: hilo de fondo DENTRO del proceso del panel (los imports
+    # pesados de backup_scheduler están a nivel de módulo → se cargan una vez, sin
+    # la fuga de memoria que tenía la versión antigua que re-importaba en cada
+    # tick). Sustituye al timer systemd que arrancaba un proceso Python entero
+    # cada minuto (ruido en el log + ~1s CPU x1440/día para 0 jobs casi siempre).
+    try:
+        from scripts.backup_scheduler import start_scheduler
+        start_scheduler()
+    except Exception as e:
+        print(f"⚠ No se pudo arrancar el backup scheduler: {e}")
     print(f"✓ {PANEL_NAME} v{PANEL_VERSION} iniciado")
     print(f"✓ Base de datos sincronizada")
 
