@@ -617,12 +617,42 @@
           <label class="adv-label"><i class="bi bi-hdd-network"></i> Nginx</label>
           <textarea class="svq-input mono adv-textarea" rows="10" v-model="advNginx"
             placeholder="location /healthz { return 200 'ok'; }"></textarea>
+          <button type="button" class="adv-toggle" @click="showNginxEx = !showNginxEx">
+            <i class="bi" :class="showNginxEx ? 'bi-chevron-down' : 'bi-chevron-right'"></i>
+            Ver ejemplos de reglas Nginx
+          </button>
+          <div v-if="showNginxEx" class="adv-examples">
+            <div v-for="(ex,i) in nginxExamples" :key="'nx'+i" class="adv-example">
+              <div class="adv-example__head">
+                <span class="adv-example__title">{{ ex.title }}</span>
+                <button type="button" class="adv-example__btn" @click="insertExample('nginx', ex.code)">
+                  <i class="bi bi-plus-lg"></i> Insertar
+                </button>
+              </div>
+              <pre class="adv-example__code mono">{{ ex.code }}</pre>
+            </div>
+          </div>
         </div>
 
         <div class="adv-field">
           <label class="adv-label"><i class="bi bi-feather"></i> Apache <span class="dd-muted">(solo si el dominio usa Apache+Nginx)</span></label>
           <textarea class="svq-input mono adv-textarea" rows="8" v-model="advApache"
             placeholder="Header set X-Mi-Cabecera 'valor'"></textarea>
+          <button type="button" class="adv-toggle" @click="showApacheEx = !showApacheEx">
+            <i class="bi" :class="showApacheEx ? 'bi-chevron-down' : 'bi-chevron-right'"></i>
+            Ver ejemplos de reglas Apache
+          </button>
+          <div v-if="showApacheEx" class="adv-examples">
+            <div v-for="(ex,i) in apacheExamples" :key="'ap'+i" class="adv-example">
+              <div class="adv-example__head">
+                <span class="adv-example__title">{{ ex.title }}</span>
+                <button type="button" class="adv-example__btn" @click="insertExample('apache', ex.code)">
+                  <i class="bi bi-plus-lg"></i> Insertar
+                </button>
+              </div>
+              <pre class="adv-example__code mono">{{ ex.code }}</pre>
+            </div>
+          </div>
         </div>
 
         <div v-if="advError" class="adv-error"><i class="bi bi-exclamation-triangle"></i> {{ advError }}</div>
@@ -746,6 +776,83 @@ export default {
     const advApache = ref('')
     const advSaving = ref(false)
     const advError  = ref('')
+    const showNginxEx = ref(false)
+    const showApacheEx = ref(false)
+
+    // Ejemplos reales de reglas que el cliente/admin puede pegar. Se inyectan
+    // DENTRO del server{} (nginx) / VirtualHost (apache) del dominio.
+    const nginxExamples = [
+      { title: 'Cabeceras de seguridad', code:
+`add_header X-Frame-Options "SAMEORIGIN" always;
+add_header X-Content-Type-Options "nosniff" always;
+add_header Referrer-Policy "strict-origin-when-cross-origin" always;` },
+      { title: 'Redirigir una ruta a otra (301)', code:
+`location = /vieja-url {
+    return 301 /nueva-url;
+}` },
+      { title: 'Bloquear acceso a una carpeta', code:
+`location ^~ /privado/ {
+    deny all;
+    return 403;
+}` },
+      { title: 'Cachear estáticos 30 días', code:
+`location ~* \\.(jpg|jpeg|png|gif|ico|css|js|woff2|svg)$ {
+    expires 30d;
+    add_header Cache-Control "public, immutable";
+    access_log off;
+}` },
+      { title: 'Denegar ficheros sensibles', code:
+`location ~* \\.(env|sql|bak|log|ini)$ {
+    deny all;
+}` },
+      { title: 'Permitir subidas grandes (cliente concreto)', code:
+`client_max_body_size 512m;` },
+      { title: 'Proteger /wp-admin por IP', code:
+`location ^~ /wp-admin/ {
+    allow 1.2.3.4;      # tu IP
+    deny all;
+    try_files $uri $uri/ /index.php?$args;
+}` },
+      { title: 'Página de mantenimiento', code:
+`location / {
+    return 503;
+}
+error_page 503 @maintenance;
+location @maintenance {
+    return 200 "Sitio en mantenimiento, vuelve pronto.";
+    add_header Content-Type text/plain;
+}` },
+    ]
+    const apacheExamples = [
+      { title: 'Cabecera personalizada', code:
+`Header set X-Mi-Cabecera "valor"` },
+      { title: 'Redirección 301', code:
+`Redirect 301 /vieja-url /nueva-url` },
+      { title: 'Proteger carpeta con contraseña', code:
+`<Directory "/home/usuario/web/dominio/public_html/privado">
+    AuthType Basic
+    AuthName "Zona restringida"
+    AuthUserFile /home/usuario/.htpasswd
+    Require valid-user
+</Directory>` },
+      { title: 'Bloquear acceso a una carpeta', code:
+`<Directory "/home/usuario/web/dominio/public_html/privado">
+    Require all denied
+</Directory>` },
+      { title: 'Forzar tipo MIME', code:
+`AddType application/wasm .wasm` },
+      { title: 'Cachear estáticos (mod_expires)', code:
+`<IfModule mod_expires.c>
+    ExpiresActive On
+    ExpiresByType image/jpeg "access plus 30 days"
+    ExpiresByType text/css "access plus 30 days"
+    ExpiresByType application/javascript "access plus 30 days"
+</IfModule>` },
+    ]
+    const insertExample = (which, code) => {
+      const ref_ = which === 'nginx' ? advNginx : advApache
+      ref_.value = (ref_.value.trimEnd() + (ref_.value.trim() ? '\n\n' : '') + code + '\n')
+    }
     const _syncAdv = () => {
       advNginx.value  = domain.value?.custom_nginx_config  || ''
       advApache.value = domain.value?.custom_apache_config || ''
@@ -1309,6 +1416,7 @@ export default {
       logSearch, filteredLogLines, logLineClass, highlightLog,
       downloading, downloadSite, suspend, unsuspend, remove, goFiles,
       advNginx, advApache, advSaving, advError, saveCustomConfig,
+      showNginxEx, showApacheEx, nginxExamples, apacheExamples, insertExample,
       appForm, installing, installResult, doInstallApp, appNeedsAdmin, appNeedsEmail, wpLocales,
       detectedApp, appLabel,
       git, gitDeployments, gitLoading, gitSaving, gitDeploying, gitKeyGen, gitRolling, gitForm,
@@ -1391,6 +1499,15 @@ export default {
 .adv-textarea { height: auto; padding: var(--sp-3); line-height: 1.5; resize: vertical; }
 .adv-actions { display: flex; align-items: center; gap: var(--sp-3); flex-wrap: wrap; }
 .adv-error { color: var(--danger); font-size: var(--fs-sm); margin-bottom: var(--sp-3); display: flex; align-items: center; gap: 6px; white-space: pre-wrap; }
+.adv-toggle { margin-top: 6px; background: none; border: none; color: var(--color-primary); cursor: pointer; font-size: var(--fs-sm); display: inline-flex; align-items: center; gap: 4px; padding: 0; }
+.adv-toggle:hover { text-decoration: underline; }
+.adv-examples { margin-top: var(--sp-3); display: flex; flex-direction: column; gap: var(--sp-2); }
+.adv-example { border: 1px solid var(--border); border-radius: var(--r-md); overflow: hidden; background: var(--surface-inset); }
+.adv-example__head { display: flex; align-items: center; justify-content: space-between; gap: var(--sp-2); padding: 6px var(--sp-3); border-bottom: 1px solid var(--border); }
+.adv-example__title { font-size: var(--fs-sm); font-weight: var(--fw-medium); }
+.adv-example__btn { background: none; border: 1px solid var(--border-strong); border-radius: var(--r-sm); padding: 2px 8px; font-size: var(--fs-xs); cursor: pointer; color: var(--color-primary); display: inline-flex; align-items: center; gap: 3px; white-space: nowrap; }
+.adv-example__btn:hover { background: var(--surface); }
+.adv-example__code { margin: 0; padding: var(--sp-3); font-size: 12px; line-height: 1.45; white-space: pre; overflow-x: auto; color: var(--text); }
 
 /* PHP table */
 .php-table { display: flex; flex-direction: column; border: 1px solid var(--border); border-radius: var(--r-md); overflow: hidden; }
