@@ -189,33 +189,47 @@
                   <span class="mbx__avatar">{{ (mb.full_email || '?').slice(0,1).toUpperCase() }}</span>
                   <div class="mbx__id">
                     <span class="mbx__email" :title="mb.full_email">{{ mb.full_email }}</span>
-                    <span class="mbx__quota">
-                      <i class="bi bi-hdd"></i>
-                      <template v-if="mb.quota_mb === 0">
-                        {{ fmtMB(mb.disk_usage_mb) }} usado · Sin límite
-                      </template>
-                      <template v-else>
-                        {{ fmtMB(mb.disk_usage_mb) }} / {{ fmtMB(mb.quota_mb) }}
-                        <span class="mbx__pct" :class="usageClass(mb)">({{ usagePct(mb) }}%)</span>
-                      </template>
-                      <span style="margin-left:8px">
-                        <i class="bi bi-send"></i>
-                        <template v-if="mb.send_limit_hour === 0">envío libre</template>
-                        <template v-else-if="sendUsage[mb.id] != null">
-                          {{ sendUsage[mb.id].sent }}/{{ mb.send_limit_hour }} /h
-                          <span class="mbx__pct" :class="sendClass(mb)">({{ sendPct(mb) }}%)</span>
-                        </template>
-                        <template v-else>
-                          {{ mb.send_limit_hour }}/h
-                          <button class="mbx__inline-link" :disabled="loadingSend" @click="loadSendUsage(mb.mail_domain_id)">ver uso</button>
-                        </template>
-                      </span>
-                    </span>
-                    <div v-if="mb.quota_mb > 0" class="mbx__bar">
-                      <div class="mbx__bar-fill" :class="usageClass(mb)" :style="{ width: Math.min(usagePct(mb),100) + '%' }"></div>
+
+                    <!-- Métrica: espacio -->
+                    <div class="mbx__metric">
+                      <div class="mbx__metric-row">
+                        <i class="bi bi-hdd"></i>
+                        <span class="mbx__metric-label">Espacio</span>
+                        <span class="mbx__metric-val">
+                          <template v-if="mb.quota_mb === 0">{{ fmtMB(mb.disk_usage_mb) }} · sin límite</template>
+                          <template v-else>
+                            {{ fmtMB(mb.disk_usage_mb) }} / {{ fmtMB(mb.quota_mb) }}
+                            <span class="mbx__pct" :class="usageClass(mb)">{{ usagePct(mb) }}%</span>
+                          </template>
+                        </span>
+                      </div>
+                      <div v-if="mb.quota_mb > 0" class="mbx__bar">
+                        <div class="mbx__bar-fill" :class="usageClass(mb)" :style="{ width: Math.min(usagePct(mb),100) + '%' }"></div>
+                      </div>
                     </div>
-                    <div v-if="mb.send_limit_hour > 0 && sendUsage[mb.id] != null" class="mbx__bar">
-                      <div class="mbx__bar-fill" :class="sendClass(mb)" :style="{ width: Math.min(sendPct(mb),100) + '%' }"></div>
+
+                    <!-- Métrica: envío -->
+                    <div class="mbx__metric">
+                      <div class="mbx__metric-row">
+                        <i class="bi bi-send"></i>
+                        <span class="mbx__metric-label">Envío/h</span>
+                        <span class="mbx__metric-val">
+                          <template v-if="mb.send_limit_hour === 0">sin límite</template>
+                          <template v-else-if="sendUsage[mb.id] != null">
+                            {{ sendUsage[mb.id].sent }} / {{ mb.send_limit_hour }}
+                            <span class="mbx__pct" :class="sendClass(mb)">{{ sendPct(mb) }}%</span>
+                          </template>
+                          <template v-else>
+                            máx. {{ mb.send_limit_hour }}
+                            <button class="mbx__inline-link" :disabled="loadingSend" @click="loadSendUsage(mb.mail_domain_id)">
+                              {{ loadingSend ? '…' : 'ver uso' }}
+                            </button>
+                          </template>
+                        </span>
+                      </div>
+                      <div v-if="mb.send_limit_hour > 0 && sendUsage[mb.id] != null" class="mbx__bar">
+                        <div class="mbx__bar-fill" :class="sendClass(mb)" :style="{ width: Math.min(sendPct(mb),100) + '%' }"></div>
+                      </div>
                     </div>
                   </div>
                   <span class="mbx__status" :class="mb.is_active ? 'is-on' : 'is-off'">
@@ -2008,14 +2022,19 @@ export default {
   display: grid; place-items: center; font-weight: var(--fw-bold); color: #fff;
   background: linear-gradient(135deg, var(--brand-400), var(--brand-600)); font-size: var(--fs-md);
 }
-.mbx__id { display: flex; flex-direction: column; min-width: 0; flex: 1; }
+.mbx__id { display: flex; flex-direction: column; min-width: 0; flex: 1; gap: 6px; }
 .mbx__email { font-weight: var(--fw-semibold); color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.mbx__quota { font-size: var(--fs-sm); color: var(--text-muted); display: flex; align-items: center; gap: 5px; flex-wrap: wrap; }
-.mbx__pct { font-weight: var(--fw-medium); }
+/* Métricas (espacio / envío): etiqueta a la izquierda, valor a la derecha, barra debajo */
+.mbx__metric { display: flex; flex-direction: column; gap: 3px; }
+.mbx__metric-row { display: flex; align-items: center; gap: 6px; font-size: var(--fs-sm); color: var(--text-muted); }
+.mbx__metric-row > .bi { font-size: 13px; width: 14px; text-align: center; flex-shrink: 0; }
+.mbx__metric-label { flex-shrink: 0; }
+.mbx__metric-val { margin-left: auto; text-align: right; color: var(--text); white-space: nowrap; }
+.mbx__pct { font-weight: var(--fw-semibold); margin-left: 4px; }
 .mbx__pct.is-ok { color: var(--text-muted); }
 .mbx__pct.is-warn { color: var(--warning); }
 .mbx__pct.is-danger { color: var(--danger); }
-.mbx__bar { height: 4px; border-radius: 999px; background: var(--surface-inset); margin-top: 5px; overflow: hidden; }
+.mbx__bar { height: 5px; border-radius: 999px; background: var(--surface-inset); overflow: hidden; }
 .mbx__bar-fill { height: 100%; border-radius: 999px; transition: width .3s ease; background: var(--svq-orange); }
 .mbx__bar-fill.is-ok { background: var(--success, #2ea043); }
 .mbx__bar-fill.is-warn { background: var(--warning); }
