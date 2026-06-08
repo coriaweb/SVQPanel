@@ -174,12 +174,79 @@ def install() -> dict:
     subprocess.run(["systemctl", "daemon-reload"], timeout=15)
     subprocess.run(["systemctl", "enable", "svqpanel-ttyd"], timeout=15)
     subprocess.run(["systemctl", "restart", "svqpanel-ttyd"], check=True, timeout=20)
+    ensure_nginx_block()
     return status()
 
 
 def uninstall() -> dict:
     subprocess.run(["systemctl", "disable", "--now", "svqpanel-ttyd"], timeout=15)
     return status()
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Bloque nginx /terminal/ (autoreparable)
+# ─────────────────────────────────────────────────────────────────────────────
+NGINX_VHOSTS = [
+    "/etc/nginx/sites-enabled/svqpanel",
+    "/etc/nginx/sites-available/svqpanel",
+]
+
+_TERMINAL_BLOCK = """    # Terminal web (ttyd) — token de un solo uso del panel; ttyd en localhost.
+    location /terminal/ {
+        include snippets/svqpanel-whitelist.conf;
+        proxy_pass http://127.0.0.1:7681/terminal/;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection "upgrade";
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_read_timeout 86400s;
+    }
+
+"""
+
+
+def ensure_nginx_block() -> bool:
+    """Garantiza que el bloque /terminal/ está en el MISMO server que /api/ (el
+    del panel), no en otro server del vhost. Reescribe si está mal ubicado.
+    Idempotente; recarga nginx si cambia algo. Tolerante a fallos.
+    """
+    import re
+    changed = False
+    for path in NGINX_VHOSTS:
+        if not os.path.exists(path):
+            continue
+        try:
+            c = open(path).read()
+            if "location /api/" not in c:
+                continue  # no es el vhost del panel
+            # ¿/terminal/ ya está pegado justo antes de /api/? entonces OK.
+            already_ok = re.search(
+                r"location /terminal/ \{.*?\}\s*\n\s*location /api/", c, re.S)
+            if already_ok:
+                continue
+            # Quitar cualquier bloque /terminal/ existente (mal ubicado)
+            c = re.sub(r"    # Terminal web.*?\n    location /terminal/ \{.*?\n    \}\n\n",
+                       "", c, flags=re.S)
+            c = re.sub(r"    location /terminal/ \{.*?\n    \}\n\n?",
+                       "", c, flags=re.S)
+            # Insertar justo antes de 'location /api/' (server del panel)
+            idx = c.find("location /api/")
+            line_start = c.rfind("\n", 0, idx) + 1
+            c = c[:line_start] + _TERMINAL_BLOCK + c[line_start:]
+            open(path, "w").write(c)
+            changed = True
+        except Exception as e:
+            logger.warning("No se pudo asegurar el bloque nginx /terminal/ en %s: %s",
+                           path, e)
+    if changed:
+        test = subprocess.run(["nginx", "-t"], capture_output=True, timeout=15)
+        if test.returncode == 0:
+            subprocess.run(["systemctl", "reload", "nginx"], timeout=15)
+        else:
+            logger.error("nginx -t falló tras ajustar /terminal/: %s",
+                         test.stderr.decode()[:300])
+    return changed
 
 
 # ─────────────────────────────────────────────────────────────────────────────
