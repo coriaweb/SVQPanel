@@ -442,6 +442,8 @@ def _run_migrations():
         "ALTER TABLE backup_jobs ADD COLUMN IF NOT EXISTS s3_prefix     VARCHAR(512)",
         "ALTER TABLE backup_jobs ADD COLUMN IF NOT EXISTS s3_access_key VARCHAR(255)",
         "ALTER TABLE backup_jobs ADD COLUMN IF NOT EXISTS s3_secret_key VARCHAR(500)",
+        # Motor restic: contraseña de cifrado del repositorio (cifrada con Fernet)
+        "ALTER TABLE backup_jobs ADD COLUMN IF NOT EXISTS restic_password VARCHAR(500)",
         # ─────────────────────────────────────────────────────────────────
         # Fase 15.2: Plantillas web (nginx + PHP-FPM presets)
         # ─────────────────────────────────────────────────────────────────

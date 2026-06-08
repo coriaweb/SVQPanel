@@ -16,11 +16,11 @@
       <i class="bi bi-info-circle-fill"></i>
       <div>
         Cada backup respalda lo que selecciones (<strong>web</strong>, <strong>bases de datos</strong> y/o
-        <strong>correo</strong>) de un dominio. Las copias <strong>incrementales</strong> solo guardan lo que
-        cambió usando enlaces duros, y las bases de datos se comprimen para ocupar poco disco. Puedes guardar
-        las copias en <strong>este servidor</strong>, en <strong>otro servidor</strong> (SFTP) o en la
-        <strong>nube</strong> (S3 / Backblaze). Para no perderlas ante un fallo de disco, lo ideal es tener
-        al menos una copia <strong>fuera</strong> del servidor.
+        <strong>correo</strong>) de un dominio. Las copias son <strong>incrementales y cifradas</strong>
+        (motor restic): solo se guarda lo que cambió —ocupan poquísimo aunque guardes mucho histórico— y los
+        datos viajan y se almacenan encriptados. Puedes guardar las copias en <strong>este servidor</strong>,
+        en <strong>otro servidor</strong> (SFTP) o en la <strong>nube</strong> (S3 / Backblaze); lo ideal es
+        tener al menos una copia <strong>fuera</strong> del servidor.
       </div>
     </div>
 
@@ -492,41 +492,29 @@
         </div>
         <div class="bk-modal__body">
           <div class="bk-warn">
-            <i class="bi bi-exclamation-triangle-fill"></i>
+            <i class="bi bi-info-circle-fill"></i>
             <div>
-              La restauración <strong>sobrescribe</strong> los archivos y tablas con los de la copia
-              elegida. No borra archivos creados después de esa copia (se superpone). Elige qué
-              restaurar y la copia de origen.
+              Al restaurar, la copia elegida se descarga en una <strong>carpeta de recuperación segura</strong>
+              dentro del dominio (<code>~/restore/&lt;copia&gt;/</code>). <strong>No sobrescribe</strong> la web en
+              vivo: revisa los archivos restaurados y copia lo que necesites. Cada copia es un punto en el tiempo
+              al que puedes volver.
             </div>
-          </div>
-
-          <label class="bk-sublabel">¿Qué restaurar?</label>
-          <div class="bk-restore-opts">
-            <label class="bk-check"><input type="checkbox" v-model="restoreOpts.files" /><i class="bi bi-folder"></i> Archivos web</label>
-            <label class="bk-check"><input type="checkbox" v-model="restoreOpts.databases" /><i class="bi bi-database"></i> Bases de datos</label>
-            <label class="bk-check"><input type="checkbox" v-model="restoreOpts.mail" /><i class="bi bi-envelope"></i> Correo</label>
           </div>
 
           <div v-if="snapshotsLoading" class="bk-center"><div class="spinner-border spinner-border-sm"></div></div>
           <EmptyState v-else-if="snapshots.length === 0" icon="hdd"
-                      title="Sin copias" description="No hay copias guardadas en disco para este dominio." />
+                      title="Sin copias" description="Aún no hay copias para este dominio. Ejecuta el backup primero." />
           <div v-else class="bk-table-wrap">
             <table class="bk-table bk-table--sm">
               <thead>
-                <tr><th>Copia (fecha)</th><th>Contenido</th><th>Tamaño</th><th>Tipo</th><th class="bk-right"></th></tr>
+                <tr><th>Fecha de la copia</th><th>ID</th><th class="bk-right"></th></tr>
               </thead>
               <tbody>
-                <tr v-for="s in snapshots" :key="s.name">
-                  <td class="bk-muted">{{ formatSnapshot(s.name) }}</td>
-                  <td>
-                    <span v-if="s.has_files" class="bk-tag bk-tag--web">Web</span>
-                    <span v-if="s.has_databases" class="bk-tag bk-tag--db">BD</span>
-                    <span v-if="s.has_mail" class="bk-tag bk-tag--mail">Correo</span>
-                  </td>
-                  <td class="bk-muted">{{ s.size_mb }} MB</td>
-                  <td class="bk-muted">{{ s.is_incremental ? 'Incremental' : 'Completa' }}</td>
+                <tr v-for="s in snapshots" :key="s.id">
+                  <td class="bk-muted">{{ formatDateTime(s.time) }}</td>
+                  <td class="bk-muted"><code>{{ s.id }}</code></td>
                   <td class="bk-right">
-                    <BaseButton variant="primary" size="sm" :loading="restoringSnap === s.name" @click="doRestore(s)">
+                    <BaseButton variant="primary" size="sm" :loading="restoringSnap === s.id" @click="doRestore(s)">
                       <i class="bi bi-arrow-counterclockwise"></i> Restaurar
                     </BaseButton>
                   </td>
@@ -537,6 +525,37 @@
         </div>
         <div class="bk-modal__foot">
           <BaseButton variant="ghost" size="sm" @click="showRestore = false">Cerrar</BaseButton>
+        </div>
+      </div>
+    </div>
+
+    <!-- Modal: contraseña de cifrado restic (se muestra UNA vez al crear) -->
+    <div v-if="showResticPassword" class="bk-modal-backdrop" @click.self="showResticPassword = false">
+      <div class="bk-modal" style="max-width:520px">
+        <div class="bk-modal__head">
+          <h3><i class="bi bi-key-fill" style="color:var(--svq-orange)"></i> Guarda esta contraseña</h3>
+        </div>
+        <div class="bk-modal__body">
+          <div class="bk-info" style="border-left:3px solid var(--danger,#dc3545)">
+            <i class="bi bi-exclamation-triangle-fill" style="color:var(--danger,#dc3545)"></i>
+            <div>
+              Tus copias se guardan <strong>cifradas</strong> con esta contraseña. <strong>Anótala y guárdala
+              en lugar seguro</strong>: sin ella, los backups son <strong>imposibles de recuperar</strong>.
+              Solo se muestra <strong>ahora</strong>.
+            </div>
+          </div>
+          <div style="display:flex;gap:.5rem;align-items:center;margin-top:1rem">
+            <input :value="resticPasswordShown" readonly class="form-control font-monospace"
+                   style="font-size:1.05rem;letter-spacing:.5px" @focus="$event.target.select()" />
+            <BaseButton variant="secondary" size="sm" @click="copyResticPassword">
+              <i class="bi bi-clipboard"></i> Copiar
+            </BaseButton>
+          </div>
+        </div>
+        <div class="bk-modal__foot">
+          <BaseButton variant="primary" size="sm" @click="showResticPassword = false">
+            La he guardado
+          </BaseButton>
         </div>
       </div>
     </div>
@@ -607,6 +626,8 @@ export default {
     const s3TestMsg = ref('')
     const s3TestOk = ref(false)
     const showS3Help = ref(false)
+    const showResticPassword = ref(false)
+    const resticPasswordShown = ref('')
 
     const runningJobId = ref(null)
 
@@ -724,8 +745,13 @@ export default {
           await api.updateBackupJob(editing.value.id, form.value)
           store.showNotification('Backup actualizado', 'success')
         } else {
-          await api.createBackupJob(form.value)
+          const created = await api.createBackupJob(form.value)
           store.showNotification('Backup creado', 'success')
+          // Mostrar UNA vez la contraseña de cifrado para que el usuario la anote
+          if (created && created.restic_password_plain) {
+            resticPasswordShown.value = created.restic_password_plain
+            showResticPassword.value = true
+          }
         }
         showForm.value = false
         await loadJobs()
@@ -734,6 +760,12 @@ export default {
       } finally {
         saving.value = false
       }
+    }
+
+    const copyResticPassword = () => {
+      navigator.clipboard?.writeText(resticPasswordShown.value)
+        .then(() => store.showNotification('Contraseña copiada', 'success'))
+        .catch(() => {})
     }
 
     const testSftp = async () => {
@@ -839,28 +871,17 @@ export default {
     }
 
     const doRestore = async (snap) => {
-      if (!restoreOpts.value.files && !restoreOpts.value.databases && !restoreOpts.value.mail) {
-        store.showNotification('Selecciona al menos un contenido a restaurar', 'warning')
-        return
-      }
-      const parts = []
-      if (restoreOpts.value.files) parts.push('archivos')
-      if (restoreOpts.value.databases) parts.push('bases de datos')
-      if (restoreOpts.value.mail) parts.push('correo')
-      if (!confirm(`¿Restaurar ${parts.join(', ')} desde la copia del ${formatSnapshot(snap.name)}?\nLos datos actuales serán sobrescritos.`)) return
+      if (!confirm(`¿Restaurar la copia del ${formatDateTime(snap.time)}?\nSe descargará en ~/restore/${snap.id}/ del dominio (NO se sobrescribe la web en vivo).`)) return
 
-      restoringSnap.value = snap.name
+      restoringSnap.value = snap.id
       try {
         const rec = await api.restoreBackup(restoreJob.value.id, {
-          snapshot_name: snap.name,
-          restore_files: restoreOpts.value.files,
-          restore_databases: restoreOpts.value.databases,
-          restore_mail: restoreOpts.value.mail,
+          snapshot_name: snap.id,
         })
         store.showNotification('Restauración iniciada…', 'info')
         const final = await pollRecord(rec.id)
         if (final && final.status === 'success') {
-          store.showNotification('Restauración completada', 'success')
+          store.showNotification(`Copia restaurada en ~/restore/${snap.id}/`, 'success')
           showRestore.value = false
         } else if (final && final.status === 'failed') {
           store.showNotification('Restauración fallida: ' + (final.error_message || 'error'), 'danger')
@@ -967,6 +988,7 @@ export default {
       showForm, editing, form, formError, saving,
       testingSftp, sftpTestMsg, sftpTestOk,
       testingS3, s3TestMsg, s3TestOk, testS3, showS3Help,
+      showResticPassword, resticPasswordShown, copyResticPassword,
       runningJobId,
       showHistory, historyJob, records, historyLoading, expanded,
       showRestore, restoreJob, snapshots, snapshotsLoading, restoreOpts, restoringSnap,

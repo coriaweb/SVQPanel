@@ -11,6 +11,7 @@ actualiza el registro a running → success|failed.
 """
 
 import os
+import secrets
 from datetime import datetime
 from typing import Optional, List
 
@@ -97,6 +98,8 @@ def _job_response(job: BackupJob, db: Session) -> BackupJobResponse:
     resp = BackupJobResponse.model_validate(job)
     resp.sftp_password = None
     resp.s3_secret_key = None
+    resp.restic_password = None        # nunca devolver el cifrado
+    resp.restic_password_plain = None  # solo en la respuesta de creación
     last = (
         db.query(BackupRecord)
         .filter(BackupRecord.job_id == job.id)
@@ -150,6 +153,7 @@ def _job_to_config(job: BackupJob) -> dict:
         "s3_prefix":         job.s3_prefix,
         "s3_access_key":     job.s3_access_key,
         "s3_secret_key":     _decrypt(job.s3_secret_key) if job.s3_secret_key else None,
+        "restic_password":   _decrypt(job.restic_password) if job.restic_password else None,
         "retention_copies":  job.retention_copies,
     }
 
@@ -199,15 +203,13 @@ def _execute_backup(job_id: int, record_id: int, force_full: bool):
         db.commit()
 
         from scripts.utils import get_domain_root
-        from scripts.backup_manager import BackupManager
-        mgr = BackupManager()
+        from scripts import restic_manager
         job_config = _job_to_config(job)
 
         domains_to_backup = _domains_for_job(job, db)
 
         all_log: list[str] = []
         total_size = 0
-        total_files_transferred = 0
         total_files_total = 0
         total_db_count = 0
         any_failed = False
@@ -239,21 +241,15 @@ def _execute_backup(job_id: int, record_id: int, force_full: bool):
                 databases = [{"db_name": d.db_name} for d in dbs]
 
             all_log.append(f"── {domain_name} ({username}) ──")
-            res = mgr.run_backup(
-                job_config=job_config,
-                username=username,
-                domain_name=domain_name,
-                files_path=files_path,
-                mail_path=mail_path,
-                databases=databases,
-                force_full=force_full,
+            res = restic_manager.run_backup(
+                job_config, username, domain_name,
+                files_path=files_path, mail_path=mail_path, databases=databases,
             )
-            all_log.extend(res["log"])
-            total_size             += res["size_bytes"]
-            total_files_transferred += res["files_transferred"]
-            total_files_total      += res["files_total"]
-            total_db_count         += res["db_count"]
-            last_path               = res["backup_path"]
+            all_log.extend([l for l in res["log"] if l])
+            total_size        += res["size_bytes"]
+            total_files_total += res["files_total"]
+            total_db_count    += res["db_count"]
+            last_path          = res.get("repo")
             if res["status"] == "failed":
                 any_failed = True
                 all_log.append(f"ERROR {domain_name}: {res['error']}")
@@ -261,7 +257,7 @@ def _execute_backup(job_id: int, record_id: int, force_full: bool):
         record.status            = "failed" if any_failed else "success"
         record.backup_path       = last_path
         record.size_bytes        = total_size
-        record.files_transferred = total_files_transferred
+        record.files_transferred = total_files_total
         record.files_total       = total_files_total
         record.db_count          = total_db_count
         record.log_output        = "\n".join(all_log)[:50000]
@@ -368,11 +364,20 @@ async def create_backup_job(
     if data.get("s3_secret_key"):
         data["s3_secret_key"] = _encrypt(data["s3_secret_key"])
 
+    # Contraseña de cifrado restic: la que ponga el usuario, o una autogenerada.
+    # Se devuelve UNA vez en texto claro (restic_password_plain) para que la anote;
+    # en BD se guarda cifrada. Sin ella los backups son irrecuperables.
+    plain_pw = data.pop("restic_password", None) or secrets.token_urlsafe(24)
+    data["restic_password"] = _encrypt(plain_pw)
+
     job = BackupJob(user_id=current_user.id, **data)
     db.add(job)
     db.commit()
     db.refresh(job)
-    return _job_response(job, db)
+    resp = _job_response(job, db)
+    # Inyectar la contraseña en claro solo en esta respuesta de creación
+    resp.restic_password_plain = plain_pw
+    return resp
 
 
 @router.get("/backups/{job_id}", response_model=BackupJobResponse)
@@ -408,6 +413,9 @@ async def update_backup_job(
             updates["s3_secret_key"] = _encrypt(updates["s3_secret_key"])
         else:
             updates.pop("s3_secret_key")
+    # La contraseña de cifrado restic NO se cambia tras crear el repo (cambiarla
+    # dejaría los backups existentes irrecuperables).
+    updates.pop("restic_password", None)
 
     for field, value in updates.items():
         setattr(job, field, value)
@@ -497,75 +505,57 @@ async def get_backup_record(
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Test de conexión SFTP
+# Test de conexión (restic: crea/accede al repositorio en el destino)
 # ─────────────────────────────────────────────────────────────────────────────
-
-@router.post("/backups/{job_id}/test-sftp")
-async def test_sftp(
-    job_id: int,
-    current_user: User = Depends(require_auth),
-    db: Session = Depends(get_db),
-):
-    """Comprueba la conectividad SFTP configurada en el job."""
+async def _test_connection(job_id, current_user, db):
     job = _get_job_or_404(job_id, db)
     _check_access(current_user, job)
-    if job.destination_type != "sftp":
-        raise HTTPException(status_code=400, detail="El job no usa destino SFTP")
-
+    username, domain_name, _, _ = _owner_and_paths(job, db)
+    if not domain_name:
+        return {"status": "error", "ok": False, "message": "El job no tiene dominio asociado"}
     try:
-        from scripts.backup_manager import BackupManager
-        mgr = BackupManager()
-        ok, message = mgr.test_sftp_connection(_job_to_config(job))
+        from scripts import restic_manager
+        ok, message = restic_manager.test_connection(_job_to_config(job), username, domain_name)
     except Exception as exc:
         return {"status": "error", "ok": False, "message": str(exc)}
-
     return {"status": "success" if ok else "error", "ok": ok, "message": message}
+
+
+@router.post("/backups/{job_id}/test-sftp")
+async def test_sftp(job_id: int, current_user: User = Depends(require_auth),
+                    db: Session = Depends(get_db)):
+    """Comprueba el destino del job (crea/accede al repositorio restic)."""
+    return await _test_connection(job_id, current_user, db)
 
 
 @router.post("/backups/{job_id}/test-s3")
-async def test_s3(
-    job_id: int,
-    current_user: User = Depends(require_auth),
-    db: Session = Depends(get_db),
-):
-    """Comprueba el acceso al bucket S3 configurado en el job."""
-    job = _get_job_or_404(job_id, db)
-    _check_access(current_user, job)
-    if job.destination_type != "s3":
-        raise HTTPException(status_code=400, detail="El job no usa destino S3")
-
-    try:
-        from scripts.backup_manager import BackupManager
-        mgr = BackupManager()
-        ok, message = mgr.test_s3_connection(_job_to_config(job))
-    except Exception as exc:
-        return {"status": "error", "ok": False, "message": str(exc)}
-
-    return {"status": "success" if ok else "error", "ok": ok, "message": message}
+async def test_s3(job_id: int, current_user: User = Depends(require_auth),
+                  db: Session = Depends(get_db)):
+    """Comprueba el destino del job (crea/accede al repositorio restic)."""
+    return await _test_connection(job_id, current_user, db)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Snapshots y restauración
 # ─────────────────────────────────────────────────────────────────────────────
 
-@router.get("/backups/{job_id}/snapshots", response_model=List[BackupSnapshotResponse])
+@router.get("/backups/{job_id}/snapshots")
 async def list_snapshots(
     job_id: int,
     current_user: User = Depends(require_auth),
     db: Session = Depends(get_db),
 ):
-    """Lista los snapshots locales disponibles para el dominio del job."""
+    """Lista los snapshots restic del dominio del job (máquina del tiempo)."""
     job = _get_job_or_404(job_id, db)
     _check_access(current_user, job)
     username, domain_name, _, _ = _owner_and_paths(job, db)
     if not domain_name:
         return []
     try:
-        from scripts.backup_manager import BackupManager
-        mgr = BackupManager()
-        return mgr.list_local_snapshots(job.local_path, username, domain_name)
-    except Exception:
-        return []
+        from scripts import restic_manager
+        return restic_manager.list_snapshots(_job_to_config(job), username, domain_name)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error listando snapshots: {e}")
 
 
 @router.post("/backups/{job_id}/restore", response_model=BackupRecordResponse, status_code=status.HTTP_202_ACCEPTED)
@@ -576,27 +566,21 @@ async def restore_backup(
     current_user: User = Depends(require_auth),
     db: Session = Depends(get_db),
 ):
-    """Restaura un snapshot del job en segundo plano y devuelve el registro pendiente."""
+    """Restaura un snapshot restic a una carpeta de recuperación (segura) en el
+    home del dominio: /home/{user}/restore/{snapshot}/. No sobrescribe la web en
+    vivo; el usuario revisa y copia lo que necesite.
+    """
     job = _get_job_or_404(job_id, db)
     _check_access(current_user, job)
-
-    if not (payload.restore_files or payload.restore_databases or payload.restore_mail):
-        raise HTTPException(status_code=400, detail="Selecciona al menos un contenido a restaurar")
 
     username, domain_name, _, _ = _owner_and_paths(job, db)
     if not domain_name:
         raise HTTPException(status_code=400, detail="El job no tiene dominio asociado")
-
-    snapshot_path = f"{job.local_path.rstrip('/')}/users/{username}/{domain_name}/{payload.snapshot_name}"
-    if not os.path.isdir(snapshot_path):
-        raise HTTPException(status_code=404, detail="Snapshot no encontrado en disco")
+    if not payload.snapshot_name:
+        raise HTTPException(status_code=400, detail="Falta el snapshot a restaurar")
 
     record = BackupRecord(
-        job_id=job.id,
-        user_id=job.user_id,
-        kind="restore",
-        status="pending",
-        backup_path=snapshot_path,
+        job_id=job.id, user_id=job.user_id, kind="restore", status="pending",
         started_at=datetime.utcnow(),
     )
     db.add(record)
@@ -604,7 +588,42 @@ async def restore_backup(
     db.refresh(record)
 
     background_tasks.add_task(
-        _execute_restore, job.id, record.id, payload.snapshot_name,
-        payload.restore_files, payload.restore_databases, payload.restore_mail,
+        _execute_restic_restore, job.id, record.id, username, domain_name,
+        payload.snapshot_name,
     )
     return _record_response(record)
+
+
+def _execute_restic_restore(job_id, record_id, username, domain, snapshot_id):
+    """Tarea de fondo: restic restore del snapshot a /home/{user}/restore/{id}/."""
+    dbs = SessionLocal()
+    try:
+        job = dbs.query(BackupJob).filter(BackupJob.id == job_id).first()
+        rec = dbs.query(BackupRecord).filter(BackupRecord.id == record_id).first()
+        if not job or not rec:
+            return
+        rec.status = "running"
+        dbs.commit()
+
+        from scripts import restic_manager
+        target = f"/home/{username}/restore/{snapshot_id}"
+        res = restic_manager.restore(_job_to_config(job), username, domain,
+                                     snapshot_id, target)
+        rec.status = "success" if res["ok"] else "failed"
+        rec.backup_path = target
+        rec.log_output = (res.get("message") or "")[:50000]
+        rec.error_message = None if res["ok"] else "Fallo en la restauración"
+        rec.finished_at = datetime.utcnow()
+        dbs.commit()
+    except Exception as e:
+        try:
+            rec = dbs.query(BackupRecord).filter(BackupRecord.id == record_id).first()
+            if rec:
+                rec.status = "failed"
+                rec.error_message = str(e)
+                rec.finished_at = datetime.utcnow()
+                dbs.commit()
+        except Exception:
+            pass
+    finally:
+        dbs.close()

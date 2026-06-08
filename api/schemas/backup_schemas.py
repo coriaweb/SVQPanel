@@ -43,6 +43,9 @@ class BackupJobBase(BaseModel):
     s3_access_key: Optional[str] = Field(None, max_length=255)
     s3_secret_key: Optional[str] = Field(None, max_length=500)
 
+    # Contraseña de cifrado restic (opcional al crear: si se omite, se autogenera)
+    restic_password: Optional[str] = Field(None, max_length=255)
+
     retention_copies: int = Field(7, ge=1, le=365)
 
     # Programación automática
@@ -121,6 +124,10 @@ class BackupJobResponse(BackupJobBase):
     # Las credenciales nunca se devuelven al cliente
     sftp_password: Optional[str] = None
     s3_secret_key: Optional[str] = None
+    restic_password: Optional[str] = None
+    # La contraseña de cifrado restic en claro SOLO se devuelve al CREAR el job
+    # (para que el usuario la anote); nunca más.
+    restic_password_plain: Optional[str] = None
 
     class Config:
         from_attributes = True
@@ -178,7 +185,8 @@ class BackupRunRequest(BaseModel):
 
 
 class BackupRestoreRequest(BaseModel):
-    snapshot_name:     str = Field(..., pattern=r"^\d{8}_\d{6}$")
+    # ID de snapshot restic (hex corto) o "latest"
+    snapshot_name:     str = Field(..., min_length=1, max_length=64)
     restore_files:     bool = True
     restore_databases: bool = True
     restore_mail:      bool = False

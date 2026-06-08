@@ -104,7 +104,6 @@ def _run_job(job_id: int):
     Las importaciones pesadas están al nivel del módulo (se cargan una vez).
     """
     # Importaciones ligeras de scripts (no routes/FastAPI)
-    from scripts.backup_manager import BackupManager
     from scripts.utils import get_domain_root
 
     db = SessionLocal()
@@ -162,12 +161,14 @@ def _run_job(job_id: int):
             "s3_prefix":         job.s3_prefix,
             "s3_access_key":     job.s3_access_key,
             "s3_secret_key":     _decrypt_sftp_password(job.s3_secret_key),
+            "restic_password":   _decrypt_sftp_password(job.restic_password),
             "retention_copies":  job.retention_copies,
         }
 
-        mgr = BackupManager()
+        from scripts import restic_manager
         all_log, total_size, total_xf, total_xt, total_db = [], 0, 0, 0, 0
         any_failed = False
+        last_repo = None
 
         for domain, owner in (domains_to_backup or []):
             username = owner.username if owner else "root"
@@ -183,27 +184,22 @@ def _run_job(job_id: int):
                 databases = [{"db_name": d.db_name} for d in dbs]
 
             all_log.append(f"── {domain_name} ({username}) ──")
-            res = mgr.run_backup(
-                job_config=job_config,
-                username=username,
-                domain_name=domain_name,
-                files_path=files_path,
-                mail_path=mail_path,
-                databases=databases,
-                force_full=False,
+            res = restic_manager.run_backup(
+                job_config, username, domain_name,
+                files_path=files_path, mail_path=mail_path, databases=databases,
             )
-            all_log.extend(res["log"])
+            all_log.extend([l for l in res["log"] if l])
             total_size += res["size_bytes"]
-            total_xf   += res["files_transferred"]
             total_xt   += res["files_total"]
             total_db   += res["db_count"]
+            last_repo = res.get("repo")
             if res["status"] == "failed":
                 any_failed = True
 
         record.status            = "failed" if any_failed else "success"
-        record.backup_path       = job_config.get("local_path")
+        record.backup_path       = last_repo
         record.size_bytes        = total_size
-        record.files_transferred = total_xf
+        record.files_transferred = total_xt   # restic: archivos procesados
         record.files_total       = total_xt
         record.db_count          = total_db
         record.log_output        = "\n".join(all_log)[:50000]

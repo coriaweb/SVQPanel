@@ -341,6 +341,7 @@ apt-get install -y -qq -o Dpkg::Options::="--force-confold" \
     rsyslog \
     rsync \
     zstd \
+    restic \
     quota \
     quotatool \
     mailutils

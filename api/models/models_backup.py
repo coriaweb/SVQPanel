@@ -42,9 +42,15 @@ class BackupJob(Base):
     include_mail      = Column(Boolean, default=False, nullable=False)
 
     # ── Tipo de copia ─────────────────────────────────────────────────────────
-    # full        → copia completa siempre
-    # incremental → rsync con --link-dest al snapshot anterior (hardlinks)
+    # Con el motor restic todas las copias son incrementales + deduplicadas +
+    # cifradas en CUALQUIER destino. Se conserva la columna por compatibilidad.
     backup_type = Column(String(20), default="incremental", nullable=False)
+
+    # ── Cifrado restic ────────────────────────────────────────────────────────
+    # Contraseña del repositorio restic (cifrada con Fernet en la BD). Sin ella
+    # los backups son IRRECUPERABLES, así que se guarda y se muestra al usuario
+    # al crear el job para que la anote. Si se deja vacía, se autogenera.
+    restic_password = Column(String(500), nullable=True)
 
     # ── Destino ───────────────────────────────────────────────────────────────
     # local : copia en /backups/ del servidor
