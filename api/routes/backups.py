@@ -79,9 +79,20 @@ def _get_job_or_404(job_id: int, db: Session) -> BackupJob:
     return job
 
 
-def _check_access(current_user: User, job: BackupJob):
+def _check_access(current_user: User, job: BackupJob, db: Session = None):
+    """Acceso de gestión completo (editar/borrar/ejecutar): admin o dueño del job."""
     if not current_user.is_admin and job.user_id != current_user.id:
         raise HTTPException(status_code=403, detail="No tienes permiso sobre este backup")
+
+
+def _check_view_access(current_user: User, job: BackupJob, db: Session):
+    """Acceso de VISTA/RESTAURACIÓN: admin, dueño del job, o cliente cuyos
+    dominios estén incluidos en el backup (p. ej. un backup global del admin)."""
+    if current_user.is_admin or job.user_id == current_user.id:
+        return
+    if _job_covers_user(job, current_user, db):
+        return
+    raise HTTPException(status_code=403, detail="No tienes permiso sobre este backup")
 
 
 def _assert_domain_ownership(domain_id: int, current_user: User, db: Session) -> Domain:
@@ -188,6 +199,50 @@ def _domains_for_job(job: BackupJob, db: Session) -> list:
         owner = db.query(User).filter(User.id == d.user_id).first()
         result.append((d, owner))
     return result
+
+
+def _job_covers_user(job: BackupJob, user: User, db: Session) -> bool:
+    """True si el backup del job incluye algún dominio del usuario `user`.
+    Se usa para que un CLIENTE vea/restaure los backups (incluidos los creados
+    por el ADMIN) que cubren sus propios dominios."""
+    if job.user_id == user.id:
+        return True
+    for domain, owner in _domains_for_job(job, db):
+        if owner and owner.id == user.id:
+            return True
+    return False
+
+
+def _user_domains_in_job(job: BackupJob, user: User, db: Session) -> list:
+    """Dominios del usuario `user` que respalda este job (para un admin: todos).
+    Devuelve lista de (domain, owner)."""
+    pairs = _domains_for_job(job, db)
+    if user.is_admin:
+        return pairs
+    return [(d, o) for (d, o) in pairs if o and o.id == user.id]
+
+
+def _resolve_target(job: BackupJob, user: User, db: Session, domain_name: str = None):
+    """Resuelve (username, domain) sobre el que operar (snapshots/restore),
+    validando que el usuario tenga derecho. Para jobs de un solo dominio usa ese;
+    para jobs globales requiere `domain_name` y lo valida.
+    Devuelve (username, domain_name) o lanza HTTPException."""
+    pairs = _user_domains_in_job(job, user, db)  # solo dominios que el user puede ver
+    if not pairs:
+        raise HTTPException(status_code=403, detail="No tienes dominios en este backup")
+
+    if domain_name:
+        for d, o in pairs:
+            if d.domain_name == domain_name:
+                return (o.username if o else "root"), d.domain_name
+        raise HTTPException(status_code=403, detail="Ese dominio no está en este backup o no es tuyo")
+
+    # Sin dominio explícito: si solo hay uno, usarlo; si hay varios, hace falta elegir
+    if len(pairs) == 1:
+        d, o = pairs[0]
+        return (o.username if o else "root"), d.domain_name
+    raise HTTPException(status_code=400,
+                        detail="Este backup cubre varios dominios; indica cuál con ?domain=")
 
 
 def _execute_backup(job_id: int, record_id: int, force_full: bool):
@@ -332,12 +387,27 @@ async def list_backup_jobs(
     current_user: User = Depends(require_auth),
     db: Session = Depends(get_db),
 ):
-    """Lista los jobs de backup del usuario actual (admin: todos)."""
-    query = db.query(BackupJob)
-    if not current_user.is_admin:
-        query = query.filter(BackupJob.user_id == current_user.id)
-    jobs = query.order_by(BackupJob.created_at.desc()).all()
-    return [_job_response(j, db) for j in jobs]
+    """Lista los jobs de backup visibles para el usuario.
+
+    Admin: todos. Cliente: los suyos + los que incluyan sus dominios (p. ej. un
+    backup global creado por el admin), marcados como de solo lectura para que la
+    UI muestre que son "del administrador".
+    """
+    if current_user.is_admin:
+        jobs = db.query(BackupJob).order_by(BackupJob.created_at.desc()).all()
+        return [_job_response(j, db) for j in jobs]
+
+    # Cliente: sus jobs + los que cubren alguno de sus dominios
+    all_jobs = db.query(BackupJob).order_by(BackupJob.created_at.desc()).all()
+    out = []
+    for j in all_jobs:
+        if j.user_id == current_user.id:
+            out.append(_job_response(j, db))
+        elif _job_covers_user(j, current_user, db):
+            resp = _job_response(j, db)
+            resp.managed_by_admin = True   # el cliente no puede editar/borrar
+            out.append(resp)
+    return out
 
 
 @router.post("/backups", response_model=BackupJobResponse, status_code=status.HTTP_201_CREATED)
@@ -387,7 +457,7 @@ async def get_backup_job(
     db: Session = Depends(get_db),
 ):
     job = _get_job_or_404(job_id, db)
-    _check_access(current_user, job)
+    _check_view_access(current_user, job, db)
     return _job_response(job, db)
 
 
@@ -539,18 +609,30 @@ async def test_s3(job_id: int, current_user: User = Depends(require_auth),
 # Snapshots y restauración
 # ─────────────────────────────────────────────────────────────────────────────
 
+@router.get("/backups/{job_id}/domains")
+async def job_domains(job_id: int, current_user: User = Depends(require_auth),
+                      db: Session = Depends(get_db)):
+    """Lista los dominios de este backup que el usuario puede ver/restaurar.
+    Para un cliente, solo sus dominios; para el admin, todos."""
+    job = _get_job_or_404(job_id, db)
+    _check_view_access(current_user, job, db)
+    pairs = _user_domains_in_job(job, current_user, db)
+    return [{"domain": d.domain_name, "owner": (o.username if o else None)}
+            for d, o in pairs]
+
+
 @router.get("/backups/{job_id}/snapshots")
 async def list_snapshots(
     job_id: int,
+    domain: str = None,
     current_user: User = Depends(require_auth),
     db: Session = Depends(get_db),
 ):
-    """Lista los snapshots restic del dominio del job (máquina del tiempo)."""
+    """Snapshots restic del dominio indicado dentro del job (máquina del tiempo).
+    Un cliente solo ve los de sus dominios; el admin, cualquiera."""
     job = _get_job_or_404(job_id, db)
-    _check_access(current_user, job)
-    username, domain_name, _, _ = _owner_and_paths(job, db)
-    if not domain_name:
-        return []
+    _check_view_access(current_user, job, db)
+    username, domain_name = _resolve_target(job, current_user, db, domain)
     try:
         from scripts import restic_manager
         return restic_manager.list_snapshots(_job_to_config(job), username, domain_name)
@@ -571,16 +653,15 @@ async def restore_backup(
     vivo; el usuario revisa y copia lo que necesite.
     """
     job = _get_job_or_404(job_id, db)
-    _check_access(current_user, job)
+    _check_view_access(current_user, job, db)
 
-    username, domain_name, _, _ = _owner_and_paths(job, db)
-    if not domain_name:
-        raise HTTPException(status_code=400, detail="El job no tiene dominio asociado")
     if not payload.snapshot_name:
         raise HTTPException(status_code=400, detail="Falta el snapshot a restaurar")
+    # Resuelve y valida el dominio del usuario (cliente: solo el suyo)
+    username, domain_name = _resolve_target(job, current_user, db, payload.domain)
 
     record = BackupRecord(
-        job_id=job.id, user_id=job.user_id, kind="restore", status="pending",
+        job_id=job.id, user_id=current_user.id, kind="restore", status="pending",
         started_at=datetime.utcnow(),
     )
     db.add(record)

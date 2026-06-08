@@ -1029,8 +1029,13 @@ class APIClient {
     return this.post(`/api/terminal/session`, target ? { target } : {})
   }
 
-  getBackupSnapshots(jobId) {
-    return this.get(`/api/backups/${jobId}/snapshots`)
+  getBackupSnapshots(jobId, domain = null) {
+    const q = domain ? `?domain=${encodeURIComponent(domain)}` : ''
+    return this.get(`/api/backups/${jobId}/snapshots${q}`)
+  }
+
+  getBackupJobDomains(jobId) {
+    return this.get(`/api/backups/${jobId}/domains`)
   }
 
   restoreBackup(jobId, data) {

@@ -121,6 +121,10 @@ class BackupJobResponse(BackupJobBase):
     last_record_status: Optional[str] = None
     last_record_size_mb: Optional[float] = None
 
+    # True si este job lo gestiona el ADMIN y el usuario actual solo puede ver/
+    # restaurar su parte (no editar/borrar/ejecutar). Lo inyecta la ruta.
+    managed_by_admin: bool = False
+
     # Las credenciales nunca se devuelven al cliente
     sftp_password: Optional[str] = None
     s3_secret_key: Optional[str] = None
@@ -187,6 +191,8 @@ class BackupRunRequest(BaseModel):
 class BackupRestoreRequest(BaseModel):
     # ID de snapshot restic (hex corto) o "latest"
     snapshot_name:     str = Field(..., min_length=1, max_length=64)
+    # Dominio a restaurar dentro del job (obligatorio si el job cubre varios)
+    domain:            Optional[str] = Field(None, max_length=255)
     restore_files:     bool = True
     restore_databases: bool = True
     restore_mail:      bool = False

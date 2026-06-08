@@ -49,7 +49,12 @@
           <tbody>
             <tr v-for="job in jobs" :key="job.id" :class="{ 'bk-row--off': !job.is_active }">
               <td>
-                <div class="bk-name">{{ job.name }}</div>
+                <div class="bk-name">
+                  {{ job.name }}
+                  <span v-if="job.managed_by_admin" class="bk-tag bk-tag--admin" title="Backup configurado por el administrador">
+                    <i class="bi bi-shield-lock"></i> Admin
+                  </span>
+                </div>
                 <div v-if="job.description" class="bk-muted">{{ job.description }}</div>
               </td>
               <td class="bk-muted">{{ job.domain_id ? domainName(job.domain_id) : 'Todos' }}</td>
@@ -88,7 +93,8 @@
               </td>
               <td class="bk-right">
                 <div class="bk-actions">
-                  <button class="bk-iconbtn" title="Ejecutar ahora"
+                  <!-- Ejecutar/editar/eliminar: solo para jobs propios (no los del admin) -->
+                  <button v-if="!job.managed_by_admin" class="bk-iconbtn" title="Ejecutar ahora"
                           :disabled="runningJobId === job.id || !job.is_active" @click="runJob(job)">
                     <i class="bi bi-play-fill"></i>
                   </button>
@@ -99,10 +105,10 @@
                   <button class="bk-iconbtn" title="Historial" @click="openHistory(job)">
                     <i class="bi bi-clock-history"></i>
                   </button>
-                  <button class="bk-iconbtn" title="Editar" @click="openEdit(job)">
+                  <button v-if="!job.managed_by_admin" class="bk-iconbtn" title="Editar" @click="openEdit(job)">
                     <i class="bi bi-pencil"></i>
                   </button>
-                  <button class="bk-iconbtn bk-iconbtn--danger" title="Eliminar" @click="deleteJob(job)">
+                  <button v-if="!job.managed_by_admin" class="bk-iconbtn bk-iconbtn--danger" title="Eliminar" @click="deleteJob(job)">
                     <i class="bi bi-trash"></i>
                   </button>
                 </div>
@@ -501,7 +507,18 @@
             </div>
           </div>
 
+          <!-- Selector de dominio (cuando el backup cubre varios) -->
+          <div v-if="restoreDomains.length > 1" class="bk-field" style="max-width:360px;margin-bottom:1rem">
+            <label>Dominio a restaurar</label>
+            <select v-model="selectedRestoreDomain" class="form-select form-select-sm" @change="loadRestoreSnapshots">
+              <option value="" disabled>Elige un dominio…</option>
+              <option v-for="d in restoreDomains" :key="d.domain" :value="d.domain">{{ d.domain }}</option>
+            </select>
+          </div>
+
           <div v-if="snapshotsLoading" class="bk-center"><div class="spinner-border spinner-border-sm"></div></div>
+          <EmptyState v-else-if="restoreDomains.length > 1 && !selectedRestoreDomain" icon="hdd"
+                      title="Elige un dominio" description="Este backup cubre varios dominios. Selecciona arriba cuál restaurar." />
           <EmptyState v-else-if="snapshots.length === 0" icon="hdd"
                       title="Sin copias" description="Aún no hay copias para este dominio. Ejecuta el backup primero." />
           <div v-else class="bk-table-wrap">
@@ -639,6 +656,8 @@ export default {
 
     const showRestore = ref(false)
     const restoreJob = ref(null)
+    const restoreDomains = ref([])
+    const selectedRestoreDomain = ref('')
     const snapshots = ref([])
     const snapshotsLoading = ref(false)
     const restoreOpts = ref({ files: true, databases: true, mail: false })
@@ -853,16 +872,35 @@ export default {
 
     const openRestore = async (job) => {
       restoreJob.value = job
-      restoreOpts.value = {
-        files: job.include_files,
-        databases: job.include_databases,
-        mail: job.include_mail,
-      }
       showRestore.value = true
       snapshotsLoading.value = true
       snapshots.value = []
+      restoreDomains.value = []
+      selectedRestoreDomain.value = ''
       try {
-        snapshots.value = await api.getBackupSnapshots(job.id)
+        // Qué dominios puede restaurar el usuario en este job (1 o varios)
+        restoreDomains.value = await api.getBackupJobDomains(job.id)
+        if (restoreDomains.value.length === 1) {
+          selectedRestoreDomain.value = restoreDomains.value[0].domain
+        }
+        await loadRestoreSnapshots()
+      } catch (e) {
+        store.showNotification('Error cargando copias: ' + e.message, 'danger')
+        snapshotsLoading.value = false
+      }
+    }
+
+    const loadRestoreSnapshots = async () => {
+      // Si hay varios dominios y no se ha elegido, no cargamos aún
+      if (restoreDomains.value.length > 1 && !selectedRestoreDomain.value) {
+        snapshots.value = []
+        snapshotsLoading.value = false
+        return
+      }
+      snapshotsLoading.value = true
+      try {
+        snapshots.value = await api.getBackupSnapshots(
+          restoreJob.value.id, selectedRestoreDomain.value || null)
       } catch (e) {
         store.showNotification('Error cargando copias: ' + e.message, 'danger')
       } finally {
@@ -877,6 +915,7 @@ export default {
       try {
         const rec = await api.restoreBackup(restoreJob.value.id, {
           snapshot_name: snap.id,
+          domain: selectedRestoreDomain.value || null,
         })
         store.showNotification('Restauración iniciada…', 'info')
         const final = await pollRecord(rec.id)
@@ -992,6 +1031,7 @@ export default {
       runningJobId,
       showHistory, historyJob, records, historyLoading, expanded,
       showRestore, restoreJob, snapshots, snapshotsLoading, restoreOpts, restoringSnap,
+      restoreDomains, selectedRestoreDomain, loadRestoreSnapshots,
       domainName, statusLabel, statusClass,
       openCreate, openEdit, closeForm, submitForm, testSftp,
       runJob, openHistory, deleteJob,
@@ -1049,6 +1089,7 @@ export default {
 .bk-tag--mail { background: var(--warning-bg); color: var(--warning); border-color: transparent; }
 .bk-tag--inc  { background: var(--success-bg); color: var(--success); border-color: transparent; }
 .bk-tag--full { background: var(--surface-inset); color: var(--text-muted); }
+.bk-tag--admin { background: var(--svq-orange, #e8590c); color: #fff; border-color: transparent; margin-left: .4rem; }
 
 /* Estado */
 .bk-status { display: inline-block; font-size: var(--fs-xs); font-weight: var(--fw-semibold); padding: 2px 9px; border-radius: var(--r-pill); }
