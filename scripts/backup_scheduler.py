@@ -156,6 +156,12 @@ def _run_job(job_id: int):
             "sftp_password":     _decrypt_sftp_password(job.sftp_password),
             "sftp_path":         job.sftp_path,
             "sftp_key_path":     job.sftp_key_path,
+            "s3_endpoint":       job.s3_endpoint,
+            "s3_region":         job.s3_region,
+            "s3_bucket":         job.s3_bucket,
+            "s3_prefix":         job.s3_prefix,
+            "s3_access_key":     job.s3_access_key,
+            "s3_secret_key":     _decrypt_sftp_password(job.s3_secret_key),
             "retention_copies":  job.retention_copies,
         }
 

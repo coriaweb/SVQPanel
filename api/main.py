@@ -428,6 +428,13 @@ def _run_migrations():
         "ALTER TABLE backup_jobs ADD COLUMN IF NOT EXISTS schedule_hour    VARCHAR(20) NOT NULL DEFAULT '2'",
         "ALTER TABLE backup_jobs ADD COLUMN IF NOT EXISTS schedule_day     VARCHAR(20) NOT NULL DEFAULT '*'",
         "ALTER TABLE backup_jobs ADD COLUMN IF NOT EXISTS schedule_weekday VARCHAR(20) NOT NULL DEFAULT '*'",
+        # Destino S3 / compatible (AWS S3, Backblaze B2, Wasabi, MinIO…)
+        "ALTER TABLE backup_jobs ADD COLUMN IF NOT EXISTS s3_endpoint   VARCHAR(255)",
+        "ALTER TABLE backup_jobs ADD COLUMN IF NOT EXISTS s3_region     VARCHAR(64)",
+        "ALTER TABLE backup_jobs ADD COLUMN IF NOT EXISTS s3_bucket     VARCHAR(255)",
+        "ALTER TABLE backup_jobs ADD COLUMN IF NOT EXISTS s3_prefix     VARCHAR(512)",
+        "ALTER TABLE backup_jobs ADD COLUMN IF NOT EXISTS s3_access_key VARCHAR(255)",
+        "ALTER TABLE backup_jobs ADD COLUMN IF NOT EXISTS s3_secret_key VARCHAR(500)",
         # ─────────────────────────────────────────────────────────────────
         # Fase 15.2: Plantillas web (nginx + PHP-FPM presets)
         # ─────────────────────────────────────────────────────────────────

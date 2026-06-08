@@ -62,8 +62,8 @@
                 </span>
               </td>
               <td class="bk-muted">
-                <i :class="job.destination_type === 'sftp' ? 'bi bi-hdd-network' : 'bi bi-hdd'"></i>
-                {{ job.destination_type === 'sftp' ? (job.sftp_host || 'SFTP') : 'Local' }}
+                <i :class="job.destination_type === 'sftp' ? 'bi bi-hdd-network' : (job.destination_type === 's3' ? 'bi bi-cloud-arrow-up' : 'bi bi-hdd')"></i>
+                {{ job.destination_type === 'sftp' ? (job.sftp_host || 'SFTP') : (job.destination_type === 's3' ? (job.s3_bucket || 'S3') : 'Local') }}
               </td>
               <td class="bk-muted">
                 <span v-if="job.schedule_enabled" class="bk-sched" :title="cronSummary(job)">
@@ -201,6 +201,10 @@
                     <input type="radio" value="sftp" v-model="form.destination_type" />
                     <i class="bi bi-hdd-network"></i> Remoto (SFTP)
                   </label>
+                  <label class="bk-check">
+                    <input type="radio" value="s3" v-model="form.destination_type" />
+                    <i class="bi bi-cloud-arrow-up"></i> S3 / Backblaze
+                  </label>
                 </div>
 
                 <div v-if="form.destination_type === 'local'" class="bk-field">
@@ -208,6 +212,54 @@
                   <input v-model="form.local_path" class="form-control form-control-sm font-monospace" placeholder="/backups" />
                 </div>
 
+                <!-- S3 / compatible -->
+                <div v-else-if="form.destination_type === 's3'" style="display:flex;flex-direction:column;gap:.75rem">
+                  <div style="display:grid;grid-template-columns:1fr 1fr;gap:.5rem">
+                    <div class="bk-field">
+                      <label>Bucket <span class="text-danger">*</span></label>
+                      <input v-model="form.s3_bucket" class="form-control form-control-sm" placeholder="mis-backups" />
+                    </div>
+                    <div class="bk-field">
+                      <label>Carpeta (prefijo)</label>
+                      <input v-model="form.s3_prefix" class="form-control form-control-sm font-monospace" placeholder="svqpanel/" />
+                    </div>
+                  </div>
+                  <div style="display:grid;grid-template-columns:1fr 1fr;gap:.5rem">
+                    <div class="bk-field">
+                      <label>Endpoint <span class="bk-hint">(vacío = AWS)</span></label>
+                      <input v-model="form.s3_endpoint" class="form-control form-control-sm" placeholder="s3.us-west-002.backblazeb2.com" />
+                    </div>
+                    <div class="bk-field">
+                      <label>Región</label>
+                      <input v-model="form.s3_region" class="form-control form-control-sm" placeholder="us-west-002 / eu-west-1" />
+                    </div>
+                  </div>
+                  <div style="display:grid;grid-template-columns:1fr 1fr;gap:.5rem">
+                    <div class="bk-field">
+                      <label>Access Key <span class="text-danger">*</span></label>
+                      <input v-model="form.s3_access_key" class="form-control form-control-sm font-monospace" placeholder="AKIA… / keyID" />
+                    </div>
+                    <div class="bk-field">
+                      <label>Secret Key</label>
+                      <input v-model="form.s3_secret_key" type="password" class="form-control form-control-sm"
+                             :placeholder="editing ? 'Sin cambios' : ''" />
+                    </div>
+                  </div>
+                  <p class="bk-hint" style="margin:0">
+                    Compatible con AWS S3, Backblaze B2, Wasabi, MinIO… El backup se sube comprimido (.tar.gz). La retención también se aplica en el bucket.
+                  </p>
+                  <div v-if="editing" style="display:flex;align-items:center;gap:.75rem">
+                    <button class="btn btn-sm btn-outline-info" :disabled="testingS3" @click="testS3">
+                      <span v-if="testingS3" class="spinner-border spinner-border-sm me-1"></span>
+                      <i v-else class="bi bi-plug"></i> Probar conexión
+                    </button>
+                    <span v-if="s3TestMsg" :class="s3TestOk ? 'text-success' : 'text-danger'" style="font-size:.82rem">
+                      {{ s3TestMsg }}
+                    </span>
+                  </div>
+                </div>
+
+                <!-- SFTP -->
                 <div v-else style="display:flex;flex-direction:column;gap:.75rem">
                   <div style="display:grid;grid-template-columns:1fr auto;gap:.5rem">
                     <div class="bk-field">
@@ -462,6 +514,12 @@ function emptyForm() {
     sftp_password: '',
     sftp_path: '/backups',
     sftp_key_path: '',
+    s3_endpoint: '',
+    s3_region: '',
+    s3_bucket: '',
+    s3_prefix: '',
+    s3_access_key: '',
+    s3_secret_key: '',
     retention_copies: 7,
     schedule_enabled: false,
     schedule_minute: '0',
@@ -490,6 +548,9 @@ export default {
     const testingSftp = ref(false)
     const sftpTestMsg = ref('')
     const sftpTestOk = ref(false)
+    const testingS3 = ref(false)
+    const s3TestMsg = ref('')
+    const s3TestOk = ref(false)
 
     const runningJobId = ref(null)
 
@@ -566,6 +627,12 @@ export default {
         sftp_password: '',
         sftp_path: job.sftp_path || '/backups',
         sftp_key_path: job.sftp_key_path || '',
+        s3_endpoint: job.s3_endpoint || '',
+        s3_region: job.s3_region || '',
+        s3_bucket: job.s3_bucket || '',
+        s3_prefix: job.s3_prefix || '',
+        s3_access_key: job.s3_access_key || '',
+        s3_secret_key: '',
         retention_copies: job.retention_copies,
         schedule_enabled: job.schedule_enabled || false,
         schedule_minute:  job.schedule_minute  || '0',
@@ -577,6 +644,7 @@ export default {
       schedPreset.value = detectPreset(form.value)
       formError.value = ''
       sftpTestMsg.value = ''
+      s3TestMsg.value = ''
       showForm.value = true
     }
 
@@ -590,6 +658,9 @@ export default {
       }
       if (form.value.destination_type === 'sftp' && (!form.value.sftp_host || !form.value.sftp_user)) {
         formError.value = 'Host y usuario SFTP son obligatorios para destino remoto.'; return
+      }
+      if (form.value.destination_type === 's3' && (!form.value.s3_bucket || !form.value.s3_access_key)) {
+        formError.value = 'Bucket y Access Key son obligatorios para destino S3.'; return
       }
       saving.value = true
       try {
@@ -622,6 +693,22 @@ export default {
         sftpTestMsg.value = e.message
       } finally {
         testingSftp.value = false
+      }
+    }
+
+    const testS3 = async () => {
+      if (!editing.value) return
+      testingS3.value = true
+      s3TestMsg.value = ''
+      try {
+        const res = await api.testBackupS3(editing.value.id)
+        s3TestOk.value = res.ok
+        s3TestMsg.value = res.message
+      } catch (e) {
+        s3TestOk.value = false
+        s3TestMsg.value = e.message
+      } finally {
+        testingS3.value = false
       }
     }
 
@@ -823,6 +910,7 @@ export default {
       jobs, domains, loading,
       showForm, editing, form, formError, saving,
       testingSftp, sftpTestMsg, sftpTestOk,
+      testingS3, s3TestMsg, s3TestOk, testS3,
       runningJobId,
       showHistory, historyJob, records, historyLoading, expanded,
       showRestore, restoreJob, snapshots, snapshotsLoading, restoreOpts, restoringSnap,

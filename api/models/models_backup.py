@@ -49,6 +49,7 @@ class BackupJob(Base):
     # ── Destino ───────────────────────────────────────────────────────────────
     # local : copia en /backups/ del servidor
     # sftp  : rsync sobre SSH a host remoto
+    # s3    : subida a almacenamiento compatible S3 (AWS S3, Backblaze B2, Wasabi, MinIO…)
     destination_type = Column(String(10), default="local", nullable=False)
 
     # Destino local
@@ -61,6 +62,14 @@ class BackupJob(Base):
     sftp_password = Column(String(500), nullable=True)   # cifrado con Fernet si está disponible
     sftp_path     = Column(String(512), nullable=True)
     sftp_key_path = Column(String(512), nullable=True)   # ruta a clave SSH privada en el servidor
+
+    # Destino S3 / compatible (AWS S3, Backblaze B2, Wasabi, MinIO…)
+    s3_endpoint   = Column(String(255), nullable=True)   # vacío = AWS; B2: s3.us-west-002.backblazeb2.com
+    s3_region     = Column(String(64),  nullable=True)
+    s3_bucket     = Column(String(255), nullable=True)
+    s3_prefix     = Column(String(512), nullable=True)   # carpeta dentro del bucket
+    s3_access_key = Column(String(255), nullable=True)
+    s3_secret_key = Column(String(500), nullable=True)   # cifrado con Fernet si está disponible
 
     # ── Retención ─────────────────────────────────────────────────────────────
     retention_copies = Column(Integer, default=7, nullable=False)  # cuántas copias conservar

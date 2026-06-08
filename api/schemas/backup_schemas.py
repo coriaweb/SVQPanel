@@ -22,7 +22,7 @@ class BackupJobBase(BaseModel):
 
     backup_type:      str = Field("incremental", pattern="^(full|incremental)$")
 
-    destination_type: str = Field("local", pattern="^(local|sftp)$")
+    destination_type: str = Field("local", pattern="^(local|sftp|s3)$")
 
     # Destino local
     local_path: str = Field("/backups", max_length=512)
@@ -34,6 +34,14 @@ class BackupJobBase(BaseModel):
     sftp_password: Optional[str] = Field(None, max_length=500)
     sftp_path:     Optional[str] = Field(None, max_length=512)
     sftp_key_path: Optional[str] = Field(None, max_length=512)
+
+    # Destino S3 / compatible (AWS, Backblaze B2, Wasabi, MinIO…)
+    s3_endpoint:   Optional[str] = Field(None, max_length=255)
+    s3_region:     Optional[str] = Field(None, max_length=64)
+    s3_bucket:     Optional[str] = Field(None, max_length=255)
+    s3_prefix:     Optional[str] = Field(None, max_length=512)
+    s3_access_key: Optional[str] = Field(None, max_length=255)
+    s3_secret_key: Optional[str] = Field(None, max_length=500)
 
     retention_copies: int = Field(7, ge=1, le=365)
 
@@ -71,7 +79,7 @@ class BackupJobUpdate(BaseModel):
     include_databases:Optional[bool] = None
     include_mail:     Optional[bool] = None
     backup_type:      Optional[str] = Field(None, pattern="^(full|incremental)$")
-    destination_type: Optional[str] = Field(None, pattern="^(local|sftp)$")
+    destination_type: Optional[str] = Field(None, pattern="^(local|sftp|s3)$")
     local_path:       Optional[str] = Field(None, max_length=512)
     sftp_host:        Optional[str] = Field(None, max_length=255)
     sftp_port:        Optional[int] = Field(None, ge=1, le=65535)
@@ -79,6 +87,12 @@ class BackupJobUpdate(BaseModel):
     sftp_password:    Optional[str] = Field(None, max_length=500)
     sftp_path:        Optional[str] = Field(None, max_length=512)
     sftp_key_path:    Optional[str] = Field(None, max_length=512)
+    s3_endpoint:      Optional[str] = Field(None, max_length=255)
+    s3_region:        Optional[str] = Field(None, max_length=64)
+    s3_bucket:        Optional[str] = Field(None, max_length=255)
+    s3_prefix:        Optional[str] = Field(None, max_length=512)
+    s3_access_key:    Optional[str] = Field(None, max_length=255)
+    s3_secret_key:    Optional[str] = Field(None, max_length=500)
     retention_copies: Optional[int] = Field(None, ge=1, le=365)
 
     schedule_enabled: Optional[bool] = None
@@ -104,8 +118,9 @@ class BackupJobResponse(BackupJobBase):
     last_record_status: Optional[str] = None
     last_record_size_mb: Optional[float] = None
 
-    # SFTP password nunca se devuelve
+    # Las credenciales nunca se devuelven al cliente
     sftp_password: Optional[str] = None
+    s3_secret_key: Optional[str] = None
 
     class Config:
         from_attributes = True

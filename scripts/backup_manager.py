@@ -245,6 +245,22 @@ class BackupManager(SystemManager):
                 # Limpiar directorio temporal
                 shutil.rmtree(str(base_dir), ignore_errors=True)
 
+            # ── Subir a S3 si destino remoto ──────────────────────────────────
+            elif dest_type == "s3":
+                s3_uri, log, ok = self._upload_to_s3(
+                    local_dir=str(snapshot_dir),
+                    job_config=job_config,
+                    username=username,
+                    domain_name=domain_name or "global",
+                    ts=ts,
+                )
+                result["log"].extend(log)
+                result["backup_path"] = s3_uri
+                if not ok:
+                    result["status"] = "failed"
+                # Limpiar directorio temporal
+                shutil.rmtree(str(base_dir), ignore_errors=True)
+
             # ── Aplicar retención ─────────────────────────────────────────────
             if dest_type == "local":
                 self._apply_retention(base_dir, job_config.get("retention_copies", 7))
@@ -561,6 +577,117 @@ class BackupManager(SystemManager):
         if rc == 0 and "OK" in stdout:
             return True, "Conexión SFTP correcta"
         return False, (stderr or "No se pudo conectar")[:200]
+
+    # ─────────────────────────────────────────────────────────────────────────
+    # Destino S3 / compatible (AWS S3, Backblaze B2, Wasabi, MinIO…)
+    # ─────────────────────────────────────────────────────────────────────────
+
+    @staticmethod
+    def _s3_client(job_config: Dict[str, Any]):
+        """Crea un cliente boto3 S3 a partir de la config del job. boto3 es una
+        dependencia opcional; si no está, lanza ImportError con mensaje claro."""
+        try:
+            import boto3
+            from botocore.config import Config as _BotoConfig
+        except ImportError:
+            raise ImportError(
+                "Falta la librería boto3 para subir a S3. Instálala en el venv del "
+                "panel: pip install boto3")
+        endpoint = (job_config.get("s3_endpoint") or "").strip() or None
+        region   = (job_config.get("s3_region") or "").strip() or None
+        return boto3.client(
+            "s3",
+            endpoint_url=("https://" + endpoint) if endpoint and not endpoint.startswith("http") else endpoint,
+            region_name=region,
+            aws_access_key_id=job_config.get("s3_access_key"),
+            aws_secret_access_key=job_config.get("s3_secret_key"),
+            config=_BotoConfig(connect_timeout=15, read_timeout=120,
+                               retries={"max_attempts": 3}),
+        )
+
+    def _upload_to_s3(
+        self,
+        local_dir: str,
+        job_config: Dict[str, Any],
+        username: str,
+        domain_name: str,
+        ts: str,
+    ) -> Tuple[str, List[str], bool]:
+        """Empaqueta el snapshot en un .tar.gz y lo sube como un único objeto al
+        bucket S3. Devuelve (uri, log, ok)."""
+        import tarfile
+        import tempfile
+
+        bucket = job_config.get("s3_bucket")
+        prefix = (job_config.get("s3_prefix") or "").strip("/")
+        key = "/".join(filter(None, [prefix, "users", username, domain_name,
+                                     f"{ts}.tar.gz"]))
+        uri = f"s3://{bucket}/{key}"
+        log: List[str] = [f"Empaquetando y subiendo a {uri}"]
+
+        if not bucket:
+            return uri, log + ["ERROR S3: falta el bucket"], False
+
+        tmp_tar = None
+        try:
+            # 1) Empaquetar el snapshot a un tar.gz temporal
+            fd, tmp_tar = tempfile.mkstemp(suffix=".tar.gz", prefix="svqbk-")
+            os.close(fd)
+            with tarfile.open(tmp_tar, "w:gz") as tar:
+                tar.add(local_dir, arcname=os.path.basename(local_dir.rstrip("/")))
+
+            # 2) Subir a S3
+            client = self._s3_client(job_config)
+            client.upload_file(tmp_tar, bucket, key)
+
+            # 3) Retención remota: conservar solo las N copias más recientes
+            try:
+                self._apply_s3_retention(client, bucket, prefix, username,
+                                         domain_name,
+                                         job_config.get("retention_copies", 7), log)
+            except Exception as exc:
+                log.append(f"Aviso retención S3: {exc}")
+
+            size = os.path.getsize(tmp_tar)
+            log.append(f"Subido a {uri} ({size // 1024} KB)")
+            return uri, log, True
+
+        except Exception as exc:
+            logger.exception("Error subiendo a S3")
+            return uri, log + [f"ERROR S3: {str(exc)[:300]}"], False
+        finally:
+            if tmp_tar and os.path.exists(tmp_tar):
+                try:
+                    os.remove(tmp_tar)
+                except Exception:
+                    pass
+
+    @staticmethod
+    def _apply_s3_retention(client, bucket, prefix, username, domain_name,
+                            retention_copies, log):
+        """Borra del bucket los .tar.gz más antiguos que el límite de retención."""
+        base = "/".join(filter(None, [prefix, "users", username, domain_name])) + "/"
+        resp = client.list_objects_v2(Bucket=bucket, Prefix=base)
+        objs = sorted(resp.get("Contents", []),
+                      key=lambda o: o["Key"], reverse=True)
+        for obj in objs[retention_copies:]:
+            client.delete_object(Bucket=bucket, Key=obj["Key"])
+            log.append(f"Retención S3: eliminado {obj['Key']}")
+
+    def test_s3_connection(self, job_config: Dict[str, Any]) -> Tuple[bool, str]:
+        """Comprueba acceso al bucket S3 con las credenciales del job."""
+        bucket = job_config.get("s3_bucket")
+        if not bucket or not job_config.get("s3_access_key"):
+            return False, "Bucket y access key son obligatorios"
+        try:
+            client = self._s3_client(job_config)
+            # head_bucket falla con 403/404 si no hay acceso o no existe
+            client.head_bucket(Bucket=bucket)
+            return True, "Conexión S3 correcta"
+        except ImportError as exc:
+            return False, str(exc)
+        except Exception as exc:
+            return False, str(exc)[:200]
 
     # ─────────────────────────────────────────────────────────────────────────
     # Listar snapshots en disco

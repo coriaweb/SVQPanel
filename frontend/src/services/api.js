@@ -1011,6 +1011,9 @@ class APIClient {
   testBackupSftp(jobId) {
     return this.post(`/api/backups/${jobId}/test-sftp`, {})
   }
+  testBackupS3(jobId) {
+    return this.post(`/api/backups/${jobId}/test-s3`, {})
+  }
 
   getBackupSnapshots(jobId) {
     return this.get(`/api/backups/${jobId}/snapshots`)

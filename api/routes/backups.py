@@ -96,6 +96,7 @@ def _job_response(job: BackupJob, db: Session) -> BackupJobResponse:
     """Serializa un job ocultando la contraseña SFTP y adjuntando el último registro."""
     resp = BackupJobResponse.model_validate(job)
     resp.sftp_password = None
+    resp.s3_secret_key = None
     last = (
         db.query(BackupRecord)
         .filter(BackupRecord.job_id == job.id)
@@ -143,6 +144,12 @@ def _job_to_config(job: BackupJob) -> dict:
         "sftp_password":     _decrypt(job.sftp_password) if job.sftp_password else None,
         "sftp_path":         job.sftp_path,
         "sftp_key_path":     job.sftp_key_path,
+        "s3_endpoint":       job.s3_endpoint,
+        "s3_region":         job.s3_region,
+        "s3_bucket":         job.s3_bucket,
+        "s3_prefix":         job.s3_prefix,
+        "s3_access_key":     job.s3_access_key,
+        "s3_secret_key":     _decrypt(job.s3_secret_key) if job.s3_secret_key else None,
         "retention_copies":  job.retention_copies,
     }
 
@@ -352,10 +359,14 @@ async def create_backup_job(
 
     if payload.destination_type == "sftp" and (not payload.sftp_host or not payload.sftp_user):
         raise HTTPException(status_code=400, detail="Host y usuario SFTP son obligatorios para destino remoto")
+    if payload.destination_type == "s3" and (not payload.s3_bucket or not payload.s3_access_key):
+        raise HTTPException(status_code=400, detail="Bucket y access key son obligatorios para destino S3")
 
     data = payload.model_dump()
     if data.get("sftp_password"):
         data["sftp_password"] = _encrypt(data["sftp_password"])
+    if data.get("s3_secret_key"):
+        data["s3_secret_key"] = _encrypt(data["s3_secret_key"])
 
     job = BackupJob(user_id=current_user.id, **data)
     db.add(job)
@@ -392,6 +403,11 @@ async def update_backup_job(
         else:
             # Cadena vacía → no tocar la contraseña existente
             updates.pop("sftp_password")
+    if "s3_secret_key" in updates:
+        if updates["s3_secret_key"]:
+            updates["s3_secret_key"] = _encrypt(updates["s3_secret_key"])
+        else:
+            updates.pop("s3_secret_key")
 
     for field, value in updates.items():
         setattr(job, field, value)
@@ -500,6 +516,28 @@ async def test_sftp(
         from scripts.backup_manager import BackupManager
         mgr = BackupManager()
         ok, message = mgr.test_sftp_connection(_job_to_config(job))
+    except Exception as exc:
+        return {"status": "error", "ok": False, "message": str(exc)}
+
+    return {"status": "success" if ok else "error", "ok": ok, "message": message}
+
+
+@router.post("/backups/{job_id}/test-s3")
+async def test_s3(
+    job_id: int,
+    current_user: User = Depends(require_auth),
+    db: Session = Depends(get_db),
+):
+    """Comprueba el acceso al bucket S3 configurado en el job."""
+    job = _get_job_or_404(job_id, db)
+    _check_access(current_user, job)
+    if job.destination_type != "s3":
+        raise HTTPException(status_code=400, detail="El job no usa destino S3")
+
+    try:
+        from scripts.backup_manager import BackupManager
+        mgr = BackupManager()
+        ok, message = mgr.test_s3_connection(_job_to_config(job))
     except Exception as exc:
         return {"status": "error", "ok": False, "message": str(exc)}
 
