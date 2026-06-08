@@ -99,8 +99,8 @@ fi
 DATA="$(cat "$TOKFILE")"
 rm -f "$TOKFILE"
 
-EXPIRES="$(echo "$DATA" | sed -n 's/.*"expires":\([0-9]*\).*/\1/p')"
-TARGET="$(echo "$DATA"  | sed -n 's/.*"target":"\([^"]*\)".*/\1/p')"
+EXPIRES="$(echo "$DATA" | sed -n 's/.*"expires": *\([0-9]*\).*/\1/p')"
+TARGET="$(echo "$DATA"  | sed -n 's/.*"target": *"\([^"]*\)".*/\1/p')"
 NOW="$(date +%s)"
 
 if [[ -z "$EXPIRES" || "$NOW" -gt "$EXPIRES" ]]; then
@@ -199,7 +199,8 @@ def issue_token(target: str) -> str:
     path = os.path.join(TOKEN_DIR, token)
     tmp = path + ".tmp"
     with open(tmp, "w") as f:
-        json.dump(data, f)
+        # Separadores compactos (sin espacios) para que el sed del launcher sea fiable.
+        json.dump(data, f, separators=(",", ":"))
     os.chmod(tmp, 0o600)
     os.replace(tmp, path)
 
