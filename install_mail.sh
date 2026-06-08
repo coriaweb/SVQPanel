@@ -38,12 +38,25 @@ if [[ "$OS_ID" != "Debian" ]]; then
 fi
 
 # ── Detectar soporte SSSE3 (necesario para Rspamd/hyperscan) ─────────────────
+# IMPORTANTE: Rspamd 4.x necesita SSSE3 no solo para hyperscan, sino para su
+# parser MIME: sin SSSE3, Rspamd 4.x NO descompone los mensajes multipart
+# (no ve los adjuntos) y se rompe el antivirus, el escaneo de adjuntos y parte
+# del antispam. En VMs KVM/Proxmox con CPU genérica ("Common KVM processor")
+# las flags SSSE3/SSE4/AVX no se exponen aunque el CPU físico las tenga: hay
+# que poner el tipo de CPU = "host" en la VM para heredar las instrucciones
+# reales del procesador. Tras cambiarlo, apagar/arrancar la VM (no basta un
+# reboot del SO) para que el hipervisor presente la nueva CPU.
 if grep -q "ssse3" /proc/cpuinfo; then
     INSTALL_RSPAMD=true
 else
     INSTALL_RSPAMD=false
     echo -e "${YELLOW}⚠ CPU sin instrucciones SSSE3 — Rspamd no es compatible con este procesador${NC}"
-    echo -e "  ${YELLOW}Se instalará Postfix + Dovecot sin antispam (DKIM requiere Rspamd)${NC}"
+    echo -e "  ${YELLOW}Se instalará Postfix + Dovecot sin antispam (DKIM/antivirus requieren Rspamd)${NC}"
+    if grep -qiE 'kvm|qemu|hypervisor' /proc/cpuinfo 2>/dev/null || \
+       systemd-detect-virt -q 2>/dev/null; then
+        echo -e "  ${YELLOW}Detectada virtualización: si es Proxmox/KVM, pon el tipo de CPU = 'host'${NC}"
+        echo -e "  ${YELLOW}en la VM y apágala/arráncala para exponer SSSE3 y poder usar Rspamd.${NC}"
+    fi
     echo ""
 fi
 
