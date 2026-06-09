@@ -136,15 +136,29 @@ def ensure_repo(job: Dict[str, Any], username: str, domain: str) -> Tuple[bool, 
     if job.get("destination_type") == "local":
         os.makedirs(repo, exist_ok=True)
 
-    # ¿Ya existe? `cat config` responde 0 si el repo está inicializado
-    rc, _, _ = _run(["cat", "config"], env, timeout=60, global_opts=opts)
+    # ¿Ya existe? `cat config` responde 0 si el repo está inicializado Y la
+    # contraseña es correcta.
+    rc, _, cerr = _run(["cat", "config"], env, timeout=60, global_opts=opts)
     if rc == 0:
         return True, repo, "Repositorio ya inicializado"
 
     rc, out, err = _run(["init"], env, timeout=120, global_opts=opts)
     if rc == 0:
         return True, repo, "Repositorio inicializado"
-    return False, repo, (err or out)[:400]
+
+    combined = (err or out or "")
+    # El repo EXISTE pero el `cat config` falló: casi siempre es que la
+    # contraseña de cifrado del job NO coincide con la del repo (el job se
+    # recreó con otra password). Mensaje claro en vez del confuso "already exists".
+    if "already exists" in combined or "already initialized" in combined:
+        msg = ("El repositorio de backups ya existe pero la contraseña de cifrado "
+               "no coincide. Probablemente el backup se recreó con otra contraseña. "
+               "Borra el repositorio antiguo o usa la contraseña original.")
+        if cerr and ("wrong password" in cerr.lower() or "no key" in cerr.lower()):
+            msg = ("Contraseña de cifrado incorrecta para este repositorio de "
+                   "backups (se creó con otra contraseña).")
+        return False, repo, msg
+    return False, repo, combined[:400]
 
 
 # Estructura ESTABLE dentro del snapshot (para poder restaurar elementos
