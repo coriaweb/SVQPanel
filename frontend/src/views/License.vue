@@ -22,10 +22,15 @@
             </div>
             <div class="lic-status__sub">{{ reasonText }}</div>
           </div>
+          <button class="lic-btn lic-btn--ghost" @click="check" :disabled="checking" title="Revalidar contra el servidor de licencias">
+            <span v-if="checking" class="spinner-border spinner-border-sm"></span>
+            <i v-else class="bi bi-arrow-clockwise"></i> Comprobar ahora
+          </button>
         </div>
         <div v-if="status.valid" class="lic-meta">
           <div><span>Plan</span><strong>{{ status.plan || '—' }}</strong></div>
           <div><span>Caduca</span><strong>{{ formatDate(status.expires) }}</strong></div>
+          <div v-if="lastChecked"><span>Comprobada</span><strong>{{ lastChecked }}</strong></div>
         </div>
       </div>
 
@@ -75,6 +80,8 @@ export default {
     const activating = ref(false)
     const activateMsg = ref('')
     const activateOk = ref(false)
+    const checking = ref(false)
+    const lastChecked = ref('')
 
     const reasonMap = {
       ok: 'Tu licencia es válida y está activa.',
@@ -117,6 +124,21 @@ export default {
       }
     }
 
+    const check = async () => {
+      checking.value = true
+      try {
+        status.value = await api.getLicenseStatus(true)   // refresh contra el servidor
+        lastChecked.value = new Date().toLocaleTimeString()
+        store.showNotification(
+          status.value.valid ? 'Licencia verificada' : 'La licencia no es válida',
+          status.value.valid ? 'success' : 'warning')
+      } catch (e) {
+        store.showNotification('Error comprobando la licencia: ' + e.message, 'danger')
+      } finally {
+        checking.value = false
+      }
+    }
+
     const formatDate = (iso) => {
       if (!iso) return '—'
       try { return new Date(iso).toLocaleDateString() } catch { return iso }
@@ -125,7 +147,7 @@ export default {
     onMounted(() => load(true))
 
     return { loading, status, keyInput, activating, activateMsg, activateOk,
-             reasonText, activate, formatDate }
+             checking, lastChecked, check, reasonText, activate, formatDate }
   },
 }
 </script>
@@ -157,6 +179,10 @@ export default {
   border-radius:var(--r-md,8px); cursor:pointer; font-weight:600; }
 .lic-btn--primary { background:var(--svq-orange,#e8590c); color:#fff; }
 .lic-btn--primary:disabled { opacity:.5; cursor:not-allowed; }
+.lic-btn--ghost { margin-left:auto; background:transparent; border:1px solid var(--border);
+  color:var(--text); font-weight:500; font-size:.82rem; padding:.4rem .7rem; }
+.lic-btn--ghost:hover { background:var(--surface-inset,#f8fafc); }
+.lic-btn--ghost:disabled { opacity:.5; cursor:not-allowed; }
 .lic-msg { margin-top:.7rem; font-size:.88rem; padding:.5rem .7rem; border-radius:var(--r-md,8px); }
 .lic-msg--ok  { background:rgba(34,197,94,.12); color:#16a34a; }
 .lic-msg--bad { background:rgba(232,89,12,.12); color:var(--svq-orange,#e8590c); }
