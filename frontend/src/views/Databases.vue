@@ -119,6 +119,14 @@
                       <i class="bi bi-key"></i>
                     </button>
                     <button
+                      class="btn btn-outline-info"
+                      @click="openRemoteModal(db)"
+                      title="Acceso remoto (IPs)"
+                      v-if="canManage(db)"
+                    >
+                      <i class="bi bi-hdd-network"></i>
+                    </button>
+                    <button
                       class="btn btn-outline-danger"
                       @click="confirmDelete(db)"
                       title="Eliminar"
@@ -347,6 +355,59 @@
         </form>
       </div>
     </Modal>
+
+    <!-- Modal: Acceso remoto (allowlist de IPs) -->
+    <Modal
+      :isOpen="showRemoteModal"
+      :title="`Acceso remoto: ${selectedDatabase?.db_name || ''}`"
+      @close="showRemoteModal = false"
+    >
+      <div>
+        <div class="alert alert-warning small">
+          <i class="bi bi-shield-exclamation me-1"></i>
+          <strong>Atención:</strong> esto expone tu base de datos a internet desde las
+          IPs que autorices. Añade <strong>solo IPs de confianza</strong> (tu oficina, tu
+          servidor de aplicación…) y usa una contraseña fuerte. Si tu IP cambia con el
+          tiempo, tendrás que volver a autorizarla. Lo más seguro sigue siendo conectar
+          por <strong>túnel SSH</strong>.
+        </div>
+
+        <!-- Datos de conexión -->
+        <div v-if="remoteConn" class="mb-3 small">
+          <div class="fw-bold mb-1">Datos de conexión:</div>
+          <div class="font-monospace bg-body-secondary rounded p-2">
+            Host: {{ remoteConn.host || '—' }}<br>
+            Puerto: {{ remoteConn.port }}<br>
+            Base de datos: {{ remoteConn.database }}<br>
+            Usuario: {{ remoteConn.user }}
+          </div>
+        </div>
+
+        <!-- Añadir IP -->
+        <div class="input-group mb-3">
+          <input v-model="remoteNewIp" type="text" class="form-control font-monospace"
+                 placeholder="Ej: 203.0.113.45" @keyup.enter="addRemoteIp" :disabled="remoteBusy" />
+          <button class="btn btn-primary" @click="addRemoteIp" :disabled="remoteBusy || !remoteNewIp.trim()">
+            <span v-if="remoteBusy" class="spinner-border spinner-border-sm me-1"></span>
+            Autorizar IP
+          </button>
+        </div>
+
+        <!-- Lista de IPs autorizadas -->
+        <div v-if="remoteHosts.length === 0" class="text-muted small">
+          No hay IPs autorizadas. La base de datos no es accesible desde fuera.
+        </div>
+        <ul v-else class="list-group">
+          <li v-for="h in remoteHosts" :key="h.ip"
+              class="list-group-item d-flex justify-content-between align-items-center">
+            <span class="font-monospace">{{ h.ip }}</span>
+            <button class="btn btn-sm btn-outline-danger" @click="removeRemoteIp(h.ip)" :disabled="remoteBusy">
+              <i class="bi bi-x-lg"></i> Quitar
+            </button>
+          </li>
+        </ul>
+      </div>
+    </Modal>
   </div>
 </template>
 
@@ -537,6 +598,62 @@ export default {
       return user ? `${user.username} (${user.email})` : `Usuario ${userId}`
     }
 
+    // ── Lógica: acceso remoto (allowlist de IPs) ────────────────────────────
+    const showRemoteModal = ref(false)
+    const remoteHosts = ref([])
+    const remoteConn = ref(null)
+    const remoteNewIp = ref('')
+    const remoteBusy = ref(false)
+
+    const openRemoteModal = async (db) => {
+      selectedDatabase.value = db
+      remoteHosts.value = []
+      remoteConn.value = null
+      remoteNewIp.value = ''
+      showRemoteModal.value = true
+      await loadRemoteHosts(db.id)
+    }
+
+    const loadRemoteHosts = async (dbId) => {
+      try {
+        const data = await databaseService.listRemoteHosts(dbId)
+        remoteHosts.value = data.hosts || []
+        remoteConn.value = data.connection || null
+      } catch (e) {
+        store.showNotification(`Error cargando acceso remoto: ${e.message}`, 'error')
+      }
+    }
+
+    const addRemoteIp = async () => {
+      const ip = remoteNewIp.value.trim()
+      if (!ip) return
+      remoteBusy.value = true
+      try {
+        await databaseService.addRemoteHost(selectedDatabase.value.id, ip)
+        remoteNewIp.value = ''
+        store.showNotification(`IP ${ip} autorizada`, 'success')
+        await loadRemoteHosts(selectedDatabase.value.id)
+      } catch (e) {
+        store.showNotification(e.message || 'No se pudo autorizar la IP', 'error')
+      } finally {
+        remoteBusy.value = false
+      }
+    }
+
+    const removeRemoteIp = async (ip) => {
+      if (!confirm(`¿Revocar el acceso remoto de ${ip}?`)) return
+      remoteBusy.value = true
+      try {
+        await databaseService.removeRemoteHost(selectedDatabase.value.id, ip)
+        store.showNotification(`IP ${ip} revocada`, 'success')
+        await loadRemoteHosts(selectedDatabase.value.id)
+      } catch (e) {
+        store.showNotification(e.message || 'No se pudo revocar la IP', 'error')
+      } finally {
+        remoteBusy.value = false
+      }
+    }
+
     // ── Lógica: usuarios adicionales de BD ──────────────────────────────────
 
     const openUsersModal = async (db) => {
@@ -686,6 +803,14 @@ export default {
       pmaLoading,
       // Usuarios adicionales de BD
       showUsersModal,
+      showRemoteModal,
+      remoteHosts,
+      remoteConn,
+      remoteNewIp,
+      remoteBusy,
+      openRemoteModal,
+      addRemoteIp,
+      removeRemoteIp,
       dbUsers,
       dbUsersLoading,
       dbUserCreateLoading,

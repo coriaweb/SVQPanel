@@ -505,6 +505,14 @@ def _run_migrations():
         "ALTER TABLE settings ADD COLUMN IF NOT EXISTS license_expires    TIMESTAMP",
         "ALTER TABLE settings ADD COLUMN IF NOT EXISTS license_checked_at TIMESTAMP",
         "ALTER TABLE settings ADD COLUMN IF NOT EXISTS license_reason     VARCHAR(48)",
+        # Acceso remoto a MySQL: IPs autorizadas por base de datos
+        """CREATE TABLE IF NOT EXISTS db_remote_hosts (
+            id          SERIAL PRIMARY KEY,
+            database_id INTEGER NOT NULL REFERENCES client_databases(id) ON DELETE CASCADE,
+            ip          VARCHAR(45) NOT NULL,
+            created_at  TIMESTAMP NOT NULL DEFAULT NOW(),
+            UNIQUE (database_id, ip)
+        )""",
         # ─────────────────────────────────────────────────────────────────
         # Fase 15.2: Plantillas web (nginx + PHP-FPM presets)
         # ─────────────────────────────────────────────────────────────────

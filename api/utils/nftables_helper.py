@@ -348,3 +348,85 @@ def table_exists() -> bool:
         return result.returncode == 0
     except Exception:
         return False
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Acceso remoto a MySQL: set de IPs permitidas al 3306 (allowlist)
+# ─────────────────────────────────────────────────────────────────────────────
+MYSQL_REMOTE_SET = "mysql_remote_allow"
+NFT_MYSQL_FILE = "/etc/nftables/svqpanel-mysql-remote.nft"
+
+
+def ensure_mysql_remote_setup() -> Tuple[bool, str]:
+    """Crea (si faltan) el set `mysql_remote_allow` y la regla que abre el 3306
+    SOLO a las IPs de ese set. Idempotente. La regla va en la cadena input."""
+    if not table_exists():
+        return False, "tabla nftables del panel no cargada"
+    try:
+        # set (no falla si ya existe)
+        subprocess.run([NFT_BIN, "add", "set", "inet", "svqpanel", MYSQL_REMOTE_SET,
+                        "{ type ipv4_addr; flags interval; }"],
+                       capture_output=True, text=True, timeout=5)
+        # regla: aceptar 3306 desde IPs del set. Comprobar si ya está.
+        chk = subprocess.run([NFT_BIN, "list", "chain", "inet", "svqpanel", "input"],
+                             capture_output=True, text=True, timeout=5)
+        if MYSQL_REMOTE_SET not in chk.stdout:
+            subprocess.run([NFT_BIN, "add", "rule", "inet", "svqpanel", "input",
+                            "tcp", "dport", "3306", "ip", "saddr",
+                            f"@{MYSQL_REMOTE_SET}", "accept"],
+                           capture_output=True, text=True, timeout=5)
+        return True, "ok"
+    except Exception as e:
+        return False, str(e)
+
+
+def mysql_remote_add_ip(ip: str) -> Tuple[bool, str]:
+    """Autoriza una IP a conectar al 3306 (la añade al set y persiste)."""
+    ensure_mysql_remote_setup()
+    ok, msg = nft_set_add_element(MYSQL_REMOTE_SET, ip)
+    if ok:
+        persist_mysql_remote()
+    return ok, msg
+
+
+def mysql_remote_remove_ip(ip: str) -> Tuple[bool, str]:
+    """Revoca una IP del acceso al 3306."""
+    ok, msg = nft_set_delete_element(MYSQL_REMOTE_SET, ip)
+    if ok:
+        persist_mysql_remote()
+    return ok, msg
+
+
+def mysql_remote_list_ips() -> list:
+    """IPs actualmente autorizadas al 3306 (leídas del set)."""
+    try:
+        r = subprocess.run([NFT_BIN, "list", "set", "inet", "svqpanel", MYSQL_REMOTE_SET],
+                           capture_output=True, text=True, timeout=5)
+        m = re.search(r"elements\s*=\s*\{(.*?)\}", r.stdout, re.DOTALL)
+        if not m:
+            return []
+        return [tok for tok in re.findall(r"\d+\.\d+\.\d+\.\d+", m.group(1))]
+    except Exception:
+        return []
+
+
+def persist_mysql_remote() -> None:
+    """Vuelca el set de IPs remotas a un .nft para que sobreviva a reinicios."""
+    ips = mysql_remote_list_ips()
+    lines = [
+        "# /etc/nftables/svqpanel-mysql-remote.nft",
+        "# Generado por SVQPanel — IPs autorizadas a MySQL remoto. NO editar a mano.",
+        "",
+        f"flush set inet svqpanel {MYSQL_REMOTE_SET}",
+    ]
+    if ips:
+        lines.append(f"add element inet svqpanel {MYSQL_REMOTE_SET} {{ {', '.join(ips)} }}")
+    lines.append("")
+    try:
+        os.makedirs(os.path.dirname(NFT_MYSQL_FILE), exist_ok=True)
+        tmp = NFT_MYSQL_FILE + ".tmp"
+        with open(tmp, "w") as f:
+            f.write("\n".join(lines))
+        os.replace(tmp, NFT_MYSQL_FILE)
+    except Exception:
+        pass

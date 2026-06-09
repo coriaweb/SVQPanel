@@ -1119,3 +1119,185 @@ def sync_database_sizes(
         "total": len(all_dbs),
         "message": f"Tamaños actualizados para {updated} de {len(all_dbs)} bases de datos",
     }
+
+
+# ═════════════════════════════════════════════════════════════════════════════
+# Acceso remoto a MySQL (allowlist de IPs por base de datos) — modelo cPanel
+# ═════════════════════════════════════════════════════════════════════════════
+import ipaddress as _ipaddress
+from pydantic import BaseModel as _BaseModel
+from api.models.models_client_db import DbRemoteHost
+
+
+def _validate_remote_ip(ip: str) -> str:
+    """Valida la IP a autorizar. RECHAZA comodines y rangos peligrosos —esa es la
+    diferencia entre seguro e inseguro. Devuelve la IP normalizada o lanza 400."""
+    ip = (ip or "").strip()
+    if ip in ("%", "*", "", "0.0.0.0", "0.0.0.0/0", "::/0"):
+        raise HTTPException(status_code=400,
+            detail="No se permite abrir la base de datos a TODAS las IPs. Indica una IP concreta.")
+    try:
+        addr = _ipaddress.ip_address(ip)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Dirección IP no válida.")
+    if addr.version != 4:
+        raise HTTPException(status_code=400, detail="Solo se admiten IPv4 por ahora.")
+    return str(addr)
+
+
+def _grant_sql(db_name: str, db_user: str, host: str) -> str:
+    safe_db = db_name.replace("`", "")
+    safe_u = db_user.replace("'", "''")
+    safe_h = host.replace("'", "''")
+    return (
+        f"GRANT SELECT, INSERT, UPDATE, DELETE, CREATE, DROP, INDEX, ALTER, "
+        f"CREATE TEMPORARY TABLES, LOCK TABLES, EXECUTE, "
+        f"CREATE VIEW, SHOW VIEW, CREATE ROUTINE, ALTER ROUTINE, "
+        f"EVENT, TRIGGER ON `{safe_db}`.* TO '{safe_u}'@'{safe_h}';"
+    )
+
+
+def _add_remote_db_user(client_db: ClientDatabase, ip: str) -> None:
+    """Crea el usuario '{db_user}'@'{ip}' con la misma contraseña que @localhost
+    y le concede permisos sobre su BD."""
+    safe_u = client_db.db_user.replace("'", "''")
+    safe_ip = ip.replace("'", "''")
+    # Reutilizar la contraseña en claro (cifrada en BD, igual que phpMyAdmin)
+    password = None
+    if client_db.db_password_enc:
+        try:
+            password = _decrypt_password(client_db.db_password_enc)
+        except Exception:
+            password = None
+    if password:
+        safe_pw = password.replace("'", "''")
+        _run_mariadb(f"CREATE USER IF NOT EXISTS '{safe_u}'@'{safe_ip}' IDENTIFIED BY '{safe_pw}';")
+    else:
+        # Sin contraseña recuperable: crear sin auth y avisar (raro)
+        _run_mariadb(f"CREATE USER IF NOT EXISTS '{safe_u}'@'{safe_ip}';")
+    _run_mariadb(_grant_sql(client_db.db_name, client_db.db_user, ip))
+    _run_mariadb("FLUSH PRIVILEGES;")
+
+
+def _drop_remote_db_user(client_db: ClientDatabase, ip: str) -> None:
+    safe_u = client_db.db_user.replace("'", "''")
+    safe_ip = ip.replace("'", "''")
+    _run_mariadb(f"DROP USER IF EXISTS '{safe_u}'@'{safe_ip}';")
+    _run_mariadb("FLUSH PRIVILEGES;")
+
+
+def _ensure_mysql_bind(db: Session, listen_public: bool) -> None:
+    """Activa/desactiva que MariaDB escuche en la IP pública. Solo cambia si hace
+    falta y reinicia MariaDB. listen_public=False vuelve a 127.0.0.1."""
+    dropin = "/etc/mysql/mariadb.conf.d/99-svqpanel-remote.cnf"
+    try:
+        if listen_public:
+            content = "[mysqld]\n# SVQPanel — escucha pública para acceso remoto (firewall filtra por IP)\nbind-address = 0.0.0.0\n"
+            with open(dropin, "w") as f:
+                f.write(content)
+        else:
+            if os.path.exists(dropin):
+                os.remove(dropin)
+        subprocess.run(["systemctl", "restart", "mariadb"], capture_output=True, timeout=60)
+    except Exception:
+        pass
+
+
+def _any_remote_hosts(db: Session) -> bool:
+    return db.query(DbRemoteHost).count() > 0
+
+
+def _get_db_for_user(db_id: int, current_user, db: Session) -> ClientDatabase:
+    cdb = db.query(ClientDatabase).filter(ClientDatabase.id == db_id).first()
+    if not cdb:
+        raise HTTPException(status_code=404, detail="Base de datos no encontrada")
+    _assert_can_manage(current_user, cdb.user_id, db)
+    return cdb
+
+
+def _server_public_ip(db: Session) -> Optional[str]:
+    try:
+        from api.routes.dns import _get_server_ipv4
+        return _get_server_ipv4(db)
+    except Exception:
+        return None
+
+
+class RemoteHostIn(_BaseModel):
+    ip: str
+
+
+@router.get("/databases/{db_id}/remote-hosts")
+async def list_remote_hosts(db_id: int,
+                            current_user: User = Depends(get_current_user),
+                            db: Session = Depends(get_db)):
+    """IPs autorizadas a conectar remotamente a esta BD + datos de conexión."""
+    cdb = _get_db_for_user(db_id, current_user, db)
+    hosts = db.query(DbRemoteHost).filter(DbRemoteHost.database_id == db_id).all()
+    return {
+        "hosts": [{"ip": h.ip, "created_at": h.created_at} for h in hosts],
+        "connection": {
+            "host": _server_public_ip(db),
+            "port": 3306,
+            "database": cdb.db_name,
+            "user": cdb.db_user,
+        },
+    }
+
+
+@router.post("/databases/{db_id}/remote-hosts")
+async def add_remote_host(db_id: int, payload: RemoteHostIn,
+                          current_user: User = Depends(get_current_user),
+                          db: Session = Depends(get_db)):
+    """Autoriza una IP: crea usuario @'IP', abre el 3306 a esa IP en el firewall
+    y activa la escucha pública de MariaDB (si era la primera)."""
+    cdb = _get_db_for_user(db_id, current_user, db)
+    ip = _validate_remote_ip(payload.ip)
+
+    if db.query(DbRemoteHost).filter(DbRemoteHost.database_id == db_id,
+                                     DbRemoteHost.ip == ip).first():
+        raise HTTPException(status_code=409, detail="Esa IP ya está autorizada.")
+
+    from api.utils import nftables_helper as nft
+
+    first_ever = not _any_remote_hosts(db)
+    # 1) MariaDB: usuario por IP
+    _add_remote_db_user(cdb, ip)
+    # 2) MariaDB escucha pública si es la primera IP del servidor
+    if first_ever:
+        _ensure_mysql_bind(db, True)
+        _add_remote_db_user(cdb, ip)   # recrear tras reinicio por si acaso (idempotente)
+    # 3) Firewall: abrir 3306 a esa IP
+    nft.mysql_remote_add_ip(ip)
+    # 4) Registrar en BD
+    db.add(DbRemoteHost(database_id=db_id, ip=ip))
+    db.commit()
+    return {"status": "success", "ip": ip,
+            "message": f"IP {ip} autorizada para acceso remoto a {cdb.db_name}"}
+
+
+@router.delete("/databases/{db_id}/remote-hosts/{ip}")
+async def remove_remote_host(db_id: int, ip: str,
+                             current_user: User = Depends(get_current_user),
+                             db: Session = Depends(get_db)):
+    """Revoca una IP: borra el usuario @'IP', la quita del firewall y, si era la
+    última del servidor, vuelve a cerrar MariaDB a localhost."""
+    cdb = _get_db_for_user(db_id, current_user, db)
+    row = db.query(DbRemoteHost).filter(DbRemoteHost.database_id == db_id,
+                                        DbRemoteHost.ip == ip).first()
+    if not row:
+        raise HTTPException(status_code=404, detail="Esa IP no estaba autorizada.")
+
+    from api.utils import nftables_helper as nft
+    _drop_remote_db_user(cdb, ip)
+    db.delete(row)
+    db.commit()
+
+    # ¿Esa IP la usa otra BD? Si no, quitarla del firewall.
+    still_used = db.query(DbRemoteHost).filter(DbRemoteHost.ip == ip).count() > 0
+    if not still_used:
+        nft.mysql_remote_remove_ip(ip)
+    # Si ya no queda NINGUNA IP remota en el servidor, cerrar MariaDB a localhost
+    if not _any_remote_hosts(db):
+        _ensure_mysql_bind(db, False)
+    return {"status": "success", "message": f"IP {ip} revocada"}

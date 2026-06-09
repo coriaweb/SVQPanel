@@ -70,6 +70,32 @@ class ClientDatabase(Base):
         back_populates="database",
         cascade="all, delete-orphan",
     )
+    remote_hosts = relationship(
+        "DbRemoteHost",
+        back_populates="database",
+        cascade="all, delete-orphan",
+    )
 
     def __repr__(self):
         return f"<ClientDatabase {self.db_name} (user_id={self.user_id})>"
+
+
+class DbRemoteHost(Base):
+    """IP autorizada a conectar remotamente a una base de datos de cliente.
+
+    Cada IP genera un usuario MySQL '{db_user}'@'{ip}' (mismo hash que
+    @localhost) y se añade al set nftables que abre el 3306 solo para ella.
+    Nunca se permite '%' ni '0.0.0.0/0' (eso lo valida la API).
+    """
+    __tablename__ = "db_remote_hosts"
+
+    id          = Column(Integer, primary_key=True, index=True)
+    database_id = Column(Integer, ForeignKey("client_databases.id", ondelete="CASCADE"),
+                         nullable=False, index=True)
+    ip          = Column(String(45), nullable=False)   # IPv4 (o IPv6 a futuro)
+    created_at  = Column(DateTime, default=datetime.utcnow)
+
+    database = relationship("ClientDatabase", back_populates="remote_hosts")
+
+    def __repr__(self):
+        return f"<DbRemoteHost db={self.database_id} ip={self.ip}>"

@@ -67,5 +67,16 @@ export default {
   // Obtener URL de acceso phpMyAdmin (autologin, token de un solo uso)
   async getPMAToken(dbId) {
     return api.get(`/api/databases/${dbId}/pma-token`)
+  },
+
+  // ── Acceso remoto (allowlist de IPs por BD) ──
+  async listRemoteHosts(dbId) {
+    return api.get(`/api/databases/${dbId}/remote-hosts`)
+  },
+  async addRemoteHost(dbId, ip) {
+    return api.post(`/api/databases/${dbId}/remote-hosts`, { ip })
+  },
+  async removeRemoteHost(dbId, ip) {
+    return api.delete(`/api/databases/${dbId}/remote-hosts/${encodeURIComponent(ip)}`)
   }
 }
