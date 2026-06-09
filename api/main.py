@@ -82,6 +82,13 @@ async def startup():
         start_scheduler()
     except Exception as e:
         print(f"⚠ No se pudo arrancar el backup scheduler: {e}")
+    # Muestreo de métricas como hilo interno (sustituye al timer systemd que
+    # arrancaba Python cada 5 min con ruido en el log).
+    try:
+        from scripts.metrics_scheduler import start_metrics_scheduler
+        start_metrics_scheduler()
+    except Exception as e:
+        print(f"⚠ No se pudo arrancar el metrics scheduler: {e}")
     print(f"✓ {PANEL_NAME} v{PANEL_VERSION} iniciado")
     print(f"✓ Base de datos sincronizada")
 

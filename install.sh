@@ -2756,36 +2756,15 @@ DCHTEOF
 # Guarda una muestra de CPU/RAM/disco/load/red en el histórico (retención 30d)
 # y evalúa las alertas configuradas (disco/servicio/carga/SSL), enviando email
 # si alguna se dispara (vía el SMTP del panel).
-cat > /etc/systemd/system/svqpanel-metrics.service << 'METEOF'
-[Unit]
-Description=SVQPanel — muestreo de métricas y evaluación de alertas
-After=network.target svqpanel.service
-
-[Service]
-Type=oneshot
-User=root
-WorkingDirectory=/opt/svqpanel
-Environment="PATH=/opt/svqpanel/venv/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
-ExecStart=/opt/svqpanel/venv/bin/python -m api.cli sample_metrics
-TimeoutStartSec=120
-METEOF
-
-cat > /etc/systemd/system/svqpanel-metrics.timer << 'METTEOF'
-[Unit]
-Description=SVQPanel — timer cada 5 min para métricas y alertas
-
-[Timer]
-OnBootSec=3min
-OnUnitActiveSec=5min
-Persistent=true
-Unit=svqpanel-metrics.service
-
-[Install]
-WantedBy=timers.target
-METTEOF
-
-systemctl enable --now svqpanel-metrics.timer >/dev/null 2>&1 || true
-echo -e "${GREEN}✓ systemd timer: svqpanel-metrics.timer (métricas + alertas cada 5 min)${NC}"
+# Nota: el muestreo de métricas lo hace un hilo de fondo DENTRO del panel
+# (scripts/metrics_scheduler.py, arrancado en api/main.py startup), igual que el
+# backup scheduler. Ya NO se usa un timer systemd cada 5 min (arrancaba un
+# proceso Python entero 288 veces/día → ruido en el log + CPU). Retiramos el
+# timer si quedó de una instalación previa.
+systemctl disable --now svqpanel-metrics.timer >/dev/null 2>&1 || true
+rm -f /etc/systemd/system/svqpanel-metrics.timer \
+      /etc/systemd/system/svqpanel-metrics.service 2>/dev/null || true
+echo -e "${GREEN}✓ Métricas + alertas: hilo interno del panel (sin timer cada 5 min)${NC}"
 
 # Nota: los backups programados los gestiona un hilo de fondo DENTRO del panel
 # (scripts/backup_scheduler.py, arrancado en api/main.py startup). Ya NO se usa
