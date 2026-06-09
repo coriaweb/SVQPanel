@@ -174,8 +174,16 @@
               type="text"
               class="form-control font-monospace"
               placeholder="185.104.188.71"
+              readonly
+              style="background: var(--surface-inset, #f2f4f7); cursor: not-allowed;"
             />
-            <div class="form-text">Dirección IPv4 principal del servidor.</div>
+            <div class="form-text">
+              Es la IP que el panel usa para los <strong>DNS y vhosts</strong> de los dominios.
+              <strong>No cambia la IP del sistema.</strong> Para migrar a una IP nueva
+              (p. ej. tu proveedor te la cambió), usa por SSH como root:
+              <code>python -m api.cli change_server_ip &lt;IP_actual&gt; &lt;IP_nueva&gt;</code>
+              — es una operación delicada (ver guía <code>docs/CAMBIO_IP_SERVIDOR.md</code>).
+            </div>
           </div>
         </div>
       </div>

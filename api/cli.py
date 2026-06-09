@@ -454,6 +454,111 @@ def cmd_migrate_php_pools(dry_run: bool = False, only_domain: str = None,
         db.close()
 
 
+def cmd_change_server_ip(args) -> int:
+    """Cambia la IP principal del servidor. OPERACIÓN PELIGROSA: ver el aviso."""
+    from scripts import server_ip_migrator as mig
+
+    # Subcomandos de control que no necesitan old/new
+    if getattr(args, "autorevert_check", False):
+        return mig.autorevert_check()
+    if getattr(args, "confirm", False):
+        return mig.confirm()
+    if getattr(args, "rollback", False):
+        return mig.rollback()
+
+    old_ip, new_ip = args.old_ip, args.new_ip
+    if not old_ip or not new_ip:
+        print("Uso: change_server_ip <IP_actual> <IP_nueva> [--no-os-network] [--dry-run]")
+        print("     change_server_ip --confirm   (hacer firme un cambio en curso)")
+        print("     change_server_ip --rollback  (revertir el último cambio)")
+        return 1
+    if not mig._valid_ip(old_ip) or not mig._valid_ip(new_ip):
+        print("✗ IP inválida.")
+        return 1
+
+    plan = mig.plan_change(old_ip, new_ip)
+    osd = plan.get("os_detected", {})
+
+    # ── Preview / dry-run ──
+    print()
+    print(f"  Cambio de IP:  {old_ip}  →  {new_ip}")
+    print(f"  Se actualizarán: settings={plan['settings']}  dominios={plan['domains']}  "
+          f"registros DNS (A)={plan['dns_records']}")
+    print(f"  Red del SO detectada: {osd.get('ip')}/{osd.get('prefix')} en {osd.get('iface')} (gw {osd.get('gateway')})")
+    toca_red = not args.no_os_network
+    print(f"  ¿Reconfigurar la red del SO?: {'SÍ (PELIGROSO)' if toca_red else 'NO (solo propaga)'}")
+    print()
+
+    if args.dry_run:
+        print("  (--dry-run: no se ha cambiado nada)")
+        return 0
+
+    # ── AVISO GRANDE DE RIESGOS ──
+    print("  ╔══════════════════════════════════════════════════════════════════╗")
+    print("  ║                    ⚠  AVISO IMPORTANTE  ⚠                         ║")
+    print("  ╠══════════════════════════════════════════════════════════════════╣")
+    print("  ║  Cambiar la IP principal del servidor es una operación de RIESGO. ║")
+    print("  ║                                                                    ║")
+    print("  ║  • Si reconfiguras la red del SO y la IP nueva NO está enrutada    ║")
+    print("  ║    por tu proveedor, el servidor quedará INCOMUNICADO (sin SSH).   ║")
+    print("  ║  • Los dominios dejarán de resolver hasta que propague el DNS      ║")
+    print("  ║    (depende del TTL de cada registro: minutos u horas).           ║")
+    print("  ║  • El correo puede verse afectado (PTR/SPF apuntan a la IP).       ║")
+    print("  ║  • TEN A MANO la consola KVM de tu proveedor como plan B.          ║")
+    print("  ║                                                                    ║")
+    print("  ║  Red de seguridad: si tocas la red del SO, hay AUTO-REVERSIÓN.     ║")
+    print(f"  ║  Si no ejecutas `--confirm` en {args.revert_timeout} min, vuelve sola a la IP vieja. ║")
+    print("  ║  Se hace BACKUP de red+BD+zonas antes de tocar nada.              ║")
+    print("  ╚══════════════════════════════════════════════════════════════════╝")
+    print()
+
+    if not args.yes:
+        try:
+            resp = input(f"  Para CONFIRMAR, escribe la IP nueva ({new_ip}): ").strip()
+        except (EOFError, KeyboardInterrupt):
+            print("\n  Cancelado.")
+            return 1
+        if resp != new_ip:
+            print("  La IP no coincide. Cancelado.")
+            return 1
+
+    # ── Ejecutar ──
+    print("\n  → Backup del estado actual…")
+    backup_dir = mig.backup_state(old_ip, new_ip)
+
+    print("  → Propagando en la base de datos…")
+    mig.apply_db(old_ip, new_ip)
+
+    print("  → Regenerando zonas DNS…")
+    nz = mig.regen_dns()
+    print(f"    {nz} zonas regeneradas")
+
+    print("  → Regenerando vhosts nginx…")
+    mig.regen_vhosts()
+
+    if toca_red:
+        print("  → Aplicando la IP nueva en la red del SO…")
+        ok = mig.apply_os_network(new_ip, prefix=osd.get("prefix"),
+                                  iface=osd.get("iface"), gateway=osd.get("gateway"))
+        if ok:
+            mig.schedule_autorevert(backup_dir, args.revert_timeout)
+            print()
+            print(f"  ✓ IP aplicada. AUTO-REVERSIÓN en {args.revert_timeout} min si no confirmas.")
+            print(f"    Comprueba que SIGUES teniendo acceso por la IP nueva ({new_ip}) y ejecuta:")
+            print(f"      python -m api.cli change_server_ip --confirm")
+            print(f"    Si algo va mal, NO confirmes: volverá sola. O fuerza:")
+            print(f"      python -m api.cli change_server_ip --rollback")
+        else:
+            print("  ✗ No se pudo aplicar la red del SO. Revirtiendo BD/DNS…")
+            mig.rollback(backup_dir)
+            return 2
+    else:
+        print()
+        print("  ✓ Propagado (sin tocar la red del SO).")
+        print(f"    Backup en: {backup_dir}  ·  rollback: change_server_ip --rollback")
+    return 0
+
+
 def _notify_all_admins(db, level, title, message, dedup_key):
     """Crea una notificación para cada usuario admin (con dedup por usuario)."""
     from scripts.notify import create_notification, clear_notification
@@ -774,6 +879,18 @@ def main():
     p_pools.add_argument("--domain", default=None, help="Migrar solo este dominio")
     p_pools.add_argument("--force", action="store_true", help="Reescribe también los pools existentes (aplica nuevas políticas de seguridad)")
 
+    p_ip = sub.add_parser("change_server_ip",
+        help="PELIGROSO: cambia la IP principal del servidor (propaga a DNS/vhosts/correo y opc. red del SO)")
+    p_ip.add_argument("old_ip", nargs="?", help="IP actual")
+    p_ip.add_argument("new_ip", nargs="?", help="IP nueva")
+    p_ip.add_argument("--dry-run", action="store_true", help="Solo muestra qué cambiaría, no toca nada")
+    p_ip.add_argument("--no-os-network", action="store_true", help="Propaga BD/DNS/vhosts pero NO toca la red del SO")
+    p_ip.add_argument("--yes", action="store_true", help="No preguntar (para automatización). PELIGROSO.")
+    p_ip.add_argument("--revert-timeout", type=int, default=10, help="Minutos para auto-reversión de red si no se confirma (default 10)")
+    p_ip.add_argument("--confirm", action="store_true", help="Confirma un cambio en curso (cancela la auto-reversión)")
+    p_ip.add_argument("--rollback", action="store_true", help="Revierte el último cambio (red + BD + zonas)")
+    p_ip.add_argument("--autorevert-check", action="store_true", help="(interno) lo ejecuta el timer de auto-reversión")
+
     args = parser.parse_args()
     if args.cmd == "refresh_ip_lists":
         sys.exit(cmd_refresh_ip_lists(force=args.force))
@@ -789,6 +906,8 @@ def main():
         sys.exit(cmd_dns_cluster_health())
     if args.cmd == "migrate_php_pools":
         sys.exit(cmd_migrate_php_pools(dry_run=args.dry_run, only_domain=args.domain, force=args.force))
+    if args.cmd == "change_server_ip":
+        sys.exit(cmd_change_server_ip(args))
     if args.cmd == "run_scheduled_backups":
         sys.exit(cmd_run_scheduled_backups())
     if args.cmd == "sample_metrics":
