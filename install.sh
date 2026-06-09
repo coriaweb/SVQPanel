@@ -39,12 +39,50 @@ fi
 echo -e "${GREEN}✓ Debian $OS_VERSION detectado${NC}\n"
 
 ###############################################################################
+# 0. MODO DESATENDIDO (opcional) — instalación tipo Hestia por variables de entorno
+###############################################################################
+# Si SVQ_UNATTENDED=1 (o se define cualquier SVQ_*), el instalador NO pregunta:
+# usa las variables de entorno y, las que falten, valores por defecto. Pensado
+# para el generador de comandos (svqhost.com) y para automatizar.
+#
+#   Variables soportadas (todas opcionales):
+#     SVQ_UNATTENDED=1            → no preguntar nada
+#     SVQ_WEBSERVER=nginx|apache  → webserver (default: nginx)
+#     SVQ_LICENSE=<clave>         → clave de licencia (default: vacía)
+#     SVQ_PANEL_PORT=8083         → puerto del panel (default: 8083)
+#     SVQ_HOSTNAME=panel.dom.com  → hostname + SSL auto (default: vacío = por IP)
+#     SVQ_MAIL=yes|no             → servidor de correo (default: no)
+#     SVQ_ROUNDCUBE=yes|no        → webmail (default: no; requiere SVQ_MAIL=yes)
+#     SVQ_MARIADB=yes|no          → MariaDB para clientes (default: no)
+#     SVQ_CROWDSEC=yes|no         → CrowdSec (default: yes)
+#
+# Ejemplo:
+#   SVQ_UNATTENDED=1 SVQ_WEBSERVER=nginx SVQ_MAIL=yes SVQ_MARIADB=yes \
+#     bash install.sh
+UNATTENDED=false
+if [[ "${SVQ_UNATTENDED:-}" == "1" || "${SVQ_UNATTENDED:-}" == "yes" ]]; then
+    UNATTENDED=true
+    echo -e "${GREEN}✓ Modo desatendido: usando variables de entorno (sin preguntas)${NC}\n"
+fi
+# Helper: normaliza un sí/no a true/false
+_is_yes() { [[ "${1,,}" =~ ^(s|si|y|yes|1|true)$ ]]; }
+
+###############################################################################
 # 1. ELEGIR WEBSERVER
 ###############################################################################
-echo -e "${YELLOW}¿Qué webserver necesitas?${NC}"
-echo "1) Nginx solo"
-echo "2) Apache + Nginx (Apache para legacy, Nginx para velocidad)"
-printf "Elige (1 o 2): "; read WEBSERVER_CHOICE </dev/tty
+if [[ "$UNATTENDED" == true || -n "${SVQ_WEBSERVER:-}" ]]; then
+    # apache → opción 2 (Apache+Nginx); cualquier otra cosa → 1 (Nginx solo)
+    if [[ "${SVQ_WEBSERVER,,}" == "apache" || "${SVQ_WEBSERVER,,}" == "apache+nginx" ]]; then
+        WEBSERVER_CHOICE=2
+    else
+        WEBSERVER_CHOICE=1
+    fi
+else
+    echo -e "${YELLOW}¿Qué webserver necesitas?${NC}"
+    echo "1) Nginx solo"
+    echo "2) Apache + Nginx (Apache para legacy, Nginx para velocidad)"
+    printf "Elige (1 o 2): "; read WEBSERVER_CHOICE </dev/tty
+fi
 
 case $WEBSERVER_CHOICE in
     1)
@@ -72,10 +110,14 @@ chmod 644 /etc/svqpanel/webserver.conf
 # SVQPanel requiere una licencia (obtenla en tu área de cliente de svqhost.com).
 # Sin licencia válida el panel se instala pero arranca en modo limitado (puedes
 # verlo y activar la licencia desde Sistema → Licencia, pero no operar).
-echo -e "${YELLOW}Licencia de SVQPanel${NC}"
-echo "  Obtén tu clave en tu área de cliente de https://www.svqhost.com"
-echo "  (puedes dejarlo vacío ahora y activarla luego desde el panel)"
-printf "Clave de licencia [Enter para omitir]: "; read _LICENSE_INPUT </dev/tty
+if [[ "$UNATTENDED" == true || -n "${SVQ_LICENSE:-}" ]]; then
+    _LICENSE_INPUT="${SVQ_LICENSE:-}"
+else
+    echo -e "${YELLOW}Licencia de SVQPanel${NC}"
+    echo "  Obtén tu clave en tu área de cliente de https://www.svqhost.com"
+    echo "  (puedes dejarlo vacío ahora y activarla luego desde el panel)"
+    printf "Clave de licencia [Enter para omitir]: "; read _LICENSE_INPUT </dev/tty
+fi
 if [ -n "$_LICENSE_INPUT" ]; then
     echo "$_LICENSE_INPUT" > /etc/svqpanel/license
     chmod 600 /etc/svqpanel/license
@@ -92,9 +134,13 @@ fi
 # El panel se sirve en un puerto dedicado (no 80/443) para poder cerrarlo
 # selectivamente en el firewall perimetral (Proxmox, etc.) y dejar 80/443
 # libres para los sitios web de los clientes.
-echo -e "${YELLOW}¿En qué puerto quieres servir el panel de control?${NC}"
-echo "  Recomendado: 8083 (cierra solo este puerto en tu firewall para máxima seguridad)"
-printf "Puerto del panel [8083]: "; read _PANEL_PORT_INPUT </dev/tty
+if [[ "$UNATTENDED" == true || -n "${SVQ_PANEL_PORT:-}" ]]; then
+    _PANEL_PORT_INPUT="${SVQ_PANEL_PORT:-}"
+else
+    echo -e "${YELLOW}¿En qué puerto quieres servir el panel de control?${NC}"
+    echo "  Recomendado: 8083 (cierra solo este puerto en tu firewall para máxima seguridad)"
+    printf "Puerto del panel [8083]: "; read _PANEL_PORT_INPUT </dev/tty
+fi
 PANEL_WEB_PORT="${_PANEL_PORT_INPUT:-8083}"
 # Validar: número 1-65535 y no chocar con puertos comunes de servicios
 if ! [[ "$PANEL_WEB_PORT" =~ ^[0-9]+$ ]] || (( PANEL_WEB_PORT < 1 || PANEL_WEB_PORT > 65535 )); then
@@ -132,11 +178,15 @@ _detect_server_ip() {
 }
 _INSTALL_SERVER_IP="$(_detect_server_ip)"
 
-echo -e "${YELLOW}¿Quieres acceder al panel por un dominio con HTTPS?${NC}"
-echo "  Si tienes un dominio (ej: panel.midominio.com) apuntando a este servidor,"
-echo "  el instalador emitirá el certificado SSL automáticamente."
-echo "  Deja en blanco para acceder por IP:puerto (puedes emitir el SSL después)."
-printf "Hostname del panel [Enter para omitir]: "; read _PANEL_HOSTNAME_INPUT </dev/tty
+if [[ "$UNATTENDED" == true || -n "${SVQ_HOSTNAME:-}" ]]; then
+    _PANEL_HOSTNAME_INPUT="${SVQ_HOSTNAME:-}"
+else
+    echo -e "${YELLOW}¿Quieres acceder al panel por un dominio con HTTPS?${NC}"
+    echo "  Si tienes un dominio (ej: panel.midominio.com) apuntando a este servidor,"
+    echo "  el instalador emitirá el certificado SSL automáticamente."
+    echo "  Deja en blanco para acceder por IP:puerto (puedes emitir el SSL después)."
+    printf "Hostname del panel [Enter para omitir]: "; read _PANEL_HOSTNAME_INPUT </dev/tty
+fi
 _PANEL_HOSTNAME_INPUT="$(echo "$_PANEL_HOSTNAME_INPUT" | tr -d ' ' | tr 'A-Z' 'a-z')"
 
 if [[ -n "$_PANEL_HOSTNAME_INPUT" ]]; then
@@ -172,12 +222,16 @@ fi
 ###############################################################################
 # 2b. SERVIDOR DE CORREO (OPCIONAL)
 ###############################################################################
-echo -e "${YELLOW}¿Instalar servidor de correo electrónico?${NC}"
-echo "  Stack: Postfix (SMTP) + Dovecot (IMAP/POP3) + Rspamd (antispam/DKIM) + Redis"
-echo -e "  ${YELLOW}Requisitos: IP con rDNS configurado, puerto 25 desbloqueado, registro MX${NC}"
-printf "¿Instalar correo? (s/N): "; read _MAIL_INPUT </dev/tty
+if [[ "$UNATTENDED" == true || -n "${SVQ_MAIL:-}" ]]; then
+    _MAIL_INPUT="${SVQ_MAIL:-no}"
+else
+    echo -e "${YELLOW}¿Instalar servidor de correo electrónico?${NC}"
+    echo "  Stack: Postfix (SMTP) + Dovecot (IMAP/POP3) + Rspamd (antispam/DKIM) + Redis"
+    echo -e "  ${YELLOW}Requisitos: IP con rDNS configurado, puerto 25 desbloqueado, registro MX${NC}"
+    printf "¿Instalar correo? (s/N): "; read _MAIL_INPUT </dev/tty
+fi
 INSTALL_MAIL=false
-if [[ "${_MAIL_INPUT,,}" =~ ^(s|si|y|yes)$ ]]; then
+if _is_yes "$_MAIL_INPUT"; then
     INSTALL_MAIL=true
     echo -e "${GREEN}✓ Servidor de correo seleccionado${NC}\n"
 else
@@ -189,10 +243,14 @@ fi
 ###############################################################################
 INSTALL_ROUNDCUBE=false
 if [[ "$INSTALL_MAIL" == true ]]; then
-    echo -e "${YELLOW}¿Instalar Roundcube Webmail?${NC}"
-    echo "  Webmail en /webmail — autologin desde el panel (1 clic por buzón)"
-    printf "¿Instalar Roundcube? (s/N): "; read _RC_INPUT </dev/tty
-    if [[ "${_RC_INPUT,,}" =~ ^(s|si|y|yes)$ ]]; then
+    if [[ "$UNATTENDED" == true || -n "${SVQ_ROUNDCUBE:-}" ]]; then
+        _RC_INPUT="${SVQ_ROUNDCUBE:-no}"
+    else
+        echo -e "${YELLOW}¿Instalar Roundcube Webmail?${NC}"
+        echo "  Webmail en /webmail — autologin desde el panel (1 clic por buzón)"
+        printf "¿Instalar Roundcube? (s/N): "; read _RC_INPUT </dev/tty
+    fi
+    if _is_yes "$_RC_INPUT"; then
         INSTALL_ROUNDCUBE=true
         echo -e "${GREEN}✓ Roundcube seleccionado${NC}\n"
     else
@@ -203,13 +261,17 @@ fi
 ###############################################################################
 # 2c. BASE DE DATOS PARA CLIENTES (MariaDB — opcional)
 ###############################################################################
-echo -e "${YELLOW}¿Instalar MariaDB para bases de datos de clientes?${NC}"
-echo "  Los clientes podrán crear BDs MySQL/MariaDB para sus aplicaciones"
-echo "  (WordPress, Joomla, PrestaShop, Laravel, etc.)"
-echo -e "  Se instala MariaDB ${YELLOW}11.4 LTS${NC} desde el repositorio oficial."
-printf "¿Instalar MariaDB? (s/N): "; read _MARIADB_INPUT </dev/tty
+if [[ "$UNATTENDED" == true || -n "${SVQ_MARIADB:-}" ]]; then
+    _MARIADB_INPUT="${SVQ_MARIADB:-no}"
+else
+    echo -e "${YELLOW}¿Instalar MariaDB para bases de datos de clientes?${NC}"
+    echo "  Los clientes podrán crear BDs MySQL/MariaDB para sus aplicaciones"
+    echo "  (WordPress, Joomla, PrestaShop, Laravel, etc.)"
+    echo -e "  Se instala MariaDB ${YELLOW}11.4 LTS${NC} desde el repositorio oficial."
+    printf "¿Instalar MariaDB? (s/N): "; read _MARIADB_INPUT </dev/tty
+fi
 INSTALL_MARIADB=false
-if [[ "${_MARIADB_INPUT,,}" =~ ^(s|si|y|yes)$ ]]; then
+if _is_yes "$_MARIADB_INPUT"; then
     INSTALL_MARIADB=true
     echo -e "${GREEN}✓ MariaDB seleccionado${NC}\n"
 else
@@ -219,13 +281,18 @@ fi
 ###############################################################################
 # 2d. CROWDSEC (IPS colaborativo) — recomendado
 ###############################################################################
-echo -e "${YELLOW}¿Instalar CrowdSec?${NC} ${GREEN}(recomendado)${NC}"
-echo "  IPS colaborativo: detecta ataques desde logs (sshd, nginx, postfix...)"
-echo "  y aplica bans via bouncer de nftables. Complementa a fail2ban con una"
-echo "  blocklist comunitaria opcional. Footprint: ~80 MB RAM."
-printf "¿Instalar CrowdSec? (S/n): "; read _CS_INPUT </dev/tty
+# Default 'yes' (recomendado): en desatendido se instala salvo SVQ_CROWDSEC=no.
+if [[ "$UNATTENDED" == true || -n "${SVQ_CROWDSEC:-}" ]]; then
+    _CS_INPUT="${SVQ_CROWDSEC:-yes}"
+else
+    echo -e "${YELLOW}¿Instalar CrowdSec?${NC} ${GREEN}(recomendado)${NC}"
+    echo "  IPS colaborativo: detecta ataques desde logs (sshd, nginx, postfix...)"
+    echo "  y aplica bans via bouncer de nftables. Complementa a fail2ban con una"
+    echo "  blocklist comunitaria opcional. Footprint: ~80 MB RAM."
+    printf "¿Instalar CrowdSec? (S/n): "; read _CS_INPUT </dev/tty
+fi
 INSTALL_CROWDSEC=true
-if [[ "${_CS_INPUT,,}" =~ ^(n|no)$ ]]; then
+if [[ "${_CS_INPUT,,}" =~ ^(n|no|0|false)$ ]]; then
     INSTALL_CROWDSEC=false
     echo -e "${YELLOW}✗ Sin CrowdSec${NC}\n"
 else
@@ -235,10 +302,15 @@ fi
 ###############################################################################
 # 2. ELEGIR VERSIONES PHP
 ###############################################################################
-echo -e "${YELLOW}¿Qué versiones PHP necesitas?${NC}"
-echo "Disponibles: 7.4, 8.0, 8.1, 8.2, 8.3, 8.4, 8.5"
-echo "Ejemplos: '8.1 8.2' o '8.5' (mínimo 1, máximo 6)"
-printf "Versiones PHP (separadas por espacio): "; read PHP_VERSIONS </dev/tty
+if [[ "$UNATTENDED" == true || -n "${SVQ_PHP:-}" ]]; then
+    # Default 8.3 si no se especifica (versiones separadas por espacio o coma)
+    PHP_VERSIONS="$(echo "${SVQ_PHP:-8.3}" | tr ',' ' ')"
+else
+    echo -e "${YELLOW}¿Qué versiones PHP necesitas?${NC}"
+    echo "Disponibles: 7.4, 8.0, 8.1, 8.2, 8.3, 8.4, 8.5"
+    echo "Ejemplos: '8.1 8.2' o '8.5' (mínimo 1, máximo 6)"
+    printf "Versiones PHP (separadas por espacio): "; read PHP_VERSIONS </dev/tty
+fi
 
 # Validar que haya al menos una versión
 if [[ -z "$PHP_VERSIONS" ]]; then
@@ -2850,9 +2922,13 @@ source venv/bin/activate
 # El mismo nombre se usa para el usuario del panel (PostgreSQL) Y para el usuario
 # del sistema operativo (estructura /home, pools PHP, etc.).
 echo ""
-echo -e "${YELLOW}Nombre de usuario administrador del panel:${NC}"
-echo -e "  Deja en blanco para generar uno aleatorio (recomendado por seguridad)"
-printf "  Usuario admin (Enter = aleatorio): "; read _ADMIN_USER_INPUT </dev/tty
+if [[ "$UNATTENDED" == true || -n "${SVQ_ADMIN_USER:-}" ]]; then
+    _ADMIN_USER_INPUT="${SVQ_ADMIN_USER:-}"   # vacío = aleatorio (recomendado)
+else
+    echo -e "${YELLOW}Nombre de usuario administrador del panel:${NC}"
+    echo -e "  Deja en blanco para generar uno aleatorio (recomendado por seguridad)"
+    printf "  Usuario admin (Enter = aleatorio): "; read _ADMIN_USER_INPUT </dev/tty
+fi
 if [[ -z "$_ADMIN_USER_INPUT" ]]; then
     ADMIN_USER="svq_$(python3 -c 'import secrets,string; print(secrets.token_hex(3))')"
     echo -e "  ${GREEN}✓ Usuario generado: ${YELLOW}${ADMIN_USER}${NC}"
