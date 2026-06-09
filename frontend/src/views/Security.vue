@@ -257,8 +257,10 @@
     <div v-if="tab==='fail2ban'" class="sec-2col">
       <div class="sec-card">
         <div class="sec-card-head">
-          <span class="sec-card-title">Jails</span>
-          <button class="sec-icon-btn" @click="loadFail2ban"><i class="bi bi-arrow-clockwise"></i></button>
+          <span class="sec-card-title">Jails
+            <span v-if="f2bLoading" class="spinner-border spinner-border-sm" style="margin-left:.4rem"></span>
+          </span>
+          <button class="sec-icon-btn" @click="loadFail2ban" :disabled="f2bLoading"><i class="bi bi-arrow-clockwise"></i></button>
         </div>
         <div class="sec-table-wrap">
           <table class="sec-table">
@@ -1172,8 +1174,15 @@ async function loadAudit() {
   catch (e) { alert('Auditoría: ' + e.message) }
 }
 
+// Recuerda qué tabs ya se cargaron, para no re-pedir datos cada vez que se
+// vuelve a uno (volver a un tab ya visto es instantáneo). El botón de refrescar
+// de cada tab sigue forzando la recarga.
+const loadedTabs = ref(new Set())
+
 function changeTab(t) {
   tab.value = t
+  if (loadedTabs.value.has(t)) return   // ya cargado → instantáneo
+  loadedTabs.value.add(t)
   if (t === 'firewall')    loadFirewall()
   if (t === 'fail2ban')    loadFail2ban()
   if (t === 'iplists')     { loadIpLists(); loadGeoCatalog() }
@@ -1381,12 +1390,15 @@ async function deleteIpList(l) {
 }
 
 // ─── Mount ───────────────────────────────────────────────────────────────────
-// Lanzamos las cargas en paralelo (no en serie): cada bloque muestra su propio
-// spinner y aparece en cuanto su endpoint responde, sin bloquearse entre sí.
+// El tab por defecto es 'firewall': cargamos SOLO lo suyo primero para que la
+// página aparezca cuanto antes. Las tarjetas-resumen de arriba (aislamiento PHP
+// y antivirus) se cargan justo después, sin bloquear la primera pintura. Los
+// demás tabs cargan sus datos al abrirse (changeTab), una sola vez.
 onMounted(() => {
+  loadedTabs.value.add('firewall')
   loadFirewall()   // incluye loadStatus() + system-ports
-  loadIsolation()
-  loadAntivirus()
+  // Resumen superior, en segundo plano (no bloquea el render del firewall)
+  setTimeout(() => { loadIsolation(); loadAntivirus() }, 0)
 })
 </script>
 
