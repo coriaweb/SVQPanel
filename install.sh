@@ -2225,7 +2225,10 @@ maxretry = 5
 [postfix-sasl]
 enabled  = $MAIL_JAILS_ENABLED
 port     = smtp,465,submission,imap,imaps,pop3,pop3s
-filter   = postfix-sasl
+# El filtro se llama 'postfix' con mode=auth (no existe 'postfix-sasl' en Debian
+# 12). journalmatch al unit real de postfix (postfix@-.service), no postfix.service.
+filter   = postfix[mode=auth]
+journalmatch = _SYSTEMD_UNIT=postfix@-.service
 maxretry = 5
 
 [nginx-limit-req]
