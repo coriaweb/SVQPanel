@@ -60,10 +60,11 @@
               <span v-for="(group, i) in groups" :key="i" class="d-flex align-items-center gap-1">
                 <input
                   v-model="groups[i]"
-                  :readonly="i < fixedGroups"
+                  :disabled="i < fixedGroups"
+                  :title="i < fixedGroups ? 'Prefijo fijo del rango (no editable)' : 'Editable'"
                   type="text"
                   maxlength="4"
-                  class="form-control form-control-sm font-monospace text-center ipv6-group"
+                  class="font-monospace text-center ipv6-group"
                   :class="i < fixedGroups ? 'ipv6-fixed' : 'ipv6-editable'"
                   @input="groups[i] = groups[i].replace(/[^0-9a-fA-F]/g, '').slice(0, 4)"
                 />
@@ -247,22 +248,39 @@ export default {
 </script>
 
 <style scoped>
-.ipv6-group {
-  width: 4.2rem;
-  padding: 0.25rem 0.3rem;
-  letter-spacing: 0.05em;
+.ipv6-fields {
+  padding: 0.5rem 0.25rem;
 }
+.ipv6-group {
+  width: 3.6rem;
+  padding: 0.35rem 0.3rem;
+  letter-spacing: 0.05em;
+  border: 1px solid var(--border, #d0d7de);
+  border-radius: var(--r-sm, 6px);
+  background: var(--surface, #fff);
+  color: var(--text, #1a1a1a);
+}
+.ipv6-group:focus {
+  outline: none;
+  border-color: var(--svq-orange, #e8590c);
+  box-shadow: 0 0 0 2px rgba(232, 89, 12, 0.15);
+}
+/* Grupos fijos (prefijo del rango): no editables, claramente apagados */
 .ipv6-fixed {
-  background-color: var(--bs-secondary-bg, #e9ecef);
-  color: var(--bs-secondary-color, #6c757d);
-  cursor: default;
+  background: var(--surface-inset, #f2f4f7);
+  color: var(--text-muted, #8a94a6);
+  cursor: not-allowed;
+  border-style: dashed;
+  opacity: 1;          /* anula el atenuado por defecto de :disabled */
+  -webkit-text-fill-color: var(--text-muted, #8a94a6);  /* color en Safari/Chrome disabled */
 }
 .ipv6-editable {
-  background-color: var(--bs-body-bg, #fff);
+  background: var(--surface, #fff);
 }
 .ipv6-sep {
-  font-family: monospace;
+  font-family: var(--font-mono, monospace);
   font-size: 1.1rem;
   user-select: none;
+  color: var(--text-muted, #8a94a6);
 }
 </style>
