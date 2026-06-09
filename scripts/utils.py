@@ -222,8 +222,13 @@ def _generate_redirect_config(
     if ipv6:
         server_names += f" {ipv6}"
 
-    ipv4_listen_http  = f"{ipv4}:80" if ipv4 else "80"
-    ipv4_listen_https = f"{ipv4}:443" if ipv4 else "443"
+    # IPv4: escuchar genérico (listen 80), NO atado a una IP concreta. Atarlo a
+    # la IP (listen 185.x.x.x:80) en un servidor de una sola IP hace que ESE
+    # vhost capture TODO el tráfico de la IP (un listen con IP es más específico
+    # que el genérico) y rompe el enrutado por server_name de los demás dominios.
+    # El enrutado lo hace server_name; la IP solo importaría con multi-IP real.
+    ipv4_listen_http  = "80"
+    ipv4_listen_https = "443"
     # IPv6: escuchar en [::]:80 y enrutar por server_name (incluye la IPv6). NO
     # default_server (ese rol es del vhost de bienvenida; duplicarlo da 404).
     ipv6_listen_http  = "listen [::]:80;"
@@ -373,8 +378,13 @@ def generate_nginx_config(
             f'    location ^~ /.well-known/acme-challenge/ {{ auth_basic off; allow all; }}\n')
 
 
-    ipv4_listen_http  = f"{ipv4}:80" if ipv4 else "80"
-    ipv4_listen_https = f"{ipv4}:443" if ipv4 else "443"
+    # IPv4: escuchar genérico (listen 80), NO atado a una IP concreta. Atarlo a
+    # la IP (listen 185.x.x.x:80) en un servidor de una sola IP hace que ESE
+    # vhost capture TODO el tráfico de la IP (un listen con IP es más específico
+    # que el genérico) y rompe el enrutado por server_name de los demás dominios.
+    # El enrutado lo hace server_name; la IP solo importaría con multi-IP real.
+    ipv4_listen_http  = "80"
+    ipv4_listen_https = "443"
     # IPv6: escuchar en [::]:80 (todas) y enrutar por server_name (que incluye la
     # IPv6 literal). NO default_server: ese rol es del vhost de bienvenida
     # (svqpanel-welcome); duplicarlo aquí roba el tráfico IPv6 y da 404.
@@ -391,9 +401,12 @@ def generate_nginx_config(
     http3_listen = ""
     http3_header = ""
     if http3_enabled and ssl_enabled:
-        http3_listen = f"\n    listen {ipv4 + ':' if ipv4 else ''}443 quic reuseport;"
+        # listen genérico (sin IP), por la misma razón que el resto: atarlo a la
+        # IP rompe el enrutado en servidores de una sola IP. reuseport solo en el
+        # IPv4 genérico (no puede repetirse por listen).
+        http3_listen = "\n    listen 443 quic reuseport;"
         if ipv6:
-            http3_listen += f"\n    listen [{ipv6}]:443 quic reuseport;"
+            http3_listen += "\n    listen [::]:443 quic;"
         http3_header = '\n    add_header Alt-Svc \'h3=":443"; ma=86400\' always;'
 
     # Headers de seguridad HTTP (sin CSP para no romper contenido de clientes)
