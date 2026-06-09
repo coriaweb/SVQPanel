@@ -133,6 +133,18 @@
 
       <!-- Contenido -->
       <main class="app-content">
+        <!-- Aviso de versión beta -->
+        <div v-if="showBetaBanner" class="beta-banner">
+          <i class="bi bi-cone-striped beta-banner__icon"></i>
+          <div class="beta-banner__text">
+            <strong>Versión BETA</strong> — Este panel está en desarrollo activo.
+            Pueden aparecer errores o cambios. Haz copias de seguridad y reporta cualquier
+            problema a <a href="mailto:info@svqhost.com?subject=Reporte%20SVQPanel%20(beta)" class="beta-banner__mail">info@svqhost.com</a>.
+          </div>
+          <button class="beta-banner__close" @click="dismissBeta" title="Ocultar este aviso">
+            <i class="bi bi-x-lg"></i>
+          </button>
+        </div>
         <router-view></router-view>
       </main>
     </div>
@@ -177,6 +189,13 @@ export default {
     const sidebarCollapsed = computed(() => store.sidebarCollapsed)
     const mobileMenuOpen  = computed(() => store.mobileMenuOpen)
     const dropdownOpen    = ref(false)
+
+    // Aviso de versión beta (se puede ocultar; recuerda la elección en el navegador)
+    const showBetaBanner = ref(localStorage.getItem('svq_beta_dismissed') !== '1')
+    const dismissBeta = () => {
+      localStorage.setItem('svq_beta_dismissed', '1')
+      showBetaBanner.value = false
+    }
 
     // Navegar y cerrar el drawer móvil
     const navigate = (to) => {
@@ -327,12 +346,37 @@ export default {
       sidebarCollapsed, mobileMenuOpen, navigate, dropdownOpen, visibleGroups, isActive, currentBreadcrumb,
       userInitials, toastIcon, logout, openPalette, serverHostname,
       serverLoad, cpuCount, loadLevel,
+      showBetaBanner, dismissBeta,
     }
   },
 }
 </script>
 
 <style scoped>
+/* ══════════════════════════════════════════════════
+   Aviso versión BETA
+══════════════════════════════════════════════════ */
+.beta-banner {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 18px;
+  margin-bottom: 18px;
+  border-radius: 12px;
+  background: linear-gradient(90deg, rgba(232,89,12,.14), rgba(232,89,12,.06));
+  border: 1px solid rgba(232,89,12,.35);
+  color: var(--text);
+}
+.beta-banner__icon { font-size: 1.4rem; color: var(--svq-orange, #e8590c); flex-shrink: 0; }
+.beta-banner__text { font-size: .9rem; line-height: 1.4; flex: 1; }
+.beta-banner__text strong { color: var(--svq-orange, #e8590c); letter-spacing: .3px; }
+.beta-banner__mail { color: var(--svq-orange, #e8590c); font-weight: 600; text-decoration: underline; }
+.beta-banner__close {
+  background: none; border: none; cursor: pointer; color: var(--text-muted);
+  font-size: 1rem; padding: 4px; border-radius: 6px; flex-shrink: 0;
+}
+.beta-banner__close:hover { background: rgba(0,0,0,.08); color: var(--text); }
+
 /* ══════════════════════════════════════════════════
    Shell
 ══════════════════════════════════════════════════ */
