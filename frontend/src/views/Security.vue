@@ -8,6 +8,9 @@
         <p class="sec-subtitle">Firewall (nftables), fail2ban, listas IP, conexiones y auditoría</p>
       </div>
       <div class="sec-head-right">
+        <span v-if="!fwStatus && !f2bStatus" class="sec-loading-inline">
+          <span class="spinner-border spinner-border-sm"></span> Cargando seguridad…
+        </span>
         <button class="sec-score" v-if="fwStatus || f2bStatus" @click="showScoreDetail = !showScoreDetail"
                 :title="showScoreDetail ? 'Ocultar desglose' : 'Ver qué suma cada cosa'">
           <svg viewBox="0 0 60 60" class="sec-score__ring">
@@ -1448,6 +1451,7 @@ onMounted(() => {
 /* Empty / loading */
 .sec-empty { display:flex; align-items:center; gap:.75rem; padding:2rem; color:var(--text-muted); font-size:.875rem; justify-content:center; }
 .sec-loading { display:flex; justify-content:center; padding:2rem; }
+.sec-loading-inline { display:inline-flex; align-items:center; gap:.5rem; color:var(--text-muted); font-size:.85rem; }
 
 /* Grid 2 columnas */
 .sec-2col { display:grid; grid-template-columns:1fr 1fr; gap:16px; }
