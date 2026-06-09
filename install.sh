@@ -2723,36 +2723,15 @@ echo -e "${GREEN}✓ systemd timer: svqpanel-backup-panel.timer (backup del pane
 # Hacer un primer backup ya, para no esperar al primer disparo del timer.
 /opt/svqpanel/venv/bin/python -m api.cli backup_panel >/dev/null 2>&1 || true
 
-# ─── Timer cada 10 min: salud de sincronización del cluster DNS ──────────────
-# Solo hace trabajo real si hay cluster configurado (si no, sale enseguida).
-cat > /etc/systemd/system/svqpanel-dns-cluster-health.service << 'DCHEOF'
-[Unit]
-Description=SVQPanel — comprueba sincronización del cluster DNS (serial BD/ns1/ns2)
-After=network.target svqpanel.service
+# Nota: la salud del cluster DNS y el muestreo de métricas los hace un hilo de
+# fondo DENTRO del panel (scripts/metrics_scheduler.py). El dns-health solo
+# trabaja si hay cluster configurado (si no, no hace nada, sin ruido). Ya NO se
+# usan timers systemd para esto. Retiramos el timer dns-cluster si quedó de antes.
+systemctl disable --now svqpanel-dns-cluster-health.timer >/dev/null 2>&1 || true
+rm -f /etc/systemd/system/svqpanel-dns-cluster-health.timer \
+      /etc/systemd/system/svqpanel-dns-cluster-health.service 2>/dev/null || true
 
-[Service]
-Type=oneshot
-User=root
-WorkingDirectory=/opt/svqpanel
-ExecStart=/opt/svqpanel/venv/bin/python -m api.cli dns_cluster_health
-TimeoutStartSec=180
-DCHEOF
-
-cat > /etc/systemd/system/svqpanel-dns-cluster-health.timer << 'DCHTEOF'
-[Unit]
-Description=SVQPanel — timer cada 10 min para salud del cluster DNS
-
-[Timer]
-OnBootSec=8min
-OnUnitActiveSec=10min
-Persistent=true
-Unit=svqpanel-dns-cluster-health.service
-
-[Install]
-WantedBy=timers.target
-DCHTEOF
-
-# ─── Timer cada 5 min: muestreo de métricas + evaluación de alertas ──────────
+# ─── Métricas + alertas ──────────────────────────────────────────────────────
 # Guarda una muestra de CPU/RAM/disco/load/red en el histórico (retención 30d)
 # y evalúa las alertas configuradas (disco/servicio/carga/SSL), enviando email
 # si alguna se dispara (vía el SMTP del panel).
@@ -2775,16 +2754,14 @@ echo -e "${GREEN}✓ Métricas + alertas: hilo interno del panel (sin timer cada
 systemctl daemon-reload
 systemctl enable --now svqpanel-domain-stats.timer          >/dev/null 2>&1 || true
 systemctl enable --now svqpanel-ssl-check.timer             >/dev/null 2>&1 || true
-systemctl enable --now svqpanel-dns-cluster-health.timer    >/dev/null 2>&1 || true
-# Por si una instalación previa dejó el timer de backups, lo retiramos.
+# Por si una instalación previa dejó timers que ahora son hilos internos, los retiramos.
 systemctl disable --now svqpanel-backup-scheduler.timer     >/dev/null 2>&1 || true
 rm -f /etc/systemd/system/svqpanel-backup-scheduler.timer \
       /etc/systemd/system/svqpanel-backup-scheduler.service 2>/dev/null || true
 
 echo -e "${GREEN}✓ systemd timer: svqpanel-domain-stats.timer (cada 4h)${NC}"
 echo -e "${GREEN}✓ systemd timer: svqpanel-ssl-check.timer (diario 05:15)${NC}"
-echo -e "${GREEN}✓ systemd timer: svqpanel-dns-cluster-health.timer (cada 10 min)${NC}"
-echo -e "${GREEN}✓ Backups programados: hilo interno del panel (sin timer)${NC}"
+echo -e "${GREEN}✓ Métricas, backups y salud DNS: hilos internos del panel (sin timers)${NC}"
 echo ""
 
 ###############################################################################

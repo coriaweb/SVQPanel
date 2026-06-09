@@ -24,19 +24,76 @@ _lock = threading.Lock()
 from api.models.database import SessionLocal, load_all_models
 load_all_models()
 
-INTERVAL_SECONDS = 300  # 5 minutos
+INTERVAL_SECONDS = 300       # métricas: cada 5 minutos
+DNS_HEALTH_SECONDS = 600     # salud del cluster DNS: cada 10 minutos
 
 
 def _loop():
-    logger.info("Metrics scheduler iniciado")
-    # Primera muestra a los ~15s del arranque, luego cada INTERVAL_SECONDS.
+    logger.info("Tareas periódicas del panel: scheduler iniciado")
     time.sleep(15)
+    last_dns = 0.0
     while True:
         try:
             _sample_once()
         except Exception:
             logger.exception("Error en metrics loop")
+        # Salud del cluster DNS cada DNS_HEALTH_SECONDS (no en cada tick de 5 min)
+        now = time.monotonic()
+        if now - last_dns >= DNS_HEALTH_SECONDS:
+            last_dns = now
+            try:
+                _dns_health_once()
+            except Exception:
+                logger.exception("Error en dns-health")
         time.sleep(INTERVAL_SECONDS)
+
+
+def _dns_health_once():
+    """Comprueba la salud del cluster DNS. Si NO hay cluster configurado, no hace
+    nada (antes el timer arrancaba Python cada 10 min solo para loguear 'nada que
+    comprobar'). Persiste el estado y avisa a admins si hay problemas."""
+    import json
+    from datetime import datetime
+    from scripts.dns_cluster import compute_cluster_health
+    from api.models.models_settings import Settings
+
+    db = SessionLocal()
+    try:
+        health = compute_cluster_health(db)
+        if health is None:
+            return  # sin cluster → silencio total
+        s = db.query(Settings).filter(Settings.id == 1).first()
+        if not s:
+            s = Settings(id=1); db.add(s)
+        s.dns_cluster_health_json = json.dumps(health)
+        s.dns_cluster_health_at = datetime.utcnow()
+        summary = health["summary"]
+        # Reusar la lógica de avisos del CLI (no duplicar)
+        from api.cli import _notify_all_admins
+        if summary["master_down"]:
+            _notify_all_admins(db, "danger", "Cluster DNS: master no responde",
+                "El nameserver master (ns1) no responde a las consultas SOA.",
+                dedup_key="dns_cluster_master_down")
+        else:
+            _notify_all_admins(db, None, "", "", "dns_cluster_master_down")
+        if summary["slave_down"]:
+            _notify_all_admins(db, "warning", "Cluster DNS: slave no responde",
+                "El nameserver slave (ns2) no responde. Sin redundancia hasta que vuelva.",
+                dedup_key="dns_cluster_slave_down")
+        else:
+            _notify_all_admins(db, None, "", "", "dns_cluster_slave_down")
+        if summary["desync"]:
+            desynced = [r["domain"] for r in health["rows"] if r["status"] == "desync"]
+            sample = ", ".join(desynced[:5]) + ("…" if len(desynced) > 5 else "")
+            _notify_all_admins(db, "warning",
+                f"Cluster DNS: {summary['desync']} zona(s) desincronizada(s)",
+                f"Zonas con distinto serial en ns1/ns2 vs panel: {sample}.",
+                dedup_key="dns_cluster_desync")
+        else:
+            _notify_all_admins(db, None, "", "", "dns_cluster_desync")
+        db.commit()
+    finally:
+        db.close()
 
 
 def _sample_once():
