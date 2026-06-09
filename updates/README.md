@@ -53,3 +53,4 @@ exit 0
 | 0014 | Fix jail Fail2ban postfix-sasl (login SMTP) | 2026-06-09 |
 | 0015 | Sistema de licencias del panel             | 2026-06-09 |
 | 0016 | Rspamd usa resolver DNS local (DNSBL)      | 2026-06-09 |
+| 0017 | named modo IPv4 si no hay IPv6 (auto-rev.) | 2026-06-09 |

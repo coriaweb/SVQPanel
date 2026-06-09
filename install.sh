@@ -655,6 +655,17 @@ if [[ -f "$NAMED_LOCAL" ]]; then
     fi
 fi
 
+# Forzar named a resolver SOLO por IPv4 si el servidor no tiene IPv6 saliente.
+# Si no, named intenta los NS por IPv6, falla con "network unreachable" e inunda
+# el log (sobre todo desde que Rspamd usa este BIND para las DNSBL). Resuelve
+# igual por IPv4, solo que ensucia; con -4 ni lo intenta.
+if ! ping6 -c1 -W2 2606:4700:4700::1111 >/dev/null 2>&1; then
+    if [[ -f /etc/default/named ]] && ! grep -q '\-4' /etc/default/named; then
+        sed -i 's/^OPTIONS="\(.*\)"/OPTIONS="\1 -4"/' /etc/default/named
+        echo -e "    ${GREEN}✓ named en modo IPv4 (sin IPv6 saliente)${NC}"
+    fi
+fi
+
 systemctl enable named
 systemctl restart named
 
