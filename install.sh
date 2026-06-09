@@ -2225,9 +2225,10 @@ maxretry = 5
 [postfix-sasl]
 enabled  = $MAIL_JAILS_ENABLED
 port     = smtp,465,submission,imap,imaps,pop3,pop3s
-# El filtro se llama 'postfix' con mode=auth (no existe 'postfix-sasl' en Debian
-# 12). journalmatch al unit real de postfix (postfix@-.service), no postfix.service.
-filter   = postfix[mode=auth]
+# Filtro propio (svqpanel-postfix-sasl): banea todos los fallos de login SMTP,
+# incluido 'Invalid authentication mechanism'. journalmatch al unit real de
+# postfix (postfix@-.service, no postfix.service).
+filter   = svqpanel-postfix-sasl
 journalmatch = _SYSTEMD_UNIT=postfix@-.service
 maxretry = 5
 
@@ -2266,6 +2267,16 @@ cat > /etc/fail2ban/filter.d/svqpanel-auth.conf << 'F2BFILTEREOF'
 failregex = ^.* auth_failed ip=<HOST>.*$
 ignoreregex =
 F2BFILTEREOF
+
+# Filtro propio de Postfix SASL: banea CUALQUIER fallo de login SMTP, incluido
+# 'Invalid authentication mechanism' (que el filtro estándar 'postfix' excluye).
+# Esos intentos son casi siempre bots de spam. El jail [postfix-sasl] lo usa.
+cat > /etc/fail2ban/filter.d/svqpanel-postfix-sasl.conf << 'F2BPSASLEOF'
+[Definition]
+failregex = warning: [^[]*\[<HOST>\]: SASL (?:(?i)LOGIN|PLAIN|CRAM-MD5|DIGEST-MD5) authentication failed
+ignoreregex =
+journalmatch = _SYSTEMD_UNIT=postfix@-.service
+F2BPSASLEOF
 
 # Asegurar que existe el log que vigila [svqpanel-auth]; si no fail2ban
 # da error de "logpath not found" al iniciar el jail

@@ -21,8 +21,18 @@ if [[ ! -f "$JL" ]] || ! grep -q '\[postfix-sasl\]' "$JL"; then
     exit 0
 fi
 
-# Corregir el filtro: postfix-sasl → postfix[mode=auth]
-sed -i 's/^filter   = postfix-sasl$/filter   = postfix[mode=auth]/' "$JL"
+# Crear el filtro propio que banea TODOS los fallos SASL (incluido 'Invalid
+# authentication mechanism', que el filtro estándar 'postfix' excluye).
+cat > /etc/fail2ban/filter.d/svqpanel-postfix-sasl.conf << 'PSASLEOF'
+[Definition]
+failregex = warning: [^[]*\[<HOST>\]: SASL (?:(?i)LOGIN|PLAIN|CRAM-MD5|DIGEST-MD5) authentication failed
+ignoreregex =
+journalmatch = _SYSTEMD_UNIT=postfix@-.service
+PSASLEOF
+
+# Apuntar el jail al filtro propio (cubre tanto 'postfix-sasl' como
+# 'postfix[mode=auth]' de versiones anteriores de este update).
+sed -i -E 's|^filter   = (postfix-sasl\|postfix\[mode=auth\])$|filter   = svqpanel-postfix-sasl|' "$JL"
 
 # Añadir journalmatch al unit correcto si falta (justo bajo el filter del jail)
 if ! awk '/\[postfix-sasl\]/{f=1} f&&/journalmatch/{print;exit}' "$JL" | grep -q journalmatch; then
