@@ -498,11 +498,28 @@ async def update_backup_job(
 @router.delete("/backups/{job_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_backup_job(
     job_id: int,
+    delete_data: bool = True,
     current_user: User = Depends(require_auth),
     db: Session = Depends(get_db),
 ):
+    """Borra el job. delete_data=True (por defecto) borra también el repositorio
+    LOCAL de copias del job, para que no quede huérfano (si se recrea el job, su
+    nueva contraseña no podría abrir el repo viejo → 'config already exists').
+    Los destinos remotos (SFTP/S3) NO se tocan."""
     job = _get_job_or_404(job_id, db)
     _check_access(current_user, job)
+
+    if delete_data and job.destination_type == "local":
+        import shutil as _sh
+        base = (job.local_path or "/backups").rstrip("/")
+        for domain, owner in _domains_for_job(job, db):
+            uname = owner.username if owner else "root"
+            repo_dir = os.path.join(base, "restic", uname, domain.domain_name)
+            try:
+                _sh.rmtree(repo_dir, ignore_errors=True)
+            except Exception:
+                pass
+
     db.delete(job)
     db.commit()
 
