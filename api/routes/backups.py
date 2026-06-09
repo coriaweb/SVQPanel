@@ -515,8 +515,12 @@ async def delete_backup_job(
         for domain, owner in _domains_for_job(job, db):
             uname = owner.username if owner else "root"
             repo_dir = os.path.join(base, "restic", uname, domain.domain_name)
+            user_dir = os.path.join(base, "restic", uname)
             try:
                 _sh.rmtree(repo_dir, ignore_errors=True)
+                # Si la carpeta del usuario queda vacía, borrarla también
+                if os.path.isdir(user_dir) and not os.listdir(user_dir):
+                    os.rmdir(user_dir)
             except Exception:
                 pass
 
