@@ -24,6 +24,32 @@
       </div>
     </div>
 
+    <!-- Actividad reciente (copias + restauraciones, con estado en vivo) -->
+    <div v-if="activity.length" class="bk-activity">
+      <div class="bk-activity__head">
+        <span><i class="bi bi-activity"></i> Actividad reciente</span>
+        <span v-if="activityRunning" class="bk-activity__live">
+          <span class="spinner-border spinner-border-sm"></span> En curso…
+        </span>
+      </div>
+      <div class="bk-activity__list">
+        <div v-for="a in activity.slice(0, 6)" :key="a.id" class="bk-activity__row">
+          <span class="bk-tag" :class="a.kind === 'restore' ? 'bk-tag--inc' : 'bk-tag--web'">
+            <i :class="a.kind === 'restore' ? 'bi bi-arrow-counterclockwise' : 'bi bi-hdd'"></i>
+            {{ a.kind === 'restore' ? 'Restauración' : 'Copia' }}
+          </span>
+          <span class="bk-activity__job">{{ a.job_name }}</span>
+          <span class="bk-activity__date">{{ formatDateTime(a.started_at) }}</span>
+          <span class="bk-activity__status">
+            <span v-if="a.status === 'running' || a.status === 'pending'" class="bk-running">
+              <span class="spinner-border spinner-border-sm"></span> {{ a.status === 'pending' ? 'En cola' : 'En proceso' }}
+            </span>
+            <span v-else class="bk-status" :class="statusClass(a.status)">{{ statusLabel(a.status) }}</span>
+          </span>
+        </div>
+      </div>
+    </div>
+
     <!-- Tabla de jobs -->
     <BaseCard title="Trabajos de backup" icon="hdd-stack" flush>
       <div v-if="loading" class="bk-center"><div class="spinner-border spinner-border-sm"></div></div>
@@ -645,7 +671,7 @@
 </template>
 
 <script>
-import { ref, watch, onMounted } from 'vue'
+import { ref, watch, computed, onMounted, onUnmounted } from 'vue'
 import api from '../services/api.js'
 import { useMainStore } from '../stores/useMainStore.js'
 import BaseCard from '../components/ui/BaseCard.vue'
@@ -759,6 +785,21 @@ export default {
       } finally {
         loading.value = false
       }
+    }
+
+    // ── Actividad reciente (copias + restauraciones, con estado en vivo) ──
+    const activity = ref([])
+    const activityRunning = computed(() =>
+      activity.value.some(a => a.status === 'running' || a.status === 'pending'))
+    let activityTimer = null
+
+    const loadActivity = async () => {
+      try {
+        activity.value = await api.getBackupActivity() || []
+      } catch (e) { /* silencioso */ }
+      // Auto-refresco: rápido si hay algo en curso, lento si no.
+      if (activityTimer) clearTimeout(activityTimer)
+      activityTimer = setTimeout(loadActivity, activityRunning.value ? 3000 : 20000)
     }
 
     const loadDomains = async () => {
@@ -911,6 +952,7 @@ export default {
       try {
         const rec = await api.runBackupJob(job.id)
         store.showNotification('Backup iniciado…', 'info')
+        loadActivity()   // refrescar el panel de actividad de inmediato
         const final = await pollRecord(rec.id)
         if (final && final.status === 'success') {
           store.showNotification(`Backup "${job.name}" completado (${final.size_mb} MB)`, 'success')
@@ -1036,6 +1078,7 @@ export default {
           mail: sel.value.mail,
         })
         store.showNotification('Restauración iniciada…', 'info')
+        loadActivity()   // mostrar la restauración en el panel de actividad
         const final = await pollRecord(rec.id)
         if (final && final.status === 'success') {
           store.showNotification(restoreOverwrite.value
@@ -1139,10 +1182,13 @@ export default {
 
     onMounted(async () => {
       await Promise.all([loadJobs(), loadDomains()])
+      loadActivity()
     })
+    onUnmounted(() => { if (activityTimer) clearTimeout(activityTimer) })
 
     return {
       jobs, domains, loading,
+      activity, activityRunning,
       showForm, editing, form, formError, saving,
       testingSftp, sftpTestMsg, sftpTestOk,
       testingS3, s3TestMsg, s3TestOk, testS3, showS3Help,
@@ -1215,6 +1261,16 @@ export default {
 .bk-radio { display: flex; align-items: flex-start; gap: .6rem; padding: .6rem; border: 1px solid var(--border); border-radius: var(--r-md); margin-bottom: .5rem; cursor: pointer; }
 .bk-radio input { margin-top: .25rem; }
 .bk-link { background: none; border: none; color: var(--svq-orange, #e8590c); cursor: pointer; font-size: .85rem; padding: 0; }
+/* Panel de actividad reciente */
+.bk-activity { border: 1px solid var(--border); border-radius: var(--r-md); margin-bottom: var(--sp-4); overflow: hidden; }
+.bk-activity__head { display: flex; justify-content: space-between; align-items: center; padding: .5rem .9rem; background: var(--surface-inset, #f8fafc); font-weight: 600; font-size: .9rem; border-bottom: 1px solid var(--border); }
+.bk-activity__live { color: var(--svq-orange, #e8590c); font-size: .82rem; font-weight: 500; display: inline-flex; align-items: center; gap: .4rem; }
+.bk-activity__list { display: flex; flex-direction: column; }
+.bk-activity__row { display: grid; grid-template-columns: 130px 1fr auto auto; gap: .75rem; align-items: center; padding: .5rem .9rem; border-bottom: 1px solid var(--border); font-size: .85rem; }
+.bk-activity__row:last-child { border-bottom: none; }
+.bk-activity__job { font-weight: 600; color: var(--text); }
+.bk-activity__date { color: var(--text-muted); }
+.bk-activity__status { text-align: right; }
 
 /* Estado */
 .bk-status { display: inline-block; font-size: var(--fs-xs); font-weight: var(--fw-semibold); padding: 2px 9px; border-radius: var(--r-pill); }

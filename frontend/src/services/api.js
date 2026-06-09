@@ -1004,6 +1004,10 @@ class APIClient {
     return this.get(`/api/backups/${jobId}/records`)
   }
 
+  getBackupActivity() {
+    return this.get(`/api/backups/recent-activity`)
+  }
+
   getBackupRecord(recordId) {
     return this.get(`/api/backups/records/${recordId}`)
   }

@@ -450,6 +450,40 @@ async def create_backup_job(
     return resp
 
 
+@router.get("/backups/recent-activity")
+async def recent_activity(
+    current_user: User = Depends(require_auth),
+    db: Session = Depends(get_db),
+):
+    """Actividad reciente de backups y restauraciones de TODOS los jobs visibles
+    para el usuario, con su estado. Para el panel de actividad en vivo.
+    NOTA: definida ANTES de /backups/{job_id} para que no la capture como id."""
+    if current_user.is_admin:
+        jobs_by_id = {j.id: j for j in db.query(BackupJob).all()}
+    else:
+        jobs_by_id = {}
+        for j in db.query(BackupJob).all():
+            if j.user_id == current_user.id or _job_covers_user(j, current_user, db):
+                jobs_by_id[j.id] = j
+    if not jobs_by_id:
+        return []
+
+    records = (
+        db.query(BackupRecord)
+        .filter(BackupRecord.job_id.in_(list(jobs_by_id.keys())))
+        .order_by(BackupRecord.started_at.desc())
+        .limit(20)
+        .all()
+    )
+    out = []
+    for r in records:
+        job = jobs_by_id.get(r.job_id)
+        resp = _record_response(r).model_dump()
+        resp["job_name"] = job.name if job else "?"
+        out.append(resp)
+    return out
+
+
 @router.get("/backups/{job_id}", response_model=BackupJobResponse)
 async def get_backup_job(
     job_id: int,
