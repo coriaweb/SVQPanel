@@ -293,16 +293,22 @@ async def firewall_system_ports(_: dict = Depends(require_admin)):
     import subprocess
     import re
 
-    # Política de la cadena
+    # Política de la cadena input. Usamos 'list chains' (solo definiciones, sin
+    # reglas) en vez de 'list chain ... input' (que recorre toda la tabla con sus
+    # ~37k reglas de geo-bloqueo). ~0.07s vs ~0.18s.
     policy = "unknown"
     try:
+        import json as _json
         r = subprocess.run(
-            ["/usr/sbin/nft", "list", "chain", "inet", "svqpanel", "input"],
+            ["/usr/sbin/nft", "-j", "list", "chains", "inet"],
             capture_output=True, text=True, timeout=10,
         )
-        pol = re.search(r"policy\s+(\w+)", r.stdout)
-        if pol:
-            policy = pol.group(1)
+        data = _json.loads(r.stdout)
+        for item in data.get("nftables", []):
+            ch = item.get("chain")
+            if ch and ch.get("table") == "svqpanel" and ch.get("name") == "input":
+                policy = ch.get("policy", "unknown")
+                break
     except Exception:
         pass
 
