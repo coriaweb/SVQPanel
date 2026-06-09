@@ -1302,6 +1302,15 @@ cat > /etc/nginx/conf.d/svqpanel-hardening.conf << 'NGHEOF'
 # SVQPanel — endurecimiento global nginx
 server_tokens off;
 NGHEOF
+# max_headers (nginx >= 1.29.8): limita el nº de cabeceras por petición. Defensa
+# contra el "HTTP/2 Bomb" (amplificación HPACK + window stall). El panel instala
+# nginx del repo oficial (reciente), pero lo añadimos condicionalmente por si
+# alguna instalación tuviera una versión vieja donde la directiva no existe.
+if nginx -V 2>&1 | grep -qoE 'nginx/[0-9]+\.[0-9]+\.[0-9]+' && \
+   printf '%s\n%s\n' "1.29.8" "$(nginx -v 2>&1 | grep -oE '[0-9]+\.[0-9]+\.[0-9]+')" | sort -V -C; then
+    echo "max_headers 100;" >> /etc/nginx/conf.d/svqpanel-hardening.conf
+    echo -e "${GREEN}✓ nginx: max_headers 100 (mitiga HTTP/2 Bomb)${NC}"
+fi
 
 ###############################################################################
 # 7. CONFIGURAR POSTGRESQL
