@@ -774,4 +774,20 @@ async def set_timezone(
     settings.timezone = tz
     db.commit()
 
-    return {"success": True, "timezone": tz, "message": f"Zona horaria cambiada a {tz}"}
+    # Los servicios que ya estaban corriendo cachean la zona horaria al arrancar,
+    # así que tras cambiarla siguen escribiendo sus logs en la zona ANTERIOR
+    # (típicamente UTC) hasta que se reinicien. Reiniciamos los de logging para
+    # que los timestamps de los logs reflejen ya la nueva zona.
+    restarted = []
+    for svc in ("rsyslog", "nginx", "postfix", "dovecot", "cron"):
+        try:
+            r = subprocess.run(["systemctl", "try-restart", svc],
+                               capture_output=True, text=True, timeout=20)
+            if r.returncode == 0:
+                restarted.append(svc)
+        except Exception:
+            pass
+
+    return {"success": True, "timezone": tz, "restarted": restarted,
+            "message": f"Zona horaria cambiada a {tz}. Servicios de logs "
+                       f"reiniciados para aplicar la nueva hora."}
