@@ -451,8 +451,19 @@ def generate_nginx_config(
         app_block_http = _proxy
         app_block_ssl  = _proxy
     else:
-        # Bloque clásico nginx: location / con try_files + location ~ \.php$.
+        # Cache de navegador para estáticos: CSS/JS/imágenes/fuentes con expires
+        # largo (acelera la web en visitas repetidas; el navegador no los re-pide).
+        static_cache = (
+            "    location ~* \\.(?:css|js|jpg|jpeg|png|gif|ico|webp|avif|svg|woff|woff2|ttf|eot|otf|mp4|webm|ogg|mp3|pdf)$ {\n"
+            "        expires 30d;\n"
+            "        add_header Cache-Control \"public, max-age=2592000\";\n"
+            "        access_log off;\n"
+            "        try_files $uri =404;\n"
+            "    }\n\n"
+        )
+        # Bloque clásico nginx: estáticos cacheados + location / con try_files + PHP.
         app_block_http = (
+            static_cache +
             f"    location / {{{rl_directive}\n"
             f"{readonly_block}        try_files $uri $uri/ /index.php?$query_string;\n"
             f"    }}\n\n"
@@ -465,6 +476,7 @@ def generate_nginx_config(
             f"    }}\n"
         )
         app_block_ssl = (
+            static_cache +
             f"    location / {{{rl_directive}\n"
             f"{readonly_block}        try_files $uri $uri/ /index.php?$query_string;\n"
             f"    }}\n\n"

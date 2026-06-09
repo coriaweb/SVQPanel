@@ -1302,6 +1302,23 @@ cat > /etc/nginx/conf.d/svqpanel-hardening.conf << 'NGHEOF'
 # SVQPanel — endurecimiento global nginx
 server_tokens off;
 NGHEOF
+
+# Compresión gzip GLOBAL (acelera todas las webs: HTML/CSS/JS/JSON ~65% menos).
+# El nginx de Debian/oficial trae gzip pero viene comentado por defecto.
+cat > /etc/nginx/conf.d/svqpanel-gzip.conf << 'NGGZEOF'
+# SVQPanel — compresión gzip global (todas las webs)
+gzip on;
+gzip_vary on;
+gzip_proxied any;
+gzip_comp_level 5;
+gzip_min_length 256;
+gzip_types
+    text/plain text/css text/xml text/javascript
+    application/javascript application/x-javascript application/json
+    application/xml application/xml+rss application/rss+xml
+    application/atom+xml application/vnd.ms-fontobject
+    application/x-font-ttf font/opentype image/svg+xml image/x-icon;
+NGGZEOF
 # max_headers (nginx >= 1.29.8): limita el nº de cabeceras por petición. Defensa
 # contra el "HTTP/2 Bomb" (amplificación HPACK + window stall). El panel instala
 # nginx del repo oficial (reciente), pero lo añadimos condicionalmente por si

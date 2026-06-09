@@ -56,3 +56,4 @@ exit 0
 | 0017 | named modo IPv4 si no hay IPv6 (auto-rev.) | 2026-06-09 |
 | 0018 | nginx listen genérico (enrutado vhosts)    | 2026-06-09 |
 | 0019 | nginx max_headers (mitiga HTTP/2 Bomb)     | 2026-06-09 |
+| 0020 | Web: gzip global + cache de estáticos     | 2026-06-09 |
