@@ -224,8 +224,10 @@ def _generate_redirect_config(
 
     ipv4_listen_http  = f"{ipv4}:80" if ipv4 else "80"
     ipv4_listen_https = f"{ipv4}:443" if ipv4 else "443"
-    ipv6_listen_http  = f"listen [{ipv6}]:80 default_server;" if ipv6 else "listen [::]:80;"
-    ipv6_listen_https = f"listen [{ipv6}]:443 ssl default_server;" if ipv6 else "listen [::]:443 ssl;"
+    # IPv6: escuchar en [::]:80 y enrutar por server_name (incluye la IPv6). NO
+    # default_server (ese rol es del vhost de bienvenida; duplicarlo da 404).
+    ipv6_listen_http  = "listen [::]:80;"
+    ipv6_listen_https = "listen [::]:443 ssl;"
 
     # Asegurarse de que redirect_to no termina en /
     destination = redirect_to.rstrip("/")
@@ -373,8 +375,11 @@ def generate_nginx_config(
 
     ipv4_listen_http  = f"{ipv4}:80" if ipv4 else "80"
     ipv4_listen_https = f"{ipv4}:443" if ipv4 else "443"
-    ipv6_listen_http  = f"listen [{ipv6}]:80 default_server;" if ipv6 else "listen [::]:80;"
-    ipv6_listen_https = f"listen [{ipv6}]:443 ssl default_server;" if ipv6 else "listen [::]:443 ssl;"
+    # IPv6: escuchar en [::]:80 (todas) y enrutar por server_name (que incluye la
+    # IPv6 literal). NO default_server: ese rol es del vhost de bienvenida
+    # (svqpanel-welcome); duplicarlo aquí roba el tráfico IPv6 y da 404.
+    ipv6_listen_http  = "listen [::]:80;"
+    ipv6_listen_https = "listen [::]:443 ssl;"
 
     hsts_header = (
         '    add_header Strict-Transport-Security "max-age=31536000; includeSubDomains; preload" always;'
