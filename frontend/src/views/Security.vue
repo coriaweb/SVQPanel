@@ -974,6 +974,7 @@ const portBusy  = ref(null)   // 'tcp443' mientras se aplica
 const jails    = ref([])
 const banned   = ref([])
 const ignoreip = ref([])
+const f2bLoading = ref(false)
 
 const ipLists       = ref([])
 
@@ -1083,15 +1084,23 @@ async function toggleSystemPort(p) {
 }
 
 async function loadFail2ban() {
+  f2bLoading.value = true
   try {
-    jails.value  = await api.getFail2banJails()
-    banned.value = await api.getBannedIps()
-    const wl = await api.getFail2banWhitelist()
+    // Las 4 cargas en PARALELO (antes en serie → sumaba la latencia de red x4)
+    const [js, bn, wl] = await Promise.all([
+      api.getFail2banJails(),
+      api.getBannedIps(),
+      api.getFail2banWhitelist(),
+    ])
+    jails.value = js
+    banned.value = bn
     ignoreip.value = wl.ignoreip || []
+    loadStatus()  // en paralelo, no la esperamos
   } catch (e) {
     if (!String(e.message).includes('503')) alert('Fail2ban: ' + e.message)
+  } finally {
+    f2bLoading.value = false
   }
-  loadStatus()
 }
 
 async function loadIpLists() {

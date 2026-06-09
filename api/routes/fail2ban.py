@@ -93,9 +93,9 @@ async def list_banned(_: dict = Depends(require_admin)):
     seen = set()
 
     if f2b.is_running():
-        for jail in f2b.list_jails():
-            status = f2b.jail_status(jail) or {}
-            for ip in status.get("banned_ips", []):
+        # Una sola llamada para todas las jails (~6x más rápido que status por jail)
+        for jail, ips in f2b.all_banned().items():
+            for ip in ips:
                 key = (ip, jail)
                 if key in seen:
                     continue

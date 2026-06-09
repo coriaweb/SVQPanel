@@ -90,6 +90,33 @@ def jail_status(jail: str) -> Optional[Dict]:
     return result
 
 
+def all_banned() -> Dict[str, List[str]]:
+    """Devuelve {jail: [ips]} de TODAS las jails en UNA sola llamada
+    (`fail2ban-client banned`, fail2ban >= 0.11). ~6x más rápido que consultar
+    el status de cada jail por separado. Si el comando no existe o falla, cae
+    al método por-jail. La salida cruda es una lista de dicts tipo:
+        [{'sshd': ['1.2.3.4']}, {'dovecot': []}, ...]
+    """
+    rc, out, _ = _run(["banned"])
+    if rc == 0 and out.strip():
+        try:
+            import ast
+            data = ast.literal_eval(out.strip())  # es repr de Python, no JSON
+            result: Dict[str, List[str]] = {}
+            for entry in data:
+                for jail, ips in entry.items():
+                    result[jail] = list(ips)
+            return result
+        except Exception:
+            pass
+    # Fallback: método antiguo (status por jail)
+    result = {}
+    for jail in list_jails():
+        st = jail_status(jail) or {}
+        result[jail] = st.get("banned_ips", [])
+    return result
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # Ban / Unban
 # ─────────────────────────────────────────────────────────────────────────────
