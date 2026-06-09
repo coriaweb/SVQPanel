@@ -14,6 +14,7 @@ const Migrations     = () => import('../views/Migrations.vue')
 const DNS            = () => import('../views/DNS.vue')
 const Mail           = () => import('../views/Mail.vue')
 const Settings       = () => import('../views/Settings.vue')
+const License        = () => import('../views/License.vue')
 const SystemServices = () => import('../views/SystemServices.vue')
 const Logs           = () => import('../views/Logs.vue')
 const Security       = () => import('../views/Security.vue')
@@ -138,6 +139,12 @@ const routes = [
     path: '/security',
     name: 'Security',
     component: Security,
+    meta: { requiresAuth: true, requiresAdmin: true }
+  },
+  {
+    path: '/license',
+    name: 'License',
+    component: License,
     meta: { requiresAuth: true, requiresAdmin: true }
   },
   {

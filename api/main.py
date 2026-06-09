@@ -13,7 +13,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from api.models.database import create_tables, get_db
 from config.config import PANEL_NAME, PANEL_VERSION
 
-from api.routes import users, domains, php, ssl, ipv6, auth, settings, dns, system, mail, databases, firewall, fail2ban, security_monitor, ip_lists, file_manager, crowdsec, plans, sftp, crons, server_ips, backups, templates, notifications, dns_cluster, git, git_webhook, monitoring, db_tuner, migrations, terminal
+from api.routes import users, domains, php, ssl, ipv6, auth, settings, dns, system, mail, databases, firewall, fail2ban, security_monitor, ip_lists, file_manager, crowdsec, plans, sftp, crons, server_ips, backups, templates, notifications, dns_cluster, git, git_webhook, monitoring, db_tuner, migrations, terminal, license
 
 # Crear app FastAPI
 app = FastAPI(
@@ -53,6 +53,54 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
         return response
 
 app.add_middleware(SecurityHeadersMiddleware)
+
+
+# ── Enforcement de licencia ──────────────────────────────────────────────────
+# En modo 'restrict' (beta y producción), sin licencia válida se bloquean las
+# operaciones de escritura (POST/PUT/DELETE) de la API, PERO se permite: login,
+# ver datos (GET), activar/consultar licencia y logout. Así el usuario puede
+# entrar, ver su panel y activar la licencia, pero no operar hasta activarla.
+# Un único punto de control (178 rutas de escritura) en vez de decorar cada una.
+_LICENSE_EXEMPT_PREFIXES = (
+    "/api/auth",            # login / logout / refresh
+    "/api/license",         # activar y consultar licencia
+)
+
+class LicenseEnforcementMiddleware(BaseHTTPMiddleware):
+    async def dispatch(self, request: Request, call_next):
+        import os
+        mode = os.getenv("SVQ_LICENSE_ENFORCEMENT", "restrict").strip().lower()
+        if mode == "warn":
+            return await call_next(request)
+
+        method = request.method.upper()
+        path = request.url.path
+        is_write = method in ("POST", "PUT", "PATCH", "DELETE")
+        is_api = path.startswith("/api/")
+        exempt = any(path.startswith(p) for p in _LICENSE_EXEMPT_PREFIXES)
+
+        if is_api and is_write and not exempt:
+            try:
+                from scripts import license_client
+                st = license_client.status()
+                if not st.get("valid"):
+                    st = license_client.validate()
+                valid = bool(st.get("valid"))
+                reason = st.get("reason")
+            except Exception:
+                valid, reason = True, None   # fail-open ante error propio
+            if not valid:
+                from starlette.responses import JSONResponse
+                return JSONResponse(
+                    status_code=402,
+                    content={"detail": (
+                        "Licencia del panel no válida o caducada. Actívala en "
+                        "Ajustes → Licencia o en tu área de cliente de SVQHost."),
+                        "license_reason": reason},
+                )
+        return await call_next(request)
+
+app.add_middleware(LicenseEnforcementMiddleware)
 
 # CORS — el panel se sirve desde su propio dominio (frontend y API en el mismo
 # host vía nginx), así que no se necesitan orígenes cruzados. Restringido a los
@@ -451,6 +499,12 @@ def _run_migrations():
         "ALTER TABLE backup_jobs ADD COLUMN IF NOT EXISTS s3_secret_key VARCHAR(500)",
         # Motor restic: contraseña de cifrado del repositorio (cifrada con Fernet)
         "ALTER TABLE backup_jobs ADD COLUMN IF NOT EXISTS restic_password VARCHAR(500)",
+        # Licencia del panel (estado cacheado para la UI; lo escribe el chequeo periódico)
+        "ALTER TABLE settings ADD COLUMN IF NOT EXISTS license_valid      BOOLEAN DEFAULT FALSE",
+        "ALTER TABLE settings ADD COLUMN IF NOT EXISTS license_plan       VARCHAR(32)",
+        "ALTER TABLE settings ADD COLUMN IF NOT EXISTS license_expires    TIMESTAMP",
+        "ALTER TABLE settings ADD COLUMN IF NOT EXISTS license_checked_at TIMESTAMP",
+        "ALTER TABLE settings ADD COLUMN IF NOT EXISTS license_reason     VARCHAR(48)",
         # ─────────────────────────────────────────────────────────────────
         # Fase 15.2: Plantillas web (nginx + PHP-FPM presets)
         # ─────────────────────────────────────────────────────────────────
@@ -698,6 +752,7 @@ app.include_router(php.router, prefix="/api", tags=["PHP"])
 app.include_router(ssl.router, prefix="/api", tags=["SSL"])
 app.include_router(ipv6.router, prefix="/api", tags=["IPv6"])
 app.include_router(settings.router, prefix="/api", tags=["Settings"])
+app.include_router(license.router, prefix="/api", tags=["License"])
 app.include_router(dns.router, prefix="/api", tags=["DNS"])
 app.include_router(dns_cluster.router, prefix="/api", tags=["DNS Cluster"])
 app.include_router(system.router, prefix="/api", tags=["System"])

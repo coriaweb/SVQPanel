@@ -67,6 +67,26 @@ echo "$WEBSERVER" > /etc/svqpanel/webserver.conf
 chmod 644 /etc/svqpanel/webserver.conf
 
 ###############################################################################
+# 1a-bis. LICENCIA DEL PANEL
+###############################################################################
+# SVQPanel requiere una licencia (obtenla en tu área de cliente de svqhost.com).
+# Sin licencia válida el panel se instala pero arranca en modo limitado (puedes
+# verlo y activar la licencia desde Sistema → Licencia, pero no operar).
+echo -e "${YELLOW}Licencia de SVQPanel${NC}"
+echo "  Obtén tu clave en tu área de cliente de https://www.svqhost.com"
+echo "  (puedes dejarlo vacío ahora y activarla luego desde el panel)"
+printf "Clave de licencia [Enter para omitir]: "; read _LICENSE_INPUT </dev/tty
+if [ -n "$_LICENSE_INPUT" ]; then
+    echo "$_LICENSE_INPUT" > /etc/svqpanel/license
+    chmod 600 /etc/svqpanel/license
+    echo -e "${GREEN}✓ Licencia guardada (se validará al arrancar el panel)${NC}"
+else
+    touch /etc/svqpanel/license
+    chmod 600 /etc/svqpanel/license
+    echo -e "${YELLOW}⚠ Sin licencia: el panel arrancará en modo limitado hasta activarla${NC}"
+fi
+
+###############################################################################
 # 1b. PUERTO DEL PANEL
 ###############################################################################
 # El panel se sirve en un puerto dedicado (no 80/443) para poder cerrarlo

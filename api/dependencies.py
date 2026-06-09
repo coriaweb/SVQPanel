@@ -81,3 +81,38 @@ async def require_auth(
 ) -> User:
     """Requiere que el usuario esté autenticado"""
     return user
+
+
+def _enforcement_mode() -> str:
+    """warn | restrict. Controla qué pasa sin licencia válida.
+    En beta arranca en 'restrict' (operaciones bloqueadas, pero login/ver/activar
+    siguen funcionando). Override por env SVQ_LICENSE_ENFORCEMENT."""
+    import os
+    return os.getenv("SVQ_LICENSE_ENFORCEMENT", "restrict").strip().lower()
+
+
+async def require_license(
+    user: User = Depends(get_current_user)
+) -> User:
+    """Requiere que el panel tenga una licencia válida para EJECUTAR la acción.
+    Se pone en las rutas de creación/modificación (crear dominios, cuentas, BD…),
+    NO en login/ver/activar licencia. En modo 'warn' no bloquea (solo la beta
+    podría aflojarlo). Lee el estado cacheado (sin llamada de red por petición)."""
+    if _enforcement_mode() == "warn":
+        return user
+    try:
+        from scripts import license_client
+        st = license_client.status()
+        if not st.get("valid"):
+            # Revalida una vez por si la caché está stale (no en cada request)
+            st = license_client.validate()
+    except Exception:
+        # Si el módulo falla, no bloqueamos el panel (fail-open ante errores propios)
+        return user
+    if not st.get("valid"):
+        raise HTTPException(
+            status_code=status.HTTP_402_PAYMENT_REQUIRED,
+            detail=("Licencia del panel no válida o caducada. Actívala en "
+                    "Ajustes → Licencia (o en tu área de cliente de SVQHost)."),
+        )
+    return user

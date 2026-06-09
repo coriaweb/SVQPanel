@@ -51,3 +51,4 @@ exit 0
 | 0012 | Métricas: hilo interno (sin timer 5 min)   | 2026-06-09 |
 | 0013 | Salud DNS: hilo interno (sin timer 10 min) | 2026-06-09 |
 | 0014 | Fix jail Fail2ban postfix-sasl (login SMTP) | 2026-06-09 |
+| 0015 | Sistema de licencias del panel             | 2026-06-09 |

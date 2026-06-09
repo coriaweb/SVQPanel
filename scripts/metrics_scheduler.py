@@ -24,28 +24,68 @@ _lock = threading.Lock()
 from api.models.database import SessionLocal, load_all_models
 load_all_models()
 
-INTERVAL_SECONDS = 300       # métricas: cada 5 minutos
-DNS_HEALTH_SECONDS = 600     # salud del cluster DNS: cada 10 minutos
+INTERVAL_SECONDS = 300        # métricas: cada 5 minutos
+DNS_HEALTH_SECONDS = 600      # salud del cluster DNS: cada 10 minutos
+LICENSE_SECONDS = 43200       # validación de licencia: cada 12 horas
 
 
 def _loop():
     logger.info("Tareas periódicas del panel: scheduler iniciado")
     time.sleep(15)
     last_dns = 0.0
+    last_license = 0.0
     while True:
         try:
             _sample_once()
         except Exception:
             logger.exception("Error en metrics loop")
-        # Salud del cluster DNS cada DNS_HEALTH_SECONDS (no en cada tick de 5 min)
         now = time.monotonic()
+        # Salud del cluster DNS cada DNS_HEALTH_SECONDS (no en cada tick de 5 min)
         if now - last_dns >= DNS_HEALTH_SECONDS:
             last_dns = now
             try:
                 _dns_health_once()
             except Exception:
                 logger.exception("Error en dns-health")
+        # Validación de licencia cada 12h (la primera, al arranque)
+        if now - last_license >= LICENSE_SECONDS:
+            last_license = now
+            try:
+                _license_check_once()
+            except Exception:
+                logger.exception("Error en license-check")
         time.sleep(INTERVAL_SECONDS)
+
+
+def _license_check_once():
+    """Revalida la licencia contra el servidor y persiste el estado en Settings
+    (para que la UI lo lea sin red). Tolerante a fallos: si no hay red, mantiene
+    el estado cacheado."""
+    from datetime import datetime
+    from scripts import license_client
+    from api.models.models_settings import Settings
+
+    result = license_client.validate(force=True)
+    db = SessionLocal()
+    try:
+        s = db.query(Settings).filter(Settings.id == 1).first()
+        if not s:
+            s = Settings(id=1); db.add(s)
+        s.license_valid = bool(result.get("valid"))
+        s.license_plan = result.get("plan")
+        s.license_reason = result.get("reason")
+        exp = result.get("expires")
+        if exp:
+            try:
+                s.license_expires = datetime.fromisoformat(exp.replace("Z", "+00:00"))
+            except Exception:
+                s.license_expires = None
+        s.license_checked_at = datetime.utcnow()
+        db.commit()
+        if not result.get("valid"):
+            logger.warning("license: estado no válido (%s)", result.get("reason"))
+    finally:
+        db.close()
 
 
 def _dns_health_once():

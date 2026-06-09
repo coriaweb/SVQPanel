@@ -133,6 +133,17 @@
 
       <!-- Contenido -->
       <main class="app-content">
+        <!-- Aviso de licencia no válida (bloquea operaciones) -->
+        <div v-if="licenseBad" class="lic-banner">
+          <i class="bi bi-exclamation-octagon-fill lic-banner__icon"></i>
+          <div class="lic-banner__text">
+            <strong>Licencia no válida o caducada.</strong> El panel está en modo
+            limitado: puedes ver tus datos pero no crear ni modificar nada hasta activar
+            una licencia.
+          </div>
+          <router-link to="/license" class="lic-banner__btn">Activar licencia</router-link>
+        </div>
+
         <!-- Aviso de versión beta -->
         <div v-if="showBetaBanner" class="beta-banner">
           <i class="bi bi-cone-striped beta-banner__icon"></i>
@@ -197,6 +208,16 @@ export default {
       showBetaBanner.value = false
     }
 
+    // Aviso de licencia no válida (banda persistente, no se puede ocultar)
+    const licenseBad = ref(false)
+    const checkLicense = async () => {
+      if (!store.isAuthenticated || store.currentUser?.role !== 'admin') return
+      try {
+        const st = await api.getLicenseStatus()
+        licenseBad.value = !st.valid
+      } catch (e) { /* silencioso: no bloquear la UI por esto */ }
+    }
+
     // Navegar y cerrar el drawer móvil
     const navigate = (to) => {
       router.push(to)
@@ -248,6 +269,7 @@ export default {
           { to: '/security',       label: 'Seguridad',       icon: 'bi-shield-lock',  roles: ['admin'] },
           { to: '/terminal',       label: 'Terminal web',    icon: 'bi-terminal' },
           { to: '/system/updates', label: 'Actualizaciones', icon: 'bi-arrow-repeat', roles: ['admin'] },
+          { to: '/license',        label: 'Licencia',        icon: 'bi-patch-check',  roles: ['admin'] },
           { to: '/settings',       label: 'Configuración',   icon: 'bi-gear',         roles: ['admin'] },
         ],
       },
@@ -336,17 +358,18 @@ export default {
     onMounted(() => {
       loadServerLoad()
       loadTimer = setInterval(loadServerLoad, 15000)  // refresco cada 15s
+      checkLicense()
     })
     onUnmounted(() => { if (loadTimer) clearInterval(loadTimer) })
     // Cargar al iniciar sesión (cuando cambia la autenticación)
-    watch(isAuthenticated, (v) => { if (v) loadServerLoad() })
+    watch(isAuthenticated, (v) => { if (v) { loadServerLoad(); checkLicense() } })
 
     return {
       store, route, router, notification, isAuthenticated, currentUser, theme,
       sidebarCollapsed, mobileMenuOpen, navigate, dropdownOpen, visibleGroups, isActive, currentBreadcrumb,
       userInitials, toastIcon, logout, openPalette, serverHostname,
       serverLoad, cpuCount, loadLevel,
-      showBetaBanner, dismissBeta,
+      showBetaBanner, dismissBeta, licenseBad,
     }
   },
 }
@@ -376,6 +399,27 @@ export default {
   font-size: 1rem; padding: 4px; border-radius: 6px; flex-shrink: 0;
 }
 .beta-banner__close:hover { background: rgba(0,0,0,.08); color: var(--text); }
+
+/* Aviso de licencia no válida (rojo, no se puede ocultar) */
+.lic-banner {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 18px;
+  margin-bottom: 18px;
+  border-radius: 12px;
+  background: linear-gradient(90deg, rgba(220,38,38,.16), rgba(220,38,38,.06));
+  border: 1px solid rgba(220,38,38,.45);
+  color: var(--text);
+}
+.lic-banner__icon { font-size: 1.4rem; color: #dc2626; flex-shrink: 0; }
+.lic-banner__text { font-size: .9rem; line-height: 1.4; flex: 1; }
+.lic-banner__text strong { color: #dc2626; }
+.lic-banner__btn {
+  flex-shrink: 0; background: #dc2626; color: #fff; text-decoration: none;
+  padding: 7px 14px; border-radius: 8px; font-weight: 600; font-size: .85rem;
+}
+.lic-banner__btn:hover { background: #b91c1c; }
 
 /* ══════════════════════════════════════════════════
    Shell

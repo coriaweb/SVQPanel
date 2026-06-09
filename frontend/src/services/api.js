@@ -1008,6 +1008,15 @@ class APIClient {
     return this.get(`/api/backups/recent-activity`)
   }
 
+  // ── Licencia del panel ──
+  getLicenseStatus(refresh = false) {
+    return this.get(`/api/license/status${refresh ? '?refresh=true' : ''}`)
+  }
+
+  activateLicense(key) {
+    return this.post('/api/license/activate', { key })
+  }
+
   getBackupRecord(recordId) {
     return this.get(`/api/backups/records/${recordId}`)
   }

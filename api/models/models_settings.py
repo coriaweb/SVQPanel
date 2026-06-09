@@ -90,6 +90,13 @@ class Settings(Base):
     dns_cluster_health_json = Column(Text, nullable=True)     # JSON con rows+summary
     dns_cluster_health_at   = Column(DateTime, nullable=True) # cuándo se calculó
 
+    # ── Licencia del panel (lo escribe el chequeo periódico; lo lee la UI) ──
+    license_valid      = Column(Boolean, default=False)       # ¿licencia válida ahora?
+    license_plan       = Column(String(32), nullable=True)    # beta | pro | ...
+    license_expires    = Column(DateTime, nullable=True)      # caducidad de la licencia
+    license_checked_at = Column(DateTime, nullable=True)      # última validación
+    license_reason     = Column(String(48), nullable=True)    # ok | no_key | offline | ...
+
     # Timestamps
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
