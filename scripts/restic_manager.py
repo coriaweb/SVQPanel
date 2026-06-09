@@ -313,7 +313,7 @@ def list_snapshot_contents(job: Dict[str, Any], username: str, domain: str,
     env = _build_env(job, repo)
     # Las rutas dentro del snapshot son /var/lib/svqpanel/backup-staging/{domain}/...
     base = f"/var/lib/svqpanel/backup-staging/{domain}"
-    out_data = {"web": False, "mail": [], "databases": []}
+    out_data = {"web": False, "mail": [], "databases": [], "legacy": False}
 
     rc, out, err = _run(["ls", snapshot_id, "--json"], env, timeout=120,
                         global_opts=_sftp_opts(job))
@@ -323,6 +323,7 @@ def list_snapshot_contents(job: Dict[str, Any], username: str, domain: str,
     mail_base = base + "/mail"
     db_base = base + "/databases"
     seen_mail = set()
+    has_new_structure = False
     for line in out.splitlines():
         line = line.strip()
         if not line:
@@ -334,15 +335,23 @@ def list_snapshot_contents(job: Dict[str, Any], username: str, domain: str,
         path = node.get("path", "")
         if path == web_base or path.startswith(web_base + "/"):
             out_data["web"] = True
+            has_new_structure = True
         elif path.startswith(mail_base + "/"):
-            # primer nivel bajo mail/ = buzón
+            has_new_structure = True
             rest = path[len(mail_base) + 1:]
             top = rest.split("/")[0]
             if top and top not in seen_mail:
                 seen_mail.add(top)
                 out_data["mail"].append(top)
         elif path.startswith(db_base + "/") and path.endswith(".sql"):
+            has_new_structure = True
             out_data["databases"].append(os.path.basename(path)[:-4])
+
+    # Copias ANTIGUAS (antes de la estructura estable 0.63.0): no tienen
+    # web/mail/databases/ predecibles. No se puede granular, pero SÍ restaurar
+    # completas. Marcamos legacy para que la UI ofrezca "restaurar todo".
+    if not has_new_structure:
+        out_data["legacy"] = True
     return out_data
 
 
@@ -379,6 +388,22 @@ def apply_restore(job: Dict[str, Any], username: str, domain: str,
     import tempfile
     log = []
     base = f"/var/lib/svqpanel/backup-staging/{domain}"
+
+    # Copia ANTIGUA (sin estructura estable): no se puede granular ni sobrescribir
+    # de forma fiable. La restauramos COMPLETA a la carpeta de recuperación.
+    if selection.get("legacy"):
+        tmp = tempfile.mkdtemp(prefix="svq-restore-")
+        res = restore(job, username, domain, snapshot_id, tmp, includes=None)
+        if not res["ok"]:
+            _rmtree_safe(tmp)
+            return {"ok": False, "message": "Fallo al descargar la copia: " + res["message"]}
+        dest = f"/home/{username}/restore/{snapshot_id}"
+        _rmtree_safe(dest)
+        os.makedirs(os.path.dirname(dest), exist_ok=True)
+        shutil.move(tmp, dest)
+        _chown_r(dest, username)
+        return {"ok": True, "target": dest,
+                "message": f"Copia (formato antiguo) restaurada completa en {dest}."}
 
     # 1) Qué rutas del snapshot incluir según la selección
     includes = []

@@ -195,6 +195,8 @@ class BackupRestoreRequest(BaseModel):
     domain:            Optional[str] = Field(None, max_length=255)
     # Modo: True = sobrescribir EN VIVO; False = a carpeta de recuperación
     overwrite:         bool = False
+    # Copia de formato antiguo (sin estructura granular): restaurar completa
+    legacy:            bool = False
     # Selección granular de qué restaurar
     web:               bool = False
     mail:              List[str] = []      # buzones concretos

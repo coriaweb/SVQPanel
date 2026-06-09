@@ -677,15 +677,18 @@ async def restore_backup(
     # Resuelve y valida el dominio del usuario (cliente: solo el suyo)
     username, domain_name = _resolve_target(job, current_user, db, payload.domain)
 
-    # Selección: si no se mandan campos granulares, restaurar TODO (compat)
-    selection = {
-        "web": payload.web or (not payload.mail and not payload.databases and payload.restore_files),
-        "mail": payload.mail,
-        "databases": payload.databases,
-    }
-    if not (selection["web"] or selection["mail"] or selection["databases"]):
-        # nada explícito → restaurar todo lo del snapshot
-        selection = {"web": True, "mail": ["*"], "databases": ["*"]}
+    # Copia antigua: restaurar completa (sin granularidad)
+    if payload.legacy:
+        selection = {"legacy": True}
+    else:
+        selection = {
+            "web": payload.web or (not payload.mail and not payload.databases and payload.restore_files),
+            "mail": payload.mail,
+            "databases": payload.databases,
+        }
+        if not (selection["web"] or selection["mail"] or selection["databases"]):
+            # nada explícito → restaurar todo lo del snapshot
+            selection = {"web": True, "mail": ["*"], "databases": ["*"]}
 
     record = BackupRecord(
         job_id=job.id, user_id=current_user.id, kind="restore", status="pending",

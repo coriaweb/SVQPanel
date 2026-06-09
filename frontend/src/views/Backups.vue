@@ -472,7 +472,7 @@
                       </button>
                     </td>
                   </tr>
-                  <tr v-if="expanded === r.id" :key="'exp-' + r.id">
+                  <tr v-if="expanded === r.id">
                     <td colspan="9" class="bk-logcell">
                       <div v-if="r.error_message" class="bk-logerr">{{ r.error_message }}</div>
                       <pre class="bk-log">{{ r.log_output || 'Sin log' }}</pre>
@@ -545,24 +545,35 @@
               <div class="bk-section-title">¿Qué quieres restaurar?</div>
               <div v-if="contentsLoading" class="bk-center"><div class="spinner-border spinner-border-sm"></div></div>
               <template v-else>
-                <label v-if="contents.web" class="bk-check bk-check--row">
-                  <input type="checkbox" v-model="sel.web" /><i class="bi bi-folder"></i> Web (archivos del sitio)
-                </label>
-                <div v-if="contents.databases && contents.databases.length">
-                  <div class="bk-muted" style="margin:.5rem 0 .2rem"><i class="bi bi-database"></i> Bases de datos:</div>
-                  <label v-for="d in contents.databases" :key="d" class="bk-check bk-check--row" style="margin-left:1rem">
-                    <input type="checkbox" :value="d" v-model="sel.databases" /> {{ d }}
-                  </label>
+                <!-- Copia antigua (sin estructura granular): se restaura completa -->
+                <div v-if="contents.legacy" class="bk-warn" style="margin:0">
+                  <i class="bi bi-clock-history"></i>
+                  <div>
+                    Esta copia es de un <strong>formato anterior</strong>, así que no se puede elegir por
+                    partes: se restaurará <strong>completa</strong> a la carpeta de recuperación. Las copias
+                    nuevas sí permiten elegir web / BD / buzones por separado.
+                  </div>
                 </div>
-                <div v-if="contents.mail && contents.mail.length">
-                  <div class="bk-muted" style="margin:.5rem 0 .2rem"><i class="bi bi-envelope"></i> Buzones de correo:</div>
-                  <label v-for="m in contents.mail" :key="m" class="bk-check bk-check--row" style="margin-left:1rem">
-                    <input type="checkbox" :value="m" v-model="sel.mail" /> {{ m }}
+                <template v-else>
+                  <label v-if="contents.web" class="bk-check bk-check--row">
+                    <input type="checkbox" v-model="sel.web" /><i class="bi bi-folder"></i> Web (archivos del sitio)
                   </label>
-                </div>
-                <p v-if="!contents.web && !contents.databases.length && !contents.mail.length" class="bk-muted">
-                  Esta copia no tiene contenido restaurable.
-                </p>
+                  <div v-if="contents.databases && contents.databases.length">
+                    <div class="bk-muted" style="margin:.5rem 0 .2rem"><i class="bi bi-database"></i> Bases de datos:</div>
+                    <label v-for="d in contents.databases" :key="d" class="bk-check bk-check--row" style="margin-left:1rem">
+                      <input type="checkbox" :value="d" v-model="sel.databases" /> {{ d }}
+                    </label>
+                  </div>
+                  <div v-if="contents.mail && contents.mail.length">
+                    <div class="bk-muted" style="margin:.5rem 0 .2rem"><i class="bi bi-envelope"></i> Buzones de correo:</div>
+                    <label v-for="m in contents.mail" :key="m" class="bk-check bk-check--row" style="margin-left:1rem">
+                      <input type="checkbox" :value="m" v-model="sel.mail" /> {{ m }}
+                    </label>
+                  </div>
+                  <p v-if="!contents.web && !contents.databases.length && !contents.mail.length" class="bk-muted">
+                    Esta copia no tiene contenido restaurable.
+                  </p>
+                </template>
               </template>
             </div>
 
@@ -589,7 +600,8 @@
         <div class="bk-modal__foot">
           <BaseButton variant="ghost" size="sm" @click="showRestore = false">Cerrar</BaseButton>
           <BaseButton v-if="restoreStep === 2" :variant="restoreOverwrite ? 'danger' : 'primary'" size="sm"
-                      :loading="!!restoringSnap" :disabled="!sel.web && !sel.databases.length && !sel.mail.length"
+                      :loading="!!restoringSnap"
+                      :disabled="!sel.legacy && !sel.web && !sel.databases.length && !sel.mail.length"
                       @click="doRestore">
             <i class="bi bi-arrow-counterclockwise"></i>
             {{ restoreOverwrite ? 'Sobrescribir ahora' : 'Restaurar a carpeta' }}
@@ -984,7 +996,10 @@ export default {
           web: !!contents.value.web,
           databases: [...(contents.value.databases || [])],
           mail: [...(contents.value.mail || [])],
+          legacy: !!contents.value.legacy,
         }
+        // Copias antiguas solo permiten restaurar a carpeta (no sobrescribir granular)
+        if (contents.value.legacy) restoreOverwrite.value = false
         restoreStep.value = 2
       } catch (e) {
         store.showNotification('Error leyendo la copia: ' + e.message, 'danger')
@@ -998,6 +1013,7 @@ export default {
       const snap = chosenSnap.value
       if (!snap) return
       const parts = []
+      if (sel.value.legacy) parts.push('copia completa')
       if (sel.value.web) parts.push('web')
       if (sel.value.databases.length) parts.push(`${sel.value.databases.length} BD`)
       if (sel.value.mail.length) parts.push(`${sel.value.mail.length} buzón(es)`)
@@ -1014,6 +1030,7 @@ export default {
           snapshot_name: snap.id,
           domain: selectedRestoreDomain.value || null,
           overwrite: restoreOverwrite.value,
+          legacy: sel.value.legacy,
           web: sel.value.web,
           databases: sel.value.databases,
           mail: sel.value.mail,
