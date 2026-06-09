@@ -640,6 +640,23 @@ async def list_snapshots(
         raise HTTPException(status_code=500, detail=f"Error listando snapshots: {e}")
 
 
+@router.get("/backups/{job_id}/snapshots/{snapshot_id}/contents")
+async def snapshot_contents(job_id: int, snapshot_id: str, domain: str = None,
+                            current_user: User = Depends(require_auth),
+                            db: Session = Depends(get_db)):
+    """Qué se puede restaurar de un snapshot: web, buzones y BBDD concretas.
+    Permite al usuario elegir granularmente qué restaurar."""
+    job = _get_job_or_404(job_id, db)
+    _check_view_access(current_user, job, db)
+    username, domain_name = _resolve_target(job, current_user, db, domain)
+    try:
+        from scripts import restic_manager
+        return restic_manager.list_snapshot_contents(
+            _job_to_config(job), username, domain_name, snapshot_id)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error leyendo el snapshot: {e}")
+
+
 @router.post("/backups/{job_id}/restore", response_model=BackupRecordResponse, status_code=status.HTTP_202_ACCEPTED)
 async def restore_backup(
     job_id: int,
@@ -660,6 +677,16 @@ async def restore_backup(
     # Resuelve y valida el dominio del usuario (cliente: solo el suyo)
     username, domain_name = _resolve_target(job, current_user, db, payload.domain)
 
+    # Selección: si no se mandan campos granulares, restaurar TODO (compat)
+    selection = {
+        "web": payload.web or (not payload.mail and not payload.databases and payload.restore_files),
+        "mail": payload.mail,
+        "databases": payload.databases,
+    }
+    if not (selection["web"] or selection["mail"] or selection["databases"]):
+        # nada explícito → restaurar todo lo del snapshot
+        selection = {"web": True, "mail": ["*"], "databases": ["*"]}
+
     record = BackupRecord(
         job_id=job.id, user_id=current_user.id, kind="restore", status="pending",
         started_at=datetime.utcnow(),
@@ -670,13 +697,14 @@ async def restore_backup(
 
     background_tasks.add_task(
         _execute_restic_restore, job.id, record.id, username, domain_name,
-        payload.snapshot_name,
+        payload.snapshot_name, selection, payload.overwrite,
     )
     return _record_response(record)
 
 
-def _execute_restic_restore(job_id, record_id, username, domain, snapshot_id):
-    """Tarea de fondo: restic restore del snapshot a /home/{user}/restore/{id}/."""
+def _execute_restic_restore(job_id, record_id, username, domain, snapshot_id,
+                            selection, overwrite):
+    """Tarea de fondo: aplica la restauración (modo + selección granular)."""
     dbs = SessionLocal()
     try:
         job = dbs.query(BackupJob).filter(BackupJob.id == job_id).first()
@@ -687,13 +715,22 @@ def _execute_restic_restore(job_id, record_id, username, domain, snapshot_id):
         dbs.commit()
 
         from scripts import restic_manager
-        target = f"/home/{username}/restore/{snapshot_id}"
-        res = restic_manager.restore(_job_to_config(job), username, domain,
-                                     snapshot_id, target)
+        # Expandir comodines "*" a lo que haya en el snapshot
+        if "*" in selection.get("mail", []) or "*" in selection.get("databases", []):
+            contents = restic_manager.list_snapshot_contents(
+                _job_to_config(job), username, domain, snapshot_id)
+            if "*" in selection["mail"]:
+                selection["mail"] = contents.get("mail", [])
+            if "*" in selection["databases"]:
+                selection["databases"] = contents.get("databases", [])
+
+        res = restic_manager.apply_restore(
+            _job_to_config(job), username, domain, snapshot_id,
+            selection, overwrite)
         rec.status = "success" if res["ok"] else "failed"
-        rec.backup_path = target
+        rec.backup_path = res.get("target")
         rec.log_output = (res.get("message") or "")[:50000]
-        rec.error_message = None if res["ok"] else "Fallo en la restauración"
+        rec.error_message = None if res["ok"] else (res.get("message") or "Fallo en la restauración")
         rec.finished_at = datetime.utcnow()
         dbs.commit()
     except Exception as e:

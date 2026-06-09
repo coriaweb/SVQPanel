@@ -1038,6 +1038,11 @@ class APIClient {
     return this.get(`/api/backups/${jobId}/domains`)
   }
 
+  getSnapshotContents(jobId, snapshotId, domain = null) {
+    const q = domain ? `?domain=${encodeURIComponent(domain)}` : ''
+    return this.get(`/api/backups/${jobId}/snapshots/${snapshotId}/contents${q}`)
+  }
+
   restoreBackup(jobId, data) {
     return this.post(`/api/backups/${jobId}/restore`, data)
   }

@@ -193,6 +193,13 @@ class BackupRestoreRequest(BaseModel):
     snapshot_name:     str = Field(..., min_length=1, max_length=64)
     # Dominio a restaurar dentro del job (obligatorio si el job cubre varios)
     domain:            Optional[str] = Field(None, max_length=255)
+    # Modo: True = sobrescribir EN VIVO; False = a carpeta de recuperación
+    overwrite:         bool = False
+    # Selección granular de qué restaurar
+    web:               bool = False
+    mail:              List[str] = []      # buzones concretos
+    databases:         List[str] = []      # nombres de BBDD concretas
+    # Compatibilidad con la versión anterior (si no se manda selección granular)
     restore_files:     bool = True
     restore_databases: bool = True
     restore_mail:      bool = False

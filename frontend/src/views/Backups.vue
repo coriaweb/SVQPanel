@@ -497,51 +497,103 @@
           <button type="button" class="bk-modal__close" @click="showRestore = false"><i class="bi bi-x-lg"></i></button>
         </div>
         <div class="bk-modal__body">
-          <div class="bk-warn">
-            <i class="bi bi-info-circle-fill"></i>
-            <div>
-              Al restaurar, la copia elegida se descarga en una <strong>carpeta de recuperación segura</strong>
-              dentro del dominio (<code>~/restore/&lt;copia&gt;/</code>). <strong>No sobrescribe</strong> la web en
-              vivo: revisa los archivos restaurados y copia lo que necesites. Cada copia es un punto en el tiempo
-              al que puedes volver.
-            </div>
-          </div>
-
           <!-- Selector de dominio (cuando el backup cubre varios) -->
           <div v-if="restoreDomains.length > 1" class="bk-field" style="max-width:360px;margin-bottom:1rem">
             <label>Dominio a restaurar</label>
-            <select v-model="selectedRestoreDomain" class="form-select form-select-sm" @change="loadRestoreSnapshots">
+            <select v-model="selectedRestoreDomain" class="form-select form-select-sm"
+                    @change="restoreStep = 1; loadRestoreSnapshots()">
               <option value="" disabled>Elige un dominio…</option>
               <option v-for="d in restoreDomains" :key="d.domain" :value="d.domain">{{ d.domain }}</option>
             </select>
           </div>
 
-          <div v-if="snapshotsLoading" class="bk-center"><div class="spinner-border spinner-border-sm"></div></div>
-          <EmptyState v-else-if="restoreDomains.length > 1 && !selectedRestoreDomain" icon="hdd"
-                      title="Elige un dominio" description="Este backup cubre varios dominios. Selecciona arriba cuál restaurar." />
-          <EmptyState v-else-if="snapshots.length === 0" icon="hdd"
-                      title="Sin copias" description="Aún no hay copias para este dominio. Ejecuta el backup primero." />
-          <div v-else class="bk-table-wrap">
-            <table class="bk-table bk-table--sm">
-              <thead>
-                <tr><th>Fecha de la copia</th><th>ID</th><th class="bk-right"></th></tr>
-              </thead>
-              <tbody>
-                <tr v-for="s in snapshots" :key="s.id">
-                  <td class="bk-muted">{{ formatDateTime(s.time) }}</td>
-                  <td class="bk-muted"><code>{{ s.id }}</code></td>
-                  <td class="bk-right">
-                    <BaseButton variant="primary" size="sm" :loading="restoringSnap === s.id" @click="doRestore(s)">
-                      <i class="bi bi-arrow-counterclockwise"></i> Restaurar
-                    </BaseButton>
-                  </td>
-                </tr>
-              </tbody>
-            </table>
-          </div>
+          <!-- PASO 1: elegir la copia -->
+          <template v-if="restoreStep === 1">
+            <p class="bk-muted" style="margin:0 0 .6rem">Elige el punto en el tiempo al que quieres volver:</p>
+            <div v-if="snapshotsLoading" class="bk-center"><div class="spinner-border spinner-border-sm"></div></div>
+            <EmptyState v-else-if="restoreDomains.length > 1 && !selectedRestoreDomain" icon="hdd"
+                        title="Elige un dominio" description="Este backup cubre varios dominios. Selecciona arriba cuál restaurar." />
+            <EmptyState v-else-if="snapshots.length === 0" icon="hdd"
+                        title="Sin copias" description="Aún no hay copias para este dominio. Ejecuta el backup primero." />
+            <div v-else class="bk-table-wrap">
+              <table class="bk-table bk-table--sm">
+                <thead><tr><th>Fecha de la copia</th><th>ID</th><th class="bk-right"></th></tr></thead>
+                <tbody>
+                  <tr v-for="s in snapshots" :key="s.id">
+                    <td class="bk-muted">{{ formatDateTime(s.time) }}</td>
+                    <td class="bk-muted"><code>{{ s.id }}</code></td>
+                    <td class="bk-right">
+                      <BaseButton variant="primary" size="sm" :loading="loadingContents === s.id" @click="chooseSnapshot(s)">
+                        Elegir <i class="bi bi-arrow-right"></i>
+                      </BaseButton>
+                    </td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          </template>
+
+          <!-- PASO 2: qué y cómo restaurar -->
+          <template v-else-if="restoreStep === 2">
+            <button class="bk-link" @click="restoreStep = 1"><i class="bi bi-arrow-left"></i> Cambiar copia</button>
+            <p class="bk-muted" style="margin:.4rem 0 .8rem">
+              Copia del <strong>{{ formatDateTime(chosenSnap?.time) }}</strong>. Elige qué restaurar y cómo:
+            </p>
+
+            <!-- Qué restaurar -->
+            <div class="bk-section">
+              <div class="bk-section-title">¿Qué quieres restaurar?</div>
+              <div v-if="contentsLoading" class="bk-center"><div class="spinner-border spinner-border-sm"></div></div>
+              <template v-else>
+                <label v-if="contents.web" class="bk-check bk-check--row">
+                  <input type="checkbox" v-model="sel.web" /><i class="bi bi-folder"></i> Web (archivos del sitio)
+                </label>
+                <div v-if="contents.databases && contents.databases.length">
+                  <div class="bk-muted" style="margin:.5rem 0 .2rem"><i class="bi bi-database"></i> Bases de datos:</div>
+                  <label v-for="d in contents.databases" :key="d" class="bk-check bk-check--row" style="margin-left:1rem">
+                    <input type="checkbox" :value="d" v-model="sel.databases" /> {{ d }}
+                  </label>
+                </div>
+                <div v-if="contents.mail && contents.mail.length">
+                  <div class="bk-muted" style="margin:.5rem 0 .2rem"><i class="bi bi-envelope"></i> Buzones de correo:</div>
+                  <label v-for="m in contents.mail" :key="m" class="bk-check bk-check--row" style="margin-left:1rem">
+                    <input type="checkbox" :value="m" v-model="sel.mail" /> {{ m }}
+                  </label>
+                </div>
+                <p v-if="!contents.web && !contents.databases.length && !contents.mail.length" class="bk-muted">
+                  Esta copia no tiene contenido restaurable.
+                </p>
+              </template>
+            </div>
+
+            <!-- Cómo restaurar -->
+            <div class="bk-section">
+              <div class="bk-section-title">¿Cómo restaurar?</div>
+              <label class="bk-radio">
+                <input type="radio" :value="false" v-model="restoreOverwrite" />
+                <div>
+                  <strong>A una carpeta de recuperación</strong> (seguro)
+                  <div class="bk-muted">Descarga la copia en <code>~/restore/</code> sin tocar lo actual. Revisas y copias lo que necesites.</div>
+                </div>
+              </label>
+              <label class="bk-radio">
+                <input type="radio" :value="true" v-model="restoreOverwrite" />
+                <div>
+                  <strong style="color:var(--danger,#dc3545)">Sobrescribir en vivo</strong> (vuelve al estado de esta copia)
+                  <div class="bk-muted">Reemplaza la web/BD/correo actuales por los de la copia. <strong>Lo actual se pierde.</strong></div>
+                </div>
+              </label>
+            </div>
+          </template>
         </div>
         <div class="bk-modal__foot">
           <BaseButton variant="ghost" size="sm" @click="showRestore = false">Cerrar</BaseButton>
+          <BaseButton v-if="restoreStep === 2" :variant="restoreOverwrite ? 'danger' : 'primary'" size="sm"
+                      :loading="!!restoringSnap" :disabled="!sel.web && !sel.databases.length && !sel.mail.length"
+                      @click="doRestore">
+            <i class="bi bi-arrow-counterclockwise"></i>
+            {{ restoreOverwrite ? 'Sobrescribir ahora' : 'Restaurar a carpeta' }}
+          </BaseButton>
         </div>
       </div>
     </div>
@@ -662,6 +714,14 @@ export default {
     const snapshotsLoading = ref(false)
     const restoreOpts = ref({ files: true, databases: true, mail: false })
     const restoringSnap = ref(null)
+    // Restauración granular (paso 2)
+    const restoreStep = ref(1)
+    const chosenSnap = ref(null)
+    const loadingContents = ref(null)
+    const contentsLoading = ref(false)
+    const contents = ref({ web: false, mail: [], databases: [] })
+    const sel = ref({ web: false, mail: [], databases: [] })
+    const restoreOverwrite = ref(false)
 
     const domainName = (id) => {
       const d = domains.value.find(x => x.id === id)
@@ -873,6 +933,9 @@ export default {
     const openRestore = async (job) => {
       restoreJob.value = job
       showRestore.value = true
+      restoreStep.value = 1
+      chosenSnap.value = null
+      restoreOverwrite.value = false
       snapshotsLoading.value = true
       snapshots.value = []
       restoreDomains.value = []
@@ -908,19 +971,58 @@ export default {
       }
     }
 
-    const doRestore = async (snap) => {
-      if (!confirm(`¿Restaurar la copia del ${formatDateTime(snap.time)}?\nSe descargará en ~/restore/${snap.id}/ del dominio (NO se sobrescribe la web en vivo).`)) return
+    // Paso 1 → 2: elegida la copia, cargar su contenido (web/buzones/BD)
+    const chooseSnapshot = async (snap) => {
+      loadingContents.value = snap.id
+      contentsLoading.value = true
+      try {
+        chosenSnap.value = snap
+        contents.value = await api.getSnapshotContents(
+          restoreJob.value.id, snap.id, selectedRestoreDomain.value || null)
+        // preseleccionar todo por defecto
+        sel.value = {
+          web: !!contents.value.web,
+          databases: [...(contents.value.databases || [])],
+          mail: [...(contents.value.mail || [])],
+        }
+        restoreStep.value = 2
+      } catch (e) {
+        store.showNotification('Error leyendo la copia: ' + e.message, 'danger')
+      } finally {
+        loadingContents.value = null
+        contentsLoading.value = false
+      }
+    }
+
+    const doRestore = async () => {
+      const snap = chosenSnap.value
+      if (!snap) return
+      const parts = []
+      if (sel.value.web) parts.push('web')
+      if (sel.value.databases.length) parts.push(`${sel.value.databases.length} BD`)
+      if (sel.value.mail.length) parts.push(`${sel.value.mail.length} buzón(es)`)
+
+      if (restoreOverwrite.value) {
+        if (!confirm(`⚠️ SOBRESCRIBIR ${parts.join(', ')} con la copia del ${formatDateTime(snap.time)}.\n\nLo actual se PERDERÁ y se reemplazará por el estado de esa copia. ¿Continuar?`)) return
+      } else {
+        if (!confirm(`Restaurar ${parts.join(', ')} de la copia del ${formatDateTime(snap.time)} a ~/restore/${snap.id}/ (no toca lo actual). ¿Continuar?`)) return
+      }
 
       restoringSnap.value = snap.id
       try {
         const rec = await api.restoreBackup(restoreJob.value.id, {
           snapshot_name: snap.id,
           domain: selectedRestoreDomain.value || null,
+          overwrite: restoreOverwrite.value,
+          web: sel.value.web,
+          databases: sel.value.databases,
+          mail: sel.value.mail,
         })
         store.showNotification('Restauración iniciada…', 'info')
         const final = await pollRecord(rec.id)
         if (final && final.status === 'success') {
-          store.showNotification(`Copia restaurada en ~/restore/${snap.id}/`, 'success')
+          store.showNotification(restoreOverwrite.value
+            ? 'Restauración aplicada correctamente' : `Restaurado en ~/restore/${snap.id}/`, 'success')
           showRestore.value = false
         } else if (final && final.status === 'failed') {
           store.showNotification('Restauración fallida: ' + (final.error_message || 'error'), 'danger')
@@ -1032,6 +1134,8 @@ export default {
       showHistory, historyJob, records, historyLoading, expanded,
       showRestore, restoreJob, snapshots, snapshotsLoading, restoreOpts, restoringSnap,
       restoreDomains, selectedRestoreDomain, loadRestoreSnapshots,
+      restoreStep, chosenSnap, loadingContents, contentsLoading,
+      contents, sel, restoreOverwrite, chooseSnapshot,
       domainName, statusLabel, statusClass,
       openCreate, openEdit, closeForm, submitForm, testSftp,
       runJob, openHistory, deleteJob,
@@ -1090,6 +1194,10 @@ export default {
 .bk-tag--inc  { background: var(--success-bg); color: var(--success); border-color: transparent; }
 .bk-tag--full { background: var(--surface-inset); color: var(--text-muted); }
 .bk-tag--admin { background: var(--svq-orange, #e8590c); color: #fff; border-color: transparent; margin-left: .4rem; }
+.bk-check--row { display: flex; align-items: center; gap: .5rem; padding: .25rem 0; cursor: pointer; }
+.bk-radio { display: flex; align-items: flex-start; gap: .6rem; padding: .6rem; border: 1px solid var(--border); border-radius: var(--r-md); margin-bottom: .5rem; cursor: pointer; }
+.bk-radio input { margin-top: .25rem; }
+.bk-link { background: none; border: none; color: var(--svq-orange, #e8590c); cursor: pointer; font-size: .85rem; padding: 0; }
 
 /* Estado */
 .bk-status { display: inline-block; font-size: var(--fs-xs); font-weight: var(--fw-semibold); padding: 2px 9px; border-radius: var(--r-pill); }
