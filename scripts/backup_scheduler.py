@@ -29,7 +29,14 @@ _scheduler_lock = threading.Lock()
 # Importaciones pesadas a nivel de módulo (se cargan UNA sola vez cuando
 # FastAPI importa este módulo al arrancar). Si estuvieran dentro de los hilos,
 # Python las re-ejecutaría en cada tick causando una fuga de memoria masiva.
-from api.models.database import SessionLocal
+from api.models.database import SessionLocal, load_all_models
+# IMPRESCINDIBLE: cargar TODOS los modelos para que SQLAlchemy resuelva las
+# relationships por nombre (Domain → 'CronJob', User → 'GitDeployment', etc.).
+# Sin esto, la primera query del hilo del scheduler revienta con
+# InvalidRequestError('CronJob' failed to locate a name) y el hilo MUERE en
+# silencio → los backups programados NUNCA se ejecutan. (Ver memoria
+# svqpanel-load-all-models.)
+load_all_models()
 from api.models.models_backup import BackupJob, BackupRecord
 from api.models.models_domain import Domain
 from api.models.models_user import User
@@ -68,6 +75,31 @@ def _matches_field(expr: str, value: int) -> bool:
         return int(expr) == value
     except ValueError:
         return False
+
+
+def _now_local() -> datetime:
+    """Hora actual en la zona horaria configurada en el panel (settings.timezone).
+    Si no se puede leer, usa la del sistema operativo (que install/Settings ya
+    sincroniza con la elegida). Devuelve un datetime naive en hora local."""
+    tzname = None
+    try:
+        db = SessionLocal()
+        try:
+            from api.models.models_settings import Settings
+            s = db.query(Settings).first()
+            tzname = getattr(s, "timezone", None)
+        finally:
+            db.close()
+    except Exception:
+        tzname = None
+    if tzname:
+        try:
+            from zoneinfo import ZoneInfo
+            return datetime.now(ZoneInfo(tzname))
+        except Exception:
+            pass
+    # Fallback: hora local del sistema (timedatectl ya está en la zona elegida)
+    return datetime.now()
 
 
 def _cron_matches(job, now: datetime) -> bool:
@@ -243,7 +275,10 @@ def _scheduler_loop():
     time.sleep(wait)
 
     while True:
-        tick = datetime.now(timezone.utc)
+        # El cron de cada job se interpreta en la ZONA HORARIA configurada en el
+        # panel (settings.timezone, p. ej. Europe/Madrid), no en UTC: así "01:45"
+        # significa la 01:45 que ve el usuario, no UTC. tick = hora local del panel.
+        tick = _now_local()
         try:
             db = SessionLocal()
             try:

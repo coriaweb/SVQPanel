@@ -46,3 +46,4 @@ exit 0
 | 0007 | Terminal web — /proc hidepid (procesos) | 2026-06-08 |
 | 0008 | Backup scheduler interno (sin timer 1/min) | 2026-06-08 |
 | 0009 | Backups con restic (incremental+cifrado)   | 2026-06-09 |
+| 0010 | Fix planificador backups (TZ + no morir)   | 2026-06-09 |
