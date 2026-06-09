@@ -30,10 +30,11 @@ logger = logging.getLogger(__name__)
 # ─────────────────────────────────────────────────────────────────────────────
 @router.get("/fail2ban/status")
 async def f2b_overall_status(_: dict = Depends(require_admin)):
-    running = f2b.is_running()
+    # list_jails() ya falla limpio si fail2ban no corre → evitamos el ping extra.
+    jails = f2b.list_jails()
     return {
-        "running":     running,
-        "jails":       f2b.list_jails() if running else [],
+        "running":     bool(jails) or f2b.is_running(),
+        "jails":       jails,
         "ignoreip":    f2b.get_ignoreip(),
     }
 
@@ -43,13 +44,11 @@ async def list_jails(_: dict = Depends(require_admin)):
     if not f2b.is_running():
         raise HTTPException(status_code=503, detail="fail2ban no está corriendo")
     out: List[JailStatus] = []
-    for jail in f2b.list_jails():
-        status = f2b.jail_status(jail)
-        if not status:
-            continue
+    # Consulta todas las jails en paralelo (antes 6x en serie ~1.1s → ~0.15s)
+    for status in f2b.all_jail_status():
         out.append(
             JailStatus(
-                name              = jail,
+                name              = status["name"],
                 enabled           = True,
                 currently_failed  = status["currently_failed"],
                 total_failed      = status["total_failed"],

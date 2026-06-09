@@ -90,6 +90,20 @@ def jail_status(jail: str) -> Optional[Dict]:
     return result
 
 
+def all_jail_status() -> List[Dict]:
+    """Status de TODAS las jails, consultándolas EN PARALELO. Cada
+    'fail2ban-client status <jail>' es un proceso aparte (~0.12s); en serie con
+    6 jails son ~1.1s. En paralelo (ThreadPool) baja a ~0.15s. Devuelve la lista
+    de dicts de jail_status, en el orden de list_jails()."""
+    jails = list_jails()
+    if not jails:
+        return []
+    from concurrent.futures import ThreadPoolExecutor
+    with ThreadPoolExecutor(max_workers=min(8, len(jails))) as ex:
+        results = list(ex.map(jail_status, jails))
+    return [r for r in results if r]
+
+
 def all_banned() -> Dict[str, List[str]]:
     """Devuelve {jail: [ips]} de TODAS las jails en UNA sola llamada
     (`fail2ban-client banned`, fail2ban >= 0.11). ~6x más rápido que consultar
