@@ -266,6 +266,11 @@
           <table class="sec-table">
             <thead><tr><th>Jail</th><th>Failed</th><th>Banned</th><th style="text-align:right">Acción</th></tr></thead>
             <tbody>
+              <tr v-if="f2bLoading && !jails.length">
+                <td colspan="4" style="text-align:center;padding:1rem">
+                  <span class="spinner-border spinner-border-sm"></span> Consultando jails…
+                </td>
+              </tr>
               <tr v-for="j in jails" :key="j.name">
                 <td><strong>{{ j.name }}</strong></td>
                 <td>{{ j.currently_failed }} / {{ j.total_failed }}</td>
@@ -282,10 +287,13 @@
       <div style="display:flex;flex-direction:column;gap:16px">
         <div class="sec-card">
           <div class="sec-card-head">
-            <span class="sec-card-title">IPs baneadas</span>
+            <span class="sec-card-title">IPs baneadas
+              <span v-if="f2bLoading" class="spinner-border spinner-border-sm" style="margin-left:.4rem"></span>
+            </span>
             <button class="sec-btn sec-btn--success sec-btn--sm" @click="openManualBan"><i class="bi bi-plus-lg"></i> Banear IP</button>
           </div>
-          <div v-if="!banned.length" class="sec-empty"><i class="bi bi-unlock"></i><span>No hay IPs baneadas.</span></div>
+          <div v-if="f2bLoading && !banned.length" class="sec-empty"><span class="spinner-border spinner-border-sm"></span><span>Consultando fail2ban…</span></div>
+          <div v-else-if="!banned.length" class="sec-empty"><i class="bi bi-unlock"></i><span>No hay IPs baneadas.</span></div>
           <div v-else class="sec-table-wrap">
             <table class="sec-table">
               <thead><tr><th>IP</th><th>Jail</th><th>Por</th><th style="text-align:right">Acción</th></tr></thead>
