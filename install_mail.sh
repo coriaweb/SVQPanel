@@ -340,6 +340,21 @@ clamav {
 }
 RSPAMDAVEOF
 
+    # ── Resolver DNS para Rspamd ──────────────────────────────────────────────
+    # Las DNSBL (Spamhaus/URIBL/dnswl…) BLOQUEAN las consultas desde resolvers
+    # públicos (8.8.8.8, 1.1.1.1) devolviendo 127.0.0.1 o respuestas falsas, lo
+    # que tira las listas y empeora el antispam. Hay que usar un resolver propio:
+    # aquí el BIND local (127.0.0.1) que el panel ya instala para el DNS de los
+    # dominios. Así las listas vuelven a responder correctamente.
+    cat > /etc/rspamd/local.d/options.inc << 'RSPAMDDNSEOF'
+dns {
+  nameserver = ["127.0.0.1"];
+  timeout = 1s;
+  sockets = 16;
+  retransmits = 5;
+}
+RSPAMDDNSEOF
+
     systemctl enable rspamd
     systemctl restart rspamd
     echo -e "${GREEN}✓ Rspamd configurado (antispam + DKIM + greylisting + Bayes + ClamAV)${NC}"
