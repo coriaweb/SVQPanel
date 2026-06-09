@@ -63,20 +63,24 @@ def list_base_ports() -> dict:
     critical,open}]}.
     """
     open_tcp, open_udp = set(), set()
+    # Listamos SOLO los dos sets de puertos base, NO toda la tabla: 'nft list
+    # table' vuelca también los miles de rangos del geo-bloqueo (~20k líneas →
+    # ~0.7s); 'nft list set' de cada set es ~0.01s.
     try:
-        r = subprocess.run([NFT_BIN, "list", "table", "inet", "svqpanel"],
-                           capture_output=True, text=True, timeout=10)
-        if r.returncode == 0:
-            txt = r.stdout
-            for set_name, dest in (("base_tcp_ports", open_tcp), ("base_udp_ports", open_udp)):
-                m = re.search(rf"set {set_name} \{{(.*?)\}}", txt, re.DOTALL)
-                if m:
-                    for tok in re.findall(r"\d+(?:-\d+)?", m.group(1)):
-                        if "-" in tok:
-                            a, b = tok.split("-")
-                            dest.update(range(int(a), int(b) + 1))
-                        else:
-                            dest.add(int(tok))
+        for set_name, dest in (("base_tcp_ports", open_tcp), ("base_udp_ports", open_udp)):
+            r = subprocess.run(
+                [NFT_BIN, "list", "set", "inet", "svqpanel", set_name],
+                capture_output=True, text=True, timeout=10)
+            if r.returncode != 0:
+                continue
+            m = re.search(r"elements\s*=\s*\{(.*?)\}", r.stdout, re.DOTALL)
+            if m:
+                for tok in re.findall(r"\d+(?:-\d+)?", m.group(1)):
+                    if "-" in tok:
+                        a, b = tok.split("-")
+                        dest.update(range(int(a), int(b) + 1))
+                    else:
+                        dest.add(int(tok))
     except Exception as e:
         return {"available": False, "error": str(e), "ports": []}
 
