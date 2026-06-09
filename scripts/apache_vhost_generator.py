@@ -120,6 +120,16 @@ def generate_apache_vhost(
         AllowOverride All
         Require all granted
     </Directory>
+
+    # Cache de navegador para estáticos (acelera visitas repetidas). mod_expires
+    # se ignora si el módulo no está; el .htaccess del cliente puede sobreescribir.
+    <IfModule mod_expires.c>
+        ExpiresActive On
+        <FilesMatch "\\.(?:css|js|jpg|jpeg|png|gif|ico|webp|avif|svg|woff|woff2|ttf|eot|otf|mp4|webm|ogg|mp3|pdf)$">
+            ExpiresDefault "access plus 30 days"
+            Header set Cache-Control "public, max-age=2592000"
+        </FilesMatch>
+    </IfModule>
 {readonly_block}{custom_block}
     # Proteger ficheros sensibles aunque el .htaccess del cliente no lo haga
     <FilesMatch "(^\\.|\\.(env|git|sql|bak|old|log|sh)$)">

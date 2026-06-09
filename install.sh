@@ -564,6 +564,7 @@ if [[ "$WEBSERVER" == "apache+nginx" ]]; then
     # del visitante a través del proxy nginx), headers (por si un .htaccess los usa).
     a2enmod rewrite
     a2enmod headers
+    a2enmod expires       # cache de navegador para estáticos (mod_expires)
     a2enmod proxy
     a2enmod proxy_fcgi
     a2enmod setenvif

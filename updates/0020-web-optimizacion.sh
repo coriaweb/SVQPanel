@@ -35,7 +35,14 @@ else
     echo "  gzip ya estaba configurado"
 fi
 
-# 2) Regenerar vhosts (añade el bloque de cache de estáticos del código nuevo)
+# 2) Si hay Apache (modo dual), activar mod_expires para la cache de estáticos.
+if command -v a2enmod >/dev/null 2>&1; then
+    a2enmod expires >/dev/null 2>&1 && systemctl reload apache2 2>/dev/null || true
+    echo "  mod_expires activado en Apache (modo dual)"
+fi
+
+# 3) Regenerar vhosts (añade el bloque de cache de estáticos del código nuevo,
+#    tanto en nginx-puro como en Apache+nginx).
 cd /opt/svqpanel || exit 1
 /opt/svqpanel/venv/bin/python -m api.cli migrate_php_pools --force 2>&1 | tail -2 || \
     echo "  ⚠ migrate_php_pools devolvió error (revisa el log), continúo"
