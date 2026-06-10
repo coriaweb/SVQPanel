@@ -49,6 +49,7 @@ def load_all_models():
         models_security, models_server_ip, models_backup, models_notification,
         models_git, models_plan, models_cron, models_template,
         models_sftp_account, models_metrics, models_migration,
+        models_api_token,
     )
 
 

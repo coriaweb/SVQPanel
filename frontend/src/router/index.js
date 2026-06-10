@@ -27,6 +27,7 @@ const Backups        = () => import('../views/Backups.vue')
 const Terminal       = () => import('../views/Terminal.vue')
 const ServerIPs      = () => import('../views/ServerIPs.vue')
 const SystemUpdates  = () => import('../views/SystemUpdates.vue')
+const ApiTokens      = () => import('../views/ApiTokens.vue')
 
 const isAuthenticated = () => {
   return !!localStorage.getItem('token')
@@ -98,6 +99,12 @@ const routes = [
     name: 'DbTuner',
     component: DbTuner,
     meta: { requiresAuth: true, requiresAdmin: true }
+  },
+  {
+    path: '/api-tokens',
+    name: 'ApiTokens',
+    component: ApiTokens,
+    meta: { requiresAuth: true }
   },
   {
     path: '/migrations',

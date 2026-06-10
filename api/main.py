@@ -13,7 +13,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from api.models.database import create_tables, get_db
 from config.config import PANEL_NAME, PANEL_VERSION
 
-from api.routes import users, domains, php, ssl, ipv6, auth, settings, dns, system, mail, databases, firewall, fail2ban, security_monitor, ip_lists, file_manager, crowdsec, plans, sftp, crons, server_ips, backups, templates, notifications, dns_cluster, git, git_webhook, monitoring, db_tuner, migrations, terminal, license
+from api.routes import users, domains, php, ssl, ipv6, auth, settings, dns, system, mail, databases, firewall, fail2ban, security_monitor, ip_lists, file_manager, crowdsec, plans, sftp, crons, server_ips, backups, templates, notifications, dns_cluster, git, git_webhook, monitoring, db_tuner, migrations, terminal, license, api_tokens
 
 # Crear app FastAPI
 app = FastAPI(
@@ -674,6 +674,24 @@ def _run_migrations():
         # Fase 21 — Tuning de recursos del pool PHP-FPM por dominio
         # ─────────────────────────────────────────────────────────────────
         "ALTER TABLE domains ADD COLUMN IF NOT EXISTS fpm_pool_overrides TEXT",
+        # ─────────────────────────────────────────────────────────────────
+        # API tokens (acceso programático). El token hereda el rol del dueño;
+        # solo se guarda el hash. Caducidad y allowlist de IPs opcionales.
+        # ─────────────────────────────────────────────────────────────────
+        """CREATE TABLE IF NOT EXISTS api_tokens (
+            id           SERIAL PRIMARY KEY,
+            user_id      INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+            name         VARCHAR(64)  NOT NULL,
+            token_hash   VARCHAR(255) NOT NULL UNIQUE,
+            prefix       VARCHAR(16)  NOT NULL,
+            allowed_ips  TEXT,
+            expires_at   TIMESTAMP,
+            last_used_at TIMESTAMP,
+            is_revoked   BOOLEAN NOT NULL DEFAULT FALSE,
+            created_at   TIMESTAMP NOT NULL DEFAULT NOW()
+        )""",
+        "CREATE INDEX IF NOT EXISTS ix_api_tokens_user_id ON api_tokens(user_id)",
+        "CREATE INDEX IF NOT EXISTS ix_api_tokens_token_hash ON api_tokens(token_hash)",
     ]
     with engine.connect() as conn:
         for sql in migrations:
@@ -784,6 +802,7 @@ app.include_router(git.router,               prefix="/api", tags=["Git Deploy"])
 app.include_router(monitoring.router,        prefix="/api", tags=["Monitoring"])
 app.include_router(db_tuner.router,          prefix="/api", tags=["DB Tuner"])
 app.include_router(migrations.router,        prefix="/api", tags=["Migrations"])
+app.include_router(api_tokens.router,        prefix="/api", tags=["API Tokens"])
 # Autoconfig/Autodiscover sin prefijo (clientes de correo los buscan en rutas raíz)
 app.include_router(mail.router, prefix="", include_in_schema=False)
 # Webhook de despliegue Git sin prefijo (GitHub/GitLab llaman a /git/webhook/{token})
