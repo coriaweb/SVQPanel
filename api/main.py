@@ -119,18 +119,36 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
         )
         # CSP: bloquea embedding y limita orígenes. Permisivo con los CDN que
         # usa la SPA (Bootstrap Icons, fuentes) e inline styles de Vue.
-        response.headers.setdefault(
-            "Content-Security-Policy",
-            "default-src 'self'; "
-            "img-src 'self' data: blob:; "
-            "style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net https://fonts.googleapis.com; "
-            "font-src 'self' https://cdn.jsdelivr.net https://fonts.gstatic.com; "
-            "script-src 'self' https://cdn.jsdelivr.net; "
-            "connect-src 'self'; "
-            "frame-ancestors 'self'; "
-            "base-uri 'self'; "
-            "form-action 'self'"
-        )
+        #
+        # Swagger UI (/docs) inyecta un <script> inline de inicialización y usa
+        # workers blob:, que la CSP estricta del panel bloquea (página en blanco).
+        # Solo en las rutas de documentación servimos una CSP algo más laxa
+        # (script inline + worker blob:), SIN debilitar la del resto del panel.
+        path = request.url.path
+        if path.startswith("/docs") or path.startswith("/redoc"):
+            response.headers["Content-Security-Policy"] = (
+                "default-src 'self'; "
+                "img-src 'self' data: blob: https://cdn.jsdelivr.net https://fastapi.tiangolo.com; "
+                "style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net https://fonts.googleapis.com; "
+                "font-src 'self' https://cdn.jsdelivr.net https://fonts.gstatic.com; "
+                "script-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; "
+                "worker-src 'self' blob:; "
+                "connect-src 'self'; "
+                "frame-ancestors 'self'; base-uri 'self'"
+            )
+        else:
+            response.headers.setdefault(
+                "Content-Security-Policy",
+                "default-src 'self'; "
+                "img-src 'self' data: blob:; "
+                "style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net https://fonts.googleapis.com; "
+                "font-src 'self' https://cdn.jsdelivr.net https://fonts.gstatic.com; "
+                "script-src 'self' https://cdn.jsdelivr.net; "
+                "connect-src 'self'; "
+                "frame-ancestors 'self'; "
+                "base-uri 'self'; "
+                "form-action 'self'"
+            )
         return response
 
 app.add_middleware(SecurityHeadersMiddleware)
