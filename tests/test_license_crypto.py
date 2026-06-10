@@ -37,9 +37,10 @@ def test_canonical_message_sin_espacios_y_slashes_sin_escapar():
 def test_firma_valida_se_acepta(monkeypatch):
     # Generamos un par de claves de prueba y "embebemos" la pública en el módulo.
     priv = Ed25519PrivateKey.generate()
+    from cryptography.hazmat.primitives import serialization
     pub_raw = priv.public_key().public_bytes(
-        encoding=__import__("cryptography").hazmat.primitives.serialization.Encoding.Raw,
-        format=__import__("cryptography").hazmat.primitives.serialization.PublicFormat.Raw,
+        encoding=serialization.Encoding.Raw,
+        format=serialization.PublicFormat.Raw,
     )
     monkeypatch.setattr(lic, "LICENSE_PUBLIC_KEY_B64", base64.b64encode(pub_raw).decode())
 
