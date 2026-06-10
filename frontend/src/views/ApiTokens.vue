@@ -17,7 +17,9 @@
     <div class="alert alert-info">
       <i class="bi bi-info-circle-fill me-2"></i>
       Usa el token en la cabecera <code>Authorization: Bearer &lt;token&gt;</code>.
-      La referencia de la API está en <a href="/docs" target="_blank">/docs</a> (Swagger).
+      La referencia interactiva de la API está en
+      <a href="/docs" target="_blank">/docs</a> (Swagger, para probar) y
+      <a href="/redoc" target="_blank">/redoc</a> (lectura).
       El token hereda <strong>tus permisos</strong>: solo puede hacer lo que tú puedes hacer en el panel.
     </div>
 

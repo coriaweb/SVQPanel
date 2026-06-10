@@ -15,11 +15,92 @@ from config.config import PANEL_NAME, PANEL_VERSION
 
 from api.routes import users, domains, php, ssl, ipv6, auth, settings, dns, system, mail, databases, firewall, fail2ban, security_monitor, ip_lists, file_manager, crowdsec, plans, sftp, crons, server_ips, backups, templates, notifications, dns_cluster, git, git_webhook, monitoring, db_tuner, migrations, terminal, license, api_tokens
 
+# ── Descripción de la API (se muestra en /docs y /redoc) ──────────────────────
+API_DESCRIPTION = f"""
+API REST de **{PANEL_NAME}** para automatizar el panel: dominios, bases de datos,
+DNS, correo, copias de seguridad, SSL, etc. Todo lo que hace la interfaz web está
+disponible aquí.
+
+## Autenticación
+
+Hay dos formas de autenticarte; en ambas se envía un *token* en la cabecera:
+
+```
+Authorization: Bearer <token>
+```
+
+1. **Login con usuario/contraseña** — `POST /api/auth/login` devuelve un token JWT
+   que caduca a las 24 h. Si tienes 2FA, requiere un segundo paso. Útil para la
+   propia web del panel.
+2. **API token** (recomendado para scripts/integraciones) — crea uno en el panel
+   (*Sistema → API Tokens*). Empieza por `svq_`, **no caduca** (salvo que le pongas
+   fecha), **salta el 2FA** y puede limitarse a IPs concretas. Revócalo cuando
+   quieras desde el panel.
+
+### Ejemplo (API token)
+
+```bash
+# Listar tus dominios
+curl -H "Authorization: Bearer svq_tu_token_aqui" \\
+     https://tu-panel:8083/api/domains
+
+# Crear un dominio
+curl -X POST -H "Authorization: Bearer svq_tu_token_aqui" \\
+     -H "Content-Type: application/json" \\
+     -d '{{"domain_name": "ejemplo.com", "php_version": "8.3"}}' \\
+     https://tu-panel:8083/api/domains
+```
+
+## Permisos según tu rol
+
+El token **hereda tus permisos**: solo puede hacer lo que tú puedes hacer en el panel.
+
+- **Administrador**: gestiona todo el servidor (usuarios, IPs, firewall, tuning…).
+- **Revendedor**: gestiona sus clientes y los dominios/BD de estos.
+- **Usuario final**: gestiona únicamente sus propios dominios, BD, correo y archivos.
+
+Si un token intenta una acción para la que su dueño no tiene permiso, la API
+responde **403 Forbidden** (igual que en la web).
+
+## Códigos de respuesta habituales
+
+| Código | Significado |
+|--------|-------------|
+| 200 / 201 | OK / creado |
+| 401 | Falta el token o no es válido / caducado |
+| 402 | El panel no tiene una licencia válida (operaciones de escritura bloqueadas) |
+| 403 | Tu rol no tiene permiso para esa acción (o IP no autorizada del token) |
+| 404 | El recurso no existe |
+| 422 | Datos de entrada inválidos (mira el detalle del error) |
+
+> Consejo: usa **API tokens** con *allowlist de IPs* para automatizaciones — son
+> revocables y no dependen de tu contraseña ni del 2FA.
+"""
+
+# Agrupaciones de endpoints (orden y descripción de cada sección en /docs).
+TAGS_METADATA = [
+    {"name": "Authentication", "description": "Login, logout, cambio de contraseña y 2FA."},
+    {"name": "API Tokens", "description": "Crear/listar/revocar tokens de acceso programático."},
+    {"name": "Domains", "description": "Alta, baja y configuración de dominios (PHP, SSL, IPv6…)."},
+    {"name": "Databases", "description": "Bases de datos MariaDB de clientes y acceso remoto."},
+    {"name": "DNS", "description": "Zonas y registros DNS."},
+    {"name": "Mail", "description": "Dominios de correo, buzones y alias."},
+    {"name": "Backups", "description": "Copias de seguridad (local, SFTP, S3; restic)."},
+    {"name": "Users", "description": "Cuentas del panel (admin/revendedor/usuario)."},
+    {"name": "SSL", "description": "Certificados Let's Encrypt por dominio."},
+    {"name": "PHP", "description": "Versiones de PHP y ajustes por dominio."},
+    {"name": "Firewall", "description": "Reglas de firewall (solo admin)."},
+    {"name": "System", "description": "Estado del servidor y servicios (solo admin)."},
+]
+
 # Crear app FastAPI
 app = FastAPI(
-    title=PANEL_NAME,
-    description="Panel de control para servidores web",
+    title=f"{PANEL_NAME} — API",
+    description=API_DESCRIPTION,
     version=PANEL_VERSION,
+    openapi_tags=TAGS_METADATA,
+    contact={"name": "SVQHost", "url": "https://svqhost.red"},
+    license_info={"name": "SVQPanel"},
 )
 
 # ── Cabeceras de seguridad HTTP en todas las respuestas del panel ──

@@ -1959,9 +1959,14 @@ server {
         proxy_set_header X-Forwarded-Proto $scheme;
     }
 
-    # Docs API → proxy al backend
+    # Docs API → proxy al backend (Swagger /docs, ReDoc /redoc, esquema OpenAPI)
     location /docs {
         proxy_pass http://svqpanel_backend/docs;
+        proxy_set_header Host $host;
+    }
+
+    location /redoc {
+        proxy_pass http://svqpanel_backend/redoc;
         proxy_set_header Host $host;
     }
 
