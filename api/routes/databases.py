@@ -1169,12 +1169,20 @@ def _add_remote_db_user(client_db: ClientDatabase, ip: str) -> None:
             password = _decrypt_password(client_db.db_password_enc)
         except Exception:
             password = None
-    if password:
-        safe_pw = password.replace("'", "''")
-        _run_mariadb(f"CREATE USER IF NOT EXISTS '{safe_u}'@'{safe_ip}' IDENTIFIED BY '{safe_pw}';")
-    else:
-        # Sin contraseña recuperable: crear sin auth y avisar (raro)
-        _run_mariadb(f"CREATE USER IF NOT EXISTS '{safe_u}'@'{safe_ip}';")
+    # SEGURIDAD: nunca crear un usuario remoto SIN contraseña (quedaría accesible
+    # sin auth desde esa IP). Si no se puede recuperar la contraseña, abortar y
+    # pedir que el cliente la restablezca primero.
+    if not password:
+        raise HTTPException(
+            status_code=409,
+            detail=("No se puede activar el acceso remoto: la contraseña de esta "
+                    "base de datos no es recuperable. Cámbiala primero (Cambiar "
+                    "contraseña) y vuelve a autorizar la IP."),
+        )
+    safe_pw = password.replace("'", "''")
+    _run_mariadb(f"CREATE USER IF NOT EXISTS '{safe_u}'@'{safe_ip}' IDENTIFIED BY '{safe_pw}';")
+    # Asegurar la contraseña aunque el usuario ya existiera sin ella (idempotente)
+    _run_mariadb(f"ALTER USER '{safe_u}'@'{safe_ip}' IDENTIFIED BY '{safe_pw}';")
     _run_mariadb(_grant_sql(client_db.db_name, client_db.db_user, ip))
     _run_mariadb("FLUSH PRIVILEGES;")
 
@@ -1261,17 +1269,39 @@ async def add_remote_host(db_id: int, payload: RemoteHostIn,
     from api.utils import nftables_helper as nft
 
     first_ever = not _any_remote_hosts(db)
-    # 1) MariaDB: usuario por IP
-    _add_remote_db_user(cdb, ip)
-    # 2) MariaDB escucha pública si es la primera IP del servidor
-    if first_ever:
-        _ensure_mysql_bind(db, True)
-        _add_remote_db_user(cdb, ip)   # recrear tras reinicio por si acaso (idempotente)
-    # 3) Firewall: abrir 3306 a esa IP
-    nft.mysql_remote_add_ip(ip)
-    # 4) Registrar en BD
-    db.add(DbRemoteHost(database_id=db_id, ip=ip))
-    db.commit()
+    user_created = False
+    fw_opened = False
+    try:
+        # 1) MariaDB: usuario por IP (puede abortar con 409 si no hay contraseña)
+        _add_remote_db_user(cdb, ip)
+        user_created = True
+        # 2) MariaDB escucha pública si es la primera IP del servidor
+        if first_ever:
+            _ensure_mysql_bind(db, True)
+            _add_remote_db_user(cdb, ip)   # recrear tras reinicio (idempotente)
+        # 3) Firewall: abrir 3306 a esa IP
+        nft.mysql_remote_add_ip(ip)
+        fw_opened = True
+        # 4) Registrar en BD
+        db.add(DbRemoteHost(database_id=db_id, ip=ip))
+        db.commit()
+    except HTTPException:
+        raise   # 409 de "sin contraseña": nada que limpiar (no se creó nada)
+    except Exception as e:
+        # Algo falló a mitad: deshacer lo aplicado para no dejar estado parcial
+        db.rollback()
+        if fw_opened:
+            try: nft.mysql_remote_remove_ip(ip)
+            except Exception: pass
+        if user_created:
+            try: _drop_remote_db_user(cdb, ip)
+            except Exception: pass
+        # Si activamos la escucha pública y ya no queda ninguna IP, cerrarla
+        if first_ever and not _any_remote_hosts(db):
+            try: _ensure_mysql_bind(db, False)
+            except Exception: pass
+        raise HTTPException(status_code=500,
+            detail=f"No se pudo activar el acceso remoto: {e}")
     return {"status": "success", "ip": ip,
             "message": f"IP {ip} autorizada para acceso remoto a {cdb.db_name}"}
 
