@@ -69,21 +69,18 @@ async def assign_ipv6(
         db.rollback()
         raise HTTPException(status_code=500, detail=f"Error al guardar IPv6: {str(e)}")
 
-    # 3. Regenerar nginx con la IPv6 para que escuche en esa IP
+    # 3. Regenerar el vhost preservando TODO el estado del dominio (modo Apache
+    #    incluido). Usamos el regenerador completo, NO update_nginx_ipv6, que
+    #    perdía proxy_to_apache y el resto de directivas → rompía el dominio en
+    #    modo Apache+Nginx al asignar IPv6.
     try:
-        domain_manager = DomainManager()
-        domain_manager.update_nginx_ipv6(
-            username=owner.username,
-            domain_name=domain.domain_name,
-            php_version=domain.php_version or "8.2",
-            ipv6_address=data.ipv6_address,
-            ssl_enabled=domain.ssl_enabled or False
-        )
+        from api.routes.domains import _regenerate_domain_vhost
+        _regenerate_domain_vhost(domain, owner)
     except Exception as e:
         # nginx falló pero la IP ya está asignada — avisar pero no revertir
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"IPv6 asignada pero error al actualizar nginx: {str(e)}"
+            detail=f"IPv6 asignada pero error al actualizar el vhost: {str(e)}"
         )
 
     return IPv6Response(
@@ -140,20 +137,19 @@ async def delete_ipv6(
         except Exception as e:
             print(f"Warning: no se pudo quitar IPv6 del sistema: {e}")
 
-        # 2. Regenerar nginx sin IPv6
+        # 2. Poner ipv6=None ANTES de regenerar (el regenerador lee domain.ipv6)
+        domain.ipv6 = None
+        db.commit()
+        db.refresh(domain)
+
+        # 3. Regenerar el vhost SIN IPv6, preservando el resto (modo Apache incl.)
         if owner:
             try:
-                domain_manager = DomainManager()
-                domain_manager.update_nginx_ipv6(
-                    username=owner.username,
-                    domain_name=domain.domain_name,
-                    php_version=domain.php_version or "8.2",
-                    ipv6_address=None,
-                    ssl_enabled=domain.ssl_enabled or False
-                )
+                from api.routes.domains import _regenerate_domain_vhost
+                _regenerate_domain_vhost(domain, owner)
             except Exception as e:
-                print(f"Warning: no se pudo actualizar nginx: {e}")
-
-    domain.ipv6 = None
-    db.commit()
+                print(f"Warning: no se pudo actualizar el vhost: {e}")
+    else:
+        domain.ipv6 = None
+        db.commit()
     return None
