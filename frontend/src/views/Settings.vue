@@ -548,27 +548,32 @@
             <div v-if="!panelBackups.length" class="text-muted small">
               No hay backups todavía. Pulsa «Backup ahora» para crear el primero.
             </div>
-            <div v-else class="pb-list">
-              <div class="pb-row pb-row--head">
-                <span>Fecha</span><span>Tamaño</span><span class="text-end">Acciones</span>
+            <template v-else>
+              <div class="d-flex justify-content-between align-items-end mb-1">
+                <span class="small text-muted">{{ panelBackups.length }} {{ panelBackups.length === 1 ? 'copia' : 'copias' }}</span>
               </div>
-              <div v-for="b in panelBackups" :key="b.timestamp" class="pb-row">
-                <span>{{ formatBackupDate(b.created_at) }}</span>
-                <span>{{ fmtBytes(b.size) }}</span>
-                <span class="text-end">
-                  <a v-if="b.db_file" :href="downloadUrl(b.db_file)" class="pb-dl" title="Base de datos">
-                    <i class="bi bi-filetype-sql"></i> BD
-                  </a>
-                  <a v-if="b.config_file" :href="downloadUrl(b.config_file)" class="pb-dl ms-2" title="Configuración">
-                    <i class="bi bi-file-zip"></i> Config
-                  </a>
-                  <button v-if="b.db_file" class="btn btn-link btn-sm text-danger p-0 ms-2"
-                          @click="askRestore(b)" title="Restaurar la BD desde esta copia">
-                    <i class="bi bi-arrow-counterclockwise"></i> Restaurar
-                  </button>
-                </span>
+              <div class="pb-list">
+                <div class="pb-row pb-row--head">
+                  <span>Fecha</span><span>Tamaño</span><span class="text-end">Acciones</span>
+                </div>
+                <div v-for="b in panelBackups" :key="b.timestamp" class="pb-row">
+                  <span>{{ formatBackupDate(b.created_at) }}</span>
+                  <span>{{ fmtBytes(b.size) }}</span>
+                  <span class="pb-actions">
+                    <a v-if="b.db_file" :href="downloadUrl(b.db_file)" class="pb-dl" title="Descargar base de datos">
+                      <i class="bi bi-filetype-sql"></i> BD
+                    </a>
+                    <a v-if="b.config_file" :href="downloadUrl(b.config_file)" class="pb-dl" title="Descargar configuración">
+                      <i class="bi bi-file-zip"></i> Config
+                    </a>
+                    <button v-if="b.db_file" class="pb-restore"
+                            @click="askRestore(b)" title="Restaurar la BD desde esta copia">
+                      <i class="bi bi-arrow-counterclockwise"></i> Restaurar
+                    </button>
+                  </span>
+                </div>
               </div>
-            </div>
+            </template>
 
             <details class="mt-3">
               <summary class="small text-muted" style="cursor:pointer">Restaurar manualmente por SSH</summary>
@@ -1572,13 +1577,37 @@ export default {
 .set-tab--active { background:var(--surface); color:var(--text); box-shadow:0 1px 3px rgba(0,0,0,.08); }
 
 /* Lista de backups del panel */
-.pb-list { display:flex; flex-direction:column; border:1px solid var(--border); border-radius:var(--r-sm,6px); overflow:hidden; }
-.pb-row { display:grid; grid-template-columns:1fr auto 230px; gap:1rem; padding:.55rem .85rem; align-items:center; font-size:.85rem; border-bottom:1px solid var(--border); }
+.pb-list {
+  display:flex; flex-direction:column;
+  border:1px solid var(--border); border-radius:var(--r-md,8px);
+  overflow-y:auto; overflow-x:hidden;
+  max-height:340px;                 /* ~7 filas visibles; el resto con scroll */
+}
+.pb-row {
+  display:grid; grid-template-columns:1fr 90px minmax(220px,auto);
+  gap:1rem; padding:.6rem .85rem; align-items:center;
+  font-size:.85rem; border-bottom:1px solid var(--border);
+}
 .pb-row:last-child { border-bottom:none; }
-.pb-row--head { background:var(--surface-2); font-size:.72rem; font-weight:600; text-transform:uppercase; letter-spacing:.04em; color:var(--text-muted); }
-.pb-dl { display:inline-flex; align-items:center; gap:3px; font-size:.78rem; color:var(--ac); text-decoration:none; }
+.pb-row--head {
+  position:sticky; top:0; z-index:1;       /* la cabecera no se va al hacer scroll */
+  background:var(--surface-2);
+  font-size:.72rem; font-weight:600; text-transform:uppercase;
+  letter-spacing:.04em; color:var(--text-muted);
+}
+.pb-actions { display:flex; align-items:center; justify-content:flex-end; gap:.75rem; }
+.pb-dl { display:inline-flex; align-items:center; gap:4px; font-size:.8rem; color:var(--ac); text-decoration:none; white-space:nowrap; }
 .pb-dl:hover { text-decoration:underline; }
-@media (max-width:560px) { .pb-row { grid-template-columns:1fr auto; } .pb-row span:nth-child(2) { display:none; } }
+.pb-restore {
+  display:inline-flex; align-items:center; gap:4px;
+  font-size:.8rem; color:var(--danger,#dc3545); background:none; border:none;
+  padding:0; cursor:pointer; white-space:nowrap;
+}
+.pb-restore:hover { text-decoration:underline; }
+@media (max-width:600px) {
+  .pb-row { grid-template-columns:1fr auto; }
+  .pb-row span:nth-child(2), .pb-row--head span:nth-child(2) { display:none; }
+}
 .pb-modal-backdrop { position:fixed; inset:0; background:rgba(0,0,0,.5); display:flex; align-items:center; justify-content:center; z-index:1060; padding:1rem; }
 .pb-modal-card { background:var(--surface,#fff); border-radius:var(--r-md,10px); padding:1.25rem 1.5rem; width:100%; max-width:460px; box-shadow:0 20px 60px rgba(0,0,0,.35); }
 
