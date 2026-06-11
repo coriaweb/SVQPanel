@@ -521,7 +521,7 @@
         <div class="card">
           <div class="card-header d-flex justify-content-between align-items-center">
             <span><i class="bi bi-database-fill-down me-2"></i> Backup del panel</span>
-            <button class="btn btn-primary btn-sm" @click="runPanelBackup" :disabled="pbRunning">
+            <button class="btn btn-sm btn-outline-primary" @click="runPanelBackup" :disabled="pbRunning">
               <span v-if="pbRunning" class="spinner-border spinner-border-sm me-1"></span>
               <i v-else class="bi bi-play-circle me-1"></i> Backup ahora
             </button>
