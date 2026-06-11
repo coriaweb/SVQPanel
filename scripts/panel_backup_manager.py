@@ -107,10 +107,15 @@ class PanelBackupManager(SystemManager):
         env["PGPASSWORD"] = db["password"]
         env["PATH"] = self._SYSTEM_PATH
 
-        # pg_dump → gzip a fichero
+        # pg_dump → gzip a fichero.
+        # --no-owner / --no-acl: el dump NO lleva sentencias de ownership ni de
+        # privilegios (GRANT/ALTER DEFAULT PRIVILEGES). panel_user no puede
+        # aplicarlas al restaurar (PG15+ → "permission denied to change default
+        # privileges"), y para una BD de un único dueño no aportan nada.
         with open(out_gz, "wb") as fh:
             dump = subprocess.Popen(
-                ["pg_dump", "-h", db["host"], "-p", db["port"], "-U", db["user"], db["dbname"]],
+                ["pg_dump", "--no-owner", "--no-acl",
+                 "-h", db["host"], "-p", db["port"], "-U", db["user"], db["dbname"]],
                 stdout=subprocess.PIPE, stderr=subprocess.PIPE, env=env,
             )
             gz = subprocess.Popen(["gzip", "-9"], stdin=dump.stdout, stdout=fh)
@@ -227,7 +232,7 @@ class PanelBackupManager(SystemManager):
         env["PGPASSWORD"] = db["password"]
         env["PATH"] = self._SYSTEM_PATH
         base_psql = ["psql", "-h", db["host"], "-p", db["port"], "-U", db["user"],
-                     "-d", db["dbname"], "-v", "ON_ERROR_STOP=1"]
+                     "-d", db["dbname"]]
 
         _log("Paso 2/3: limpiando objetos previos y cargando el dump…")
         # El dump es SQL plano sin --clean, así que partimos de una BD limpia.
@@ -235,16 +240,20 @@ class PanelBackupManager(SystemManager):
         # PostgreSQL 15+ el dueño del esquema `public` es `pg_database_owner` y
         # `panel_user` no puede dropearlo (must be owner of schema public). En
         # cambio sí puede borrar TODO lo que él posee (las tablas de la app), que
-        # es justo lo que el dump volverá a crear.
+        # es justo lo que el dump volverá a crear. Este paso SÍ debe fallar si no
+        # se puede limpiar (ON_ERROR_STOP), para no cargar sobre datos viejos.
         drop = subprocess.run(
-            base_psql + ["-c", f'DROP OWNED BY "{db["user"]}" CASCADE;'],
+            base_psql + ["-v", "ON_ERROR_STOP=1", "-c", f'DROP OWNED BY "{db["user"]}" CASCADE;'],
             env=env, capture_output=True, text=True,
         )
         if drop.returncode != 0:
             _log(f"  ✗ error limpiando objetos previos: {drop.stderr.strip()}")
             raise RuntimeError(f"No se pudo limpiar la BD: {drop.stderr.strip()}")
 
-        # gunzip -c dump | psql
+        # gunzip -c dump | psql  — SIN ON_ERROR_STOP: los dumps antiguos llevan
+        # GRANT/ALTER DEFAULT PRIVILEGES que panel_user no puede aplicar (error
+        # benigno); los datos sí se cargan. Los dumps nuevos (--no-owner --no-acl)
+        # ya no los traen.
         with subprocess.Popen(["gunzip", "-c", src], stdout=subprocess.PIPE, env=env) as gz:
             load = subprocess.run(base_psql, stdin=gz.stdout, env=env,
                                   capture_output=True, text=True)
