@@ -3158,6 +3158,10 @@ except Exception as e:
     sys.exit(1)
 PANELSSLEOF
     if [[ $? -eq 0 ]]; then
+        # Cinturón y tirantes: el manager ya persiste el estado, pero forzamos
+        # una sincronización por si acaso (deja ssl_panel_enabled + fecha en la BD
+        # → la UI muestra "SSL activo" en vez de "Sin SSL").
+        /opt/svqpanel/venv/bin/python -m api.cli sync_panel_ssl >/dev/null 2>&1 || true
         echo -e "${GREEN}✓ SSL del panel emitido. Accede por https://$PANEL_HOSTNAME:$PANEL_WEB_PORT${NC}\n"
         PANEL_ACCESS_URL="https://$PANEL_HOSTNAME:$PANEL_WEB_PORT"
     else

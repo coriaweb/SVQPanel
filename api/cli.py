@@ -780,6 +780,68 @@ def cmd_backup_panel() -> int:
         return 1
 
 
+def cmd_sync_panel_ssl() -> int:
+    """
+    Sincroniza el estado del SSL del panel en la BD con la realidad del sistema.
+
+    Repara el caso en que el cert se emitió (p.ej. en la instalación) pero settings
+    quedó con ssl_panel_enabled=false (la UI mostraría "Sin SSL" pese a tenerlo).
+    Si existe el cert del hostname → marca enabled=true + fecha; si no, lo deja en
+    false. Idempotente y seguro: NO emite ni renueva, solo refleja lo que hay.
+    """
+    log = logging.getLogger("svqpanel-cli")
+    import os as _os
+    from api.models.models_settings import Settings
+    from scripts.panel_ssl_manager import PanelSSLManager
+
+    db = SessionLocal()
+    try:
+        s = db.query(Settings).first()
+        if not s:
+            print("No hay settings; nada que sincronizar.")
+            return 0
+
+        hostname = (s.panel_hostname or "").strip()
+        # Fallback conservador: si no hay hostname guardado, deducirlo del único
+        # cert de Let's Encrypt presente (si hay exactamente uno).
+        if not hostname:
+            live = "/etc/letsencrypt/live"
+            certs = []
+            if _os.path.isdir(live):
+                certs = [d for d in _os.listdir(live)
+                         if _os.path.isfile(_os.path.join(live, d, "fullchain.pem"))]
+            if len(certs) == 1:
+                hostname = certs[0]
+                s.panel_hostname = hostname
+
+        if not hostname:
+            print("Sin hostname del panel ni cert único; nada que sincronizar.")
+            return 0
+
+        cert_file = f"/etc/letsencrypt/live/{hostname}/fullchain.pem"
+        if _os.path.exists(cert_file):
+            expires = PanelSSLManager()._get_cert_expiry(hostname)
+            s.ssl_panel_enabled = True
+            s.ssl_panel_expires = expires
+            db.commit()
+            print(f"✓ SSL del panel sincronizado: {hostname} (caduca {expires})")
+            log.info("sync_panel_ssl: enabled=True host=%s expires=%s", hostname, expires)
+        else:
+            if s.ssl_panel_enabled:
+                s.ssl_panel_enabled = False
+                s.ssl_panel_expires = None
+                db.commit()
+            print(f"Sin cert para {hostname}; estado dejado en 'sin SSL'.")
+        return 0
+    except Exception as e:
+        db.rollback()
+        log.error("sync_panel_ssl error: %s", e)
+        print(f"✗ Error: {e}")
+        return 1
+    finally:
+        db.close()
+
+
 def cmd_restore_panel(filename: str) -> int:
     """
     RESCATE (destructivo): restaura panel_db desde un dump panel_db_*.sql.gz.
@@ -890,6 +952,7 @@ def main():
     sub.add_parser("sample_metrics", help="Toma muestra de métricas y evalúa alertas")
     sub.add_parser("panel_whitelist_disable", help="RESCATE: desactiva la whitelist de IPs del panel")
     sub.add_parser("backup_panel", help="Backup de la BD y config del propio panel")
+    sub.add_parser("sync_panel_ssl", help="Sincroniza el estado SSL del panel en la BD con el cert real")
 
     p_restore = sub.add_parser("restore_panel",
         help="RESCATE: restaura panel_db desde un backup (destructivo; reinicia el panel)")
@@ -958,6 +1021,8 @@ def main():
                                    email=args.email, list_only=args.list_only))
     if args.cmd == "backup_panel":
         sys.exit(cmd_backup_panel())
+    if args.cmd == "sync_panel_ssl":
+        sys.exit(cmd_sync_panel_ssl())
     if args.cmd == "restore_panel":
         sys.exit(cmd_restore_panel(args.filename))
 

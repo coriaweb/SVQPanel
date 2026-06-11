@@ -599,12 +599,44 @@ class PanelSSLManager(SystemManager):
         # 4. Leer fecha de expiración del certificado
         expires = self._get_cert_expiry(hostname)
 
+        # 5. Persistir el estado en la BD del panel. Así el estado queda correcto
+        #    tanto si se emite desde la UI como desde el install (que llama a este
+        #    manager directamente). Sin esto, la UI mostraría "Sin SSL" pese a
+        #    tener el cert. No debe romper una emisión ya exitosa.
+        self._persist_ssl_state(True, hostname, expires, force_https)
+
         logger.info(f"SSL del panel emitido correctamente para {hostname}")
         return {
             "success": True,
             "hostname": hostname,
             "expires": expires.isoformat() if expires else None,
         }
+
+    def _persist_ssl_state(self, enabled: bool, hostname: str | None,
+                           expires, force_https: bool) -> None:
+        """Refleja el estado del SSL del panel en settings (idempotente).
+
+        Tolerante a fallos: si la BD no está disponible no debe abortar la
+        emisión/revocación (que ya ocurrió a nivel de sistema). El estado se
+        puede recuperar luego con `python -m api.cli sync_panel_ssl`.
+        """
+        try:
+            from api.models.database import SessionLocal, load_all_models
+            load_all_models()
+            from api.routes.settings import get_or_create_settings
+            db = SessionLocal()
+            try:
+                s = get_or_create_settings(db)
+                s.ssl_panel_enabled = enabled
+                if hostname:
+                    s.panel_hostname = hostname
+                s.force_https = bool(force_https)
+                s.ssl_panel_expires = expires if enabled else None
+                db.commit()
+            finally:
+                db.close()
+        except Exception as e:
+            logger.warning("No se pudo persistir el estado SSL en settings: %s", e)
 
     # ──────────────────────────────────────────────────────────────────────────
     # Revocación / eliminación
@@ -640,6 +672,9 @@ class PanelSSLManager(SystemManager):
         # Volver a HTTP simple
         self._write_nginx_http_only(hostname)
         self._nginx_reload()
+
+        # Reflejar en la BD que ya no hay SSL.
+        self._persist_ssl_state(False, hostname, None, False)
 
         return {"success": True}
 

@@ -59,3 +59,4 @@ exit 0
 | 0020 | Web: gzip global + cache de estáticos     | 2026-06-09 |
 | 0021 | Acceso remoto MySQL (allowlist IPs 3306)  | 2026-06-09 |
 | 0022 | Exponer docs API (Swagger/ReDoc/OpenAPI)  | 2026-06-10 |
+| 0023 | Sincronizar estado SSL del panel en la BD  | 2026-06-11 |
