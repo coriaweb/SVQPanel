@@ -443,8 +443,15 @@
                     :disabled="settings?.ssl_panel_enabled"
                   />
                   <label for="force_https" class="form-check-label">
-                    Forzar HTTPS (redirigir HTTP → HTTPS automáticamente)
+                    Forzar HTTPS (HSTS)
                   </label>
+                </div>
+                <div class="form-text small mt-1">
+                  <i class="bi bi-info-circle me-1"></i>
+                  La redirección <strong>HTTP → HTTPS ya está activa</strong> automáticamente.
+                  Esta opción añade además <strong>HSTS</strong>, que <strong>no se recomienda</strong>
+                  si el panel se sirve en un puerto no estándar (p. ej. 8083): el navegador
+                  intentaría usar HTTPS en el puerto 443 y podría dejarte sin acceso al panel.
                 </div>
               </div>
 
