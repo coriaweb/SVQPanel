@@ -229,15 +229,20 @@ class PanelBackupManager(SystemManager):
         base_psql = ["psql", "-h", db["host"], "-p", db["port"], "-U", db["user"],
                      "-d", db["dbname"], "-v", "ON_ERROR_STOP=1"]
 
-        _log("Paso 2/3: recreando esquema y cargando el dump…")
-        # DROP/CREATE SCHEMA: el dump es SQL plano sin --clean, así partimos limpio.
+        _log("Paso 2/3: limpiando objetos previos y cargando el dump…")
+        # El dump es SQL plano sin --clean, así que partimos de una BD limpia.
+        # Usamos `DROP OWNED BY <user>` en vez de `DROP SCHEMA public` porque en
+        # PostgreSQL 15+ el dueño del esquema `public` es `pg_database_owner` y
+        # `panel_user` no puede dropearlo (must be owner of schema public). En
+        # cambio sí puede borrar TODO lo que él posee (las tablas de la app), que
+        # es justo lo que el dump volverá a crear.
         drop = subprocess.run(
-            base_psql + ["-c", "DROP SCHEMA public CASCADE; CREATE SCHEMA public;"],
+            base_psql + ["-c", f'DROP OWNED BY "{db["user"]}" CASCADE;'],
             env=env, capture_output=True, text=True,
         )
         if drop.returncode != 0:
-            _log(f"  ✗ error recreando esquema: {drop.stderr.strip()}")
-            raise RuntimeError(f"No se pudo recrear el esquema: {drop.stderr.strip()}")
+            _log(f"  ✗ error limpiando objetos previos: {drop.stderr.strip()}")
+            raise RuntimeError(f"No se pudo limpiar la BD: {drop.stderr.strip()}")
 
         # gunzip -c dump | psql
         with subprocess.Popen(["gunzip", "-c", src], stdout=subprocess.PIPE, env=env) as gz:
