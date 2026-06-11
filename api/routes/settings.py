@@ -629,16 +629,20 @@ async def set_panel_whitelist(data: PanelWhitelistRequest,
 # ─── Backup del propio panel ─────────────────────────────────────────────────
 
 @router.get("/settings/panel-backup")
-async def list_panel_backups(current_user=Depends(require_admin)):
-    """Lista los backups del panel existentes + último."""
+async def list_panel_backups(current_user=Depends(require_admin), db: Session = Depends(get_db)):
+    """Lista los backups del panel existentes + último + retención configurada."""
+    from scripts.panel_backup_manager import DEFAULT_RETENTION
+    s = db.query(Settings).filter(Settings.id == 1).first()
+    retention = getattr(s, "panel_backup_retention", None) or DEFAULT_RETENTION
     try:
         from scripts.panel_backup_manager import PanelBackupManager
         backups = PanelBackupManager().list_backups()
-        return {"backups": backups, "last": backups[0] if backups else None}
+        return {"backups": backups, "last": backups[0] if backups else None,
+                "retention": retention}
     except PermissionError:
         raise HTTPException(403, "Se necesitan privilegios root")
     except Exception as e:
-        return {"backups": [], "last": None, "error": str(e)}
+        return {"backups": [], "last": None, "retention": retention, "error": str(e)}
 
 
 @router.post("/settings/panel-backup")
@@ -682,6 +686,77 @@ async def download_panel_backup(filename: str, token: str = "", db: Session = De
     except PermissionError:
         raise HTTPException(403, "Se necesitan privilegios root")
     return FileResponse(path, filename=filename, media_type="application/gzip")
+
+
+class _RetentionRequest(_BM):
+    retention: int = _F(15, ge=1, le=365)
+
+
+@router.put("/settings/panel-backup/retention")
+async def set_panel_backup_retention(
+    payload: _RetentionRequest,
+    current_user=Depends(require_admin),
+    db: Session = Depends(get_db),
+):
+    """Configura cuántas copias diarias del panel se conservan (rotación)."""
+    s = db.query(Settings).filter(Settings.id == 1).first()
+    if not s:
+        s = Settings(id=1)
+        db.add(s)
+    s.panel_backup_retention = payload.retention
+    db.commit()
+    return {"status": "success", "retention": payload.retention}
+
+
+class _RestoreRequest(_BM):
+    filename: str = _F(..., max_length=128)
+
+
+@router.post("/settings/panel-backup/restore", status_code=202)
+async def restore_panel_backup(
+    payload: _RestoreRequest,
+    current_user=Depends(require_admin),
+):
+    """
+    Restaura el panel desde un backup (DESTRUCTIVO: pisa todo panel_db). Hace un
+    backup de seguridad antes y reinicia el panel al terminar.
+
+    No restaura en este proceso (el restart mataría el request): lanza el CLI
+    `restore_panel` DETACHED y responde de inmediato.
+    """
+    import os
+    import sys
+    import subprocess
+    from scripts.panel_backup_manager import PanelBackupManager
+
+    # Validar el nombre ANTES de lanzar nada (anti-traversal + existencia).
+    try:
+        PanelBackupManager().get_backup_path(payload.filename)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    except FileNotFoundError:
+        raise HTTPException(404, "Backup no encontrado")
+    except PermissionError:
+        raise HTTPException(403, "Se necesitan privilegios root")
+
+    # Lanzar el CLI desacoplado del proceso web (sobrevive al restart del panel).
+    repo_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    try:
+        subprocess.Popen(
+            [sys.executable, "-m", "api.cli", "restore_panel", payload.filename],
+            cwd=repo_root,
+            start_new_session=True,                # detach: nueva sesión/grupo
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+        )
+    except Exception as e:
+        raise HTTPException(500, f"No se pudo lanzar la restauración: {e}")
+
+    return {
+        "status": "restoring",
+        "message": ("Restauración en marcha. Se ha creado un backup de seguridad "
+                    "y el panel se reiniciará en unos segundos."),
+        "filename": payload.filename,
+    }
 
 
 # ─── Timezone ────────────────────────────────────────────────────────────────

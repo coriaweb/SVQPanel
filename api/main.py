@@ -604,6 +604,8 @@ def _run_migrations():
         "ALTER TABLE settings ADD COLUMN IF NOT EXISTS license_expires    TIMESTAMP",
         "ALTER TABLE settings ADD COLUMN IF NOT EXISTS license_checked_at TIMESTAMP",
         "ALTER TABLE settings ADD COLUMN IF NOT EXISTS license_reason     VARCHAR(48)",
+        # Retención (nº de copias) del backup del propio panel
+        "ALTER TABLE settings ADD COLUMN IF NOT EXISTS panel_backup_retention INTEGER DEFAULT 15",
         # Acceso remoto a MySQL: IPs autorizadas por base de datos
         """CREATE TABLE IF NOT EXISTS db_remote_hosts (
             id          SERIAL PRIMARY KEY,

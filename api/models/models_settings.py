@@ -31,6 +31,9 @@ class Settings(Base):
     # con la versión más reciente realmente instalada.
     php_default_version = Column(String(10), default="8.3")
 
+    # Backup del propio panel — nº de copias diarias a conservar (rotación).
+    panel_backup_retention = Column(Integer, default=15)
+
     # File Manager - Límites de subida
     max_upload_mb = Column(Integer, default=100)              # MB máximo por archivo
     max_text_file_mb = Column(Integer, default=2)             # MB máximo para editar en el panel

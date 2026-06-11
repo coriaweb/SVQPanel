@@ -523,15 +523,27 @@
             <p class="text-muted small mb-3">
               Copia de seguridad de la base de datos del panel (usuarios, dominios, DNS, correo,
               planes, configuración) y los ficheros críticos (<code>.env</code>, claves DKIM, etc.).
-              Se ejecuta <strong>automáticamente cada día a las 03:30</strong> y se conservan los 7 más recientes.
+              Se ejecuta <strong>automáticamente cada día a las 03:30</strong> y se conservan las
+              <strong>{{ pbRetention }}</strong> copias más recientes.
             </p>
+
+            <!-- Retención configurable -->
+            <div class="d-flex align-items-center gap-2 mb-3">
+              <label class="small text-muted mb-0">Copias a conservar:</label>
+              <input type="number" min="1" max="365" v-model.number="pbRetention"
+                     class="form-control form-control-sm" style="width:90px" />
+              <button class="btn btn-outline-secondary btn-sm" @click="savePbRetention" :disabled="pbSavingRet">
+                <span v-if="pbSavingRet" class="spinner-border spinner-border-sm"></span>
+                <span v-else>Guardar</span>
+              </button>
+            </div>
 
             <div v-if="!panelBackups.length" class="text-muted small">
               No hay backups todavía. Pulsa «Backup ahora» para crear el primero.
             </div>
             <div v-else class="pb-list">
               <div class="pb-row pb-row--head">
-                <span>Fecha</span><span>Tamaño</span><span class="text-end">Descargar</span>
+                <span>Fecha</span><span>Tamaño</span><span class="text-end">Acciones</span>
               </div>
               <div v-for="b in panelBackups" :key="b.timestamp" class="pb-row">
                 <span>{{ formatBackupDate(b.created_at) }}</span>
@@ -543,12 +555,16 @@
                   <a v-if="b.config_file" :href="downloadUrl(b.config_file)" class="pb-dl ms-2" title="Configuración">
                     <i class="bi bi-file-zip"></i> Config
                   </a>
+                  <button v-if="b.db_file" class="btn btn-link btn-sm text-danger p-0 ms-2"
+                          @click="askRestore(b)" title="Restaurar la BD desde esta copia">
+                    <i class="bi bi-arrow-counterclockwise"></i> Restaurar
+                  </button>
                 </span>
               </div>
             </div>
 
             <details class="mt-3">
-              <summary class="small text-muted" style="cursor:pointer">¿Cómo restaurar un backup?</summary>
+              <summary class="small text-muted" style="cursor:pointer">Restaurar manualmente por SSH</summary>
               <div class="alert alert-secondary py-2 small mt-2 mb-0 font-monospace">
                 # Por SSH, en el servidor:<br>
                 gunzip -c panel_db_FECHA.sql.gz | psql -U panel_user panel_db<br>
@@ -556,6 +572,32 @@
                 systemctl restart svqpanel
               </div>
             </details>
+
+            <!-- Modal de confirmación de restauración -->
+            <div v-if="pbRestoreTarget" class="pb-modal-backdrop" @click.self="cancelRestore">
+              <div class="pb-modal-card">
+                <h5 class="text-danger"><i class="bi bi-exclamation-triangle-fill"></i> Restaurar el panel</h5>
+                <p class="small mb-2">
+                  Vas a restaurar la base de datos del panel desde la copia del
+                  <strong>{{ formatBackupDate(pbRestoreTarget.created_at) }}</strong>.
+                </p>
+                <ul class="small text-muted">
+                  <li>Se <strong>sobrescribirá TODO</strong> el estado actual (usuarios, dominios, planes…).</li>
+                  <li>Antes se crea un <strong>backup de seguridad automático</strong>.</li>
+                  <li>El panel <strong>se reiniciará</strong> al terminar (unos segundos de corte).</li>
+                </ul>
+                <p class="small mb-1">Para confirmar, escribe <code>RESTAURAR</code>:</p>
+                <input v-model="pbRestoreConfirm" class="form-control form-control-sm mb-3"
+                       placeholder="RESTAURAR" @keyup.enter="doRestore" />
+                <div class="d-flex justify-content-end gap-2">
+                  <button class="btn btn-secondary btn-sm" @click="cancelRestore">Cancelar</button>
+                  <button class="btn btn-danger btn-sm" :disabled="pbRestoreConfirm.trim().toUpperCase() !== 'RESTAURAR' || pbRestoring" @click="doRestore">
+                    <span v-if="pbRestoring" class="spinner-border spinner-border-sm me-1"></span>
+                    Restaurar y reiniciar
+                  </button>
+                </div>
+              </div>
+            </div>
           </div>
         </div>
       </div>
@@ -908,11 +950,17 @@ export default {
     // ─── Backup del panel ───
     const panelBackups = ref([])
     const pbRunning = ref(false)
+    const pbRetention = ref(15)
+    const pbSavingRet = ref(false)
+    const pbRestoreTarget = ref(null)   // fila a restaurar (abre el modal)
+    const pbRestoreConfirm = ref('')    // el admin debe escribir "RESTAURAR"
+    const pbRestoring = ref(false)
 
     const loadPanelBackups = async () => {
       try {
         const r = await api.get('/api/settings/panel-backup')
         panelBackups.value = r.backups || []
+        if (r.retention) pbRetention.value = r.retention
       } catch { /* silencioso */ }
     }
     const runPanelBackup = async () => {
@@ -925,6 +973,43 @@ export default {
         store.showNotification('Error: ' + (e.message || e), 'danger')
       } finally {
         pbRunning.value = false
+      }
+    }
+    const savePbRetention = async () => {
+      pbSavingRet.value = true
+      try {
+        const n = Math.max(1, Math.min(365, parseInt(pbRetention.value) || 15))
+        pbRetention.value = n
+        await api.put('/api/settings/panel-backup/retention', { retention: n })
+        store.showNotification(`Se conservarán las ${n} copias más recientes`, 'success')
+      } catch (e) {
+        store.showNotification('Error: ' + (e.message || e), 'danger')
+      } finally {
+        pbSavingRet.value = false
+      }
+    }
+    const askRestore = (b) => {
+      pbRestoreTarget.value = b
+      pbRestoreConfirm.value = ''
+    }
+    const cancelRestore = () => {
+      pbRestoreTarget.value = null
+      pbRestoreConfirm.value = ''
+    }
+    const doRestore = async () => {
+      if (!pbRestoreTarget.value || pbRestoreConfirm.value.trim().toUpperCase() !== 'RESTAURAR') return
+      pbRestoring.value = true
+      try {
+        await api.post('/api/settings/panel-backup/restore', {
+          filename: pbRestoreTarget.value.db_file,
+        })
+        cancelRestore()
+        store.showNotification(
+          'Restauración en marcha. El panel se reiniciará en unos segundos…', 'warning')
+      } catch (e) {
+        store.showNotification('Error: ' + (e.message || e), 'danger')
+      } finally {
+        pbRestoring.value = false
       }
     }
     const downloadUrl = (filename) => {
@@ -1420,6 +1505,8 @@ export default {
       showSmtpTest, smtpTestTo, saveSmtp, openSmtpTest, sendSmtpTest,
       wl, wlSaving, showWlConfirm, previewIps, confirmSaveWhitelist, saveWhitelist,
       panelBackups, pbRunning, runPanelBackup, downloadUrl, fmtBytes, formatBackupDate,
+      pbRetention, pbSavingRet, savePbRetention,
+      pbRestoreTarget, pbRestoreConfirm, pbRestoring, askRestore, cancelRestore, doRestore,
       loading, saving, settings, form, parsedRange, saveSettings,
       installedPhpVersions, recommendedPhp, defaultPhpNotInstalled,
       phpVersions, phpLoading, phpError, phpActionLoading,
@@ -1479,12 +1566,14 @@ export default {
 
 /* Lista de backups del panel */
 .pb-list { display:flex; flex-direction:column; border:1px solid var(--border); border-radius:var(--r-sm,6px); overflow:hidden; }
-.pb-row { display:grid; grid-template-columns:1fr auto 130px; gap:1rem; padding:.55rem .85rem; align-items:center; font-size:.85rem; border-bottom:1px solid var(--border); }
+.pb-row { display:grid; grid-template-columns:1fr auto 230px; gap:1rem; padding:.55rem .85rem; align-items:center; font-size:.85rem; border-bottom:1px solid var(--border); }
 .pb-row:last-child { border-bottom:none; }
 .pb-row--head { background:var(--surface-2); font-size:.72rem; font-weight:600; text-transform:uppercase; letter-spacing:.04em; color:var(--text-muted); }
 .pb-dl { display:inline-flex; align-items:center; gap:3px; font-size:.78rem; color:var(--ac); text-decoration:none; }
 .pb-dl:hover { text-decoration:underline; }
 @media (max-width:560px) { .pb-row { grid-template-columns:1fr auto; } .pb-row span:nth-child(2) { display:none; } }
+.pb-modal-backdrop { position:fixed; inset:0; background:rgba(0,0,0,.5); display:flex; align-items:center; justify-content:center; z-index:1060; padding:1rem; }
+.pb-modal-card { background:var(--surface,#fff); border-radius:var(--r-md,10px); padding:1.25rem 1.5rem; width:100%; max-width:460px; box-shadow:0 20px 60px rgba(0,0,0,.35); }
 
 /* Lista de versiones PHP — fila en desktop, tarjeta apilada en móvil */
 .php-list { display: flex; flex-direction: column; }

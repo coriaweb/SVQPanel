@@ -28,7 +28,8 @@ from scripts.base import SystemManager
 logger = logging.getLogger(__name__)
 
 BACKUP_DIR = "/var/backups/svqpanel"
-DEFAULT_RETENTION = 7   # nº de backups a conservar
+DEFAULT_RETENTION = 15  # nº de backups a conservar (configurable en Ajustes)
+RESTORE_LOG = "/var/log/svqpanel-restore.log"
 
 # Ficheros/directorios de configuración crítica a incluir en el tar.
 # Se incluyen los que existan (tolerante a ausencias).
@@ -183,3 +184,75 @@ class PanelBackupManager(SystemManager):
         if not os.path.isfile(path):
             raise FileNotFoundError("Backup no encontrado")
         return path
+
+    # ── Restaurar (operación de rescate, destructiva) ──────────────────────────
+
+    def restore(self, db_filename: str) -> dict:
+        """
+        Restaura la BD del panel desde un dump `panel_db_*.sql.gz`.
+
+        PELIGROSO: pisa TODO el estado de panel_db. Antes de restaurar hace un
+        backup de seguridad automático (red de seguridad si algo sale mal) y, al
+        terminar, reinicia el panel para que tome la BD restaurada.
+
+        Pensado para ejecutarse DETACHED desde el CLI (`restore_panel`), no en el
+        proceso web: el restart del panel mataría el request a mitad. Loguea cada
+        paso en RESTORE_LOG.
+        """
+        # Solo se restaura el dump de BD (no el tar de config, que se restaura a mano)
+        if not re.match(r"^panel_db_\d{4}-\d{2}-\d{2}_\d{6}\.sql\.gz$", db_filename):
+            raise ValueError("Solo se puede restaurar un dump de BD (panel_db_*.sql.gz)")
+        src = self.get_backup_path(db_filename)
+
+        def _log(msg: str) -> None:
+            line = f"{datetime.utcnow().isoformat()}Z  {msg}"
+            logger.info(msg)
+            try:
+                with open(RESTORE_LOG, "a") as fh:
+                    fh.write(line + "\n")
+            except OSError:
+                pass
+
+        _log(f"=== Restauración del panel desde {db_filename} ===")
+
+        # 1) Backup de seguridad ANTES de pisar nada
+        _log("Paso 1/3: backup de seguridad previo…")
+        safety = self.create()
+        _log(f"  ✓ backup de seguridad: {safety['db_file']}")
+
+        # 2) Recrear el esquema y cargar el dump
+        url = os.getenv("DATABASE_URL", "postgresql://panel_user:panel_password_123@localhost/panel_db")
+        db = _parse_db_url(url)
+        env = os.environ.copy()
+        env["PGPASSWORD"] = db["password"]
+        env["PATH"] = self._SYSTEM_PATH
+        base_psql = ["psql", "-h", db["host"], "-p", db["port"], "-U", db["user"],
+                     "-d", db["dbname"], "-v", "ON_ERROR_STOP=1"]
+
+        _log("Paso 2/3: recreando esquema y cargando el dump…")
+        # DROP/CREATE SCHEMA: el dump es SQL plano sin --clean, así partimos limpio.
+        drop = subprocess.run(
+            base_psql + ["-c", "DROP SCHEMA public CASCADE; CREATE SCHEMA public;"],
+            env=env, capture_output=True, text=True,
+        )
+        if drop.returncode != 0:
+            _log(f"  ✗ error recreando esquema: {drop.stderr.strip()}")
+            raise RuntimeError(f"No se pudo recrear el esquema: {drop.stderr.strip()}")
+
+        # gunzip -c dump | psql
+        with subprocess.Popen(["gunzip", "-c", src], stdout=subprocess.PIPE, env=env) as gz:
+            load = subprocess.run(base_psql, stdin=gz.stdout, env=env,
+                                  capture_output=True, text=True)
+            gz.stdout.close()
+        if load.returncode != 0:
+            _log(f"  ✗ error cargando el dump: {load.stderr.strip()}")
+            raise RuntimeError(f"Error restaurando el dump: {load.stderr.strip()}")
+        _log("  ✓ dump restaurado")
+
+        # 3) Reiniciar el panel para que tome la BD restaurada
+        _log("Paso 3/3: reiniciando svqpanel…")
+        subprocess.run(["systemctl", "restart", "svqpanel"], env=env,
+                       capture_output=True, text=True)
+        _log("=== Restauración completada ===")
+        return {"success": True, "restored_from": db_filename,
+                "safety_backup": safety["db_file"]}

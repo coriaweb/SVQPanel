@@ -746,6 +746,21 @@ def cmd_panel_whitelist_disable() -> int:
         db.close()
 
 
+def _panel_backup_retention() -> int:
+    """Lee la retención configurada (settings.panel_backup_retention) con fallback."""
+    from scripts.panel_backup_manager import DEFAULT_RETENTION
+    from api.models.models_settings import Settings
+    db = SessionLocal()
+    try:
+        s = db.query(Settings).first()
+        val = getattr(s, "panel_backup_retention", None) if s else None
+        return int(val) if val and int(val) > 0 else DEFAULT_RETENTION
+    except Exception:
+        return DEFAULT_RETENTION
+    finally:
+        db.close()
+
+
 def cmd_backup_panel() -> int:
     """
     Crea un backup del propio panel (BD panel_db + ficheros de config críticos)
@@ -754,13 +769,33 @@ def cmd_backup_panel() -> int:
     log = logging.getLogger("svqpanel-cli")
     try:
         from scripts.panel_backup_manager import PanelBackupManager
-        res = PanelBackupManager().create()
+        res = PanelBackupManager().create(retention=_panel_backup_retention())
         log.info("backup_panel OK: %s (%d B) + %s (%d B)",
                  res["db_file"], res["db_size"], res["config_file"], res["config_size"])
         print(f"✓ Backup creado: {res['db_file']} + {res['config_file']}")
         return 0
     except Exception as e:
         log.error("backup_panel error: %s", e)
+        print(f"✗ Error: {e}")
+        return 1
+
+
+def cmd_restore_panel(filename: str) -> int:
+    """
+    RESCATE (destructivo): restaura panel_db desde un dump panel_db_*.sql.gz.
+    Hace un backup de seguridad antes, restaura y reinicia el panel. Pensado para
+    ejecutarse DETACHED (lo lanza el endpoint POST /settings/panel-backup/restore).
+    """
+    log = logging.getLogger("svqpanel-cli")
+    try:
+        from scripts.panel_backup_manager import PanelBackupManager
+        res = PanelBackupManager().restore(filename)
+        log.info("restore_panel OK: restaurado %s (seguridad: %s)",
+                 res["restored_from"], res["safety_backup"])
+        print(f"✓ Restaurado: {res['restored_from']}")
+        return 0
+    except Exception as e:
+        log.error("restore_panel error: %s", e)
         print(f"✗ Error: {e}")
         return 1
 
@@ -856,6 +891,10 @@ def main():
     sub.add_parser("panel_whitelist_disable", help="RESCATE: desactiva la whitelist de IPs del panel")
     sub.add_parser("backup_panel", help="Backup de la BD y config del propio panel")
 
+    p_restore = sub.add_parser("restore_panel",
+        help="RESCATE: restaura panel_db desde un backup (destructivo; reinicia el panel)")
+    p_restore.add_argument("filename", help="Nombre del dump (panel_db_FECHA.sql.gz)")
+
     p_admin = sub.add_parser("admin_recover",
         help="RESCATE: recupera/crea acceso de administrador (ejecutar como root)")
     p_admin.add_argument("--username", default=None, help="Usuario admin a resetear o crear")
@@ -919,6 +958,8 @@ def main():
                                    email=args.email, list_only=args.list_only))
     if args.cmd == "backup_panel":
         sys.exit(cmd_backup_panel())
+    if args.cmd == "restore_panel":
+        sys.exit(cmd_restore_panel(args.filename))
 
 
 if __name__ == "__main__":
