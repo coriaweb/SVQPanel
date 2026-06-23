@@ -62,7 +62,13 @@ code { font-family: var(--font-mono); color: var(--danger); background: var(--su
 .card-body { color: var(--text); padding: 14px 16px; }
 .shadow-sm  { box-shadow: var(--shadow-sm) !important; }
 .shadow, .shadow-lg { box-shadow: var(--shadow-lg) !important; }
-.border     { border-color: var(--border) !important; }
+/* Bootstrap real: .border = 1px solid <color>. Antes solo fijábamos el color
+   (sin width/style), por lo que los recuadros .border salían SIN borde visible. */
+.border        { border: 1px solid var(--border) !important; }
+.border-top    { border-top: 1px solid var(--border) !important; }
+.border-bottom { border-bottom: 1px solid var(--border) !important; }
+.border-start  { border-left: 1px solid var(--border) !important; }
+.border-end    { border-right: 1px solid var(--border) !important; }
 .border-0   { border: 0 !important; }
 
 /* ── Cabecera de página ── */
