@@ -717,6 +717,8 @@ def _run_migrations():
         # Rate-limit de envío de correo (Rspamd) por buzón y por dominio
         "ALTER TABLE mailboxes ADD COLUMN IF NOT EXISTS send_limit_hour INTEGER NOT NULL DEFAULT 200",
         "ALTER TABLE mail_domains ADD COLUMN IF NOT EXISTS send_limit_hour INTEGER NOT NULL DEFAULT 1000",
+        # Preferencia de IP de salida SMTP por dominio (ipv4 / ipv6)
+        "ALTER TABLE mail_domains ADD COLUMN IF NOT EXISTS mail_out_ip_pref VARCHAR(8) NOT NULL DEFAULT 'ipv4'",
         # SMTP relay (smarthost) global + override por dominio
         "ALTER TABLE settings ADD COLUMN IF NOT EXISTS relay_enabled BOOLEAN NOT NULL DEFAULT FALSE",
         "ALTER TABLE settings ADD COLUMN IF NOT EXISTS relay_host VARCHAR(255)",

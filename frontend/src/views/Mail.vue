@@ -532,6 +532,34 @@
                 <i v-else :class="relayForm.enabled ? 'bi bi-save' : 'bi bi-x-circle'"></i>
                 {{ relayForm.enabled ? 'Guardar relay' : 'Desactivar relay' }}
               </button>
+
+              <!-- ── IP de salida del correo (IPv4 / IPv6) ── -->
+              <div v-if="outIp" style="margin-top:2rem;border-top:1px solid var(--border);padding-top:1.5rem">
+                <h6 style="font-weight:600;font-size:.95rem;margin-bottom:.5rem">IP de salida del correo</h6>
+                <p style="font-size:.85rem;color:var(--text-muted);margin-bottom:1rem">
+                  Por qué IP sale el correo de este dominio al enviarlo directo (sin relay).
+                </p>
+                <div class="sv-info-box" style="display:flex;gap:.5rem;align-items:center;flex-wrap:wrap">
+                  <button class="sv-btn sv-btn--sm" :class="outIp.pref==='ipv4' ? 'sv-btn--primary' : 'sv-btn--ghost'"
+                          :disabled="outIpSaving || outIp.pref==='ipv4'" @click="setOutIp('ipv4')">
+                    IPv4 <code v-if="outIp.ipv4" style="font-size:.8em">{{ outIp.ipv4 }}</code>
+                  </button>
+                  <button class="sv-btn sv-btn--sm" :class="outIp.pref==='ipv6' ? 'sv-btn--primary' : 'sv-btn--ghost'"
+                          :disabled="outIpSaving || !outIp.ipv6_available || outIp.pref==='ipv6'"
+                          :title="!outIp.ipv6_available ? 'El dominio no tiene IPv6 asignada' : ''"
+                          @click="setOutIp('ipv6')">
+                    IPv6 <code v-if="outIp.ipv6" style="font-size:.8em">{{ outIp.ipv6 }}</code>
+                  </button>
+                </div>
+                <div v-if="!outIp.ipv6_available" class="sv-alert sv-alert--muted" style="margin-top:.75rem;font-size:.82rem">
+                  Activa IPv6 en el dominio (pestaña del dominio) para poder enviar correo por IPv6.
+                </div>
+                <div v-else-if="outIp.pref==='ipv6'" class="sv-alert sv-alert--warn" style="margin-top:.75rem;font-size:.82rem">
+                  <i class="bi bi-exclamation-triangle"></i>
+                  El correo saldrá preferentemente por IPv6. Asegúrate de que la IPv6 tiene
+                  <strong>rDNS (PTR)</strong> configurado o Gmail/Outlook podrían rechazarlo.
+                </div>
+              </div>
             </template>
           </div>
 
@@ -1364,6 +1392,9 @@ export default {
     const relayForm    = ref({ enabled: false, host: '', port: 587, username: '', password: '' })
     const loadingRelay = ref(false)
     const relaySaving  = ref(false)
+    // IP de salida del correo (IPv4/IPv6) del dominio
+    const outIp        = ref(null)
+    const outIpSaving  = ref(false)
 
     // ── TLS propio del dominio (SNI) ──
     const mailtls       = ref(null)
@@ -1428,6 +1459,27 @@ export default {
         relay.value = null
       } finally {
         loadingRelay.value = false
+      }
+      // Cargar la preferencia de IP de salida (no bloquea el relay si falla)
+      try {
+        outIp.value = await api.get(`/api/mail/domains/${domainId}/out-ip`)
+      } catch (e) {
+        outIp.value = null
+      }
+    }
+
+    const setOutIp = async (pref) => {
+      if (!outIp.value || outIp.value.pref === pref) return
+      outIpSaving.value = true
+      try {
+        const r = await api.post(`/api/mail/domains/${selectedDomain.value.id}/out-ip`, { pref })
+        store.showNotification('IP de salida del correo actualizada', 'success')
+        if (r && r.warning) store.showNotification(r.warning, 'warning')
+        await loadRelay(selectedDomain.value.id)
+      } catch (e) {
+        store.showNotification('Error: ' + (e.message || e), 'danger')
+      } finally {
+        outIpSaving.value = false
       }
     }
 
@@ -1955,6 +2007,7 @@ export default {
       webmail, loadingWebmail, webmailSaving, webmailSslIssuing,
       loadWebmail, toggleWebmail, issueWebmailSsl,
       relay, relayForm, loadingRelay, relaySaving, loadRelay, saveDomainRelay,
+      outIp, outIpSaving, setOutIp,
       mailtls, mailtlsSaving, toggleMailTls,
       antivirus, antivirusSaving, toggleAntivirus,
       // Monitoreo de envío

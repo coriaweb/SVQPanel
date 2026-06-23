@@ -45,6 +45,14 @@ class MailDomain(Base):
     # buzones. 0 = sin límite. Anti-abuso si una cuenta es comprometida.
     send_limit_hour = Column(Integer, default=1000)
 
+    # ── Preferencia de IP de salida SMTP del dominio ───────────────────────
+    # Cómo sale el correo de este dominio (sender_dependent transport + bind):
+    #   "ipv4" (default) → bindea la IPv4 del servidor/dominio (rDNS garantizado)
+    #   "ipv6"           → prefiere la IPv6 del dominio (requiere rDNS v6; la
+    #                      entregabilidad es responsabilidad del cliente)
+    # Solo tiene efecto si el dominio web vinculado tiene IPv6 asignada.
+    mail_out_ip_pref = Column(String(8), default="ipv4", nullable=False)
+
     # ── SMTP relay propio del dominio (override del relay global) ──────────
     # Si está activo, el correo de ESTE dominio sale por su smarthost (p. ej.
     # Proxmox Mail Gateway, Brevo). La contraseña vive en el password map de

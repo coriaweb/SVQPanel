@@ -494,14 +494,22 @@ async def update_domain(
                     f"No se pudo configurar IPv6 en interfaz para {db_domain.domain_name}: {_ipv6_err}"
                 )
 
-        # Actualizar IP de salida SMTP en Postfix si cambió la IPv4
+        # Actualizar IP de salida SMTP en Postfix si cambió la IPv4. Reaplicamos
+        # según la preferencia del dominio (ipv4/ipv6), leyendo su MailDomain.
         if ipv4_changed:
             try:
                 from scripts import mail_manager as mail_mod
                 mm = mail_mod.MailManager()
                 if mm.mail_available():
                     if db_domain.ipv4:
-                        mm.set_domain_sender_ip(db_domain.domain_name, db_domain.ipv4)
+                        from api.models.models_mail import MailDomain
+                        _md = db.query(MailDomain).filter(
+                            MailDomain.domain_name == db_domain.domain_name).first()
+                        if _md:
+                            from api.routes.mail import _apply_domain_sender_ip
+                            _apply_domain_sender_ip(_md, db)
+                        else:
+                            mm.set_domain_sender_ip(db_domain.domain_name, db_domain.ipv4)
                     else:
                         mm.remove_domain_sender_ip(db_domain.domain_name)
             except Exception as mail_err:

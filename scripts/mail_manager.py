@@ -29,6 +29,10 @@ class MailManager(SystemManager):
     POSTFIX_DIR = "/etc/postfix"
     DOVECOT_USERS = "/etc/dovecot/users"
     SENDER_TRANSPORT_MAP  = "sender_dependent_transport"
+    # Config auxiliar de la IP de salida por dominio (no es un mapa Postfix
+    # cargado por main.cf; lo leemos nosotros para reconstruir master.cf).
+    # Formato por línea: "@dominio  <ipv4>|<ipv6>|<pref>"  (ipv6/pref opcionales)
+    SENDER_IP_CFG_MAP     = "svqpanel_sender_ip_cfg"
     # SMTP relay (smarthost): credenciales y relayhost por remitente.
     RELAY_PASSWORD_MAP    = "svqpanel_relay_passwd"   # "[host]:port  user:pass"
     RELAY_SENDER_MAP      = "svqpanel_relay_sender"   # "@dominio  [host]:port"
@@ -599,9 +603,15 @@ vacation
     # IP de salida SMTP por dominio (sender_dependent_default_transport_maps)
     # ─────────────────────────────────────────────────────────────────────
 
-    def _transport_name(self, ipv4: str) -> str:
-        """smtp_185_104_188_71 para 185.104.188.71"""
-        return "smtp_" + ipv4.replace(".", "_")
+    def _transport_name(self, domain_name: str) -> str:
+        """Transporte por dominio: svqout_<dominio_sanitizado>.
+
+        Antes se nombraba por IPv4 (smtp_185_104_188_71); con IPv6 + preferencia
+        el nombre no puede codificar toda la config, así que indexamos por dominio
+        y guardamos ipv4/ipv6/pref en SENDER_IP_CFG_MAP.
+        """
+        safe = domain_name.replace(".", "_").replace("-", "_")
+        return "svqout_" + safe
 
     def _ensure_main_cf_sender_transport(self):
         """
@@ -620,30 +630,39 @@ vacation
                 f.write(f"\n# SVQPanel: IP de salida por dominio\n{directive}\n")
             logger.info("main.cf: sender_dependent_default_transport_maps añadido")
 
+    def _build_master_bind_block(self, cfg: dict) -> str:
+        """Construye el bloque de master.cf (entre marcadores) a partir del mapa
+        de config {@dominio: 'ipv4|ipv6|pref'}. Función pura (testeable)."""
+        transports: dict = {}
+        for sender, raw in cfg.items():
+            dom = sender.lstrip("@")
+            parts = (raw.split("|") + ["", "", ""])[:3]
+            ipv4, ipv6, pref = parts[0].strip(), parts[1].strip(), (parts[2].strip() or "ipv4")
+            transports[self._transport_name(dom)] = (ipv4, ipv6, pref)
+
+        lines = [self._MASTER_START]
+        for name in sorted(transports):
+            ipv4, ipv6, pref = transports[name]
+            lines.append(f"{name} unix  -       -       n       -       -       smtp")
+            lines.append(f"  -o smtp_bind_address={ipv4}")
+            lines.append(f"  -o smtp_bind_address6={ipv6}")
+            # Si hay IPv6 y el dominio la prefiere, salir por IPv6 (IPv4 fallback).
+            # Si no, forzar IPv4 para no usar IPv6 sin querer (rDNS).
+            if ipv6 and pref == "ipv6":
+                lines.append(f"  -o smtp_address_preference=ipv6")
+            else:
+                lines.append(f"  -o smtp_address_preference=ipv4")
+        lines.append(self._MASTER_END)
+        return "\n".join(lines) + "\n"
+
     def _rebuild_master_cf_smtp_binds(self):
         """
-        Regenera la sección marcada en master.cf con un transporte smtp_X_X_X_X
-        por cada IP única presente en sender_dependent_transport.
-        Si no quedan entradas, elimina la sección.
+        Regenera la sección marcada en master.cf: un transporte por dominio con
+        su bind de IPv4 y/o IPv6 y su preferencia. Lee SENDER_IP_CFG_MAP
+        (@dominio → ipv4|ipv6|pref). Si no quedan entradas, elimina la sección.
         """
-        entries = self._read_map(self.SENDER_TRANSPORT_MAP)
-        # Extraer IPs únicas de los valores  "smtp_X_X_X_X:"
-        unique: dict[str, str] = {}
-        for val in entries.values():
-            name = val.rstrip(":")
-            if name.startswith("smtp_") and "_" in name[5:]:
-                ip = name[5:].replace("_", ".")
-                unique[name] = ip
-
-        # Construir bloque
-        lines = [self._MASTER_START]
-        for name in sorted(unique):
-            ip = unique[name]
-            lines.append(f"{name} unix  -       -       n       -       -       smtp")
-            lines.append(f"  -o smtp_bind_address={ip}")
-            lines.append(f"  -o smtp_bind_address6=")
-        lines.append(self._MASTER_END)
-        new_block = "\n".join(lines) + "\n"
+        cfg = self._read_map(self.SENDER_IP_CFG_MAP)
+        new_block = self._build_master_bind_block(cfg)
 
         try:
             with open(self.POSTFIX_MASTER_CF, "r", encoding="utf-8") as f:
@@ -667,21 +686,33 @@ vacation
         os.replace(tmp, self.POSTFIX_MASTER_CF)
         logger.info("master.cf: sección SVQPANEL_SMTP_BIND actualizada")
 
-    def set_domain_sender_ip(self, domain_name: str, ipv4: str):
+    def set_domain_sender_ip(self, domain_name: str, ipv4: str,
+                             ipv6: str = "", pref: str = "ipv4"):
         """
-        Configura la IP de salida SMTP para un dominio.
-        - Añade @domain → smtp_X_X_X_X: en sender_dependent_transport
-        - Garantiza el transporte en master.cf y la directiva en main.cf
+        Configura la IP de salida SMTP de un dominio (IPv4 y opcionalmente IPv6).
+        - sender_dependent_transport: @domain → svqout_<dominio>:
+        - SENDER_IP_CFG_MAP: @domain → ipv4|ipv6|pref  (lo lee el rebuild)
+        - master.cf: transporte con bind v4/v6 y smtp_address_preference
+
+        pref: "ipv6" → prefiere IPv6 (requiere rDNS; entregabilidad del cliente).
+              "ipv4" (default) → fuerza IPv4.
         """
         if not self.mail_available():
             return {"success": False, "reason": "postfix_not_installed"}
-        transport = self._transport_name(ipv4)
+        if pref not in ("ipv4", "ipv6"):
+            pref = "ipv4"
+        if pref == "ipv6" and not ipv6:
+            pref = "ipv4"  # sin IPv6 no se puede preferir IPv6
+        transport = self._transport_name(domain_name)
         self._map_set(self.SENDER_TRANSPORT_MAP, f"@{domain_name}", f"{transport}:")
+        self._map_set(self.SENDER_IP_CFG_MAP, f"@{domain_name}",
+                      f"{ipv4}|{ipv6}|{pref}")
         self._ensure_main_cf_sender_transport()
         self._rebuild_master_cf_smtp_binds()
         self._reload_postfix()
-        logger.info(f"set_domain_sender_ip: {domain_name} → {ipv4}")
-        return {"success": True, "domain": domain_name, "ip": ipv4}
+        logger.info(f"set_domain_sender_ip: {domain_name} → v4={ipv4} v6={ipv6} pref={pref}")
+        return {"success": True, "domain": domain_name,
+                "ipv4": ipv4, "ipv6": ipv6, "pref": pref}
 
     def remove_domain_sender_ip(self, domain_name: str):
         """
@@ -691,6 +722,7 @@ vacation
         if not self.mail_available():
             return {"success": False, "reason": "postfix_not_installed"}
         self._map_remove(self.SENDER_TRANSPORT_MAP, f"@{domain_name}")
+        self._map_remove(self.SENDER_IP_CFG_MAP, f"@{domain_name}")
         self._rebuild_master_cf_smtp_binds()
         self._reload_postfix()
         logger.info(f"remove_domain_sender_ip: {domain_name} → IP por defecto")

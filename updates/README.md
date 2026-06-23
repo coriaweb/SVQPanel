@@ -67,3 +67,4 @@ exit 0
 | 0028 | Fix listen atado a IP en vhosts webmail/mail | 2026-06-23 |
 | 0029 | TLS: algoritmos de firma SHA-256+ (sin SHA-224) | 2026-06-23 |
 | 0030 | CAA Let's Encrypt en zonas DNS (issue+issuewild) | 2026-06-23 |
+| 0031 | IP de salida SMTP por dominio con IPv6 (pref)  | 2026-06-23 |

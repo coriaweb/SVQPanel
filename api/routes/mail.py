@@ -14,6 +14,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi.responses import Response
 from sqlalchemy.orm import Session
 from typing import List
+from pydantic import BaseModel as _BM, Field as _F
 
 from api.models.database import get_db
 from api.models.models_mail import MailDomain, Mailbox, MailAlias, WebmailToken
@@ -732,6 +733,93 @@ async def set_webmail(
         return {"status": "success", "enabled": False}
 
 
+def _domain_ipv4_ipv6(md, db):
+    """IPv4/IPv6 del dominio web vinculado al MailDomain (o del servidor)."""
+    from api.models.models_domain import Domain
+    ipv4 = ipv6 = None
+    dom = None
+    if getattr(md, "domain_id", None):
+        dom = db.query(Domain).filter(Domain.id == md.domain_id).first()
+    if not dom:
+        dom = db.query(Domain).filter(Domain.domain_name == md.domain_name).first()
+    if dom:
+        ipv4 = dom.ipv4
+        ipv6 = dom.ipv6
+    # Fallback IPv4: la del servidor
+    if not ipv4:
+        try:
+            from api.routes.dns import _get_server_ipv4
+            ipv4 = _get_server_ipv4(db)
+        except Exception:
+            ipv4 = None
+    return ipv4, ipv6
+
+
+def _apply_domain_sender_ip(md, db):
+    """Aplica en Postfix la IP de salida del dominio según mail_out_ip_pref.
+
+    - pref ipv6 y el dominio tiene IPv6 → transporte con bind v4+v6, prefiere v6.
+    - pref ipv4 (o sin IPv6) → transporte que fuerza IPv4.
+    No revienta si Postfix no está disponible (entorno dev)."""
+    try:
+        from scripts.mail_manager import MailManager
+        mm = MailManager()
+        if not mm.mail_available():
+            return
+        ipv4, ipv6 = _domain_ipv4_ipv6(md, db)
+        if not ipv4:
+            return
+        pref = getattr(md, "mail_out_ip_pref", "ipv4") or "ipv4"
+        mm.set_domain_sender_ip(md.domain_name, ipv4, ipv6 or "", pref)
+    except Exception as e:
+        logger.warning(f"_apply_domain_sender_ip {md.domain_name}: {e}")
+
+
+@router.get("/mail/domains/{domain_id}/out-ip")
+async def get_mail_out_ip(domain_id: int, current_user=Depends(require_auth),
+                          db: Session = Depends(get_db)):
+    """Preferencia de IP de salida SMTP del dominio + si tiene IPv6 disponible."""
+    md = _get_mail_domain_or_404(domain_id, db)
+    _require_edit(md, current_user)
+    ipv4, ipv6 = _domain_ipv4_ipv6(md, db)
+    return {
+        "domain": md.domain_name,
+        "pref": getattr(md, "mail_out_ip_pref", "ipv4") or "ipv4",
+        "ipv4": ipv4,
+        "ipv6": ipv6,
+        "ipv6_available": bool(ipv6),
+    }
+
+
+class MailOutIpRequest(_BM):
+    pref: str = _F("ipv4", pattern="^(ipv4|ipv6)$")
+
+
+@router.post("/mail/domains/{domain_id}/out-ip")
+async def set_mail_out_ip(domain_id: int, data: MailOutIpRequest,
+                          current_user=Depends(require_auth),
+                          db: Session = Depends(get_db)):
+    """Cambia la preferencia de IP de salida SMTP del dominio (ipv4/ipv6).
+
+    Elegir ipv6 requiere que el dominio tenga IPv6 asignada; la entregabilidad
+    (rDNS de la IPv6) es responsabilidad del cliente/proveedor."""
+    md = _get_mail_domain_or_404(domain_id, db)
+    _require_edit(md, current_user)
+
+    ipv4, ipv6 = _domain_ipv4_ipv6(md, db)
+    if data.pref == "ipv6" and not ipv6:
+        raise HTTPException(status_code=409,
+            detail="El dominio no tiene IPv6 asignada. Actívala antes de enviar correo por IPv6.")
+
+    md.mail_out_ip_pref = data.pref
+    db.commit()
+    db.refresh(md)
+    _apply_domain_sender_ip(md, db)
+    return {"status": "success", "pref": md.mail_out_ip_pref,
+            "warning": ("Asegúrate de que la IPv6 tiene rDNS (PTR) o el correo "
+                        "podría ser rechazado por Gmail/Outlook.") if data.pref == "ipv6" else None}
+
+
 @router.post("/mail/domains/{domain_id}/webmail/ssl")
 async def issue_webmail_ssl(
     domain_id: int,
@@ -771,7 +859,6 @@ async def issue_webmail_ssl(
 # ─────────────────────────────────────────────────────────────────────────────
 # SMTP relay propio del dominio (override del relay global)
 # ─────────────────────────────────────────────────────────────────────────────
-from pydantic import BaseModel as _BM, Field as _F
 
 
 class DomainRelayRequest(_BM):

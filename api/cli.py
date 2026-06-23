@@ -1178,6 +1178,43 @@ def cmd_harden_tls(dry_run: bool = False) -> int:
         db.close()
 
 
+def cmd_migrate_mail_out_ip(dry_run: bool = False) -> int:
+    """Reaplica la IP de salida SMTP de todos los dominios con el formato nuevo
+    (transporte por dominio svqout_* + mapa de config con ipv4/ipv6/pref).
+
+    Migra instalaciones con el formato viejo (transportes smtp_X_X_X_X) y deja
+    master.cf coherente. Idempotente.
+    """
+    from scripts.mail_manager import MailManager
+    try:
+        from api.models.models_mail import MailDomain
+        from api.routes.mail import _apply_domain_sender_ip
+    except Exception as e:
+        logger.error(f"No se pudo importar correo: {e}")
+        return 0
+
+    mm = MailManager()
+    if not mm.mail_available():
+        logger.info("Postfix no disponible; nada que migrar.")
+        return 0
+
+    db = SessionLocal()
+    try:
+        mds = db.query(MailDomain).all()
+        n = 0
+        for md in mds:
+            if dry_run:
+                logger.info(f"  {md.domain_name}: reaplicaría IP salida (pref={getattr(md,'mail_out_ip_pref','ipv4')})")
+                n += 1
+                continue
+            _apply_domain_sender_ip(md, db)
+            n += 1
+        logger.info(f"migrate_mail_out_ip: dominios procesados={n}")
+        return 0
+    finally:
+        db.close()
+
+
 def cmd_backfill_caa(dry_run: bool = False) -> int:
     """Añade registros CAA (issue+issuewild Let's Encrypt) a las zonas DNS
     existentes que no los tengan. Idempotente: no duplica si ya hay CAA.
@@ -1318,6 +1355,10 @@ def main():
     p_purge.add_argument("username", help="Usuario del panel a eliminar")
     p_purge.add_argument("--yes", action="store_true", help="Confirmar el borrado (sin esto solo avisa)")
 
+    p_moi = sub.add_parser("migrate_mail_out_ip",
+        help="Reaplica la IP de salida SMTP por dominio (formato nuevo svqout_* + ipv6/pref)")
+    p_moi.add_argument("--dry-run", action="store_true", help="Solo muestra qué haría")
+
     p_caa = sub.add_parser("backfill_caa",
         help="Añade CAA (issue+issuewild Let's Encrypt) a las zonas DNS que no lo tengan")
     p_caa.add_argument("--dry-run", action="store_true", help="Solo muestra qué haría")
@@ -1415,6 +1456,8 @@ def main():
         sys.exit(cmd_fix_mail_vhosts(dry_run=args.dry_run))
     if args.cmd == "backfill_caa":
         sys.exit(cmd_backfill_caa(dry_run=args.dry_run))
+    if args.cmd == "migrate_mail_out_ip":
+        sys.exit(cmd_migrate_mail_out_ip(dry_run=args.dry_run))
 
 
 if __name__ == "__main__":
