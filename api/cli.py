@@ -1178,6 +1178,48 @@ def cmd_harden_tls(dry_run: bool = False) -> int:
         db.close()
 
 
+def cmd_fix_mail_vhosts(dry_run: bool = False) -> int:
+    """Regenera los vhosts de webmail.* y mail.* para quitar el 'listen <IP>'
+    atado a la IPv4, que los hacía default de la IP y capturaba tráfico de otros
+    server_name (causaba la asimetría IPv4/IPv6 y que www.dominio acabara en
+    webmail). Idempotente.
+    """
+    from scripts.webmail_manager import WebmailManager
+    from scripts.mail_tls_manager import MailTLSManager
+    try:
+        from api.models.models_mail import MailDomain
+    except Exception as e:
+        logger.error(f"No se pudo importar MailDomain: {e}")
+        return 0
+
+    db = SessionLocal()
+    try:
+        mail_domains = db.query(MailDomain).all()
+        wm = WebmailManager()
+        web_ok = 0
+        for md in mail_domains:
+            dom = md.domain_name
+            if wm.is_enabled(dom):
+                if dry_run:
+                    logger.info(f"  {dom}: regeneraría vhost webmail")
+                else:
+                    try:
+                        wm.enable(dom)
+                        web_ok += 1
+                    except Exception as e:
+                        logger.error(f"  {dom}: webmail enable falló: {e}")
+        # Vhosts de mail.* (TLS SNI + redirect): rebuild_from_db los reescribe.
+        if not dry_run:
+            try:
+                MailTLSManager().rebuild_from_db(mail_domains)
+            except Exception as e:
+                logger.error(f"rebuild_from_db (mail vhosts) falló: {e}")
+        logger.info(f"fix_mail_vhosts: webmail regenerados={web_ok}, mail rebuild=ok")
+        return 0
+    finally:
+        db.close()
+
+
 def cmd_backfill_dns_ipv6(dry_run: bool = False) -> int:
     """Backfill de zonas DNS existentes:
       - Rellena DnsZone.ip_address si está NULL (la lista mostraba '—').
@@ -1242,6 +1284,10 @@ def main():
         help="Borra un cliente y TODOS sus recursos del sistema (vhosts, correo, DNS, BDs, cron, SFTP…)")
     p_purge.add_argument("username", help="Usuario del panel a eliminar")
     p_purge.add_argument("--yes", action="store_true", help="Confirmar el borrado (sin esto solo avisa)")
+
+    p_fmv = sub.add_parser("fix_mail_vhosts",
+        help="Regenera vhosts webmail.*/mail.* quitando el listen atado a IP (asimetría IPv4/IPv6)")
+    p_fmv.add_argument("--dry-run", action="store_true", help="Solo muestra qué haría")
 
     p_htls = sub.add_parser("harden_tls",
         help="Regenera los vhosts SSL con la política TLS endurecida (cifrados modernos)")
@@ -1328,6 +1374,8 @@ def main():
         sys.exit(cmd_backfill_dns_ipv6(dry_run=args.dry_run))
     if args.cmd == "harden_tls":
         sys.exit(cmd_harden_tls(dry_run=args.dry_run))
+    if args.cmd == "fix_mail_vhosts":
+        sys.exit(cmd_fix_mail_vhosts(dry_run=args.dry_run))
 
 
 if __name__ == "__main__":

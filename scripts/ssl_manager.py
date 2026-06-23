@@ -222,29 +222,14 @@ class SSLManager(SystemManager):
 
         os.makedirs(f"{acme_root}/.well-known/acme-challenge", exist_ok=True)
 
-        # Detectar IP pública del servidor
-        srv_ip = None
-        try:
-            r = subprocess.run(
-                ["ip", "-4", "addr", "show", "scope", "global"],
-                capture_output=True, text=True, timeout=5,
-            )
-            for line in r.stdout.splitlines():
-                line = line.strip()
-                if line.startswith("inet "):
-                    srv_ip = line.split()[1].split("/")[0]
-                    break
-        except Exception as e:
-            logger.warning(f"Could not detect server IP: {e}")
-
-        # Vhost temporal solo para el challenge ACME
+        # Vhost temporal solo para el challenge ACME. listen GENÉRICO (sin atar a
+        # la IP): atarlo haría a este vhost efímero el default de la IP durante la
+        # emisión y podría capturar tráfico de otros server_name. Enruta por name.
         tmp_vhost_path = f"/etc/nginx/sites-available/svqpanel-acme-{domain_name}"
         tmp_link_path  = f"/etc/nginx/sites-enabled/svqpanel-acme-{domain_name}"
-        ip_listen = f"    listen {srv_ip}:80;\n" if srv_ip else ""
         tmp_conf = (
             f"server {{\n"
             f"    listen 80;\n"
-            f"{ip_listen}"
             f"    listen [::]:80;\n"
             f"    server_name {mail_host};\n"
             f"    location ^~ /.well-known {{\n"

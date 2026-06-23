@@ -129,28 +129,13 @@ class MailTLSManager(SystemManager):
         avail = f"{SITES_AVAILABLE}/{vhost_name}"
         link  = f"{SITES_ENABLED}/{vhost_name}"
 
-        # Detectar IP pública (igual que ssl_manager)
-        srv_ip = None
-        try:
-            r = subprocess.run(
-                ["ip", "-4", "addr", "show", "scope", "global"],
-                capture_output=True, text=True, timeout=5,
-            )
-            for line in r.stdout.splitlines():
-                line = line.strip()
-                if line.startswith("inet "):
-                    srv_ip = line.split()[1].split("/")[0]
-                    break
-        except Exception:
-            pass
-        ip_listen = f"    listen {srv_ip}:443 ssl;\n" if srv_ip else ""
-        ip_listen80 = f"    listen {srv_ip}:80;\n" if srv_ip else ""
-
+        # listen GENÉRICO (sin atar a la IP). Atar a la IP (listen <IP>:443) hace
+        # que este vhost capture el tráfico de otros server_name de esa IP y crea
+        # asimetría IPv4/IPv6. nginx enruta por server_name y elige el cert por SNI.
         conf = (
             f"# SVQPanel — vhost mail.{domain} (TLS correo + redirect webmail)\n"
             f"server {{\n"
             f"    listen 80;\n"
-            f"{ip_listen80}"
             f"    listen [::]:80;\n"
             f"    server_name {host};\n"
             f"    location ^~ /.well-known {{\n"
@@ -161,7 +146,6 @@ class MailTLSManager(SystemManager):
             f"}}\n"
             f"server {{\n"
             f"    listen 443 ssl;\n"
-            f"{ip_listen}"
             f"    listen [::]:443 ssl;\n"
             f"    http2 on;\n"
             f"    server_name {host};\n"
