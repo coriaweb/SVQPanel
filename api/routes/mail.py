@@ -1566,6 +1566,11 @@ async def delete_mailbox(
     panel_username  = md.user.username if md.user else current_user.username
     mailbox_username = mb.username
 
+    # Borrar primero los tokens de webmail del buzón (defensa en profundidad:
+    # el FK ya es ON DELETE CASCADE, pero esto evita el 500 en BD antiguas donde
+    # el cascade no estuviera aplicado).
+    db.query(WebmailToken).filter(WebmailToken.mailbox_id == mb.id).delete(
+        synchronize_session=False)
     db.delete(mb)
     db.commit()
 

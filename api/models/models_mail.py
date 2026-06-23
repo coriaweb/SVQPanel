@@ -7,7 +7,7 @@ from sqlalchemy import (
     Column, Integer, Float, String, Boolean, DateTime, Text,
     ForeignKey, UniqueConstraint
 )
-from sqlalchemy.orm import relationship
+from sqlalchemy.orm import relationship, backref
 from datetime import datetime
 from api.models.database import Base
 
@@ -201,7 +201,14 @@ class WebmailToken(Base):
     used       = Column(Boolean, default=False)
     created_at = Column(DateTime, default=datetime.utcnow)
 
-    mailbox = relationship("Mailbox", backref="webmail_tokens")
+    # passive_deletes=True: al borrar el buzón, dejamos que la BD haga el
+    # CASCADE (ondelete arriba) en vez de que el ORM intente poner mailbox_id=NULL
+    # (que violaba el NOT NULL → error 500 al eliminar un buzón).
+    mailbox = relationship(
+        "Mailbox",
+        backref=backref("webmail_tokens", cascade="all, delete-orphan",
+                        passive_deletes=True),
+    )
 
     def __repr__(self):
         return f"<WebmailToken mailbox={self.mailbox_id} used={self.used}>"
