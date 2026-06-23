@@ -1026,6 +1026,8 @@ def cmd_clean_orphan_vhosts(yes: bool = False) -> int:
         print(f"  [apache] {p}")
     for p in links:
         print(f"  [symlink roto] {p}")
+    for p in res["removed"].get("php_pools", []):
+        print(f"  [pool php-fpm] {p}")
     for w in res["warnings"]:
         print(f"  aviso: {w}")
     if not yes:

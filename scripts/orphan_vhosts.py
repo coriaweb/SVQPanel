@@ -27,6 +27,8 @@ NGINX_AVAILABLE = "/etc/nginx/sites-available"
 NGINX_ENABLED   = "/etc/nginx/sites-enabled"
 APACHE_AVAILABLE = "/etc/apache2/sites-available"
 APACHE_ENABLED   = "/etc/apache2/sites-enabled"
+# Pools PHP-FPM por dominio: /etc/php/{ver}/fpm/pool.d/svqpanel-{dominio}.conf
+PHP_POOL_GLOB = "/etc/php/*/fpm/pool.d/svqpanel-*.conf"
 
 # Nombres protegidos (vhosts del sistema/panel que nunca se borran).
 _PROTECTED = ("svqpanel", "svqpanel-welcome", "000-default", "default-ssl", "default")
@@ -82,11 +84,13 @@ def _vhost_is_orphan(content: str) -> bool:
 
 def find_orphans() -> Dict[str, List[str]]:
     """
-    Devuelve {'nginx': [...], 'apache': [...], 'broken_links': [...]} con los
-    vhosts huérfanos detectados (sin borrar nada). 'broken_links' son symlinks
-    de sites-enabled cuyo destino ya no existe (rompen igualmente el configtest).
+    Devuelve {'nginx', 'apache', 'broken_links', 'php_pools'} con los recursos
+    huérfanos detectados (sin borrar nada). 'broken_links' son symlinks de
+    sites-enabled cuyo destino ya no existe; 'php_pools' son pools PHP-FPM por
+    dominio cuyo usuario del sistema ya no existe (rompen `php-fpm -t` y, con él,
+    el alta de cualquier dominio nuevo).
     """
-    result = {"nginx": [], "apache": [], "broken_links": []}
+    result = {"nginx": [], "apache": [], "broken_links": [], "php_pools": []}
 
     for path in glob.glob(os.path.join(NGINX_AVAILABLE, "*")):
         if not os.path.isfile(path) or _is_protected(path):
@@ -113,7 +117,41 @@ def find_orphans() -> Dict[str, List[str]]:
     # también tumba `nginx -t` / `apache2ctl configtest`.
     result["broken_links"] = _find_broken_symlinks()
 
+    # Pools PHP-FPM cuyo usuario del sistema ya no existe.
+    result["php_pools"] = _find_orphan_php_pools()
+
     return result
+
+
+def _user_exists(username: str) -> bool:
+    import pwd
+    try:
+        pwd.getpwnam(username)
+        return True
+    except KeyError:
+        return False
+
+
+def _find_orphan_php_pools() -> List[str]:
+    """
+    Pools PHP-FPM por dominio (svqpanel-*.conf) cuyo `user = X` apunta a un
+    usuario del sistema que ya no existe. Esos pools hacen fallar `php-fpm -t`
+    y, en cadena, bloquean el alta de nuevos dominios.
+    """
+    orphans = []
+    for path in glob.glob(PHP_POOL_GLOB):
+        try:
+            with open(path, "r", errors="replace") as f:
+                content = f.read()
+        except OSError:
+            continue
+        m = re.search(r'^\s*user\s*=\s*(\S+)', content, re.MULTILINE)
+        if not m:
+            continue
+        owner = m.group(1).strip()
+        if not _user_exists(owner):
+            orphans.append(path)
+    return orphans
 
 
 def _find_broken_symlinks() -> List[str]:
@@ -146,7 +184,7 @@ def clean_orphans(dry_run: bool = False) -> Dict[str, object]:
     sm = SystemManager(require_root=True)
 
     orphans = find_orphans()
-    removed = {"nginx": [], "apache": [], "broken_links": []}
+    removed = {"nginx": [], "apache": [], "broken_links": [], "php_pools": []}
     warnings: List[str] = []
 
     # Saber a qué webserver pertenece cada symlink roto, para recargar el correcto.
@@ -198,8 +236,31 @@ def clean_orphans(dry_run: bool = False) -> Dict[str, object]:
         except OSError as e:
             warnings.append(f"link[{os.path.basename(link)}]: {e}")
 
+    # ── Pools PHP-FPM huérfanos (usuario inexistente) ───────────────────────
+    fpm_versions_touched = set()
+    for path in orphans["php_pools"]:
+        # /etc/php/{ver}/fpm/pool.d/...  → extraer la versión para recargar FPM
+        m = re.search(r'/etc/php/([^/]+)/fpm/', path)
+        ver = m.group(1) if m else None
+        if dry_run:
+            removed["php_pools"].append(path)
+            continue
+        try:
+            os.remove(path)
+            removed["php_pools"].append(path)
+            if ver:
+                fpm_versions_touched.add(ver)
+            logger.info(f"Pool PHP-FPM huérfano borrado: {path}")
+        except OSError as e:
+            warnings.append(f"php_pool[{os.path.basename(path)}]: {e}")
+
     # ── Recargar webservers (solo si borramos algo y no es dry-run) ─────────
     if not dry_run:
+        for ver in fpm_versions_touched:
+            try:
+                sm.execute_command(["systemctl", "reload", f"php{ver}-fpm"], check=False)
+            except Exception as e:
+                warnings.append(f"reload php{ver}-fpm: {e}")
         if removed["nginx"] or nginx_link_broken:
             try:
                 from scripts.utils import nginx_configtest, reload_nginx
@@ -221,6 +282,6 @@ def clean_orphans(dry_run: bool = False) -> Dict[str, object]:
         "dry_run": dry_run,
         "removed": removed,
         "count": (len(removed["nginx"]) + len(removed["apache"])
-                  + len(removed["broken_links"])),
+                  + len(removed["broken_links"]) + len(removed["php_pools"])),
         "warnings": warnings,
     }
