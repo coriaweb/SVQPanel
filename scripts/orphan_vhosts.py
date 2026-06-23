@@ -95,7 +95,7 @@ def find_orphans() -> Dict[str, List[str]]:
     BIND en disco sin fila correspondiente en la tabla dns_zones.
     """
     result = {"nginx": [], "apache": [], "broken_links": [],
-              "php_pools": [], "dns_zones": []}
+              "php_pools": [], "dns_zones": [], "webmail": []}
 
     for path in glob.glob(os.path.join(NGINX_AVAILABLE, "*")):
         if not os.path.isfile(path) or _is_protected(path):
@@ -128,7 +128,41 @@ def find_orphans() -> Dict[str, List[str]]:
     # Zone files de BIND sin fila en dns_zones.
     result["dns_zones"] = _find_orphan_dns_zones()
 
+    # Vhosts de webmail (svqpanel-webmail-{dom}) cuyo dominio base ya no existe.
+    result["webmail"] = _find_orphan_webmail()
+
     return result
+
+
+def _find_orphan_webmail() -> List[str]:
+    """
+    Vhosts nginx svqpanel-webmail-{dominio} cuyo {dominio} ya no existe ni como
+    dominio web (tabla domains) ni como dominio de correo (mail_domains). Quedan
+    de borrados donde el webmail se dejó en 503 en vez de eliminarse.
+    Conservador: si no se puede leer la BD, devuelve [].
+    """
+    prefix = "svqpanel-webmail-"
+    try:
+        from api.models.database import SessionLocal
+        from api.models.models_domain import Domain
+        from api.models.models_mail import MailDomain
+        db = SessionLocal()
+        try:
+            live = {d.domain_name for d in db.query(Domain).all()}
+            live |= {m.domain_name for m in db.query(MailDomain).all()}
+        finally:
+            db.close()
+    except Exception:
+        return []
+
+    orphans = []
+    for path in glob.glob(os.path.join(NGINX_AVAILABLE, prefix + "*")):
+        if not os.path.isfile(path):
+            continue
+        domain = os.path.basename(path)[len(prefix):]
+        if domain and domain not in live:
+            orphans.append(path)
+    return orphans
 
 
 def _find_orphan_dns_zones() -> List[str]:
@@ -224,7 +258,7 @@ def clean_orphans(dry_run: bool = False) -> Dict[str, object]:
 
     orphans = find_orphans()
     removed = {"nginx": [], "apache": [], "broken_links": [],
-               "php_pools": [], "dns_zones": []}
+               "php_pools": [], "dns_zones": [], "webmail": []}
     warnings: List[str] = []
 
     # Saber a qué webserver pertenece cada symlink roto, para recargar el correcto.
@@ -306,6 +340,24 @@ def clean_orphans(dry_run: bool = False) -> Dict[str, object]:
         except OSError as e:
             warnings.append(f"dns_zone[{os.path.basename(path)}]: {e}")
 
+    # ── Vhosts de webmail huérfanos (svqpanel-webmail-{dom} sin dominio) ─────
+    webmail_removed = False
+    for path in orphans["webmail"]:
+        name = os.path.basename(path)
+        enabled = os.path.join(NGINX_ENABLED, name)
+        if dry_run:
+            removed["webmail"].append(path)
+            continue
+        try:
+            if os.path.islink(enabled) or os.path.exists(enabled):
+                os.remove(enabled)
+            os.remove(path)
+            removed["webmail"].append(path)
+            webmail_removed = True
+            logger.info(f"Vhost webmail huérfano borrado: {path}")
+        except OSError as e:
+            warnings.append(f"webmail[{name}]: {e}")
+
     # ── Recargar webservers (solo si borramos algo y no es dry-run) ─────────
     if not dry_run:
         for ver in fpm_versions_touched:
@@ -313,7 +365,7 @@ def clean_orphans(dry_run: bool = False) -> Dict[str, object]:
                 sm.execute_command(["systemctl", "reload", f"php{ver}-fpm"], check=False)
             except Exception as e:
                 warnings.append(f"reload php{ver}-fpm: {e}")
-        if removed["nginx"] or nginx_link_broken:
+        if removed["nginx"] or nginx_link_broken or webmail_removed:
             try:
                 from scripts.utils import nginx_configtest, reload_nginx
                 ok, out = nginx_configtest()
@@ -335,6 +387,6 @@ def clean_orphans(dry_run: bool = False) -> Dict[str, object]:
         "removed": removed,
         "count": (len(removed["nginx"]) + len(removed["apache"])
                   + len(removed["broken_links"]) + len(removed["php_pools"])
-                  + len(removed["dns_zones"])),
+                  + len(removed["dns_zones"]) + len(removed["webmail"])),
         "warnings": warnings,
     }

@@ -574,6 +574,12 @@ async def delete_domain(
                             .all())
             purge_mail_domains(db, mail_domains, username, dns_warnings)
             purge_dns_zones(db, {db_domain.domain_name}, dns_warnings)
+            # Por si hubo webmail sin fila MailDomain (o quedó de antes):
+            try:
+                from scripts.webmail_manager import WebmailManager
+                WebmailManager().destroy(db_domain.domain_name)
+            except Exception:
+                pass
         except Exception as e:
             print(f"Warning: limpieza DNS/correo de {db_domain.domain_name}: {e}")
         if dns_warnings:

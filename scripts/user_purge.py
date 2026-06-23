@@ -170,9 +170,11 @@ def purge_mail_domains(db: Session, mail_domains, username: str, warnings: List[
     for md in mail_domains:
         dname = md.domain_name
         selector = getattr(md, "dkim_selector", "mail")
+        # Borrado TOTAL del vhost webmail (no el 503 de _deactivate_webmail): el
+        # dominio se elimina por completo, no debe quedar svqpanel-webmail-{dom}.
         try:
-            from api.routes.mail import _deactivate_webmail
-            _deactivate_webmail(dname, db)
+            from scripts.webmail_manager import WebmailManager
+            WebmailManager().destroy(dname)
         except Exception as e:
             warnings.append(f"webmail[{dname}]: {e}")
         try:

@@ -318,3 +318,26 @@ server {{
         self.execute_command(["nginx", "-s", "reload"], check=False)
         logger.info(f"Webmail desactivado (503): {host}")
         return True, "Webmail desactivado"
+
+    def destroy(self, domain: str) -> Tuple[bool, str]:
+        """
+        Elimina POR COMPLETO el vhost de webmail (available + enabled). A
+        diferencia de remove() —que deja un vhost 503 porque el dominio sigue
+        existiendo—, esto es para cuando se borra el dominio entero: no debe
+        quedar ningún fichero huérfano de webmail.{dominio}.
+        """
+        avail   = os.path.join(SITES_AVAILABLE, vhost_name(domain))
+        enabled = os.path.join(SITES_ENABLED,   vhost_name(domain))
+        removed = False
+        for path in (enabled, avail):
+            try:
+                if os.path.islink(path) or os.path.exists(path):
+                    os.remove(path)
+                    removed = True
+            except OSError as e:
+                logger.warning(f"No se pudo borrar {path}: {e}")
+        if removed:
+            self.execute_command(["nginx", "-t"], check=False)
+            self.execute_command(["systemctl", "reload", "nginx"], check=False)
+            logger.info(f"Webmail vhost eliminado por completo: {webmail_host(domain)}")
+        return True, "Webmail eliminado"

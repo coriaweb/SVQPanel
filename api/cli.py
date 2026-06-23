@@ -1030,6 +1030,8 @@ def cmd_clean_orphan_vhosts(yes: bool = False) -> int:
         print(f"  [pool php-fpm] {p}")
     for p in res["removed"].get("dns_zones", []):
         print(f"  [zona dns] {p}")
+    for p in res["removed"].get("webmail", []):
+        print(f"  [webmail] {p}")
     for w in res["warnings"]:
         print(f"  aviso: {w}")
     if not yes:
