@@ -2960,6 +2960,10 @@ ADMIN_PASSWORD=$(python3 -c \
 if ! id "$ADMIN_USER" >/dev/null 2>&1; then
     useradd -m -s /bin/bash -d "/home/${ADMIN_USER}" "$ADMIN_USER"
     echo "${ADMIN_USER}:${ADMIN_PASSWORD}" | chpasswd
+    # Home a 711 (igual que UserManager): el dueño entra, otros NO listan su
+    # contenido, pero www-data SÍ puede atravesarlo para servir la web. useradd
+    # -m lo crea en 755 por defecto, que dejaría el home listable por otros.
+    chmod 711 "/home/${ADMIN_USER}"
     # Estructura web estilo Hestia (igual que UserManager.create_user)
     mkdir -p "/home/${ADMIN_USER}/web"
     chown "${ADMIN_USER}:www-data" "/home/${ADMIN_USER}/web"

@@ -1249,12 +1249,15 @@ def cmd_backfill_caa(dry_run: bool = False) -> int:
 
 
 def cmd_fix_home_perms(dry_run: bool = False) -> int:
-    """Repara los permisos del home de los usuarios que quedaron en 750.
+    """Normaliza los permisos del home de los usuarios del panel a 711.
 
-    El home DEBE ser 711 para que www-data/Apache pueda atravesarlo y servir la
-    web (con 750, 'other' no tiene traverse → 403 Forbidden). Un bug del revert
-    de SFTP dejaba algunos homes en 750. NO toca homes con SFTP-only activo
-    (esos son root:root 755, requisito del chroot). Idempotente.
+    El home DEBE ser 711: el dueño entra, 'other' NO lista el contenido, pero
+    www-data/Apache SÍ puede ATRAVESARLO para servir la web. Casos anómalos que
+    corrige:
+      - 750 → 711 (bug del revert de SFTP; con 750 'other' no atraviesa → 403)
+      - 755 → 711 (homes creados por useradd -m sin chmod; otros podían listar)
+    NO toca homes con SFTP-only activo (root:root 755, requisito del chroot):
+    se excluyen por owner root. Idempotente.
     """
     import os as _os, subprocess as _sp
 
@@ -1268,17 +1271,16 @@ def cmd_fix_home_perms(dry_run: bool = False) -> int:
                 continue
             st = _os.stat(home)
             mode = st.st_mode & 0o777
-            owner_uid = st.st_uid
             # Si el home es de root (SFTP-only chroot activo), no tocar.
-            if owner_uid == 0:
+            if st.st_uid == 0:
                 continue
-            if mode == 0o750:
+            if mode != 0o711:
                 if dry_run:
-                    logger.info(f"  {u.username}: home 750 → 711")
+                    logger.info(f"  {u.username}: home {oct(mode)[2:]} → 711")
                 else:
                     _sp.run(["chmod", "711", home], capture_output=True)
                 fixed += 1
-        logger.info(f"fix_home_perms: homes corregidos (750→711)={fixed}")
+        logger.info(f"fix_home_perms: homes normalizados a 711={fixed}")
         return 0
     finally:
         db.close()
