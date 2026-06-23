@@ -66,10 +66,19 @@ def purge_user_system(db: Session, user) -> List[str]:
         warnings.append(f"sftp: {e}")
 
     # ── 2. Dominios de correo (Postfix + Dovecot + Maildir + DKIM + webmail) ──
+    # Reproduce EXACTAMENTE lo que hace DELETE /mail/domains/{id}: quita webmail
+    # por dominio (vhost+DNS), limpia Postfix/Dovecot/Maildir, borra DKIM y
+    # regenera Rspamd al final.
     mail_domains = db.query(MailDomain).filter(MailDomain.user_id == user.id).all()
     for md in mail_domains:
         dname = md.domain_name
         selector = getattr(md, "dkim_selector", "mail")
+        # Webmail por dominio (webmail.{dominio}): vhost + DNS
+        try:
+            from api.routes.mail import _deactivate_webmail
+            _deactivate_webmail(dname, db)
+        except Exception as e:
+            warnings.append(f"webmail[{dname}]: {e}")
         try:
             from scripts.mail_manager import MailManager
             MailManager().delete_mail_domain(dname, username)
@@ -85,6 +94,19 @@ def purge_user_system(db: Session, user) -> List[str]:
             RspamdManager().remove_domain(dname)
         except Exception:
             pass
+    # Borrar las filas de correo de la BD ANTES de regenerar Rspamd, para que la
+    # config global no incluya los dominios que estamos eliminando (el cascade de
+    # User aún no ha corrido en este punto). El cascade de MailDomain limpia sus
+    # buzones y alias.
+    if mail_domains:
+        for md in mail_domains:
+            db.delete(md)
+        db.commit()
+        try:
+            from api.routes.mail import _rebuild_rspamd
+            _rebuild_rspamd(db)
+        except Exception as e:
+            warnings.append(f"rspamd_rebuild: {e}")
 
     # ── 3. Bases de datos MariaDB (DROP DATABASE + DROP USER) ─────────────────
     databases = db.query(ClientDatabase).filter(ClientDatabase.user_id == user.id).all()
