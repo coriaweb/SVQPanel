@@ -173,7 +173,7 @@ server {{
     ssl_protocols {SSL_PROTOCOLS};
     ssl_ciphers {SSL_CIPHERS};
     ssl_prefer_server_ciphers on;
-    ssl_conf_command Signature_Algorithms {SSL_SIGN_ALGS};
+    ssl_conf_command SignatureAlgorithms {SSL_SIGN_ALGS};
 
     location ^~ /.well-known {{
         allow all;
@@ -279,7 +279,7 @@ server {{
     ssl_protocols {SSL_PROTOCOLS};
     ssl_ciphers {SSL_CIPHERS};
     ssl_prefer_server_ciphers on;
-    ssl_conf_command Signature_Algorithms {SSL_SIGN_ALGS};
+    ssl_conf_command SignatureAlgorithms {SSL_SIGN_ALGS};
     return 503;
     error_page 503 @webmail_disabled;
     location @webmail_disabled {{

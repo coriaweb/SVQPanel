@@ -199,7 +199,7 @@ class PanelSSLManager(SystemManager):
             f"    ssl_protocols       {SSL_PROTOCOLS};\n"
             f"    ssl_ciphers         {SSL_CIPHERS};\n"
             f"    ssl_prefer_server_ciphers on;\n"
-            f"    ssl_conf_command Signature_Algorithms {SSL_SIGN_ALGS};\n"
+            f"    ssl_conf_command SignatureAlgorithms {SSL_SIGN_ALGS};\n"
             f"    ssl_session_cache   shared:SSL:10m;\n"
             f"    ssl_session_timeout 10m;\n"
             f"    add_header Strict-Transport-Security \"max-age=31536000; includeSubDomains\" always;\n"
@@ -760,7 +760,7 @@ server {{
     ssl_protocols       {SSL_PROTOCOLS};
     ssl_ciphers         {SSL_CIPHERS};
     ssl_prefer_server_ciphers on;
-    ssl_conf_command Signature_Algorithms {SSL_SIGN_ALGS};
+    ssl_conf_command SignatureAlgorithms {SSL_SIGN_ALGS};
 
     root /var/www/html;
     index index.html;
@@ -783,7 +783,7 @@ server {{
     ssl_protocols       {SSL_PROTOCOLS};
     ssl_ciphers         {SSL_CIPHERS};
     ssl_prefer_server_ciphers on;
-    ssl_conf_command Signature_Algorithms {SSL_SIGN_ALGS};
+    ssl_conf_command SignatureAlgorithms {SSL_SIGN_ALGS};
     ssl_session_cache   shared:SSL:10m;
     ssl_session_timeout 10m;
     # NO enviamos HSTS: el panel corre en un puerto no estándar ({PANEL_WEB_PORT}).

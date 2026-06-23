@@ -28,7 +28,7 @@ SSL_SIGN_ALGS = (
     "RSA+SHA256:RSA+SHA384:RSA+SHA512"
 )
 # Línea nginx lista para inyectar tras los ssl_ciphers (con su \n al final).
-SSL_CONF_COMMAND_LINE = f"    ssl_conf_command Signature_Algorithms {SSL_SIGN_ALGS};\n"
+SSL_CONF_COMMAND_LINE = f"    ssl_conf_command SignatureAlgorithms {SSL_SIGN_ALGS};\n"
 
 
 def validate_username(username: str) -> bool:

@@ -154,7 +154,7 @@ class MailTLSManager(SystemManager):
             f"    ssl_protocols {SSL_PROTOCOLS};\n"
             f"    ssl_ciphers {SSL_CIPHERS};\n"
             f"    ssl_prefer_server_ciphers on;\n"
-            f"    ssl_conf_command Signature_Algorithms {SSL_SIGN_ALGS};\n"
+            f"    ssl_conf_command SignatureAlgorithms {SSL_SIGN_ALGS};\n"
             f"    return 301 https://{webmail}$request_uri;\n"
             f"}}\n"
         )
