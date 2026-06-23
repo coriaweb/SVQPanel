@@ -17,20 +17,28 @@
       <!-- Nav -->
       <nav class="sb-nav sb-scroll">
         <div v-for="group in visibleGroups" :key="group.label" class="sb-group">
-          <!-- Separador colapsado / etiqueta expandido -->
+          <!-- Separador (sidebar en modo iconos) / etiqueta plegable (expandido) -->
           <div class="sb-sep" v-if="sidebarCollapsed"></div>
-          <p class="sb-group-label" v-else>{{ group.label }}</p>
+          <button class="sb-group-label sb-group-label--toggle" v-else
+            @click="toggleGroup(group.id)"
+            :aria-expanded="!isGroupCollapsed(group.id)">
+            <i class="bi sb-group-chevron" :class="isGroupCollapsed(group.id) ? 'bi-chevron-right' : 'bi-chevron-down'"></i>
+            <span>{{ group.label }}</span>
+          </button>
 
-          <a v-for="item in group.items" :key="item.to"
-            :href="item.to"
-            class="sb-item"
-            :class="{ 'sb-item--active': isActive(item.to) }"
-            :title="sidebarCollapsed ? item.label : ''"
-            @click.prevent="navigate(item.to)">
-            <i class="bi" :class="item.icon"></i>
-            <span class="sb-item__label">{{ item.label }}</span>
-            <span v-if="item.badge != null && !sidebarCollapsed" class="sb-badge">{{ item.badge }}</span>
-          </a>
+          <!-- Items: ocultos si el grupo está plegado (solo en modo expandido) -->
+          <template v-if="sidebarCollapsed || !isGroupCollapsed(group.id)">
+            <a v-for="item in group.items" :key="item.to"
+              :href="item.to"
+              class="sb-item"
+              :class="{ 'sb-item--active': isActive(item.to) }"
+              :title="sidebarCollapsed ? item.label : ''"
+              @click.prevent="navigate(item.to)">
+              <i class="bi" :class="item.icon"></i>
+              <span class="sb-item__label">{{ item.label }}</span>
+              <span v-if="item.badge != null && !sidebarCollapsed" class="sb-badge">{{ item.badge }}</span>
+            </a>
+          </template>
         </div>
       </nav>
 
@@ -232,17 +240,23 @@ export default {
     // ── Navegación agrupada ──
     const navGroups = [
       {
-        label: 'General',
+        id: 'general', label: 'General',
         items: [
           { to: '/dashboard', label: 'Inicio',     icon: 'bi-speedometer2' },
           { to: '/domains',   label: 'Dominios',   icon: 'bi-globe2' },
           { to: '/databases', label: 'Bases de datos', icon: 'bi-database' },
-          { to: '/mail',      label: 'Correo',     icon: 'bi-envelope' },
-          { to: '/dns',       label: 'DNS',        icon: 'bi-diagram-3' },
         ],
       },
       {
-        label: 'Archivos',
+        id: 'mail-dns', label: 'Correo y DNS',
+        items: [
+          { to: '/mail',       label: 'Correo',         icon: 'bi-envelope' },
+          { to: '/dns',        label: 'DNS',            icon: 'bi-diagram-3' },
+          { to: '/mail-queue', label: 'Cola de correo', icon: 'bi-envelope-paper', roles: ['admin'] },
+        ],
+      },
+      {
+        id: 'files', label: 'Archivos',
         items: [
           { to: '/files',   label: 'Gestor de archivos', icon: 'bi-folder2-open' },
           { to: '/sftp',    label: 'Acceso SFTP',        icon: 'bi-folder-symlink', roles: ['notAdmin'] },
@@ -251,24 +265,28 @@ export default {
         ],
       },
       {
-        label: 'Administración',
+        id: 'admin', label: 'Administración',
         items: [
           { to: '/users',      label: 'Usuarios', icon: 'bi-people',      roles: ['admin'] },
           { to: '/plans',      label: 'Planes',   icon: 'bi-stack',       roles: ['admin', 'reseller'] },
           { to: '/server-ips', label: 'IPs',      icon: 'bi-hdd-network', roles: ['admin'] },
           { to: '/db-tuner',   label: 'Optimizar BD', icon: 'bi-speedometer', roles: ['admin'] },
-          { to: '/mail-queue', label: 'Cola de correo', icon: 'bi-envelope-paper', roles: ['admin'] },
           { to: '/migrations', label: 'Migrar / Importar', icon: 'bi-box-arrow-in-down', roles: ['admin'] },
         ],
       },
       {
-        label: 'Sistema',
+        id: 'system', label: 'Sistema',
         items: [
           { to: '/system',         label: 'Servicios',       icon: 'bi-hdd-rack',     roles: ['admin'] },
           { to: '/processes',      label: 'Procesos',        icon: 'bi-cpu',          roles: ['admin'] },
           { to: '/monitoring',     label: 'Monitorización',  icon: 'bi-graph-up',     roles: ['admin'] },
           { to: '/logs',           label: 'Logs',            icon: 'bi-card-text',    roles: ['admin'] },
           { to: '/security',       label: 'Seguridad',       icon: 'bi-shield-lock',  roles: ['admin'] },
+        ],
+      },
+      {
+        id: 'config', label: 'Configuración',
+        items: [
           { to: '/terminal',       label: 'Terminal web',    icon: 'bi-terminal' },
           { to: '/api-tokens',     label: 'API Tokens',      icon: 'bi-key' },
           { to: '/system/updates', label: 'Actualizaciones', icon: 'bi-arrow-repeat', roles: ['admin'] },
@@ -291,6 +309,26 @@ export default {
     const visibleGroups = computed(() =>
       navGroups.map((g) => ({ ...g, items: g.items.filter(canSee) })).filter((g) => g.items.length > 0)
     )
+
+    // ── Grupos plegables (estado recordado en localStorage) ──
+    // 'general' empieza abierto; el resto se recuerda según lo deje el usuario.
+    const _loadCollapsed = () => {
+      try {
+        const raw = localStorage.getItem('svq_collapsed_groups')
+        if (raw) return new Set(JSON.parse(raw))
+      } catch { /* ignore */ }
+      return new Set()  // por defecto todos abiertos
+    }
+    const collapsedGroups = ref(_loadCollapsed())
+
+    const isGroupCollapsed = (id) => collapsedGroups.value.has(id)
+
+    const toggleGroup = (id) => {
+      const s = new Set(collapsedGroups.value)
+      if (s.has(id)) s.delete(id); else s.add(id)
+      collapsedGroups.value = s
+      try { localStorage.setItem('svq_collapsed_groups', JSON.stringify([...s])) } catch { /* ignore */ }
+    }
 
     // Lista de todas las rutas del menú, para detectar la coincidencia más específica
     const allNavPaths = navGroups.flatMap((g) => g.items.map((it) => it.to))
@@ -370,6 +408,7 @@ export default {
     return {
       store, route, router, notification, isAuthenticated, currentUser, theme,
       sidebarCollapsed, mobileMenuOpen, navigate, dropdownOpen, visibleGroups, isActive, currentBreadcrumb,
+      isGroupCollapsed, toggleGroup,
       userInitials, toastIcon, logout, openPalette, serverHostname,
       serverLoad, cpuCount, loadLevel,
       showBetaBanner, dismissBeta, licenseBad,
@@ -492,6 +531,17 @@ export default {
   margin: 0; padding: 14px 22px 5px;
   font-size: 11px; font-weight: 600; text-transform: uppercase;
   letter-spacing: .1em; color: var(--sb-muted);
+}
+/* Etiqueta de grupo plegable: ocupa todo el ancho y es clicable */
+.sb-group-label--toggle {
+  display: flex; align-items: center; gap: 6px; width: 100%;
+  background: none; border: none; cursor: pointer; text-align: left;
+  transition: color .15s;
+}
+.sb-group-label--toggle:hover { color: var(--sb-text, #fff); }
+.sb-group-chevron {
+  font-size: 9px; opacity: .7; transition: transform .15s;
+  width: 10px; flex-shrink: 0;
 }
 .sb-sep { height: 1px; background: var(--sb-border); margin: 8px 14px; }
 
