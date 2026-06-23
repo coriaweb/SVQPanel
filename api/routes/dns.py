@@ -842,4 +842,17 @@ def _build_template_records(domain: str, ipv4: str, ipv6: str = None,
     records.append({"record_type": "SRV", "name": "_pop3._tcp",       "content": f"0 110 mail.{domain}.", "ttl": 14400, "priority": 1})
     records.append({"record_type": "SRV", "name": "_pop3s._tcp",      "content": f"0 995 mail.{domain}.", "ttl": 14400, "priority": 1})
 
+    # CAA — solo Let's Encrypt puede emitir certs (normales y wildcard) para el
+    # dominio. El panel emite todo con LE, así que esto no rompe renovaciones y
+    # bloquea que cualquier otra CA emita un cert (por error o por ataque).
+    records.extend(CAA_TEMPLATE_RECORDS())
+
     return records
+
+
+def CAA_TEMPLATE_RECORDS() -> list:
+    """Registros CAA por defecto: autoriza SOLO a Let's Encrypt (issue+issuewild)."""
+    return [
+        {"record_type": "CAA", "name": "@", "content": '0 issue "letsencrypt.org"',     "ttl": 14400, "priority": 0},
+        {"record_type": "CAA", "name": "@", "content": '0 issuewild "letsencrypt.org"', "ttl": 14400, "priority": 0},
+    ]

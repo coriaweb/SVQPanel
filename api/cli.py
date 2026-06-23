@@ -1178,6 +1178,39 @@ def cmd_harden_tls(dry_run: bool = False) -> int:
         db.close()
 
 
+def cmd_backfill_caa(dry_run: bool = False) -> int:
+    """Añade registros CAA (issue+issuewild Let's Encrypt) a las zonas DNS
+    existentes que no los tengan. Idempotente: no duplica si ya hay CAA.
+    """
+    from api.routes.dns import CAA_TEMPLATE_RECORDS, _sync_zone_to_bind, _bump_serial
+    from api.models.models_dns import DnsZone, DnsRecord
+
+    db = SessionLocal()
+    try:
+        zonas = db.query(DnsZone).all()
+        added = 0
+        for z in zonas:
+            ya = db.query(DnsRecord).filter(
+                DnsRecord.zone_id == z.id, DnsRecord.record_type == "CAA"
+            ).count()
+            if ya:
+                continue  # ya tiene CAA, no tocar
+            if dry_run:
+                logger.info(f"  {z.domain_name}: añadiría CAA (issue+issuewild LE)")
+                added += 1
+                continue
+            for r in CAA_TEMPLATE_RECORDS():
+                db.add(DnsRecord(zone_id=z.id, **r))
+            z.serial = _bump_serial(z.serial)
+            db.commit()
+            _sync_zone_to_bind(z, db)
+            added += 1
+        logger.info(f"backfill CAA: zonas actualizadas={added}")
+        return 0
+    finally:
+        db.close()
+
+
 def cmd_fix_mail_vhosts(dry_run: bool = False) -> int:
     """Regenera los vhosts de webmail.* y mail.* para quitar el 'listen <IP>'
     atado a la IPv4, que los hacía default de la IP y capturaba tráfico de otros
@@ -1285,6 +1318,10 @@ def main():
     p_purge.add_argument("username", help="Usuario del panel a eliminar")
     p_purge.add_argument("--yes", action="store_true", help="Confirmar el borrado (sin esto solo avisa)")
 
+    p_caa = sub.add_parser("backfill_caa",
+        help="Añade CAA (issue+issuewild Let's Encrypt) a las zonas DNS que no lo tengan")
+    p_caa.add_argument("--dry-run", action="store_true", help="Solo muestra qué haría")
+
     p_fmv = sub.add_parser("fix_mail_vhosts",
         help="Regenera vhosts webmail.*/mail.* quitando el listen atado a IP (asimetría IPv4/IPv6)")
     p_fmv.add_argument("--dry-run", action="store_true", help="Solo muestra qué haría")
@@ -1376,6 +1413,8 @@ def main():
         sys.exit(cmd_harden_tls(dry_run=args.dry_run))
     if args.cmd == "fix_mail_vhosts":
         sys.exit(cmd_fix_mail_vhosts(dry_run=args.dry_run))
+    if args.cmd == "backfill_caa":
+        sys.exit(cmd_backfill_caa(dry_run=args.dry_run))
 
 
 if __name__ == "__main__":

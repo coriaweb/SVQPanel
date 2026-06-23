@@ -46,6 +46,25 @@ def test_zona_registro_MX_con_prioridad():
     assert "10" in z, "la prioridad del MX debe aparecer"
 
 
+def test_zona_render_caa():
+    # El render genérico debe emitir el rdata CAA tal cual (sintaxis BIND válida)
+    z = _zone([{"record_type": "CAA", "name": "@",
+               "content": '0 issue "letsencrypt.org"', "ttl": 14400, "priority": None}])
+    assert "CAA" in z
+    assert '0 issue "letsencrypt.org"' in z
+
+
+def test_plantilla_incluye_caa_letsencrypt():
+    # La plantilla por defecto debe incluir CAA issue + issuewild de Let's Encrypt
+    from api.routes.dns import _build_template_records
+    recs = _build_template_records("ejemplo.com", "1.2.3.4")
+    caa = [r for r in recs if r["record_type"] == "CAA"]
+    assert len(caa) == 2
+    contents = {r["content"] for r in caa}
+    assert '0 issue "letsencrypt.org"' in contents
+    assert '0 issuewild "letsencrypt.org"' in contents
+
+
 def test_serial_distinto_genera_zona_distinta():
     recs = [{"record_type": "A", "name": "@", "content": "1.2.3.4",
              "ttl": 3600, "priority": None}]
