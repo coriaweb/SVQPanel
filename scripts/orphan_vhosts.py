@@ -26,6 +26,7 @@ logger = logging.getLogger(__name__)
 NGINX_AVAILABLE = "/etc/nginx/sites-available"
 NGINX_ENABLED   = "/etc/nginx/sites-enabled"
 APACHE_AVAILABLE = "/etc/apache2/sites-available"
+APACHE_ENABLED   = "/etc/apache2/sites-enabled"
 
 # Nombres protegidos (vhosts del sistema/panel que nunca se borran).
 _PROTECTED = ("svqpanel", "svqpanel-welcome", "000-default", "default-ssl", "default")
@@ -81,10 +82,11 @@ def _vhost_is_orphan(content: str) -> bool:
 
 def find_orphans() -> Dict[str, List[str]]:
     """
-    Devuelve {'nginx': [ficheros...], 'apache': [ficheros...]} con los vhosts
-    huérfanos detectados (sin borrar nada).
+    Devuelve {'nginx': [...], 'apache': [...], 'broken_links': [...]} con los
+    vhosts huérfanos detectados (sin borrar nada). 'broken_links' son symlinks
+    de sites-enabled cuyo destino ya no existe (rompen igualmente el configtest).
     """
-    result = {"nginx": [], "apache": []}
+    result = {"nginx": [], "apache": [], "broken_links": []}
 
     for path in glob.glob(os.path.join(NGINX_AVAILABLE, "*")):
         if not os.path.isfile(path) or _is_protected(path):
@@ -106,7 +108,31 @@ def find_orphans() -> Dict[str, List[str]]:
         except OSError:
             continue
 
+    # Symlinks rotos en sites-enabled (destino borrado). Es el otro caso real:
+    # se borró el .conf de sites-available pero quedó el symlink colgante, que
+    # también tumba `nginx -t` / `apache2ctl configtest`.
+    result["broken_links"] = _find_broken_symlinks()
+
     return result
+
+
+def _find_broken_symlinks() -> List[str]:
+    """Symlinks colgantes (destino inexistente) en los sites-enabled de nginx y
+    Apache, excluyendo los protegidos del panel."""
+    broken = []
+    for d in (NGINX_ENABLED, APACHE_ENABLED):
+        try:
+            entries = os.listdir(d)
+        except OSError:
+            continue
+        for name in entries:
+            if _is_protected(name):
+                continue
+            link = os.path.join(d, name)
+            # islink + no existe el destino  → symlink roto
+            if os.path.islink(link) and not os.path.exists(link):
+                broken.append(link)
+    return broken
 
 
 def clean_orphans(dry_run: bool = False) -> Dict[str, object]:
@@ -120,8 +146,12 @@ def clean_orphans(dry_run: bool = False) -> Dict[str, object]:
     sm = SystemManager(require_root=True)
 
     orphans = find_orphans()
-    removed = {"nginx": [], "apache": []}
+    removed = {"nginx": [], "apache": [], "broken_links": []}
     warnings: List[str] = []
+
+    # Saber a qué webserver pertenece cada symlink roto, para recargar el correcto.
+    nginx_link_broken = any(l.startswith(NGINX_ENABLED) for l in orphans["broken_links"])
+    apache_link_broken = any(l.startswith(APACHE_ENABLED) for l in orphans["broken_links"])
 
     # ── nginx ─────────────────────────────────────────────────────────────
     for path in orphans["nginx"]:
@@ -156,9 +186,21 @@ def clean_orphans(dry_run: bool = False) -> Dict[str, object]:
         except Exception as e:
             warnings.append(f"apache[{name}]: {e}")
 
+    # ── Symlinks rotos en sites-enabled (nginx + Apache) ────────────────────
+    for link in orphans["broken_links"]:
+        if dry_run:
+            removed["broken_links"].append(link)
+            continue
+        try:
+            os.remove(link)   # borrar el symlink colgante (no toca destino)
+            removed["broken_links"].append(link)
+            logger.info(f"Symlink huérfano borrado: {link}")
+        except OSError as e:
+            warnings.append(f"link[{os.path.basename(link)}]: {e}")
+
     # ── Recargar webservers (solo si borramos algo y no es dry-run) ─────────
     if not dry_run:
-        if removed["nginx"]:
+        if removed["nginx"] or nginx_link_broken:
             try:
                 from scripts.utils import nginx_configtest, reload_nginx
                 ok, out = nginx_configtest()
@@ -168,7 +210,7 @@ def clean_orphans(dry_run: bool = False) -> Dict[str, object]:
                     warnings.append(f"nginx -t sigue fallando tras la limpieza: {out.strip()}")
             except Exception as e:
                 warnings.append(f"reload nginx: {e}")
-        if removed["apache"]:
+        if removed["apache"] or apache_link_broken:
             rc, _o, err = sm.execute_command(["apache2ctl", "configtest"], check=False)
             if rc == 0:
                 sm.execute_command(["systemctl", "reload", "apache2"], check=False)
@@ -178,6 +220,7 @@ def clean_orphans(dry_run: bool = False) -> Dict[str, object]:
     return {
         "dry_run": dry_run,
         "removed": removed,
-        "count": len(removed["nginx"]) + len(removed["apache"]),
+        "count": (len(removed["nginx"]) + len(removed["apache"])
+                  + len(removed["broken_links"])),
         "warnings": warnings,
     }

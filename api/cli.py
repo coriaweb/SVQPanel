@@ -1012,6 +1012,7 @@ def cmd_clean_orphan_vhosts(yes: bool = False) -> int:
     res = clean_orphans(dry_run=not yes)
     nginx = res["removed"]["nginx"]
     apache = res["removed"]["apache"]
+    links = res["removed"].get("broken_links", [])
 
     if res["count"] == 0:
         print("✓ No hay vhosts huérfanos. Nada que limpiar.")
@@ -1023,6 +1024,8 @@ def cmd_clean_orphan_vhosts(yes: bool = False) -> int:
         print(f"  [nginx]  {p}")
     for p in apache:
         print(f"  [apache] {p}")
+    for p in links:
+        print(f"  [symlink roto] {p}")
     for w in res["warnings"]:
         print(f"  aviso: {w}")
     if not yes:
