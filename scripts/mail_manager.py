@@ -662,6 +662,7 @@ vacation
         (@dominio → ipv4|ipv6|pref). Si no quedan entradas, elimina la sección.
         """
         cfg = self._read_map(self.SENDER_IP_CFG_MAP)
+        has_entries = bool(cfg)
         new_block = self._build_master_bind_block(cfg)
 
         try:
@@ -672,12 +673,12 @@ vacation
 
         pattern = re.escape(self._MASTER_START) + r".*?" + re.escape(self._MASTER_END) + r"\n?"
         if re.search(pattern, content, flags=re.DOTALL):
-            if unique:
+            if has_entries:
                 content = re.sub(pattern, new_block, content, flags=re.DOTALL)
             else:
-                # Sin IPs: eliminar bloque completo
+                # Sin dominios con IP propia: eliminar el bloque completo
                 content = re.sub(r"\n?" + pattern, "", content, flags=re.DOTALL)
-        elif unique:
+        elif has_entries:
             content += "\n" + new_block
 
         tmp = self.POSTFIX_MASTER_CF + ".tmp"
