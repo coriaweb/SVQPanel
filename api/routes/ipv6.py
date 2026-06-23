@@ -83,6 +83,16 @@ async def assign_ipv6(
             detail=f"IPv6 asignada pero error al actualizar el vhost: {str(e)}"
         )
 
+    # 4. Sincronizar AAAA en la zona DNS (si el panel la gestiona). No-op si el
+    #    dominio usa DNS externo. No revertimos la asignación si esto falla.
+    try:
+        from api.routes.dns import sync_aaaa_records_for_domain
+        sync_aaaa_records_for_domain(domain.domain_name, data.ipv6_address, db)
+    except Exception as e:
+        import logging
+        logging.getLogger(__name__).warning(
+            f"IPv6 asignada pero no se pudo sincronizar AAAA en DNS: {e}")
+
     return IPv6Response(
         domain_id=domain.id,
         ipv6_address=domain.ipv6,
@@ -149,6 +159,13 @@ async def delete_ipv6(
                 _regenerate_domain_vhost(domain, owner)
             except Exception as e:
                 print(f"Warning: no se pudo actualizar el vhost: {e}")
+
+        # 4. Quitar los AAAA de la zona DNS (no-op si DNS externo).
+        try:
+            from api.routes.dns import sync_aaaa_records_for_domain
+            sync_aaaa_records_for_domain(domain.domain_name, None, db)
+        except Exception as e:
+            print(f"Warning: no se pudieron quitar los AAAA del DNS: {e}")
     else:
         domain.ipv6 = None
         db.commit()

@@ -679,6 +679,76 @@ def _bump_serial(current: int) -> int:
     return max(current + 1, today + 1)
 
 
+def compute_aaaa_changes(existing: list, ipv6) -> dict:
+    """Decide qué AAAA crear/actualizar/borrar para reflejar `ipv6`. Función PURA.
+
+    `existing`: lista de dicts {"record_type","name","content"} de la zona.
+    Devuelve {"upsert": [(name, ipv6), ...], "delete_names": [name, ...]}:
+      - upsert: nombres que deben tener AAAA con ese contenido (A→AAAA paralelo).
+      - delete_names: nombres cuyo AAAA sobra (huérfano, o desactivación de IPv6).
+    """
+    aaaa = {r["name"]: r.get("content") for r in existing if r["record_type"] == "AAAA"}
+    if not ipv6:
+        # Desactivar: borrar todos los AAAA existentes.
+        return {"upsert": [], "delete_names": sorted(aaaa.keys())}
+
+    a_names = sorted({r["name"] for r in existing if r["record_type"] == "A"})
+    upsert = [(n, ipv6) for n in a_names if aaaa.get(n) != ipv6]
+    # AAAA cuyo name ya no tiene A → huérfano, fuera.
+    delete_names = sorted(n for n in aaaa if n not in a_names)
+    return {"upsert": upsert, "delete_names": delete_names}
+
+
+def sync_aaaa_records_for_domain(domain_name: str, ipv6, db: Session) -> dict:
+    """Sincroniza los registros AAAA de la zona DNS de un dominio con su IPv6.
+
+    Se invoca al asignar/quitar la IPv6 de un dominio para mantener el DNS
+    coherente con la realidad del servidor:
+      - ipv6 con valor  → crea/actualiza un AAAA por cada registro A existente
+        (paridad IPv4/IPv6: típicamente @ y mail; www/ftp son CNAME y heredan).
+      - ipv6 None/""    → elimina todos los AAAA de la zona.
+
+    DEFENSIVO: si el panel NO gestiona la zona de ese dominio (DNS externo), es
+    un no-op silencioso. Devuelve un dict con lo que hizo (para logging/respuesta).
+    """
+    zone = db.query(DnsZone).filter(DnsZone.domain_name == domain_name).first()
+    if not zone:
+        # DNS externo o sin zona en el panel → no tocamos nada.
+        return {"managed": False, "added": 0, "removed": 0}
+
+    existing = db.query(DnsRecord).filter(DnsRecord.zone_id == zone.id).all()
+    existing_dicts = [
+        {"record_type": r.record_type, "name": r.name, "content": r.content}
+        for r in existing
+    ]
+    plan = compute_aaaa_changes(existing_dicts, ipv6)
+    aaaa_by_name = {r.name: r for r in existing if r.record_type == "AAAA"}
+    added = removed = 0
+
+    for name, content in plan["upsert"]:
+        rec = aaaa_by_name.get(name)
+        if rec is None:
+            db.add(DnsRecord(
+                zone_id=zone.id, record_type="AAAA",
+                name=name, content=content, ttl=14400, priority=0,
+            ))
+        else:
+            rec.content = content
+        added += 1
+    for name in plan["delete_names"]:
+        rec = aaaa_by_name.get(name)
+        if rec is not None:
+            db.delete(rec)
+            removed += 1
+
+    if added or removed:
+        zone.serial = _bump_serial(zone.serial)
+        db.commit()
+        _sync_zone_to_bind(zone, db)
+
+    return {"managed": True, "added": added, "removed": removed}
+
+
 def _build_template_records(domain: str, ipv4: str, ipv6: str = None,
                             ns1: str = None, ns2: str = None) -> list:
     """
