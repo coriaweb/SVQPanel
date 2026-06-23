@@ -189,11 +189,21 @@ def purge_user_system(db: Session, user) -> List[str]:
 
     # ── 6. Crontab del sistema (/var/spool/cron/crontabs/{username}) ──────────
     # userdel -r NO lo borra. Lo vaciamos por completo con `crontab -r`.
-    try:
-        from scripts.base import SystemManager  # ejecutor con root
-        SystemManager(require_root=True).execute_command(
-            ["crontab", "-u", username, "-r"], check=False)
-    except Exception as e:
-        warnings.append(f"crontab: {e}")
+    # Si el binario `crontab` no está instalado, borramos el fichero a mano.
+    import shutil as _shutil
+    if _shutil.which("crontab"):
+        try:
+            from scripts.base import SystemManager  # ejecutor con root
+            SystemManager(require_root=True).execute_command(
+                ["crontab", "-u", username, "-r"], check=False)
+        except Exception as e:
+            warnings.append(f"crontab: {e}")
+    else:
+        spool = f"/var/spool/cron/crontabs/{username}"
+        try:
+            if os.path.exists(spool):
+                os.remove(spool)
+        except OSError as e:
+            warnings.append(f"crontab: {e}")
 
     return warnings
