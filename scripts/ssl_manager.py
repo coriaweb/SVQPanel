@@ -162,6 +162,21 @@ class SSLManager(SystemManager):
             logger.error(f"Failed to create SSL: {str(e)}")
             raise
 
+    def _cert_domains(self, cert_path: str) -> list:
+        """Devuelve la lista de dominios (SAN) de un certificado. [] si falla."""
+        try:
+            rc, out, err = self.execute_command(
+                ["openssl", "x509", "-in", cert_path, "-noout", "-ext", "subjectAltName"],
+                check=False)
+            doms = []
+            for tok in (out or "").replace(",", " ").split():
+                tok = tok.strip()
+                if tok.startswith("DNS:"):
+                    doms.append(tok[4:])
+            return doms
+        except Exception:
+            return []
+
     def expand_for_webmail(self, domain_name: str, email: str) -> dict:
         """
         Emite o expande el cert para webmail.{dominio}:
@@ -177,16 +192,25 @@ class SSLManager(SystemManager):
         domain_cert = f"/etc/letsencrypt/live/{domain_name}/fullchain.pem"
 
         if os.path.exists(domain_cert):
-            # Dominio tiene cert web → expandir para incluir webmail como SAN
-            cmd = [
-                certbot_path, "certonly", "--nginx", "--expand",
-                "-d", domain_name, "-d", webmail_host,
-                "--non-interactive", "--agree-tos", "-m", email,
-            ]
+            # Dominio tiene cert web → expandir para incluir webmail como SAN.
+            # IMPORTANTE: hay que pasar TODOS los SAN actuales + webmail. Si solo
+            # se pasan -d dominio -d webmail, certbot genera un cert SIN www (ni
+            # los demás SAN), rompiendo la web canónica y dejando webmail con un
+            # cert que no le sirve. Leemos los SAN del cert vigente y los unimos.
+            existing = self._cert_domains(domain_cert)
+            wanted = list(dict.fromkeys(existing + [domain_name, webmail_host]))
+            # --cert-name fija el lineage al del dominio: sin esto, certbot puede
+            # crear un cert duplicado "{dominio}-0001" en vez de expandir el bueno
+            # (deja el vhost apuntando al viejo, sin webmail → candado rojo).
+            cmd = [certbot_path, "certonly", "--nginx", "--expand",
+                   "--cert-name", domain_name]
+            for d in wanted:
+                cmd += ["-d", d]
+            cmd += ["--non-interactive", "--agree-tos", "-m", email]
             rc, stdout, stderr = self.execute_command(cmd, check=False)
             if rc != 0:
                 raise RuntimeError(f"certbot expand failed: {(stderr or '').strip()}")
-            logger.info(f"Cert expanded with webmail SAN: {webmail_host}")
+            logger.info(f"Cert expanded (SANs={wanted}) with webmail: {webmail_host}")
             return {"success": True, "domain": webmail_host,
                     "cert": domain_cert}
         else:
