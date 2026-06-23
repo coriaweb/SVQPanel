@@ -13,6 +13,7 @@ from .utils import (
     get_nginx_config_path,
     generate_nginx_config,
     reload_nginx,
+    reload_nginx_or_diagnose,
     write_fastcgi_cache_zone,
     remove_fastcgi_cache_zone,
     write_ratelimit_zone,
@@ -216,8 +217,9 @@ class DomainManager(SystemManager):
                 logger.info(f"Created Nginx front vhost (proxy→Apache): {config_path}")
                 enabled_link = f"/etc/nginx/sites-enabled/{domain_name}"
                 self.execute_command(["ln", "-sf", config_path, enabled_link])
-                if not reload_nginx():
-                    raise RuntimeError("Nginx configuration test failed")
+                # Recarga con diagnóstico: si el configtest falla por un vhost
+                # AJENO (huérfano de un borrado anterior), no culpamos a este.
+                reload_nginx_or_diagnose(domain_name)
 
             else:  # nginx solo
                 config_path = get_nginx_config_path(domain_name)
@@ -237,9 +239,8 @@ class DomainManager(SystemManager):
                 enabled_link = f"/etc/nginx/sites-enabled/{domain_name}"
                 self.execute_command(["ln", "-sf", config_path, enabled_link])
 
-                # Test y reload Nginx
-                if not reload_nginx():
-                    raise RuntimeError("Nginx configuration test failed")
+                # Test y reload Nginx (con diagnóstico de vhost ajeno/huérfano)
+                reload_nginx_or_diagnose(domain_name)
 
             logger.info(f"Domain created: {domain_name}")
             return {
@@ -290,6 +291,25 @@ class DomainManager(SystemManager):
             if self.file_exists(nginx_config):
                 self.execute_command(["rm", "-f", nginx_config])
                 logger.info(f"Removed Nginx config: {nginx_config}")
+
+            # Eliminar el vhost Apache si existe (modo apache+nginx). El borrado
+            # solo quitaba el de nginx; en modo Apache quedaba el .conf colgando
+            # en sites-available + el symlink en sites-enabled.
+            try:
+                from scripts.webserver_config import get_apache_vhost_path
+                apache_vhost = get_apache_vhost_path(domain_name)
+                if self.file_exists(apache_vhost):
+                    # a2dissite quita el symlink en sites-enabled
+                    self.execute_command(["a2dissite", f"{domain_name}.conf"], check=False)
+                    self.execute_command(["a2dissite", domain_name], check=False)
+                    self.execute_command(["rm", "-f", apache_vhost])
+                    logger.info(f"Removed Apache vhost: {apache_vhost}")
+                    rc, _out, _err = self.execute_command(
+                        ["apache2ctl", "configtest"], check=False)
+                    if rc == 0:
+                        self.execute_command(["systemctl", "reload", "apache2"], check=False)
+            except Exception as apache_err:
+                logger.warning(f"No se pudo eliminar el vhost Apache de {domain_name}: {apache_err}")
 
             # Eliminar el pool PHP-FPM dedicado del dominio (todas las versiones)
             try:

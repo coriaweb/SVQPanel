@@ -945,6 +945,91 @@ def cmd_admin_recover(username: str = None, password: str = None,
         db.close()
 
 
+def cmd_purge_user(username: str, yes: bool = False) -> int:
+    """Borra un cliente y TODOS sus recursos del sistema (root).
+
+    Hace la misma limpieza completa que el endpoint DELETE /users/{id}:
+    vhosts nginx+Apache, IPv6, correo (Postfix/Dovecot/DKIM/Rspamd), zonas DNS
+    + cluster, BDs MariaDB, crontab, subcuentas SFTP, pools PHP… y luego el
+    usuario del SO (userdel -r) y la fila del panel.
+    """
+    db = SessionLocal()
+    try:
+        target = db.query(User).filter(User.username == username).first()
+        if not target:
+            print(f"✗ Usuario no encontrado: {username}")
+            return 1
+        if target.is_admin:
+            other = (db.query(User)
+                     .filter(User.is_admin == True, User.id != target.id)  # noqa: E712
+                     .count())
+            if other == 0:
+                print("✗ Es el único administrador del panel; no se borra.")
+                return 1
+        if not yes:
+            print(f"Esto eliminará al cliente '{username}' y TODOS sus recursos.")
+            print("Re-ejecuta con --yes para confirmar.")
+            return 1
+
+        from scripts.user_purge import purge_user_system
+        from scripts.user_manager import UserManager
+        warnings = purge_user_system(db, target)
+        try:
+            UserManager().delete_user(target.username)
+        except Exception as e:
+            warnings.append(f"userdel: {e}")
+        db.delete(target)
+        db.commit()
+
+        print(f"✓ Cliente eliminado: {username}")
+        if warnings:
+            print("  Avisos durante la limpieza:")
+            for w in warnings:
+                print(f"   - {w}")
+        return 0
+    except Exception as e:
+        db.rollback()
+        logger.error("purge_user error: %s", e)
+        print(f"✗ Error: {e}")
+        return 1
+    finally:
+        db.close()
+
+
+def cmd_clean_orphan_vhosts(yes: bool = False) -> int:
+    """Detecta y elimina vhosts huérfanos de nginx/Apache (root/logs inexistentes).
+
+    Repara instalaciones donde quedaron vhosts de dominios borrados que hacían
+    fallar `nginx -t` / `apache2ctl configtest` y bloqueaban el alta de dominios.
+    Sin --yes solo muestra qué borraría (dry-run). NUNCA toca el vhost del panel.
+    """
+    try:
+        from scripts.orphan_vhosts import clean_orphans
+    except Exception as e:
+        print(f"✗ No se pudo cargar el saneador: {e}")
+        return 1
+
+    res = clean_orphans(dry_run=not yes)
+    nginx = res["removed"]["nginx"]
+    apache = res["removed"]["apache"]
+
+    if res["count"] == 0:
+        print("✓ No hay vhosts huérfanos. Nada que limpiar.")
+        return 0
+
+    verbo = "Se borrarían" if not yes else "Borrados"
+    print(f"{verbo} {res['count']} vhost(s) huérfano(s):")
+    for p in nginx:
+        print(f"  [nginx]  {p}")
+    for p in apache:
+        print(f"  [apache] {p}")
+    for w in res["warnings"]:
+        print(f"  aviso: {w}")
+    if not yes:
+        print("\nRe-ejecuta con --yes para borrarlos y recargar el webserver.")
+    return 0
+
+
 def main():
     parser = argparse.ArgumentParser(prog="api.cli", description="SVQPanel CLI")
     sub = parser.add_subparsers(dest="cmd", required=True)
@@ -965,6 +1050,15 @@ def main():
     p_admin.add_argument("--email", default=None, help="Email (al crear un admin nuevo)")
     p_admin.add_argument("--list", action="store_true", dest="list_only",
                          help="Solo listar las cuentas de administrador")
+
+    p_purge = sub.add_parser("purge_user",
+        help="Borra un cliente y TODOS sus recursos del sistema (vhosts, correo, DNS, BDs, cron, SFTP…)")
+    p_purge.add_argument("username", help="Usuario del panel a eliminar")
+    p_purge.add_argument("--yes", action="store_true", help="Confirmar el borrado (sin esto solo avisa)")
+
+    p_orphan = sub.add_parser("clean_orphan_vhosts",
+        help="Detecta/elimina vhosts huérfanos de nginx/Apache (root o logs inexistentes)")
+    p_orphan.add_argument("--yes", action="store_true", help="Borrar de verdad (sin esto solo muestra)")
 
     p_refresh = sub.add_parser("refresh_ip_lists", help="Refresca listas IP vencidas")
     p_refresh.add_argument("--force", action="store_true", help="Refresca todas, ignorar interval")
@@ -1025,6 +1119,10 @@ def main():
         sys.exit(cmd_sync_panel_ssl())
     if args.cmd == "restore_panel":
         sys.exit(cmd_restore_panel(args.filename))
+    if args.cmd == "purge_user":
+        sys.exit(cmd_purge_user(args.username, yes=args.yes))
+    if args.cmd == "clean_orphan_vhosts":
+        sys.exit(cmd_clean_orphan_vhosts(yes=args.yes))
 
 
 if __name__ == "__main__":

@@ -256,12 +256,47 @@ async def delete_user(
                 detail="Usuario no encontrado"
             )
 
-        # Delete system user
-        user_manager.delete_user(db_user.username)
+        # No permitir borrar el último admin del panel (quedaría sin acceso).
+        if db_user.is_admin:
+            other_admins = (db.query(User)
+                            .filter(User.is_admin == True, User.id != db_user.id)  # noqa: E712
+                            .count())
+            if other_admins == 0:
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail="No se puede eliminar el único administrador del panel",
+                )
 
-        # Delete from database
+        # Limpieza COMPLETA de sistema (vhosts nginx+Apache, IPv6, correo,
+        # DNS + cluster, BDs MariaDB, crontab, subcuentas SFTP, pools PHP…).
+        # DEBE ir ANTES del db.delete: necesita los nombres de dominio/BD que
+        # el cascade está a punto de borrar. Best-effort: acumula avisos.
+        warnings = []
+        try:
+            from scripts.user_purge import purge_user_system
+            warnings = purge_user_system(db, db_user)
+        except Exception as e:
+            warnings.append(f"purge: {e}")
+
+        # Delete system user (home + spool de correo)
+        try:
+            user_manager.delete_user(db_user.username)
+        except Exception as e:
+            warnings.append(f"userdel: {e}")
+
+        # Delete from database (cascade borra domains/mail/db/cron de la BD)
         db.delete(db_user)
         db.commit()
+
+        if warnings:
+            # 207: el usuario se borró pero hubo errores en la limpieza de sistema.
+            raise HTTPException(
+                status_code=status.HTTP_207_MULTI_STATUS,
+                detail={
+                    "message": "Usuario eliminado, pero con avisos en la limpieza de sistema",
+                    "warnings": warnings,
+                },
+            )
         return None
     except HTTPException:
         raise

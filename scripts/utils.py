@@ -670,6 +670,48 @@ def purge_fastcgi_cache(domain: str) -> int:
     return freed
 
 
+def nginx_configtest() -> tuple:
+    """
+    Ejecuta `nginx -t`. Devuelve (ok: bool, salida: str).
+    No recarga nada; solo valida la sintaxis de TODA la config.
+    """
+    import subprocess
+    import os
+
+    env = os.environ.copy()
+    env["PATH"] = "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+    try:
+        proc = subprocess.run(["nginx", "-t"], capture_output=True, env=env)
+        out = (proc.stderr or b"").decode(errors="replace")
+        return proc.returncode == 0, out
+    except Exception as e:
+        return False, str(e)
+
+
+def reload_nginx_or_diagnose(domain_name: str) -> None:
+    """
+    Recarga nginx tras crear/editar el vhost de `domain_name`. Si el configtest
+    falla, distingue si el problema es ESTE vhost o uno AJENO (huérfano de un
+    borrado anterior cuyo root/logs ya no existen). Así un vhost roto de otro
+    dominio no hace fracasar el alta del nuevo con un mensaje engañoso.
+
+    Lanza RuntimeError con un mensaje específico si no puede recargar.
+    """
+    ok, out = nginx_configtest()
+    if ok:
+        if not reload_nginx():
+            raise RuntimeError("Nginx no pudo recargar (configtest OK pero reload falló)")
+        return
+
+    out = (out or "").strip()
+    if domain_name in out:
+        raise RuntimeError(f"Nginx configtest falló por el vhost de este dominio: {out}")
+    raise RuntimeError(
+        "Nginx no puede recargar porque OTRO vhost tiene un error (no es de este "
+        "dominio); suele ser un vhost huérfano de un borrado anterior. Ejecuta "
+        f"`python -m api.cli clean_orphan_vhosts --yes` para sanearlos. Detalle: {out}")
+
+
 def reload_nginx() -> bool:
     """
     Valida la config y recarga nginx con un delay de 1s mediante un proceso
