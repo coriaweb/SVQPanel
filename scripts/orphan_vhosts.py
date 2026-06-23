@@ -29,6 +29,9 @@ APACHE_AVAILABLE = "/etc/apache2/sites-available"
 APACHE_ENABLED   = "/etc/apache2/sites-enabled"
 # Pools PHP-FPM por dominio: /etc/php/{ver}/fpm/pool.d/svqpanel-{dominio}.conf
 PHP_POOL_GLOB = "/etc/php/*/fpm/pool.d/svqpanel-*.conf"
+# Zonas DNS (BIND): /etc/bind/zones/db.{dominio}
+DNS_ZONES_DIR = "/etc/bind/zones"
+DNS_ZONE_PREFIX = "db."
 
 # Nombres protegidos (vhosts del sistema/panel que nunca se borran).
 _PROTECTED = ("svqpanel", "svqpanel-welcome", "000-default", "default-ssl", "default")
@@ -84,13 +87,15 @@ def _vhost_is_orphan(content: str) -> bool:
 
 def find_orphans() -> Dict[str, List[str]]:
     """
-    Devuelve {'nginx', 'apache', 'broken_links', 'php_pools'} con los recursos
-    huérfanos detectados (sin borrar nada). 'broken_links' son symlinks de
-    sites-enabled cuyo destino ya no existe; 'php_pools' son pools PHP-FPM por
-    dominio cuyo usuario del sistema ya no existe (rompen `php-fpm -t` y, con él,
-    el alta de cualquier dominio nuevo).
+    Devuelve {'nginx', 'apache', 'broken_links', 'php_pools', 'dns_zones'} con
+    los recursos huérfanos detectados (sin borrar nada). 'broken_links' son
+    symlinks de sites-enabled cuyo destino ya no existe; 'php_pools' son pools
+    PHP-FPM por dominio cuyo usuario del sistema ya no existe (rompen `php-fpm -t`
+    y, con él, el alta de cualquier dominio nuevo); 'dns_zones' son zone files de
+    BIND en disco sin fila correspondiente en la tabla dns_zones.
     """
-    result = {"nginx": [], "apache": [], "broken_links": [], "php_pools": []}
+    result = {"nginx": [], "apache": [], "broken_links": [],
+              "php_pools": [], "dns_zones": []}
 
     for path in glob.glob(os.path.join(NGINX_AVAILABLE, "*")):
         if not os.path.isfile(path) or _is_protected(path):
@@ -120,7 +125,41 @@ def find_orphans() -> Dict[str, List[str]]:
     # Pools PHP-FPM cuyo usuario del sistema ya no existe.
     result["php_pools"] = _find_orphan_php_pools()
 
+    # Zone files de BIND sin fila en dns_zones.
+    result["dns_zones"] = _find_orphan_dns_zones()
+
     return result
+
+
+def _find_orphan_dns_zones() -> List[str]:
+    """
+    Zone files /etc/bind/zones/db.{dominio} cuyo {dominio} ya no existe en la
+    tabla dns_zones (quedaron de borrados antiguos). No suelen romper BIND (no
+    están en named.conf.zones), pero son basura en disco.
+
+    Si no se puede consultar la BD, devuelve [] (conservador: no borrar a ciegas).
+    """
+    if not os.path.isdir(DNS_ZONES_DIR):
+        return []
+    try:
+        from api.models.database import SessionLocal
+        from api.models.models_dns import DnsZone
+        db = SessionLocal()
+        try:
+            known = {z.domain_name for z in db.query(DnsZone).all()}
+        finally:
+            db.close()
+    except Exception:
+        return []
+
+    orphans = []
+    for name in os.listdir(DNS_ZONES_DIR):
+        if not name.startswith(DNS_ZONE_PREFIX):
+            continue
+        domain = name[len(DNS_ZONE_PREFIX):]
+        if domain and domain not in known:
+            orphans.append(os.path.join(DNS_ZONES_DIR, name))
+    return orphans
 
 
 def _user_exists(username: str) -> bool:
@@ -184,7 +223,8 @@ def clean_orphans(dry_run: bool = False) -> Dict[str, object]:
     sm = SystemManager(require_root=True)
 
     orphans = find_orphans()
-    removed = {"nginx": [], "apache": [], "broken_links": [], "php_pools": []}
+    removed = {"nginx": [], "apache": [], "broken_links": [],
+               "php_pools": [], "dns_zones": []}
     warnings: List[str] = []
 
     # Saber a qué webserver pertenece cada symlink roto, para recargar el correcto.
@@ -254,6 +294,18 @@ def clean_orphans(dry_run: bool = False) -> Dict[str, object]:
         except OSError as e:
             warnings.append(f"php_pool[{os.path.basename(path)}]: {e}")
 
+    # ── Zone files DNS huérfanos (sin fila en dns_zones) ────────────────────
+    for path in orphans["dns_zones"]:
+        if dry_run:
+            removed["dns_zones"].append(path)
+            continue
+        try:
+            os.remove(path)
+            removed["dns_zones"].append(path)
+            logger.info(f"Zone file DNS huérfano borrado: {path}")
+        except OSError as e:
+            warnings.append(f"dns_zone[{os.path.basename(path)}]: {e}")
+
     # ── Recargar webservers (solo si borramos algo y no es dry-run) ─────────
     if not dry_run:
         for ver in fpm_versions_touched:
@@ -282,6 +334,7 @@ def clean_orphans(dry_run: bool = False) -> Dict[str, object]:
         "dry_run": dry_run,
         "removed": removed,
         "count": (len(removed["nginx"]) + len(removed["apache"])
-                  + len(removed["broken_links"]) + len(removed["php_pools"])),
+                  + len(removed["broken_links"]) + len(removed["php_pools"])
+                  + len(removed["dns_zones"])),
         "warnings": warnings,
     }
