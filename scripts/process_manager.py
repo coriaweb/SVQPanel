@@ -88,6 +88,11 @@ def list_processes(limit: int = 200, sort_by: str = "cpu") -> Dict:
         except ValueError:
             continue
         user, pcpu, pmem, rss, comm, args = parts[1], parts[2], parts[3], parts[4], parts[5], parts[6]
+        # Ocultar el PROPIO ps de esta consulta: siempre sale ~100% (su %CPU es
+        # el promedio de su vida, que es solo el instante de ejecutarse). Es un
+        # artefacto, no consumo real. Lo identificamos por nuestra invocación exacta.
+        if comm == "ps" and "pid,user,pcpu,pmem,rss,comm,args" in args:
+            continue
         try:
             rss_kb = int(rss)
         except ValueError:
