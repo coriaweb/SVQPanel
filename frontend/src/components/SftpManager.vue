@@ -316,7 +316,7 @@ onMounted(load)
 .sftp__loading { text-align: center; padding: 1.5rem; }
 .sftp__spinner {
   display: inline-block; width: 1.1rem; height: 1.1rem;
-  border: 2px solid var(--border); border-top-color: var(--accent);
+  border: 2px solid var(--border); border-top-color: var(--ac);
   border-radius: 50%; animation: sftp-spin .6s linear infinite; vertical-align: -2px;
 }
 .sftp__spinner--sm { width: .85rem; height: .85rem; margin-right: .4rem; }
@@ -327,17 +327,17 @@ onMounted(load)
 .sftp__mb { margin-bottom: .6rem; }
 .sftp code {
   font-family: var(--font-mono, monospace);
-  background: var(--surface-3); padding: .05rem .35rem; border-radius: 4px; font-size: .85em;
+  background: var(--surface-inset); padding: .05rem .35rem; border-radius: 4px; font-size: .85em;
 }
 
 /* Toggle / switch */
 .sftp__toggle-row { display: flex; justify-content: space-between; align-items: flex-start; }
 .sftp__switch {
   position: relative; width: 42px; height: 24px; border-radius: 999px;
-  border: none; background: var(--surface-3); cursor: pointer; vertical-align: middle;
+  border: none; background: var(--surface-inset); cursor: pointer; vertical-align: middle;
   transition: background .15s; padding: 0;
 }
-.sftp__switch.on { background: var(--accent); }
+.sftp__switch.on { background: var(--ac); }
 .sftp__switch:disabled { opacity: .6; cursor: not-allowed; }
 .sftp__switch-knob {
   position: absolute; top: 3px; left: 3px; width: 18px; height: 18px;
@@ -348,8 +348,8 @@ onMounted(load)
 
 /* Cajas */
 .sftp__box {
-  border: 1px solid var(--border); border-radius: var(--radius-md);
-  padding: 1rem; background: var(--surface-1);
+  border: 1px solid var(--border); border-radius: var(--r-md);
+  padding: 1rem; background: var(--surface);
 }
 .sftp__box--inset { background: var(--surface-2); }
 .sftp__box-head {
@@ -362,17 +362,17 @@ onMounted(load)
 .sftp__chip {
   display: inline-block; min-width: 1.4em; text-align: center;
   padding: .1rem .45rem; border-radius: 999px; font-size: .72rem; font-weight: 600;
-  background: var(--surface-3); color: var(--text-secondary);
+  background: var(--surface-inset); color: var(--text-secondary);
 }
 .sftp__chip--blue { background: color-mix(in srgb, var(--info) 15%, transparent); color: var(--info); }
 
 /* Inputs / forms */
 .sftp__input {
   width: 100%; padding: .4rem .6rem; font-size: .85rem;
-  border: 1px solid var(--border); border-radius: var(--radius-sm);
-  background: var(--surface-1); color: var(--text);
+  border: 1px solid var(--border); border-radius: var(--r-sm);
+  background: var(--surface); color: var(--text);
 }
-.sftp__input:focus { outline: none; border-color: var(--accent); }
+.sftp__input:focus { outline: none; border-color: var(--ac); }
 .sftp__input--mono { font-family: var(--font-mono, monospace); font-size: 11px; }
 .sftp__inline-form { display: flex; gap: .5rem; align-items: center; }
 .sftp__inline-form .sftp__input { flex: 1; }
@@ -387,12 +387,12 @@ onMounted(load)
 .sftp__btn {
   display: inline-flex; align-items: center; gap: .35rem; justify-content: center;
   padding: .4rem .8rem; font-size: .82rem; font-weight: 500;
-  border-radius: var(--radius-sm); border: 1px solid var(--border);
+  border-radius: var(--r-sm); border: 1px solid var(--border);
   background: var(--surface-2); color: var(--text); cursor: pointer; white-space: nowrap;
   transition: background .15s, border-color .15s, color .15s;
 }
 .sftp__btn:disabled { opacity: .55; cursor: not-allowed; }
-.sftp__btn--primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+.sftp__btn--primary { background: var(--ac); border-color: var(--ac); color: #fff; }
 .sftp__btn--success { background: var(--success); border-color: var(--success); color: #fff; }
 .sftp__btn--ghost { background: transparent; }
 .sftp__btn--icon, .sftp__btn--icon-danger { padding: .35rem .5rem; }
@@ -408,7 +408,7 @@ onMounted(load)
 .sftp__fp { font-family: var(--font-mono, monospace); color: var(--text-muted); font-size: 11px; margin-top: .15rem; }
 
 /* Alertas */
-.sftp__alert { padding: .65rem .85rem; border-radius: var(--radius-sm); font-size: .82rem; }
+.sftp__alert { padding: .65rem .85rem; border-radius: var(--r-sm); font-size: .82rem; }
 .sftp__alert--info { background: color-mix(in srgb, var(--info) 8%, transparent); border: 1px solid color-mix(in srgb, var(--info) 25%, transparent); }
 .sftp__alert--warn { background: color-mix(in srgb, var(--warning) 10%, transparent); border: 1px solid color-mix(in srgb, var(--warning) 30%, transparent); }
 
