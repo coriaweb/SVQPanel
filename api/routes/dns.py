@@ -679,6 +679,42 @@ def _bump_serial(current: int) -> int:
     return max(current + 1, today + 1)
 
 
+def build_spf(ipv4, ipv6=None) -> str:
+    """Construye el registro SPF incluyendo ip4 e ip6 según disponibilidad."""
+    mechs = ["v=spf1", "a", "mx"]
+    if ipv4:
+        mechs.append(f"ip4:{ipv4}")
+    if ipv6:
+        mechs.append(f"ip6:{ipv6}")
+    mechs.append("-all")
+    return " ".join(mechs)
+
+
+def apply_ip6_to_spf(spf: str, ipv6) -> str:
+    """Devuelve el SPF con el mecanismo ip6 añadido/actualizado o eliminado.
+
+    Función PURA. Si ipv6 tiene valor, garantiza un único `ip6:<ipv6>` (justo
+    antes del all final); si es None/"", elimina cualquier `ip6:...` existente.
+    Mantiene el resto de mecanismos intactos. Idempotente.
+    """
+    if not spf or not spf.startswith("v=spf1"):
+        return spf
+    # Tokeniza y elimina cualquier ip6: previo y el mecanismo all final.
+    tokens = spf.split()
+    all_mech = "-all"
+    body = []
+    for t in tokens[1:]:
+        if t.lower().startswith("ip6:"):
+            continue
+        if t in ("-all", "~all", "?all", "+all"):
+            all_mech = t
+            continue
+        body.append(t)
+    if ipv6:
+        body.append(f"ip6:{ipv6}")
+    return " ".join(["v=spf1"] + body + [all_mech])
+
+
 def compute_aaaa_changes(existing: list, ipv6) -> dict:
     """Decide qué AAAA crear/actualizar/borrar para reflejar `ipv6`. Función PURA.
 
@@ -741,12 +777,23 @@ def sync_aaaa_records_for_domain(domain_name: str, ipv6, db: Session) -> dict:
             db.delete(rec)
             removed += 1
 
-    if added or removed:
+    # SPF: incluir ip6 cuando hay IPv6, quitarlo cuando se desactiva. Tocamos el
+    # TXT SPF de @ (el que empieza por v=spf1); dejamos otros TXT intactos.
+    spf_updated = False
+    for r in existing:
+        if r.record_type == "TXT" and r.name == "@" and (r.content or "").startswith("v=spf1"):
+            nuevo = apply_ip6_to_spf(r.content, ipv6)
+            if nuevo != r.content:
+                r.content = nuevo
+                spf_updated = True
+            break
+
+    if added or removed or spf_updated:
         zone.serial = _bump_serial(zone.serial)
         db.commit()
         _sync_zone_to_bind(zone, db)
 
-    return {"managed": True, "added": added, "removed": removed}
+    return {"managed": True, "added": added, "removed": removed, "spf_updated": spf_updated}
 
 
 def _build_template_records(domain: str, ipv4: str, ipv6: str = None,
@@ -784,7 +831,7 @@ def _build_template_records(domain: str, ipv4: str, ipv6: str = None,
     records.append({"record_type": "MX", "name": "@", "content": f"mail.{domain}.", "ttl": 14400, "priority": 0})
 
     # TXT SPF + DMARC
-    spf = f"v=spf1 a mx ip4:{ipv4} -all" if ipv4 else "v=spf1 a mx -all"
+    spf = build_spf(ipv4, ipv6)
     records.append({"record_type": "TXT", "name": "@",     "content": spf,                               "ttl": 14400, "priority": 0})
     records.append({"record_type": "TXT", "name": "_dmarc","content": "v=DMARC1; p=quarantine; pct=100", "ttl": 14400, "priority": 0})
 

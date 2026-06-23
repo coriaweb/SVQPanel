@@ -196,7 +196,10 @@ async def create_domain(
                     except PermissionError:
                         serial = 2026052501
 
-                    zone = DnsZone(domain_name=domain.domain_name, serial=serial)
+                    # ip_address: necesario para que la lista de zonas muestre la
+                    # IP (si no, sale "—"). Coherente con el endpoint create_zone.
+                    zone = DnsZone(domain_name=domain.domain_name, serial=serial,
+                                   ip_address=ipv4)
                     db.add(zone)
                     db.commit()
                     db.refresh(zone)

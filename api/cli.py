@@ -1143,6 +1143,45 @@ def cmd_migrate_canonical_domain(dry_run: bool = False) -> int:
         db.close()
 
 
+def cmd_backfill_dns_ipv6(dry_run: bool = False) -> int:
+    """Backfill de zonas DNS existentes:
+      - Rellena DnsZone.ip_address si está NULL (la lista mostraba '—').
+      - Para dominios con IPv6 asignada: asegura AAAA + ip6 en el SPF.
+    Idempotente y seguro de re-ejecutar.
+    """
+    from api.routes.dns import sync_aaaa_records_for_domain, _get_server_ipv4
+    from api.models.models_dns import DnsZone
+
+    db = SessionLocal()
+    try:
+        zonas = db.query(DnsZone).all()
+        ip_fix = aaaa_fix = 0
+        for z in zonas:
+            dom = db.query(Domain).filter(Domain.domain_name == z.domain_name).first()
+            # 1) ip_address NULL → poner la IPv4 del dominio o la del servidor
+            if not z.ip_address:
+                ipv4 = (dom.ipv4 if dom and dom.ipv4 else None) or _get_server_ipv4(db)
+                if ipv4:
+                    if dry_run:
+                        logger.info(f"  {z.domain_name}: rellenaría ip_address={ipv4}")
+                    else:
+                        z.ip_address = ipv4
+                        db.commit()
+                    ip_fix += 1
+            # 2) dominio con IPv6 → asegurar AAAA + ip6 en SPF
+            if dom and dom.ipv6 and not dry_run:
+                res = sync_aaaa_records_for_domain(z.domain_name, dom.ipv6, db)
+                if res.get("added") or res.get("spf_updated"):
+                    aaaa_fix += 1
+            elif dom and dom.ipv6 and dry_run:
+                logger.info(f"  {z.domain_name}: sincronizaría AAAA+SPF para {dom.ipv6}")
+                aaaa_fix += 1
+        logger.info(f"backfill DNS: ip_address={ip_fix}, AAAA/SPF={aaaa_fix}")
+        return 0
+    finally:
+        db.close()
+
+
 def main():
     parser = argparse.ArgumentParser(prog="api.cli", description="SVQPanel CLI")
     sub = parser.add_subparsers(dest="cmd", required=True)
@@ -1168,6 +1207,10 @@ def main():
         help="Borra un cliente y TODOS sus recursos del sistema (vhosts, correo, DNS, BDs, cron, SFTP…)")
     p_purge.add_argument("username", help="Usuario del panel a eliminar")
     p_purge.add_argument("--yes", action="store_true", help="Confirmar el borrado (sin esto solo avisa)")
+
+    p_bf = sub.add_parser("backfill_dns_ipv6",
+        help="Rellena ip_address NULL de zonas y añade AAAA+ip6(SPF) a dominios con IPv6")
+    p_bf.add_argument("--dry-run", action="store_true", help="Solo muestra qué haría")
 
     p_canon = sub.add_parser("migrate_canonical_domain",
         help="Aplica el dominio canónico (forzar www por defecto) a dominios existentes; defensivo si www no resuelve")
@@ -1242,6 +1285,8 @@ def main():
         sys.exit(cmd_clean_orphan_vhosts(yes=args.yes))
     if args.cmd == "migrate_canonical_domain":
         sys.exit(cmd_migrate_canonical_domain(dry_run=args.dry_run))
+    if args.cmd == "backfill_dns_ipv6":
+        sys.exit(cmd_backfill_dns_ipv6(dry_run=args.dry_run))
 
 
 if __name__ == "__main__":

@@ -62,3 +62,4 @@ exit 0
 | 0023 | Sincronizar estado SSL del panel en la BD  | 2026-06-11 |
 | 0024 | Limpiar vhosts huérfanos nginx/Apache       | 2026-06-23 |
 | 0025 | Dominio canónico: forzar www (defensivo DNS) | 2026-06-23 |
+| 0026 | Backfill DNS: ip_address + AAAA/ip6 en SPF   | 2026-06-23 |
