@@ -160,12 +160,18 @@ def _prepare_chroot_home(username: str) -> None:
 
 
 def _revert_chroot_home(username: str) -> None:
-    """Restaura /home/{user} a {user}:{user} 750 (estado antes de SFTP-only)."""
+    """Restaura /home/{user} a {user}:{user} 711 (estado normal del panel).
+
+    IMPORTANTE: 711 (no 750). El home DEBE ser 711 para que www-data/Apache
+    pueda ATRAVESARLO (--x para 'other') y servir la web del cliente. Con 750,
+    'other' no tiene traverse → Apache/nginx dan 403 Forbidden. Es el mismo modo
+    que pone user_manager al crear el usuario.
+    """
     h = home_dir(username)
     if not os.path.isdir(h):
         return
     _sh(["chown", f"{username}:{username}", h])
-    _sh(["chmod", "750", h])
+    _sh(["chmod", "711", h])
 
 
 def enable_sftp(username: str) -> Tuple[bool, str]:

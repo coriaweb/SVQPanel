@@ -1248,6 +1248,42 @@ def cmd_backfill_caa(dry_run: bool = False) -> int:
         db.close()
 
 
+def cmd_fix_home_perms(dry_run: bool = False) -> int:
+    """Repara los permisos del home de los usuarios que quedaron en 750.
+
+    El home DEBE ser 711 para que www-data/Apache pueda atravesarlo y servir la
+    web (con 750, 'other' no tiene traverse → 403 Forbidden). Un bug del revert
+    de SFTP dejaba algunos homes en 750. NO toca homes con SFTP-only activo
+    (esos son root:root 755, requisito del chroot). Idempotente.
+    """
+    import os as _os, subprocess as _sp
+
+    db = SessionLocal()
+    try:
+        users = db.query(User).all()
+        fixed = 0
+        for u in users:
+            home = f"/home/{u.username}"
+            if not _os.path.isdir(home):
+                continue
+            st = _os.stat(home)
+            mode = st.st_mode & 0o777
+            owner_uid = st.st_uid
+            # Si el home es de root (SFTP-only chroot activo), no tocar.
+            if owner_uid == 0:
+                continue
+            if mode == 0o750:
+                if dry_run:
+                    logger.info(f"  {u.username}: home 750 → 711")
+                else:
+                    _sp.run(["chmod", "711", home], capture_output=True)
+                fixed += 1
+        logger.info(f"fix_home_perms: homes corregidos (750→711)={fixed}")
+        return 0
+    finally:
+        db.close()
+
+
 def cmd_fix_mail_vhosts(dry_run: bool = False) -> int:
     """Regenera los vhosts de webmail.* y mail.* para quitar el 'listen <IP>'
     atado a la IPv4, que los hacía default de la IP y capturaba tráfico de otros
@@ -1363,6 +1399,10 @@ def main():
         help="Añade CAA (issue+issuewild Let's Encrypt) a las zonas DNS que no lo tengan")
     p_caa.add_argument("--dry-run", action="store_true", help="Solo muestra qué haría")
 
+    p_fhp = sub.add_parser("fix_home_perms",
+        help="Repara homes en 750 → 711 (traverse de www-data; arregla 403 Forbidden)")
+    p_fhp.add_argument("--dry-run", action="store_true", help="Solo muestra qué haría")
+
     p_fmv = sub.add_parser("fix_mail_vhosts",
         help="Regenera vhosts webmail.*/mail.* quitando el listen atado a IP (asimetría IPv4/IPv6)")
     p_fmv.add_argument("--dry-run", action="store_true", help="Solo muestra qué haría")
@@ -1454,6 +1494,8 @@ def main():
         sys.exit(cmd_harden_tls(dry_run=args.dry_run))
     if args.cmd == "fix_mail_vhosts":
         sys.exit(cmd_fix_mail_vhosts(dry_run=args.dry_run))
+    if args.cmd == "fix_home_perms":
+        sys.exit(cmd_fix_home_perms(dry_run=args.dry_run))
     if args.cmd == "backfill_caa":
         sys.exit(cmd_backfill_caa(dry_run=args.dry_run))
     if args.cmd == "migrate_mail_out_ip":
