@@ -46,7 +46,6 @@ def purge_user_system(db: Session, user) -> List[str]:
     from api.models.models_domain import Domain
     from api.models.models_mail import MailDomain
     from api.models.models_client_db import ClientDatabase
-    from api.models.models_dns import DnsZone
     from api.models.models_sftp_account import SftpAccount
 
     # ── 1. Subcuentas SFTP (usuarios Linux propios + bind-mounts) ────────────
@@ -66,47 +65,8 @@ def purge_user_system(db: Session, user) -> List[str]:
         warnings.append(f"sftp: {e}")
 
     # ── 2. Dominios de correo (Postfix + Dovecot + Maildir + DKIM + webmail) ──
-    # Reproduce EXACTAMENTE lo que hace DELETE /mail/domains/{id}: quita webmail
-    # por dominio (vhost+DNS), limpia Postfix/Dovecot/Maildir, borra DKIM y
-    # regenera Rspamd al final.
     mail_domains = db.query(MailDomain).filter(MailDomain.user_id == user.id).all()
-    for md in mail_domains:
-        dname = md.domain_name
-        selector = getattr(md, "dkim_selector", "mail")
-        # Webmail por dominio (webmail.{dominio}): vhost + DNS
-        try:
-            from api.routes.mail import _deactivate_webmail
-            _deactivate_webmail(dname, db)
-        except Exception as e:
-            warnings.append(f"webmail[{dname}]: {e}")
-        try:
-            from scripts.mail_manager import MailManager
-            MailManager().delete_mail_domain(dname, username)
-        except Exception as e:
-            warnings.append(f"mail[{dname}]: {e}")
-        try:
-            from scripts.dkim_manager import DkimManager
-            DkimManager().remove_key(dname, selector)
-        except Exception as e:
-            warnings.append(f"dkim[{dname}]: {e}")
-        try:
-            from scripts.rspamd_manager import RspamdManager
-            RspamdManager().remove_domain(dname)
-        except Exception:
-            pass
-    # Borrar las filas de correo de la BD ANTES de regenerar Rspamd, para que la
-    # config global no incluya los dominios que estamos eliminando (el cascade de
-    # User aún no ha corrido en este punto). El cascade de MailDomain limpia sus
-    # buzones y alias.
-    if mail_domains:
-        for md in mail_domains:
-            db.delete(md)
-        db.commit()
-        try:
-            from api.routes.mail import _rebuild_rspamd
-            _rebuild_rspamd(db)
-        except Exception as e:
-            warnings.append(f"rspamd_rebuild: {e}")
+    purge_mail_domains(db, mail_domains, username, warnings)
 
     # ── 3. Bases de datos MariaDB (DROP DATABASE + DROP USER) ─────────────────
     databases = db.query(ClientDatabase).filter(ClientDatabase.user_id == user.id).all()
@@ -174,41 +134,7 @@ def purge_user_system(db: Session, user) -> List[str]:
     # ── 5. Zonas DNS (zone file + named.conf.zones + slave del cluster) ───────
     # Las zonas no tienen user_id: se asocian por nombre de dominio del usuario.
     domain_names = {d.domain_name for d in domains}
-    if domain_names:
-        user_zones = (db.query(DnsZone)
-                        .filter(DnsZone.domain_name.in_(domain_names)).all())
-        for zone in user_zones:
-            dname = zone.domain_name
-            from api.models.models_dns import DnsRecord
-            db.query(DnsRecord).filter(DnsRecord.zone_id == zone.id).delete()
-            db.delete(zone)
-        db.commit()
-
-        if user_zones:
-            remaining = [z.domain_name for z in db.query(DnsZone)
-                         .filter(DnsZone.is_active == True).all()]  # noqa: E712
-            removed_in_cluster = False
-            try:
-                from scripts.dns_cluster import load_cluster, DNSCluster, all_zones_meta
-                cluster = load_cluster(db)
-                if cluster:
-                    slave = cluster["slave"] or cluster["master"]
-                    for zone in user_zones:
-                        DNSCluster(panel_id=cluster["panel_id"]).remove_zone(
-                            cluster["master"], slave, cluster["tsig"],
-                            zone.domain_name, all_zones_meta(db))
-                    removed_in_cluster = True
-            except Exception as e:
-                warnings.append(f"dns_cluster: {e}")
-            if not removed_in_cluster:
-                try:
-                    from scripts.dns_manager import DNSManager
-                    for zone in user_zones:
-                        DNSManager().delete_zone(zone.domain_name, remaining)
-                except PermissionError:
-                    pass
-                except Exception as e:
-                    warnings.append(f"dns: {e}")
+    purge_dns_zones(db, domain_names, warnings)
 
     # ── 6. Crontab del sistema (/var/spool/cron/crontabs/{username}) ──────────
     # userdel -r NO lo borra. Lo vaciamos por completo con `crontab -r`.
@@ -230,3 +156,94 @@ def purge_user_system(db: Session, user) -> List[str]:
             warnings.append(f"crontab: {e}")
 
     return warnings
+
+
+def purge_mail_domains(db: Session, mail_domains, username: str, warnings: List[str]) -> None:
+    """
+    Limpia del sistema una lista de dominios de correo (objetos MailDomain) y
+    borra sus filas de la BD. Reproduce EXACTAMENTE DELETE /mail/domains/{id}:
+    webmail por dominio (vhost+DNS), Postfix/Dovecot/Maildir, DKIM, Rspamd.
+    Reutilizable desde purge_user_system y desde DELETE /domains/{id}.
+    """
+    if not mail_domains:
+        return
+    for md in mail_domains:
+        dname = md.domain_name
+        selector = getattr(md, "dkim_selector", "mail")
+        try:
+            from api.routes.mail import _deactivate_webmail
+            _deactivate_webmail(dname, db)
+        except Exception as e:
+            warnings.append(f"webmail[{dname}]: {e}")
+        try:
+            from scripts.mail_manager import MailManager
+            MailManager().delete_mail_domain(dname, username)
+        except Exception as e:
+            warnings.append(f"mail[{dname}]: {e}")
+        try:
+            from scripts.dkim_manager import DkimManager
+            DkimManager().remove_key(dname, selector)
+        except Exception as e:
+            warnings.append(f"dkim[{dname}]: {e}")
+        try:
+            from scripts.rspamd_manager import RspamdManager
+            RspamdManager().remove_domain(dname)
+        except Exception:
+            pass
+    # Borrar filas ANTES de regenerar Rspamd para que la config global no incluya
+    # los dominios eliminados. El cascade de MailDomain limpia buzones y alias.
+    for md in mail_domains:
+        db.delete(md)
+    db.commit()
+    try:
+        from api.routes.mail import _rebuild_rspamd
+        _rebuild_rspamd(db)
+    except Exception as e:
+        warnings.append(f"rspamd_rebuild: {e}")
+
+
+def purge_dns_zones(db: Session, domain_names, warnings: List[str]) -> None:
+    """
+    Borra las zonas DNS (DnsZone + DnsRecord) cuyo nombre esté en `domain_names`,
+    de la BD y del sistema (zone file + named.conf.zones + slave del cluster).
+    Reutilizable desde purge_user_system y desde DELETE /domains/{id}.
+    """
+    domain_names = set(domain_names or [])
+    if not domain_names:
+        return
+    from api.models.models_dns import DnsZone, DnsRecord
+    user_zones = (db.query(DnsZone)
+                    .filter(DnsZone.domain_name.in_(domain_names)).all())
+    if not user_zones:
+        return
+
+    zone_domains = [z.domain_name for z in user_zones]
+    for zone in user_zones:
+        db.query(DnsRecord).filter(DnsRecord.zone_id == zone.id).delete()
+        db.delete(zone)
+    db.commit()
+
+    remaining = [z.domain_name for z in db.query(DnsZone)
+                 .filter(DnsZone.is_active == True).all()]  # noqa: E712
+    removed_in_cluster = False
+    try:
+        from scripts.dns_cluster import load_cluster, DNSCluster, all_zones_meta
+        cluster = load_cluster(db)
+        if cluster:
+            slave = cluster["slave"] or cluster["master"]
+            for dname in zone_domains:
+                DNSCluster(panel_id=cluster["panel_id"]).remove_zone(
+                    cluster["master"], slave, cluster["tsig"],
+                    dname, all_zones_meta(db))
+            removed_in_cluster = True
+    except Exception as e:
+        warnings.append(f"dns_cluster: {e}")
+    if not removed_in_cluster:
+        try:
+            from scripts.dns_manager import DNSManager
+            for dname in zone_domains:
+                DNSManager().delete_zone(dname, remaining)
+        except PermissionError:
+            pass
+        except Exception as e:
+            warnings.append(f"dns: {e}")

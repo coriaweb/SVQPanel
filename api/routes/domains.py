@@ -562,6 +562,23 @@ async def delete_domain(
         except Exception as e:
             print(f"Warning: limpieza pool/cache de {db_domain.domain_name}: {e}")
 
+        # Deshacer el resto de lo que crea el alta: zona DNS y dominio de correo
+        # del MISMO nombre. Reutiliza los helpers del orquestador de borrado
+        # (misma lógica que la cascada al borrar usuario y que DELETE /dns,/mail).
+        dns_warnings = []
+        try:
+            from scripts.user_purge import purge_dns_zones, purge_mail_domains
+            from api.models.models_mail import MailDomain
+            mail_domains = (db.query(MailDomain)
+                            .filter(MailDomain.domain_name == db_domain.domain_name)
+                            .all())
+            purge_mail_domains(db, mail_domains, username, dns_warnings)
+            purge_dns_zones(db, {db_domain.domain_name}, dns_warnings)
+        except Exception as e:
+            print(f"Warning: limpieza DNS/correo de {db_domain.domain_name}: {e}")
+        if dns_warnings:
+            print(f"Warning: avisos limpieza DNS/correo: {dns_warnings}")
+
         db.delete(db_domain)
         db.commit()
         return None
