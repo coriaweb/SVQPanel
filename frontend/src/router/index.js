@@ -10,6 +10,8 @@ const Domains        = () => import('../views/Domains.vue')
 const DomainDetail   = () => import('../views/DomainDetail.vue')
 const Databases      = () => import('../views/Databases.vue')
 const DbTuner        = () => import('../views/DbTuner.vue')
+const MailQueue      = () => import('../views/MailQueue.vue')
+const Processes      = () => import('../views/Processes.vue')
 const Migrations     = () => import('../views/Migrations.vue')
 const DNS            = () => import('../views/DNS.vue')
 const Mail           = () => import('../views/Mail.vue')
@@ -98,6 +100,18 @@ const routes = [
     path: '/db-tuner',
     name: 'DbTuner',
     component: DbTuner,
+    meta: { requiresAuth: true, requiresAdmin: true }
+  },
+  {
+    path: '/mail-queue',
+    name: 'MailQueue',
+    component: MailQueue,
+    meta: { requiresAuth: true, requiresAdmin: true }
+  },
+  {
+    path: '/processes',
+    name: 'Processes',
+    component: Processes,
     meta: { requiresAuth: true, requiresAdmin: true }
   },
   {

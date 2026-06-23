@@ -257,6 +257,7 @@ export default {
           { to: '/plans',      label: 'Planes',   icon: 'bi-stack',       roles: ['admin', 'reseller'] },
           { to: '/server-ips', label: 'IPs',      icon: 'bi-hdd-network', roles: ['admin'] },
           { to: '/db-tuner',   label: 'Optimizar BD', icon: 'bi-speedometer', roles: ['admin'] },
+          { to: '/mail-queue', label: 'Cola de correo', icon: 'bi-envelope-paper', roles: ['admin'] },
           { to: '/migrations', label: 'Migrar / Importar', icon: 'bi-box-arrow-in-down', roles: ['admin'] },
         ],
       },
@@ -264,6 +265,7 @@ export default {
         label: 'Sistema',
         items: [
           { to: '/system',         label: 'Servicios',       icon: 'bi-hdd-rack',     roles: ['admin'] },
+          { to: '/processes',      label: 'Procesos',        icon: 'bi-cpu',          roles: ['admin'] },
           { to: '/monitoring',     label: 'Monitorización',  icon: 'bi-graph-up',     roles: ['admin'] },
           { to: '/logs',           label: 'Logs',            icon: 'bi-card-text',    roles: ['admin'] },
           { to: '/security',       label: 'Seguridad',       icon: 'bi-shield-lock',  roles: ['admin'] },
