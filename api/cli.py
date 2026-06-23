@@ -437,6 +437,7 @@ def cmd_migrate_php_pools(dry_run: bool = False, only_domain: str = None,
                     rate_limit_enabled=d.rate_limit_enabled or False,
                     rate_limit_rps=d.rate_limit_rps or 10,
                     rate_limit_burst=d.rate_limit_burst or 20,
+                    canonical_domain=d.canonical_domain or "www",
                 )
             except Exception as e:
                 failed += 1
@@ -1039,6 +1040,109 @@ def cmd_clean_orphan_vhosts(yes: bool = False) -> int:
     return 0
 
 
+def cmd_migrate_canonical_domain(dry_run: bool = False) -> int:
+    """Aplica el dominio canónico (por defecto: forzar www) a los dominios ya
+    existentes, REGENERANDO su vhost con la redirección 301.
+
+    DEFENSIVO: forzar www solo es seguro si 'www.<dominio>' resuelve en DNS; si
+    no resuelve, redirigir dominio.com → www.dominio.com tumbaría la web. Por eso:
+      - Si www.<dominio> resuelve  → canonical='www'  (default; se aplica el 301).
+      - Si NO resuelve             → canonical='none' (sirve ambas, sin redirigir).
+    Idempotente: respeta dominios que el cliente ya configuró a 'non-www'/'none'
+    distinto del default (no los pisa). Seguro de re-ejecutar.
+    """
+    import socket
+    from scripts.domain_manager import DomainManager
+
+    def _resuelve(host: str) -> bool:
+        try:
+            socket.getaddrinfo(host, None)
+            return True
+        except Exception:
+            return False
+
+    db = SessionLocal()
+    try:
+        domains = db.query(Domain).all()
+        mgr = DomainManager()
+        forzados = sin_www_dns = ya_ok = fallidos = 0
+        for d in domains:
+            owner = db.query(User).filter(User.id == d.user_id).first()
+            if not owner:
+                logger.warning(f"  {d.domain_name}: sin propietario, omitido")
+                continue
+
+            actual = d.canonical_domain or "www"
+            # Solo decidimos automáticamente cuando el dominio está en 'www'
+            # (el default recién aplicado). Si el cliente ya eligió otra cosa
+            # explícitamente, no lo tocamos.
+            if actual == "www":
+                if _resuelve(f"www.{d.domain_name}"):
+                    objetivo = "www"
+                else:
+                    objetivo = "none"
+                    sin_www_dns += 1
+                    logger.info(
+                        f"  {d.domain_name}: www no resuelve → canonical=none "
+                        f"(no se fuerza www para no tumbar la web)")
+            else:
+                objetivo = actual  # respetar elección previa del cliente
+
+            if dry_run:
+                logger.info(f"  {d.domain_name}: quedaría canonical={objetivo} (actual={actual})")
+                continue
+
+            if d.canonical_domain != objetivo:
+                d.canonical_domain = objetivo
+                db.commit()
+
+            # Regenerar el vhost para materializar el 301 en disco.
+            try:
+                from scripts import php_ini_manager as _phpini
+                _sock = _phpini.pool_socket_path(d.domain_name) if _phpini.has_pool(d.domain_name) else None
+                mgr.regenerate_vhost(
+                    username=owner.username,
+                    domain_name=d.domain_name,
+                    php_version=d.php_version or "8.2",
+                    ssl_enabled=d.ssl_enabled or False,
+                    ipv6=d.ipv6,
+                    fastcgi_cache_enabled=d.fastcgi_cache_enabled or False,
+                    fastcgi_cache_ttl_minutes=d.fastcgi_cache_ttl_minutes or 60,
+                    php_socket_override=_sock,
+                    template_nginx_extra=d.template_nginx_extra,
+                    custom_nginx_config=d.custom_nginx_config,
+                    custom_apache_config=d.custom_apache_config,
+                    redirect_to=d.redirect_to,
+                    custom_docroot=d.custom_docroot,
+                    ipv4=d.ipv4,
+                    force_https=d.force_https or False,
+                    hsts=d.hsts_enabled or False,
+                    rate_limit_enabled=d.rate_limit_enabled or False,
+                    rate_limit_rps=d.rate_limit_rps or 10,
+                    rate_limit_burst=d.rate_limit_burst or 20,
+                    readonly_mode_enabled=d.readonly_mode_enabled or False,
+                    allowed_mutation_ips=d.allowed_mutation_ips,
+                    blocked_user_agents=_json.loads(d.blocked_user_agents) if d.blocked_user_agents else [],
+                    security_headers_enabled=d.security_headers_enabled or False,
+                    http3_enabled=d.http3_enabled or False,
+                    canonical_domain=objetivo,
+                )
+                if objetivo == "www":
+                    forzados += 1
+                else:
+                    ya_ok += 1
+            except Exception as e:
+                fallidos += 1
+                logger.error(f"  {d.domain_name}: regenerate_vhost falló: {e}")
+
+        logger.info(
+            f"canonical: www forzado={forzados}, sin-www-por-DNS={sin_www_dns}, "
+            f"respetados={ya_ok}, fallidos={fallidos}")
+        return 0
+    finally:
+        db.close()
+
+
 def main():
     parser = argparse.ArgumentParser(prog="api.cli", description="SVQPanel CLI")
     sub = parser.add_subparsers(dest="cmd", required=True)
@@ -1064,6 +1168,10 @@ def main():
         help="Borra un cliente y TODOS sus recursos del sistema (vhosts, correo, DNS, BDs, cron, SFTP…)")
     p_purge.add_argument("username", help="Usuario del panel a eliminar")
     p_purge.add_argument("--yes", action="store_true", help="Confirmar el borrado (sin esto solo avisa)")
+
+    p_canon = sub.add_parser("migrate_canonical_domain",
+        help="Aplica el dominio canónico (forzar www por defecto) a dominios existentes; defensivo si www no resuelve")
+    p_canon.add_argument("--dry-run", action="store_true", help="Solo muestra qué haría")
 
     p_orphan = sub.add_parser("clean_orphan_vhosts",
         help="Detecta/elimina vhosts huérfanos de nginx/Apache (root o logs inexistentes)")
@@ -1132,6 +1240,8 @@ def main():
         sys.exit(cmd_purge_user(args.username, yes=args.yes))
     if args.cmd == "clean_orphan_vhosts":
         sys.exit(cmd_clean_orphan_vhosts(yes=args.yes))
+    if args.cmd == "migrate_canonical_domain":
+        sys.exit(cmd_migrate_canonical_domain(dry_run=args.dry_run))
 
 
 if __name__ == "__main__":

@@ -63,6 +63,12 @@ class Domain(Base):
     force_https  = Column(Boolean, default=False, nullable=False)
     hsts_enabled = Column(Boolean, default=False, nullable=False)
 
+    # Dominio canónico: a qué variante redirigir 301 (SEO + costumbre del cliente).
+    #   "www"     → dominio.com   redirige a www.dominio.com  (DEFAULT del panel)
+    #   "non-www" → www.dominio.com redirige a dominio.com
+    #   "none"    → sirve ambas sin redirigir (comportamiento antiguo)
+    canonical_domain = Column(String(8), default="www", nullable=False)
+
     # Rate limiting anti-abuso (Fase 19) — off por defecto
     rate_limit_enabled = Column(Boolean, default=False, nullable=False)
     rate_limit_rps     = Column(Integer, default=10, nullable=False)

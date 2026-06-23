@@ -461,6 +461,7 @@ async def update_domain(
                         blocked_user_agents=__import__('json').loads(db_domain.blocked_user_agents) if db_domain.blocked_user_agents else [],
                         security_headers_enabled=db_domain.security_headers_enabled or False,
                         http3_enabled=db_domain.http3_enabled or False,
+                        canonical_domain=db_domain.canonical_domain or "www",
                     )
                 except Exception as vhost_err:
                     import logging
@@ -716,6 +717,7 @@ async def set_domain_cache(
             rate_limit_burst=domain.rate_limit_burst or 20,
             security_headers_enabled=domain.security_headers_enabled or False,
             http3_enabled=domain.http3_enabled or False,
+            canonical_domain=domain.canonical_domain or "www",
         )
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error aplicando cache: {e}")
@@ -787,6 +789,7 @@ async def set_domain_rate_limit(
             rate_limit_burst=burst,
             security_headers_enabled=domain.security_headers_enabled or False,
             http3_enabled=domain.http3_enabled or False,
+            canonical_domain=domain.canonical_domain or "www",
         )
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error aplicando rate limit: {e}")
@@ -861,6 +864,7 @@ async def set_domain_bad_bots(
             blocked_user_agents=patterns,
             security_headers_enabled=domain.security_headers_enabled or False,
             http3_enabled=domain.http3_enabled or False,
+            canonical_domain=domain.canonical_domain or "www",
         )
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error aplicando bloqueo de bots: {e}")
@@ -1003,6 +1007,7 @@ async def set_domain_php_config(
             rate_limit_burst=domain.rate_limit_burst or 20,
             security_headers_enabled=domain.security_headers_enabled or False,
             http3_enabled=domain.http3_enabled or False,
+            canonical_domain=domain.canonical_domain or "www",
         )
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error regenerando vhost: {e}")
@@ -1183,6 +1188,7 @@ async def set_domain_php_hardening(
             rate_limit_burst=domain.rate_limit_burst or 20,
             security_headers_enabled=domain.security_headers_enabled or False,
             http3_enabled=domain.http3_enabled or False,
+            canonical_domain=domain.canonical_domain or "www",
         )
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error regenerando vhost: {e}")
@@ -1241,12 +1247,58 @@ def _regenerate_domain_vhost(domain, owner):
         security_headers_enabled=domain.security_headers_enabled or False,
         http3_enabled=domain.http3_enabled or False,
         httpauth=_httpauth,
+        canonical_domain=domain.canonical_domain or "www",
     )
 
 
 class CustomConfigRequest(BaseModel):
     custom_nginx_config:  Optional[str] = _Field(None, max_length=20000)
     custom_apache_config: Optional[str] = _Field(None, max_length=20000)
+
+
+_CANONICAL_CHOICES = ("www", "non-www", "none")
+
+
+class CanonicalRequest(BaseModel):
+    # www → fuerza www.dominio | non-www → fuerza dominio sin www | none → sin redirección
+    canonical_domain: str = _Field(..., pattern="^(www|non-www|none)$")
+
+
+@router.put("/domains/{domain_id}/canonical")
+async def update_canonical_domain(
+    domain_id:    int,
+    payload:      CanonicalRequest,
+    current_user: User = Depends(require_auth),
+    db:           Session = Depends(get_db),
+):
+    """Define el dominio canónico (www / non-www / none) y regenera el vhost con
+    la redirección 301 correspondiente. Si la validación del vhost falla, revierte
+    al valor anterior y devuelve 422."""
+    domain = _get_owned_domain(domain_id, db, current_user)
+    owner = db.query(User).filter(User.id == domain.user_id).first()
+    if not owner:
+        raise HTTPException(status_code=409, detail="El dominio no tiene propietario")
+
+    if payload.canonical_domain not in _CANONICAL_CHOICES:
+        raise HTTPException(status_code=400, detail="Valor de canonical_domain no válido")
+
+    prev = domain.canonical_domain
+    domain.canonical_domain = payload.canonical_domain
+    db.commit()
+    db.refresh(domain)
+
+    try:
+        _regenerate_domain_vhost(domain, owner)
+    except Exception as e:
+        domain.canonical_domain = prev
+        db.commit()
+        try:
+            _regenerate_domain_vhost(domain, owner)
+        except Exception:
+            pass
+        raise HTTPException(status_code=422, detail=f"No se pudo aplicar el dominio canónico: {e}")
+
+    return {"status": "success", "canonical_domain": domain.canonical_domain}
 
 
 # Tokens que delatan que el usuario pegó un vhost completo (no un fragmento):

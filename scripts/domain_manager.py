@@ -422,6 +422,7 @@ class DomainManager(SystemManager):
         custom_nginx_config: str = None,
         custom_apache_config: str = None,
         httpauth: dict = None,
+        canonical_domain: str = "www",
     ) -> dict:
         """
         Regenera la vhost completa del dominio con TODO el estado actual
@@ -503,6 +504,7 @@ class DomainManager(SystemManager):
                 proxy_to_apache=True,
                 custom_nginx_config=custom_nginx_config,
                 httpauth=httpauth,
+                canonical_domain=canonical_domain,
             )
             with open(config_path, "w") as f:
                 f.write(config_content)
@@ -552,6 +554,7 @@ class DomainManager(SystemManager):
                 http3_enabled=http3_enabled,
                 custom_nginx_config=custom_nginx_config,
                 httpauth=httpauth,
+                canonical_domain=canonical_domain,
             )
             with open(config_path, "w") as f:
                 f.write(config_content)

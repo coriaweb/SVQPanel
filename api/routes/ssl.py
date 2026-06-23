@@ -132,6 +132,7 @@ async def toggle_ssl(
             rate_limit_enabled=domain.rate_limit_enabled or False,
             rate_limit_rps=domain.rate_limit_rps or 10,
             rate_limit_burst=domain.rate_limit_burst or 20,
+            canonical_domain=domain.canonical_domain or "www",
         )
 
         return _domain_ssl_response(domain, ssl_manager)
@@ -235,6 +236,7 @@ async def create_ssl(
                     blocked_user_agents=_json.loads(domain.blocked_user_agents) if domain.blocked_user_agents else [],
                     security_headers_enabled=domain.security_headers_enabled or False,
                     http3_enabled=domain.http3_enabled or False,
+                    canonical_domain=domain.canonical_domain or "www",
                 )
             except Exception as vhost_err:
                 import logging

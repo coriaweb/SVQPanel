@@ -61,3 +61,4 @@ exit 0
 | 0022 | Exponer docs API (Swagger/ReDoc/OpenAPI)  | 2026-06-10 |
 | 0023 | Sincronizar estado SSL del panel en la BD  | 2026-06-11 |
 | 0024 | Limpiar vhosts huérfanos nginx/Apache       | 2026-06-23 |
+| 0025 | Dominio canónico: forzar www (defensivo DNS) | 2026-06-23 |

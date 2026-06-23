@@ -263,6 +263,32 @@ server {{
     return config
 
 
+def _canonical_redirect_block(domain: str, canonical_domain: Optional[str]) -> str:
+    """Bloque nginx que fuerza el dominio canónico (www / non-www) con un 301.
+
+    Se inyecta dentro del server{} (que escucha tanto dominio como www.dominio).
+    Usa $host para detectar la variante pedida y redirige a la canónica
+    preservando esquema y URI. Devuelve "" si canonical_domain es 'none'/None.
+    """
+    if canonical_domain == "www":
+        # dominio.com → www.dominio.com (la variante con www es la canónica)
+        return (
+            f"\n    # ── Dominio canónico: forzar www ──\n"
+            f"    if ($host = {domain}) {{\n"
+            f"        return 301 $scheme://www.{domain}$request_uri;\n"
+            f"    }}\n"
+        )
+    if canonical_domain == "non-www":
+        # www.dominio.com → dominio.com (la variante sin www es la canónica)
+        return (
+            f"\n    # ── Dominio canónico: forzar sin www ──\n"
+            f"    if ($host = www.{domain}) {{\n"
+            f"        return 301 $scheme://{domain}$request_uri;\n"
+            f"    }}\n"
+        )
+    return ""
+
+
 def _readonly_mode_block(allowed_ips_json: Optional[str]) -> str:
     """
     Genera el bloque nginx limit_except que bloquea POST/PUT/DELETE/PATCH
@@ -310,6 +336,7 @@ def generate_nginx_config(
     proxy_to_apache: bool = False,
     custom_nginx_config: Optional[str] = None,
     httpauth: Optional[dict] = None,
+    canonical_domain: Optional[str] = "www",
 ) -> str:
     """
     Generate Nginx vhost configuration (Hestia-style paths).
@@ -361,6 +388,9 @@ def generate_nginx_config(
     server_names = f"{domain} www.{domain}"
     if ipv6:
         server_names += f" {ipv6}"   # nginx acepta IPv6 sin corchetes en server_name
+
+    # Redirección al dominio canónico (www / non-www). Vacío si 'none'/None.
+    canonical_block = _canonical_redirect_block(domain, canonical_domain)
 
     # Inyección dentro del server{}: primero la plantilla, luego las directivas
     # personalizadas del dominio (pueden complementar/sobrescribir a la plantilla).
@@ -491,11 +521,14 @@ def generate_nginx_config(
 
     # Si force_https: el bloque HTTP solo redirige a HTTPS
     if force_https and ssl_enabled:
+        # $server_name al redirigir a https da el primer nombre del bloque (el
+        # dominio raíz); para respetar la variante pedida usamos $host. El
+        # canonical_block (si aplica) ya redirige a la variante correcta antes.
         http_block = f"""server {{
     listen {ipv4_listen_http};
     {ipv6_listen_http}
     server_name {server_names};
-    return 301 https://$server_name$request_uri;
+{canonical_block}    return 301 https://$host$request_uri;
 }}
 """
     else:
@@ -520,7 +553,7 @@ def generate_nginx_config(
     # Pasamos el upstream al template via variable para que los location blocks
     # de la plantilla puedan usar $phpfpm_backend en lugar del nombre hardcodeado
     set $phpfpm_backend php_{backend_name};
-{tpl_extra}{bots_block}{app_block_http}
+{canonical_block}{tpl_extra}{bots_block}{app_block_http}
     location ~ /\\.ht {{
         deny all;
     }}
@@ -569,7 +602,7 @@ server {{
 
     index index.php index.html index.htm;
 {skip_block}    set $phpfpm_backend php_{backend_name};
-{tpl_extra}{bots_block}{app_block_ssl}
+{canonical_block}{tpl_extra}{bots_block}{app_block_ssl}
     location ~ /\\.ht {{
         deny all;
     }}

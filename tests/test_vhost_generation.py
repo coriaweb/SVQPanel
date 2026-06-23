@@ -98,6 +98,40 @@ def test_nginx_redirect_genera_301():
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# Dominio canónico (www / non-www / none) — redirección 301 a la variante elegida
+# ─────────────────────────────────────────────────────────────────────────────
+def test_nginx_canonical_www_por_defecto_redirige_no_www_a_www():
+    # El default del panel es forzar www: dominio.com → www.dominio.com
+    cfg = generate_nginx_config("ejemplo.com", "user1", "8.3")
+    assert "if ($host = ejemplo.com)" in cfg
+    assert "return 301 $scheme://www.ejemplo.com$request_uri;" in cfg
+
+
+def test_nginx_canonical_non_www_redirige_www_a_raiz():
+    cfg = generate_nginx_config("ejemplo.com", "user1", "8.3",
+                                canonical_domain="non-www")
+    assert "if ($host = www.ejemplo.com)" in cfg
+    assert "return 301 $scheme://ejemplo.com$request_uri;" in cfg
+
+
+def test_nginx_canonical_none_no_redirige():
+    cfg = generate_nginx_config("ejemplo.com", "user1", "8.3",
+                                canonical_domain="none")
+    # Sin redirección canónica: no debe haber un if($host=...) de canónico
+    assert "Dominio canónico" not in cfg
+
+
+def test_nginx_canonical_www_tambien_en_bloque_ssl():
+    # La redirección canónica debe aplicarse también en el bloque 443.
+    cfg = generate_nginx_config("ejemplo.com", "user1", "8.3",
+                                ssl_enabled=True, canonical_domain="www")
+    # Debe aparecer en el bloque https (busca tras 'listen 443')
+    pos_443 = cfg.find("listen 443")
+    assert pos_443 != -1
+    assert "return 301 $scheme://www.ejemplo.com$request_uri;" in cfg[pos_443:]
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # SSL: cuando está activo, debe haber bloque 443
 # ─────────────────────────────────────────────────────────────────────────────
 def test_nginx_ssl_genera_bloque_443():

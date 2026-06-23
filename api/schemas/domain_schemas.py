@@ -82,6 +82,8 @@ class DomainResponse(BaseModel):
     ssl_expires: Optional[datetime] = None
     force_https:  Optional[bool] = False
     hsts_enabled: Optional[bool] = False
+    # Dominio canónico (www / non-www / none)
+    canonical_domain: Optional[str] = "www"
     ipv4: Optional[str] = None
     ipv6: Optional[str] = None
     is_active: Optional[bool] = True

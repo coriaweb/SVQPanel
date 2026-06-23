@@ -649,6 +649,8 @@ def _run_migrations():
         # SSL avanzado (force_https, HSTS)
         "ALTER TABLE domains ADD COLUMN IF NOT EXISTS force_https BOOLEAN NOT NULL DEFAULT FALSE",
         "ALTER TABLE domains ADD COLUMN IF NOT EXISTS hsts_enabled BOOLEAN NOT NULL DEFAULT FALSE",
+        # Dominio canónico (www / non-www / none). Default 'www' por costumbre del cliente.
+        "ALTER TABLE domains ADD COLUMN IF NOT EXISTS canonical_domain VARCHAR(8) NOT NULL DEFAULT 'www'",
         # Rate limiting anti-abuso (Fase 19)
         "ALTER TABLE domains ADD COLUMN IF NOT EXISTS rate_limit_enabled BOOLEAN NOT NULL DEFAULT FALSE",
         "ALTER TABLE domains ADD COLUMN IF NOT EXISTS rate_limit_rps INTEGER NOT NULL DEFAULT 10",

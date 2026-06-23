@@ -672,6 +672,7 @@ class TemplateManager(SystemManager):
                 rate_limit_enabled=getattr(domain_row, 'rate_limit_enabled', False) or False,
                 rate_limit_burst=getattr(domain_row, 'rate_limit_burst', 20) or 20,
                 docroot_subdir=getattr(template_row, 'docroot_subdir', None),
+                canonical_domain=getattr(domain_row, 'canonical_domain', 'www') or 'www',
             )
             with open(nginx_config_path, "w") as f:
                 f.write(config)

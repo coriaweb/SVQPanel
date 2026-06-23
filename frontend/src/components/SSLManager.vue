@@ -1,5 +1,22 @@
 <template>
   <div>
+    <!-- Dominio canónico (www / sin www / ninguno) — aplica con o sin SSL -->
+    <div class="ssl-options canonical-box">
+      <div class="canonical-head">
+        <span class="ssl-opt-title">Dominio canónico</span>
+        <span class="ssl-opt-desc">Redirige (301) a la variante elegida. Por defecto: forzar www.</span>
+      </div>
+      <div class="canonical-choices">
+        <button v-for="opt in canonicalOptions" :key="opt.value"
+          class="canonical-btn" :class="{ on: canonical === opt.value }"
+          :disabled="savingCanonical"
+          @click="setCanonical(opt.value)">
+          <i v-if="canonical === opt.value" class="bi bi-check-lg"></i>
+          {{ opt.label }}
+        </button>
+      </div>
+    </div>
+
     <!-- Cert activo -->
     <div v-if="ssl && ssl.ssl_enabled" class="ssl-active">
       <div class="ssl-badge">
@@ -121,6 +138,32 @@ export default {
     const hsts = ref(false)
     const email = ref('')
 
+    // Dominio canónico (www / non-www / none)
+    const canonical = ref(props.domain.canonical_domain || 'www')
+    const savingCanonical = ref(false)
+    const canonicalOptions = [
+      { value: 'www',     label: 'Forzar www' },
+      { value: 'non-www', label: 'Forzar sin www' },
+      { value: 'none',    label: 'Sin redirección' },
+    ]
+
+    const setCanonical = async (value) => {
+      if (value === canonical.value || savingCanonical.value) return
+      const prev = canonical.value
+      canonical.value = value
+      savingCanonical.value = true
+      try {
+        await api.put(`/api/domains/${props.domain.id}/canonical`, { canonical_domain: value })
+        emit('reload')
+        store.showNotification('Dominio canónico actualizado', 'success')
+      } catch (e) {
+        canonical.value = prev
+        store.showNotification('Error al cambiar el dominio canónico: ' + (e.message || ''), 'danger')
+      } finally {
+        savingCanonical.value = false
+      }
+    }
+
     const loadSSL = async () => {
       try {
         const data = await api.getSSL(props.domain.id)
@@ -209,6 +252,7 @@ export default {
     return {
       ssl, loading, toggling, showForm, showRevokeConfirm,
       forceHttps, hsts, email,
+      canonical, savingCanonical, canonicalOptions, setCanonical,
       createSSL, renewSSL, revokeSSL, saveToggle, formatDate,
     }
   }
@@ -235,6 +279,28 @@ export default {
 .ssl-meta-row span:first-child { min-width: 120px; color: var(--text-muted); }
 
 .ssl-options { display: flex; flex-direction: column; gap: .5rem; }
+
+.canonical-box {
+  margin-bottom: 1rem; padding: .75rem .85rem;
+  border-radius: var(--radius-sm);
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+}
+.canonical-head { display: flex; flex-direction: column; gap: .15rem; margin-bottom: .6rem; }
+.canonical-choices { display: flex; gap: .4rem; flex-wrap: wrap; }
+.canonical-btn {
+  display: inline-flex; align-items: center; gap: .35rem;
+  padding: .35rem .8rem; border-radius: 999px;
+  font-size: .78rem; font-weight: 500;
+  border: 1.5px solid var(--border); background: var(--surface-3);
+  color: var(--text-muted); cursor: pointer;
+  transition: background .15s, color .15s, border-color .15s;
+}
+.canonical-btn.on {
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+  border-color: var(--accent); color: var(--accent);
+}
+.canonical-btn:disabled { opacity: .5; cursor: not-allowed; }
 
 .ssl-opt-row {
   display: flex; align-items: center; justify-content: space-between;
