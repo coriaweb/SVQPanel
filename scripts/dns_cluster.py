@@ -785,10 +785,44 @@ def load_cluster(db) -> Optional[Dict]:
     }
 
 
-def compute_cluster_health(db) -> Optional[Dict]:
+def resync_zone(db, domain: str) -> bool:
+    """
+    Reempuja UNA zona de la BD al cluster (master→slave). Úsalo para auto-curar
+    una zona que quedó desfasada porque un push anterior falló (p. ej. timeout
+    SSH puntual): la BD tiene el serial bueno pero los nameservers van atrás.
+    Devuelve True si el push se intentó (cluster presente), False si no hay
+    cluster. Las excepciones se propagan.
+    """
+    from api.models.models_dns import DnsZone, DnsRecord
+    zone = db.query(DnsZone).filter(DnsZone.domain_name == domain).first()
+    if not zone:
+        return False
+    records = db.query(DnsRecord).filter(DnsRecord.zone_id == zone.id).all()
+    record_dicts = [
+        {"record_type": r.record_type, "name": r.name,
+         "content": r.content, "ttl": r.ttl, "priority": r.priority}
+        for r in records
+    ]
+    from scripts.dns_manager import DNSManager, get_panel_nameservers
+    panel_ns1, _ = get_panel_nameservers(db)
+    soa_ns = zone.soa_ns or panel_ns1
+    zone_text = DNSManager.render_zone(
+        zone.domain_name, zone.serial, record_dicts,
+        soa_ns=soa_ns, ttl=zone.ttl or 14400,
+    )
+    return push_zone_to_cluster(db, zone.domain_name, zone_text,
+                                dnssec=bool(zone.dnssec_enabled))
+
+
+def compute_cluster_health(db, auto_resync: bool = True) -> Optional[Dict]:
     """
     Calcula la salud del cluster comparando el serial de cada zona en la BD del
     panel con el que sirven ns1 y ns2. Devuelve None si no hay cluster.
+
+    Si auto_resync=True y una zona está desfasada PORQUE la BD va por delante del
+    master (db_serial > master_serial), reintenta empujar esa zona y recomprueba
+    su estado: auto-cura desfases por fallos de push puntuales. NO toca zonas
+    donde el master va por delante (caso anómalo que no debe pisar el panel).
 
     {
       "rows":    [ {domain, db_serial, master_serial, slave_serial, status}, … ],
@@ -807,6 +841,33 @@ def compute_cluster_health(db) -> Optional[Dict]:
     ]
     cl = DNSCluster(panel_id=cluster["panel_id"])
     rows = cl.cluster_health(cluster["master"], cluster["slave"], zones)
+
+    if auto_resync:
+        for r in rows:
+            ms = r["master_serial"]
+            # Solo el caso recuperable: BD por delante del master (push perdido).
+            if r["status"] == "desync" and ms is not None and r["db_serial"] > ms:
+                try:
+                    if resync_zone(db, r["domain"]):
+                        import logging, time
+                        logging.getLogger(__name__).info(
+                            f"auto-resync de zona desfasada: {r['domain']} "
+                            f"(BD={r['db_serial']} > master={ms})")
+                        # Recomprobar tras el push, con un par de reintentos: el
+                        # slave tarda unos segundos en recibir el AXFR (NOTIFY).
+                        for _ in range(3):
+                            time.sleep(2)
+                            new = cl.cluster_health(
+                                cluster["master"], cluster["slave"],
+                                [{"domain": r["domain"], "db_serial": r["db_serial"]}])
+                            if new:
+                                r.update(new[0])
+                                if r["status"] == "ok":
+                                    break
+                except Exception as e:
+                    import logging
+                    logging.getLogger(__name__).error(
+                        f"auto-resync de {r['domain']} falló: {e}")
 
     summary = {"total": len(rows), "ok": 0, "desync": 0,
                "master_down": 0, "slave_down": 0}

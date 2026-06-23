@@ -1265,7 +1265,7 @@ export default {
       }
     }
 
-    onMounted(async () => { await loadZones(); await loadDomains(); await loadNameservers(); await loadCluster(); await loadHealth(false) })
+    onMounted(async () => { await loadZones(); await loadDomains(); await loadNameservers(); await loadCluster(); await loadHealth(true) })
 
     return {
       domainsWithoutZone,

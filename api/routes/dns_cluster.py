@@ -328,6 +328,7 @@ async def cluster_health(live: bool = False, _=Depends(require_admin),
     - Con ?live=1 lo recalcula en el momento (hace SSH a los nodos).
     """
     import json
+    from datetime import datetime
     from scripts.dns_cluster import compute_cluster_health
 
     if not _get_master(db):
@@ -335,6 +336,15 @@ async def cluster_health(live: bool = False, _=Depends(require_admin),
 
     if live:
         health = compute_cluster_health(db)
+        # Persistir el resultado en vivo (ya posiblemente auto-curado) como caché,
+        # para que la siguiente carga normal muestre el estado real, no uno viejo.
+        if health is not None:
+            s = db.query(Settings).filter(Settings.id == 1).first()
+            if not s:
+                s = Settings(id=1); db.add(s)
+            s.dns_cluster_health_json = json.dumps(health)
+            s.dns_cluster_health_at = datetime.utcnow()
+            db.commit()
         return {"enabled": True, "live": True, "checked_at": None, **(health or {})}
 
     s = db.query(Settings).filter(Settings.id == 1).first()
