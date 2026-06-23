@@ -149,6 +149,11 @@ def test_nginx_ssl_cifrados_modernos():
     cipher_line = next(l for l in cfg.splitlines() if "ssl_ciphers" in l).upper()
     for weak in ("CBC", "CAMELLIA", "ARIA", "CCM"):
         assert weak not in cipher_line, f"cifrado débil {weak} en la lista"
+    # Algoritmos de firma TLS 1.2: solo SHA-256/384/512 (sin SHA-224 ni SHA-1).
+    assert "ssl_conf_command Signature_Algorithms" in cfg
+    sign_line = next(l for l in cfg.splitlines() if "Signature_Algorithms" in l)
+    assert "SHA256" in sign_line and "SHA384" in sign_line
+    assert "SHA224" not in sign_line and "SHA1" not in sign_line
 
 
 # ─────────────────────────────────────────────────────────────────────────────

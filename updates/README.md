@@ -65,3 +65,4 @@ exit 0
 | 0026 | Backfill DNS: ip_address + AAAA/ip6 en SPF   | 2026-06-23 |
 | 0027 | Endurecer cifrados TLS (AEAD + prefer order) | 2026-06-23 |
 | 0028 | Fix listen atado a IP en vhosts webmail/mail | 2026-06-23 |
+| 0029 | TLS: algoritmos de firma SHA-256+ (sin SHA-224) | 2026-06-23 |

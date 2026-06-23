@@ -19,6 +19,16 @@ SSL_CIPHERS = (
     "ECDHE-ECDSA-AES256-GCM-SHA384:ECDHE-RSA-AES256-GCM-SHA384:"
     "ECDHE-ECDSA-CHACHA20-POLY1305:ECDHE-RSA-CHACHA20-POLY1305"
 )
+# Algoritmos de firma TLS 1.2 (handshake). Dejamos SOLO SHA-256/384/512 — fuera
+# SHA-224 (phase-out NCSC) y SHA-1 (insuficiente). Requiere nginx 1.19.4+ /
+# OpenSSL 1.1.1+ (la directiva ssl_conf_command). TLS 1.3 ya lo gestiona solo.
+SSL_SIGN_ALGS = (
+    "ECDSA+SHA256:ECDSA+SHA384:ECDSA+SHA512:"
+    "RSA-PSS+SHA256:RSA-PSS+SHA384:RSA-PSS+SHA512:"
+    "RSA+SHA256:RSA+SHA384:RSA+SHA512"
+)
+# Línea nginx lista para inyectar tras los ssl_ciphers (con su \n al final).
+SSL_CONF_COMMAND_LINE = f"    ssl_conf_command Signature_Algorithms {SSL_SIGN_ALGS};\n"
 
 
 def validate_username(username: str) -> bool:
@@ -271,7 +281,7 @@ server {{
     ssl_protocols {SSL_PROTOCOLS};
     ssl_ciphers {SSL_CIPHERS};
     ssl_prefer_server_ciphers on;
-
+{SSL_CONF_COMMAND_LINE}
     return 301 {destination}$request_uri;
 }}
 """
@@ -614,7 +624,7 @@ server {{
     ssl_protocols {SSL_PROTOCOLS};
     ssl_ciphers {SSL_CIPHERS};
     ssl_prefer_server_ciphers on;
-{hsts_header}{http3_header}{sec_headers_https}
+{SSL_CONF_COMMAND_LINE}{hsts_header}{http3_header}{sec_headers_https}
 
     index index.php index.html index.htm;
 {skip_block}    set $phpfpm_backend php_{backend_name};
