@@ -63,3 +63,4 @@ exit 0
 | 0024 | Limpiar vhosts huérfanos nginx/Apache       | 2026-06-23 |
 | 0025 | Dominio canónico: forzar www (defensivo DNS) | 2026-06-23 |
 | 0026 | Backfill DNS: ip_address + AAAA/ip6 en SPF   | 2026-06-23 |
+| 0027 | Endurecer cifrados TLS (AEAD + prefer order) | 2026-06-23 |

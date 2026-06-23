@@ -16,6 +16,7 @@ import re
 import shutil
 from datetime import datetime
 from .base import SystemManager
+from .utils import SSL_PROTOCOLS, SSL_CIPHERS
 
 logger = logging.getLogger(__name__)
 
@@ -195,8 +196,9 @@ class PanelSSLManager(SystemManager):
             f"\n"
             f"    ssl_certificate     {cert_path};\n"
             f"    ssl_certificate_key {key_path};\n"
-            f"    ssl_protocols       TLSv1.2 TLSv1.3;\n"
-            f"    ssl_ciphers         HIGH:!aNULL:!MD5;\n"
+            f"    ssl_protocols       {SSL_PROTOCOLS};\n"
+            f"    ssl_ciphers         {SSL_CIPHERS};\n"
+            f"    ssl_prefer_server_ciphers on;\n"
             f"    ssl_session_cache   shared:SSL:10m;\n"
             f"    ssl_session_timeout 10m;\n"
             f"    add_header Strict-Transport-Security \"max-age=31536000; includeSubDomains\" always;\n"
@@ -424,6 +426,7 @@ import os
 import re
 from datetime import datetime
 from .base import SystemManager
+from .utils import SSL_PROTOCOLS, SSL_CIPHERS
 
 logger = logging.getLogger(__name__)
 
@@ -753,8 +756,9 @@ server {{
 
     ssl_certificate     {cert_path};
     ssl_certificate_key {key_path};
-    ssl_protocols       TLSv1.2 TLSv1.3;
-    ssl_ciphers         HIGH:!aNULL:!MD5;
+    ssl_protocols       {SSL_PROTOCOLS};
+    ssl_ciphers         {SSL_CIPHERS};
+    ssl_prefer_server_ciphers on;
 
     root /var/www/html;
     index index.html;
@@ -774,8 +778,9 @@ server {{
 
     ssl_certificate     {cert_path};
     ssl_certificate_key {key_path};
-    ssl_protocols       TLSv1.2 TLSv1.3;
-    ssl_ciphers         HIGH:!aNULL:!MD5;
+    ssl_protocols       {SSL_PROTOCOLS};
+    ssl_ciphers         {SSL_CIPHERS};
+    ssl_prefer_server_ciphers on;
     ssl_session_cache   shared:SSL:10m;
     ssl_session_timeout 10m;
     # NO enviamos HSTS: el panel corre en un puerto no estándar ({PANEL_WEB_PORT}).

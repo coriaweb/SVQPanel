@@ -6,6 +6,20 @@ from typing import Optional
 
 logger = logging.getLogger(__name__)
 
+# ── Política TLS del servidor (centralizada) ────────────────────────────────
+# Nivel "moderno" (NCSC-NL 2025): TLS 1.2 SOLO con cifrados AEAD (ECDHE + GCM/
+# CHACHA20) — sin CBC, Camellia, ARIA ni CCM_8, que el test marca como
+# insufficient/phase-out. TLS 1.3 negocia sus propios cifrados (todos buenos).
+# Compatible con cualquier navegador/móvil de los últimos ~8 años.
+# Fuente única: usar SSL_PROTOCOLS / SSL_CIPHERS en todos los vhosts (web,
+# correo, webmail, panel) para que un cambio de política se propague a la vez.
+SSL_PROTOCOLS = "TLSv1.2 TLSv1.3"
+SSL_CIPHERS = (
+    "ECDHE-ECDSA-AES128-GCM-SHA256:ECDHE-RSA-AES128-GCM-SHA256:"
+    "ECDHE-ECDSA-AES256-GCM-SHA384:ECDHE-RSA-AES256-GCM-SHA384:"
+    "ECDHE-ECDSA-CHACHA20-POLY1305:ECDHE-RSA-CHACHA20-POLY1305"
+)
+
 
 def validate_username(username: str) -> bool:
     """Validate Linux username format"""
@@ -254,8 +268,9 @@ server {{
 
     ssl_certificate /etc/letsencrypt/live/{domain}/fullchain.pem;
     ssl_certificate_key /etc/letsencrypt/live/{domain}/privkey.pem;
-    ssl_protocols TLSv1.2 TLSv1.3;
-    ssl_ciphers HIGH:!aNULL:!MD5;
+    ssl_protocols {SSL_PROTOCOLS};
+    ssl_ciphers {SSL_CIPHERS};
+    ssl_prefer_server_ciphers on;
 
     return 301 {destination}$request_uri;
 }}
@@ -596,8 +611,9 @@ server {{
 
     ssl_certificate /etc/letsencrypt/live/{domain}/fullchain.pem;
     ssl_certificate_key /etc/letsencrypt/live/{domain}/privkey.pem;
-    ssl_protocols TLSv1.2 TLSv1.3;
-    ssl_ciphers HIGH:!aNULL:!MD5;
+    ssl_protocols {SSL_PROTOCOLS};
+    ssl_ciphers {SSL_CIPHERS};
+    ssl_prefer_server_ciphers on;
 {hsts_header}{http3_header}{sec_headers_https}
 
     index index.php index.html index.htm;

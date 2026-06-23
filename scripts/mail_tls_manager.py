@@ -24,6 +24,7 @@ import os
 from typing import List, Tuple
 
 from .base import SystemManager
+from .utils import SSL_PROTOCOLS, SSL_CIPHERS
 
 logger = logging.getLogger(__name__)
 
@@ -166,8 +167,9 @@ class MailTLSManager(SystemManager):
             f"    server_name {host};\n"
             f"    ssl_certificate     {full};\n"
             f"    ssl_certificate_key {key};\n"
-            f"    ssl_protocols TLSv1.2 TLSv1.3;\n"
-            f"    ssl_ciphers HIGH:!aNULL:!MD5;\n"
+            f"    ssl_protocols {SSL_PROTOCOLS};\n"
+            f"    ssl_ciphers {SSL_CIPHERS};\n"
+            f"    ssl_prefer_server_ciphers on;\n"
             f"    return 301 https://{webmail}$request_uri;\n"
             f"}}\n"
         )

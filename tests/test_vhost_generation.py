@@ -132,6 +132,26 @@ def test_nginx_canonical_www_tambien_en_bloque_ssl():
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# TLS endurecido (NCSC-NL): cifrados modernos AEAD + prefer_server_ciphers
+# ─────────────────────────────────────────────────────────────────────────────
+def test_nginx_ssl_cifrados_modernos():
+    cfg = generate_nginx_config("ejemplo.com", "user1", "8.3", ssl_enabled=True)
+    # Debe imponer su orden de cifrados
+    assert "ssl_prefer_server_ciphers on;" in cfg
+    # Debe ofrecer cifrados AEAD modernos
+    assert "ECDHE-ECDSA-CHACHA20-POLY1305" in cfg
+    assert "ECDHE-RSA-AES256-GCM-SHA384" in cfg
+    # NO debe usar la lista antigua y permisiva
+    assert "HIGH:!aNULL:!MD5" not in cfg
+    # La línea de cifrados NO debe contener débiles (CBC/Camellia/ARIA/CCM_8).
+    # Comprobamos SOLO la línea ssl_ciphers (no todo el vhost: "ARIA" aparece como
+    # substring en comentarios tipo "vARIAble").
+    cipher_line = next(l for l in cfg.splitlines() if "ssl_ciphers" in l).upper()
+    for weak in ("CBC", "CAMELLIA", "ARIA", "CCM"):
+        assert weak not in cipher_line, f"cifrado débil {weak} en la lista"
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # SSL: cuando está activo, debe haber bloque 443
 # ─────────────────────────────────────────────────────────────────────────────
 def test_nginx_ssl_genera_bloque_443():

@@ -1143,6 +1143,41 @@ def cmd_migrate_canonical_domain(dry_run: bool = False) -> int:
         db.close()
 
 
+def cmd_harden_tls(dry_run: bool = False) -> int:
+    """Regenera los vhosts con SSL para aplicar la política TLS endurecida
+    (cifrados AEAD modernos + ssl_prefer_server_ciphers on).
+
+    Reescribe los vhosts de TODOS los dominios con SSL activo (es donde está el
+    ssl_ciphers que evalúan los tests tipo internet.nl/NCSC). Idempotente: usa el
+    regenerador estándar que preserva el resto del estado del dominio. El correo,
+    webmail y panel toman la política nueva al regenerarse/renovar su SSL.
+    """
+    from api.routes.domains import _regenerate_domain_vhost
+
+    db = SessionLocal()
+    try:
+        domains = db.query(Domain).filter(Domain.ssl_enabled == True).all()  # noqa: E712
+        ok = fail = 0
+        for d in domains:
+            owner = db.query(User).filter(User.id == d.user_id).first()
+            if not owner:
+                continue
+            if dry_run:
+                logger.info(f"  {d.domain_name}: regeneraría vhost (TLS endurecido)")
+                ok += 1
+                continue
+            try:
+                _regenerate_domain_vhost(d, owner)
+                ok += 1
+            except Exception as e:
+                fail += 1
+                logger.error(f"  {d.domain_name}: regenerate_vhost falló: {e}")
+        logger.info(f"harden_tls: vhosts SSL regenerados={ok}, fallidos={fail}")
+        return 0
+    finally:
+        db.close()
+
+
 def cmd_backfill_dns_ipv6(dry_run: bool = False) -> int:
     """Backfill de zonas DNS existentes:
       - Rellena DnsZone.ip_address si está NULL (la lista mostraba '—').
@@ -1207,6 +1242,10 @@ def main():
         help="Borra un cliente y TODOS sus recursos del sistema (vhosts, correo, DNS, BDs, cron, SFTP…)")
     p_purge.add_argument("username", help="Usuario del panel a eliminar")
     p_purge.add_argument("--yes", action="store_true", help="Confirmar el borrado (sin esto solo avisa)")
+
+    p_htls = sub.add_parser("harden_tls",
+        help="Regenera los vhosts SSL con la política TLS endurecida (cifrados modernos)")
+    p_htls.add_argument("--dry-run", action="store_true", help="Solo muestra qué haría")
 
     p_bf = sub.add_parser("backfill_dns_ipv6",
         help="Rellena ip_address NULL de zonas y añade AAAA+ip6(SPF) a dominios con IPv6")
@@ -1287,6 +1326,8 @@ def main():
         sys.exit(cmd_migrate_canonical_domain(dry_run=args.dry_run))
     if args.cmd == "backfill_dns_ipv6":
         sys.exit(cmd_backfill_dns_ipv6(dry_run=args.dry_run))
+    if args.cmd == "harden_tls":
+        sys.exit(cmd_harden_tls(dry_run=args.dry_run))
 
 
 if __name__ == "__main__":

@@ -16,6 +16,7 @@ import os
 from typing import Tuple
 
 from .base import SystemManager
+from .utils import SSL_PROTOCOLS, SSL_CIPHERS
 
 logger = logging.getLogger(__name__)
 
@@ -180,8 +181,9 @@ server {{
 
     ssl_certificate {ssl_cert};
     ssl_certificate_key {ssl_key};
-    ssl_protocols TLSv1.2 TLSv1.3;
-    ssl_ciphers HIGH:!aNULL:!MD5;
+    ssl_protocols {SSL_PROTOCOLS};
+    ssl_ciphers {SSL_CIPHERS};
+    ssl_prefer_server_ciphers on;
 
     location ^~ /.well-known {{
         allow all;
@@ -284,7 +286,9 @@ server {{
     server_name {host};
     ssl_certificate {ssl_cert};
     ssl_certificate_key {ssl_key};
-    ssl_protocols TLSv1.2 TLSv1.3;
+    ssl_protocols {SSL_PROTOCOLS};
+    ssl_ciphers {SSL_CIPHERS};
+    ssl_prefer_server_ciphers on;
     return 503;
     error_page 503 @webmail_disabled;
     location @webmail_disabled {{
