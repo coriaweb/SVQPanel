@@ -1647,4 +1647,138 @@ export default {
 }
 .sv-full { grid-column: 1 / -1; }
 @media (max-width: 768px) { .sv-grid { grid-template-columns: 1fr; } .sv-half { grid-column: 1 / -1; } }
+
+/* ─────────────────────────────────────────────────────────────────────────
+   Formularios y botones con el look SVQ (esta vista usa markup tipo Bootstrap).
+   Reestilamos aquí, scoped, para que NO dependa del bridge global y se vea
+   igual que el resto del panel (Dashboard/Domains/Antispam).
+   ───────────────────────────────────────────────────────────────────────── */
+.sv-view :deep(.form-label) {
+  font-size: .82rem; font-weight: 600; color: var(--text);
+  margin-bottom: .35rem; display: block;
+}
+.sv-view :deep(.form-text) { font-size: .78rem; color: var(--text-muted); margin-top: .3rem; }
+
+.sv-view :deep(.form-control),
+.sv-view :deep(.form-select) {
+  width: 100%;
+  background: var(--surface-inset);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: var(--r-sm, 8px);
+  padding: .5rem .7rem;
+  font-size: .9rem;
+  transition: border-color .15s, box-shadow .15s;
+}
+.sv-view :deep(.form-control::placeholder) { color: var(--text-muted); opacity: .7; }
+.sv-view :deep(.form-control:focus),
+.sv-view :deep(.form-select:focus) {
+  outline: none;
+  border-color: var(--ac);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--ac) 18%, transparent);
+}
+.sv-view :deep(.form-control:disabled),
+.sv-view :deep(.form-select:disabled) { opacity: .55; cursor: not-allowed; }
+.sv-view :deep(.font-monospace),
+.sv-view :deep(.font-mono) { font-family: var(--font-mono, monospace); }
+
+/* Switches y checkboxes */
+.sv-view :deep(.form-check) { display: flex; align-items: center; gap: .5rem; }
+.sv-view :deep(.form-check-input) {
+  appearance: none; -webkit-appearance: none;
+  margin: 0; cursor: pointer; flex-shrink: 0;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+}
+.sv-view :deep(.form-check-input:not([role="switch"])) {
+  width: 1.1rem; height: 1.1rem; border-radius: var(--r-xs, 5px);
+}
+.sv-view :deep(.form-check-input:checked) {
+  background: var(--ac); border-color: var(--ac);
+}
+/* Switch (role=switch): píldora con bolita */
+.sv-view :deep(.form-check-input[role="switch"]) {
+  width: 2.1rem; height: 1.15rem; border-radius: 999px; position: relative;
+  transition: background .15s, border-color .15s;
+}
+.sv-view :deep(.form-check-input[role="switch"])::after {
+  content: ""; position: absolute; top: 50%; left: 2px;
+  width: .85rem; height: .85rem; border-radius: 50%;
+  background: #fff; transform: translateY(-50%);
+  transition: left .15s; box-shadow: 0 1px 2px rgba(0,0,0,.3);
+}
+.sv-view :deep(.form-check-input[role="switch"]:checked)::after { left: calc(100% - .95rem); }
+.sv-view :deep(.form-check-label) { font-size: .88rem; color: var(--text); cursor: pointer; }
+
+/* Botones */
+.sv-view :deep(.btn) {
+  display: inline-flex; align-items: center; justify-content: center; gap: .4rem;
+  padding: .5rem .9rem; font-size: .85rem; font-weight: 600;
+  border-radius: var(--r-sm, 8px); border: 1px solid transparent;
+  cursor: pointer; transition: filter .15s, background .15s, border-color .15s;
+  text-decoration: none; line-height: 1.2;
+}
+.sv-view :deep(.btn:disabled) { opacity: .55; cursor: not-allowed; }
+.sv-view :deep(.btn-primary) { background: var(--ac); color: #fff; }
+.sv-view :deep(.btn-primary:hover:not(:disabled)) { filter: brightness(1.08); }
+.sv-view :deep(.btn-success) { background: var(--success); color: #fff; }
+.sv-view :deep(.btn-danger)  { background: var(--danger); color: #fff; }
+.sv-view :deep(.btn-warning) { background: var(--warning); color: #fff; }
+.sv-view :deep(.btn-secondary) { background: var(--surface-2); color: var(--text); border-color: var(--border); }
+.sv-view :deep(.btn-outline-primary),
+.sv-view :deep(.btn-outline-secondary),
+.sv-view :deep(.btn-outline-danger) {
+  background: transparent; border-color: var(--border); color: var(--text);
+}
+.sv-view :deep(.btn-outline-primary:hover:not(:disabled)) { border-color: var(--ac); color: var(--ac); }
+.sv-view :deep(.btn-outline-danger:hover:not(:disabled)) { border-color: var(--danger); color: var(--danger); }
+.sv-view :deep(.btn-sm) { padding: .3rem .6rem; font-size: .78rem; }
+
+/* Badges */
+.sv-view :deep(.badge) {
+  display: inline-flex; align-items: center; gap: .25rem;
+  padding: .2rem .55rem; border-radius: 999px;
+  font-size: .72rem; font-weight: 600;
+}
+.sv-view :deep(.bg-success), .sv-view :deep(.badge.bg-success) { background: color-mix(in srgb, var(--success) 16%, transparent); color: var(--success); }
+.sv-view :deep(.bg-danger),  .sv-view :deep(.badge.bg-danger)  { background: color-mix(in srgb, var(--danger) 16%, transparent); color: var(--danger); }
+.sv-view :deep(.bg-warning), .sv-view :deep(.badge.bg-warning) { background: color-mix(in srgb, var(--warning) 16%, transparent); color: var(--warning); }
+.sv-view :deep(.bg-secondary),.sv-view :deep(.badge.bg-secondary){ background: var(--surface-2); color: var(--text-muted); }
+
+/* Alerts */
+.sv-view :deep(.alert) {
+  border-radius: var(--r-md, 10px); padding: .75rem 1rem;
+  font-size: .85rem; border: 1px solid var(--border);
+}
+.sv-view :deep(.alert-success) { background: color-mix(in srgb, var(--success) 8%, transparent); border-color: color-mix(in srgb, var(--success) 30%, transparent); color: var(--text); }
+.sv-view :deep(.alert-danger)  { background: color-mix(in srgb, var(--danger) 8%, transparent);  border-color: color-mix(in srgb, var(--danger) 30%, transparent);  color: var(--text); }
+.sv-view :deep(.alert-warning) { background: color-mix(in srgb, var(--warning) 8%, transparent); border-color: color-mix(in srgb, var(--warning) 30%, transparent); color: var(--text); }
+.sv-view :deep(.alert-info)    { background: color-mix(in srgb, var(--info) 8%, transparent);    border-color: color-mix(in srgb, var(--info) 30%, transparent);    color: var(--text); }
+
+/* Input group (campo + botón pegados) */
+.sv-view :deep(.input-group) { display: flex; align-items: stretch; }
+.sv-view :deep(.input-group) > :deep(.form-control) { border-top-right-radius: 0; border-bottom-right-radius: 0; }
+.sv-view :deep(.input-group) > :deep(.btn) { border-top-left-radius: 0; border-bottom-left-radius: 0; }
+.sv-view :deep(.input-group-text) {
+  display: flex; align-items: center; padding: 0 .7rem;
+  background: var(--surface-2); border: 1px solid var(--border); color: var(--text-muted);
+  font-size: .85rem;
+}
+
+/* List group (listas de filas) */
+.sv-view :deep(.list-group) { border: 1px solid var(--border); border-radius: var(--r-md, 10px); overflow: hidden; }
+.sv-view :deep(.list-group-item) {
+  background: var(--surface); color: var(--text);
+  border: none; border-bottom: 1px solid var(--border);
+  padding: .65rem .9rem; font-size: .88rem;
+}
+.sv-view :deep(.list-group-item:last-child) { border-bottom: none; }
+
+/* Spinner */
+.sv-view :deep(.spinner-border) {
+  display: inline-block; width: 1.6rem; height: 1.6rem;
+  border: 2px solid var(--border); border-top-color: var(--ac);
+  border-radius: 50%; animation: sv-spin .6s linear infinite;
+}
+@keyframes sv-spin { to { transform: rotate(360deg); } }
 </style>
