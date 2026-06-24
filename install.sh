@@ -826,6 +826,25 @@ submission inet n       -       y       -       -       smtpd
 MASTEREOF
     fi
 
+    # SMTPS (puerto 465, SSL/TLS directo) — los clientes de correo modernos
+    # (Thunderbird, Apple Mail, Outlook) prefieren SSL directo en 465 sobre
+    # STARTTLS en 587. Ambos cifran igual, pero ofrecer 465 hace que el
+    # autoconfig de Thunderbird muestre "SSL/TLS" en el saliente (como cPanel/
+    # Hestia). Mantenemos también el 587 para máxima compatibilidad.
+    if ! grep -qE "^smtps|^465" /etc/postfix/master.cf; then
+        cat >> /etc/postfix/master.cf << 'MASTEREOF'
+
+smtps     inet  n       -       y       -       -       smtpd
+  -o syslog_name=postfix/smtps
+  -o smtpd_tls_wrappermode=yes
+  -o smtpd_tls_security_level=encrypt
+  -o smtpd_sasl_auth_enable=yes
+  -o smtpd_reject_unlisted_recipient=no
+  -o smtpd_recipient_restrictions=permit_sasl_authenticated,reject
+  -o milter_macro_daemon_name=ORIGINATING
+MASTEREOF
+    fi
+
     # ── SMTP relay (smarthost) — estructura base ──────────────────────────
     # El panel configura el relay GLOBAL (relayhost) y el override por dominio
     # (sender_dependent_relayhost_maps) desde scripts/mail_manager.py. Aquí
@@ -843,7 +862,7 @@ MASTEREOF
 
     systemctl enable postfix
     systemctl restart postfix
-    echo -e "  ${GREEN}✓ Postfix configurado (SMTP 25 + submission 587 + relay listo)${NC}"
+    echo -e "  ${GREEN}✓ Postfix configurado (SMTP 25 + submission 587 + smtps 465 + relay listo)${NC}"
 
     # ── 2. DOVECOT ────────────────────────────────────────────────────────
     echo -e "  ${YELLOW}→ Instalando Dovecot...${NC}"
@@ -3295,7 +3314,7 @@ fi
 if [[ "$INSTALL_MAIL" == true ]]; then
     echo -e "\n${YELLOW}Servidor de correo:${NC}"
     echo "  • SMTP entrada:  puerto 25   (MX de tus dominios)"
-    echo "  • SMTP envío:    puerto 587  (clientes con STARTTLS + auth)"
+    echo "  • SMTP envío:    puerto 465 (SSL/TLS) / 587 (STARTTLS) + auth"
     echo "  • IMAP:          puerto 143  (STARTTLS) / 993 (TLS)"
     echo "  • POP3:          puerto 110  (STARTTLS) / 995 (TLS)"
     echo "  • Rspamd UI:     http://${SERVER_IP}:11334"

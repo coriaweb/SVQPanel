@@ -73,3 +73,4 @@ exit 0
 | 0034 | Bajar límite no-auth a 10/h (empujar a SMTP)    | 2026-06-24 |
 | 0035 | Aprendizaje de spam (Bayes + IMAPSieve Junk)   | 2026-06-24 |
 | 0036 | Aprendizaje spam también por flag (Thunderbird) | 2026-06-24 |
+| 0037 | SMTPS puerto 465 (SSL/TLS directo, además de 587) | 2026-06-24 |
