@@ -327,23 +327,18 @@ return custom_keywords
 custom_keywords = "{self.RATELIMIT_LUA}";
 """
 
-    def rebuild_ratelimit_from_db(self, mail_domains, reload=True,
-                                  domain_sysuser=None, unauth_sysusers=None):
-        """
-        Regenera los mapas de rate-limit (por buzón, por dominio y por usuario de
-        sistema para el correo no autenticado), el Lua y la config del módulo.
+    @classmethod
+    def _compute_ratelimit_lines(cls, mail_domains, domain_sysuser=None,
+                                 unauth_sysusers=None):
+        """Calcula las líneas de los 3 mapas de rate-limit. Función PURA (sin I/O,
+        testeable). Devuelve (user_lines, domain_lines, sysuser_lines).
 
-        mail_domains: MailDomain con sus mailboxes cargados.
-        domain_sysuser: dict {dominio: usuario_sistema} para mapear el límite del
-          dominio al correo no autenticado (PHP) que inyecta ese usuario.
-        unauth_sysusers: dict {usuario_sistema: limite/h} explícito; si se pasa,
-          tiene prioridad. Si no, se deriva de domain_sysuser + send_limit_hour
-          del dominio (o el DEFAULT_UNAUTH_LIMIT_HOUR conservador).
-        Formato de mapa hash: "clave  N / 1h".
+        - user_lines:    "buzon@dominio  N / 1h"  (por buzón autenticado)
+        - domain_lines:  "dominio  N / 1h"        (por dominio autenticado)
+        - sysuser_lines: "usuario_sistema N / 1h" (correo NO autenticado de PHP)
         """
         user_lines = []
         domain_lines = []
-        # usuario_sistema → límite/hora (no-auth). Tope conservador por defecto.
         sysuser_limit = {}
         # Base: todos los usuarios con web reciben el tope por defecto. Luego un
         # dominio de correo con send_limit menor puede bajarlo (nos quedamos con
@@ -360,18 +355,34 @@ custom_keywords = "{self.RATELIMIT_LUA}";
                 if mlimit > 0:
                     addr = f"{mb.username}@{md.domain_name}".lower()
                     user_lines.append(f"{addr} {mlimit} / 1h")
-            # Correo no autenticado del sitio: límite por usuario del sistema.
             su = (domain_sysuser or {}).get(md.domain_name)
             if su:
-                # Cap al DEFAULT (50/h): el correo de scripts web debe ser bajo
-                # aunque el dominio tenga un límite autenticado alto.
-                lim = min(dlimit, self.DEFAULT_UNAUTH_LIMIT_HOUR) if dlimit > 0 \
-                    else self.DEFAULT_UNAUTH_LIMIT_HOUR
-                # Si un usuario tiene varios dominios, nos quedamos con el menor.
+                # Cap al DEFAULT: el correo de scripts web debe ser bajo aunque el
+                # dominio tenga un límite autenticado alto. Menor de varios dominios.
+                lim = min(dlimit, cls.DEFAULT_UNAUTH_LIMIT_HOUR) if dlimit > 0 \
+                    else cls.DEFAULT_UNAUTH_LIMIT_HOUR
                 prev = sysuser_limit.get(su.lower())
                 sysuser_limit[su.lower()] = min(prev, lim) if prev else lim
 
         sysuser_lines = [f"{su} {lim} / 1h" for su, lim in sorted(sysuser_limit.items())]
+        return user_lines, domain_lines, sysuser_lines
+
+    def rebuild_ratelimit_from_db(self, mail_domains, reload=True,
+                                  domain_sysuser=None, unauth_sysusers=None):
+        """
+        Regenera los mapas de rate-limit (por buzón, por dominio y por usuario de
+        sistema para el correo no autenticado), el Lua y la config del módulo.
+
+        mail_domains: MailDomain con sus mailboxes cargados.
+        domain_sysuser: dict {dominio: usuario_sistema} para mapear el límite del
+          dominio al correo no autenticado (PHP) que inyecta ese usuario.
+        unauth_sysusers: dict {usuario_sistema: limite/h} explícito; si se pasa,
+          tiene prioridad. Si no, se deriva de domain_sysuser + send_limit_hour
+          del dominio (o el DEFAULT_UNAUTH_LIMIT_HOUR conservador).
+        Formato de mapa hash: "clave  N / 1h".
+        """
+        user_lines, domain_lines, sysuser_lines = self._compute_ratelimit_lines(
+            mail_domains, domain_sysuser=domain_sysuser, unauth_sysusers=unauth_sysusers)
 
         self._write_map(self.RATELIMIT_USER_MAP, user_lines)
         self._write_map(self.RATELIMIT_DOMAIN_MAP, domain_lines)
