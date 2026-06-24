@@ -413,6 +413,10 @@ def create_database(
     db_collation = data.db_collation
     password  = data.db_password
 
+    # Política de contraseñas del panel
+    from scripts.password_policy import enforce_or_400
+    enforce_or_400(password, db)
+
     # Escapar backtick en el nombre de la BD (prevención de SQL injection)
     safe_db_name = db_name.replace("`", "``")
     # Los usuarios y contraseñas van entre comillas simples — escapar ' → ''
@@ -653,6 +657,10 @@ def reset_database_password(
         raise HTTPException(status_code=404, detail="Base de datos no encontrada")
 
     _assert_can_manage(current_user, client_db.user_id, db)
+
+    # Política de contraseñas del panel
+    from scripts.password_policy import enforce_or_400
+    enforce_or_400(data.new_password, db)
 
     safe_user = client_db.db_user.replace("'", "''")
     safe_pass = data.new_password.replace("'", "''")

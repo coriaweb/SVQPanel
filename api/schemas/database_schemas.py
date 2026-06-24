@@ -64,8 +64,8 @@ class DatabaseCreate(BaseModel):
     @field_validator("db_password")
     @classmethod
     def validate_password(cls, v):
-        if len(v) < 8:
-            raise ValueError("La contraseña debe tener al menos 8 caracteres")
+        # El mínimo/composición lo aplica la política del panel en el endpoint
+        # (enforce_or_400). Aquí solo el tope de longitud (sanity de MariaDB).
         if len(v) > 128:
             raise ValueError("La contraseña no puede superar 128 caracteres")
         return v
@@ -101,8 +101,7 @@ class DatabaseChangePassword(BaseModel):
     @field_validator("new_password")
     @classmethod
     def validate_password(cls, v):
-        if len(v) < 8:
-            raise ValueError("La contraseña debe tener al menos 8 caracteres")
+        # El mínimo/composición lo aplica la política del panel en el endpoint.
         if len(v) > 128:
             raise ValueError("La contraseña no puede superar 128 caracteres")
         return v

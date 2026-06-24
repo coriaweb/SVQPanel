@@ -33,6 +33,18 @@
         <i class="bi" :class="req.ok ? 'bi-check-circle-fill' : 'bi-circle'"></i> {{ req.label }}
       </li>
     </ul>
+
+    <!-- Política actual (desplegable) -->
+    <details v-if="showPolicy" class="pf-policy">
+      <summary><i class="bi bi-info-circle"></i> Ver política de contraseñas</summary>
+      <ul>
+        <li>Longitud mínima: <strong>{{ policy.min_length }}</strong> caracteres</li>
+        <li v-if="policy.require_upper">Debe incluir al menos una <strong>mayúscula</strong></li>
+        <li v-if="policy.require_lower">Debe incluir al menos una <strong>minúscula</strong></li>
+        <li v-if="policy.require_digit">Debe incluir al menos un <strong>número</strong></li>
+        <li v-if="policy.require_symbol">Debe incluir al menos un <strong>símbolo</strong></li>
+      </ul>
+    </details>
   </div>
 </template>
 
@@ -45,6 +57,7 @@ const props = defineProps({
   placeholder: { type: String, default: 'Contraseña' },
   autocomplete: { type: String, default: 'new-password' },
   showChecklist: { type: Boolean, default: true },
+  showPolicy: { type: Boolean, default: true },
 })
 const emit = defineEmits(['update:modelValue', 'valid'])
 
@@ -156,4 +169,10 @@ async function generate() {
 .pf-reqs li { font-size: .76rem; color: var(--text-muted); display: flex; align-items: center; gap: .3rem; }
 .pf-reqs li.pf-ok { color: var(--success); }
 .pf-reqs li i { font-size: .8rem; }
+
+.pf-policy { font-size: .78rem; }
+.pf-policy summary { color: var(--text-muted); cursor: pointer; display: inline-flex; align-items: center; gap: .3rem; user-select: none; }
+.pf-policy summary:hover { color: var(--ac); }
+.pf-policy ul { margin: .4rem 0 0; padding-left: 1.1rem; color: var(--text-muted); }
+.pf-policy li { margin: .15rem 0; }
 </style>

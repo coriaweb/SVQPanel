@@ -56,23 +56,7 @@
     <!-- Contraseña -->
     <div class="mb-3">
       <label class="form-label">Contraseña BD</label>
-      <div class="input-group">
-        <input
-          v-model="form.db_password"
-          :type="showPassword ? 'text' : 'password'"
-          class="form-control"
-          placeholder="Mínimo 8 caracteres"
-          required
-        />
-        <button
-          type="button"
-          class="btn btn-outline-secondary"
-          @click="showPassword = !showPassword"
-        >
-          <i :class="showPassword ? 'bi bi-eye-slash' : 'bi bi-eye'"></i>
-        </button>
-      </div>
-      <small class="text-muted">8-128 caracteres</small>
+      <PasswordField v-model="form.db_password" placeholder="Contraseña de la base de datos" @valid="pwdValid = $event" />
     </div>
 
     <!-- Charset y Collation -->
@@ -143,9 +127,11 @@
 import { ref, computed, onMounted } from 'vue'
 import { useMainStore } from '../stores/useMainStore'
 import databaseService from '../services/databaseService'
+import PasswordField from './PasswordField.vue'
 
 export default {
   name: 'DatabaseForm',
+  components: { PasswordField },
   props: {
     database: { type: Object, default: null },
     domains: { type: Array, default: () => [] },
@@ -156,7 +142,7 @@ export default {
   setup(props, { emit }) {
     const store = useMainStore()
     const loading = ref(false)
-    const showPassword = ref(false)
+    const pwdValid = ref(false)
     const charsetList = ref([])
     const collationMap = ref({})
     const isEditing = ref(!!props.database)
@@ -276,7 +262,7 @@ export default {
     return {
       form,
       loading,
-      showPassword,
+      pwdValid,
       charsets,
       availableCollations,
       isEditing,
