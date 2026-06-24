@@ -242,6 +242,15 @@ async def create_domain(
                 except Exception:
                     pass  # Correo no bloquea la creación del dominio
 
+        # Aplicar el límite de correo NO autenticado (PHP/web) al usuario del
+        # nuevo dominio: así un sitio hackeado no puede enviar sin tope aunque el
+        # dominio no tenga correo configurado. Tolerante a fallos (dev/sin root).
+        try:
+            from api.routes.mail import _rebuild_rspamd
+            _rebuild_rspamd(db)
+        except Exception:
+            pass
+
         # Liberar memoria de subprocesos (nginx, PHP-FPM, chown...) retenida
         # temporalmente por Python. Sin esto, el spike de ~800MB al crear un
         # dominio puede persistir hasta el siguiente GC automático.

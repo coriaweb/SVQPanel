@@ -1315,6 +1315,14 @@ for PHP_VER in "${PHP_ARRAY[@]}"; do
         PHP_INI_FPM="/etc/php/${PHP_VER}/fpm/php.ini"
         if [[ -f "$PHP_INI_FPM" ]]; then
             sed -i "s|^\s*disable_functions\s*=.*|disable_functions =|" "$PHP_INI_FPM"
+            # mail.add_x_header = On → PHP añade la cabecera X-PHP-Originating-Script
+            # con el UID y el script que envía. Imprescindible para identificar QUÉ
+            # fichero de un sitio comprometido está enviando spam.
+            if grep -q "^\s*;\?\s*mail.add_x_header" "$PHP_INI_FPM"; then
+                sed -i "s|^\s*;\?\s*mail.add_x_header\s*=.*|mail.add_x_header = On|" "$PHP_INI_FPM"
+            else
+                echo "mail.add_x_header = On" >> "$PHP_INI_FPM"
+            fi
         fi
 
         # Verificar que FPM arrancó (socket debe existir)

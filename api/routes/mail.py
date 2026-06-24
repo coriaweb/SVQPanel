@@ -254,8 +254,35 @@ def _rebuild_rspamd(db: Session):
             .filter(MailDomain.is_active == True)  # noqa: E712
             .all()
         )
+        # Límite del correo NO autenticado (PHP/localhost) por usuario del
+        # SISTEMA. Cubre a TODOS los usuarios con web (tengan correo o no): el
+        # envelope sender de ese correo es "usuario_sistema@hostname", así que
+        # un sitio hackeado de cualquier dominio queda topado. Default
+        # conservador (RspamdManager.DEFAULT_UNAUTH_LIMIT_HOUR); si el dominio de
+        # correo tiene un send_limit menor, se respeta vía domain_sysuser.
+        from api.models.models_domain import Domain
+        from api.models.models_user import User as _User
+        domain_sysuser = {}
+        for md in all_domains:
+            dom = (db.query(Domain).filter(Domain.id == md.domain_id).first()
+                   if getattr(md, "domain_id", None) else None) \
+                or db.query(Domain).filter(Domain.domain_name == md.domain_name).first()
+            if dom:
+                owner = db.query(_User).filter(_User.id == dom.user_id).first()
+                if owner and owner.username:
+                    domain_sysuser[md.domain_name] = owner.username
+
+        # TODOS los usuarios de sistema con al menos un dominio web → tope default.
+        unauth_sysusers = {}
+        for dom in db.query(Domain).all():
+            owner = db.query(_User).filter(_User.id == dom.user_id).first()
+            if owner and owner.username:
+                unauth_sysusers.setdefault(owner.username,
+                                           RspamdManager.DEFAULT_UNAUTH_LIMIT_HOUR)
+
         mgr.rebuild_from_db(all_domains)
-        mgr.rebuild_ratelimit_from_db(all_domains)
+        mgr.rebuild_ratelimit_from_db(all_domains, domain_sysuser=domain_sysuser,
+                                      unauth_sysusers=unauth_sysusers)
         mgr.rebuild_antivirus_from_db(all_domains)
     except PermissionError:
         logger.warning("Sin permisos para actualizar Rspamd (¿entorno dev?)")

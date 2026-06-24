@@ -29,6 +29,15 @@ class RspamdManager:
     #   domain_ratelimit.map  → "dominio.com 1000 / 1h"      (por dominio remitente)
     RATELIMIT_USER_MAP   = "/etc/rspamd/maps/user_ratelimit.map"
     RATELIMIT_DOMAIN_MAP = "/etc/rspamd/maps/domain_ratelimit.map"
+    # Límite para el correo NO autenticado (PHP/localhost, p.ej. formularios web).
+    # Clave = usuario del SISTEMA que inyecta el correo (envelope sender local
+    # part). Cierra el agujero por el que un sitio hackeado enviaba sin límite.
+    #   sysuser_ratelimit.map → "weblab94 200 / 1h"
+    RATELIMIT_SYSUSER_MAP = "/etc/rspamd/maps/sysuser_ratelimit.map"
+    # Límite por defecto del correo NO autenticado (formularios web, scripts PHP).
+    # Conservador a propósito: un formulario de contacto legítimo manda muy poco;
+    # esto frena en seco a un sitio hackeado que intente enviar miles.
+    DEFAULT_UNAUTH_LIMIT_HOUR = 50
     RSPAMD_API      = "http://127.0.0.1:11334"
 
     # Antivirus por dominio: ClamAV escanea todo (símbolo CLAM_VIRUS); el Lua
@@ -254,6 +263,11 @@ local domain_map = rspamd_config:add_map({{
   type = 'map',
   description = 'SVQPanel: límite de envío por dominio',
 }})
+local sysuser_map = rspamd_config:add_map({{
+  url = '{self.RATELIMIT_SYSUSER_MAP}',
+  type = 'map',
+  description = 'SVQPanel: límite de envío NO autenticado (PHP/localhost) por usuario de sistema',
+}})
 
 -- Por buzón autenticado (login SASL == email completo)
 custom_keywords.svq_user_send = function(task)
@@ -277,6 +291,22 @@ custom_keywords.svq_domain_send = function(task)
   end
 end
 
+-- Correo NO autenticado inyectado en localhost (PHP mail(), sendmail): es el
+-- que enviaría un sitio web hackeado. Lo identificamos por el USUARIO DEL
+-- SISTEMA del envelope sender (p.ej. "weblab94@hostname" → "weblab94"), que
+-- mapea 1:1 con la cuenta del cliente. Así el spam de un sitio comprometido
+-- choca con el límite/hora del dueño en vez de salir sin tope.
+custom_keywords.svq_sysuser_send = function(task)
+  if task:get_user() then return end    -- autenticado → ya cubierto arriba
+  local from = task:get_from('smtp')    -- envelope sender (MAIL FROM)
+  if not from or not from[1] or not from[1].user then return end
+  local sysuser = from[1].user:lower()  -- parte local antes de @
+  local lim = sysuser_map and sysuser_map:get_key(sysuser)
+  if lim then
+    return 'svq_sysuser_' .. sysuser, lim
+  end
+end
+
 return custom_keywords
 """
 
@@ -286,14 +316,30 @@ return custom_keywords
 custom_keywords = "{self.RATELIMIT_LUA}";
 """
 
-    def rebuild_ratelimit_from_db(self, mail_domains, reload=True):
+    def rebuild_ratelimit_from_db(self, mail_domains, reload=True,
+                                  domain_sysuser=None, unauth_sysusers=None):
         """
-        Regenera los mapas de rate-limit (por buzón y por dominio), el Lua y la
-        config del módulo ratelimit desde la BD. mail_domains: MailDomain con sus
-        mailboxes cargados. Formato de mapa hash: "clave  N / 1h".
+        Regenera los mapas de rate-limit (por buzón, por dominio y por usuario de
+        sistema para el correo no autenticado), el Lua y la config del módulo.
+
+        mail_domains: MailDomain con sus mailboxes cargados.
+        domain_sysuser: dict {dominio: usuario_sistema} para mapear el límite del
+          dominio al correo no autenticado (PHP) que inyecta ese usuario.
+        unauth_sysusers: dict {usuario_sistema: limite/h} explícito; si se pasa,
+          tiene prioridad. Si no, se deriva de domain_sysuser + send_limit_hour
+          del dominio (o el DEFAULT_UNAUTH_LIMIT_HOUR conservador).
+        Formato de mapa hash: "clave  N / 1h".
         """
         user_lines = []
         domain_lines = []
+        # usuario_sistema → límite/hora (no-auth). Tope conservador por defecto.
+        sysuser_limit = {}
+        # Base: todos los usuarios con web reciben el tope por defecto. Luego un
+        # dominio de correo con send_limit menor puede bajarlo (nos quedamos con
+        # el menor), nunca subirlo por encima del default.
+        if unauth_sysusers:
+            for su, lim in unauth_sysusers.items():
+                sysuser_limit[su.lower()] = int(lim)
         for md in mail_domains:
             dlimit = int(getattr(md, "send_limit_hour", 0) or 0)
             if dlimit > 0:
@@ -303,9 +349,22 @@ custom_keywords = "{self.RATELIMIT_LUA}";
                 if mlimit > 0:
                     addr = f"{mb.username}@{md.domain_name}".lower()
                     user_lines.append(f"{addr} {mlimit} / 1h")
+            # Correo no autenticado del sitio: límite por usuario del sistema.
+            su = (domain_sysuser or {}).get(md.domain_name)
+            if su:
+                # Cap al DEFAULT (50/h): el correo de scripts web debe ser bajo
+                # aunque el dominio tenga un límite autenticado alto.
+                lim = min(dlimit, self.DEFAULT_UNAUTH_LIMIT_HOUR) if dlimit > 0 \
+                    else self.DEFAULT_UNAUTH_LIMIT_HOUR
+                # Si un usuario tiene varios dominios, nos quedamos con el menor.
+                prev = sysuser_limit.get(su.lower())
+                sysuser_limit[su.lower()] = min(prev, lim) if prev else lim
+
+        sysuser_lines = [f"{su} {lim} / 1h" for su, lim in sorted(sysuser_limit.items())]
 
         self._write_map(self.RATELIMIT_USER_MAP, user_lines)
         self._write_map(self.RATELIMIT_DOMAIN_MAP, domain_lines)
+        self._write_map(self.RATELIMIT_SYSUSER_MAP, sysuser_lines)
 
         # Lua + conf (idempotentes)
         for path, content in (

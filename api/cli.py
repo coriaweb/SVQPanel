@@ -1248,6 +1248,26 @@ def cmd_backfill_caa(dry_run: bool = False) -> int:
         db.close()
 
 
+def cmd_rebuild_mail_ratelimit() -> int:
+    """Reconstruye la config de rate-limit de Rspamd desde la BD, incluyendo el
+    NUEVO límite del correo NO autenticado (PHP/localhost) por usuario de sistema.
+    Cierra el agujero por el que un sitio web hackeado podía enviar sin tope.
+    """
+    from api.models.database import get_db
+    try:
+        from api.routes.mail import _rebuild_rspamd
+    except Exception as e:
+        logger.error(f"No se pudo importar _rebuild_rspamd: {e}")
+        return 0
+    db = SessionLocal()
+    try:
+        _rebuild_rspamd(db)
+        logger.info("rebuild_mail_ratelimit: config de Rspamd regenerada (incl. no-auth)")
+        return 0
+    finally:
+        db.close()
+
+
 def cmd_fix_home_perms(dry_run: bool = False) -> int:
     """Normaliza los permisos del home de los usuarios del panel a 711.
 
@@ -1401,6 +1421,9 @@ def main():
         help="Añade CAA (issue+issuewild Let's Encrypt) a las zonas DNS que no lo tengan")
     p_caa.add_argument("--dry-run", action="store_true", help="Solo muestra qué haría")
 
+    sub.add_parser("rebuild_mail_ratelimit",
+        help="Regenera rate-limit Rspamd (incl. límite del correo no autenticado de PHP/web)")
+
     p_fhp = sub.add_parser("fix_home_perms",
         help="Repara homes en 750 → 711 (traverse de www-data; arregla 403 Forbidden)")
     p_fhp.add_argument("--dry-run", action="store_true", help="Solo muestra qué haría")
@@ -1498,6 +1521,8 @@ def main():
         sys.exit(cmd_fix_mail_vhosts(dry_run=args.dry_run))
     if args.cmd == "fix_home_perms":
         sys.exit(cmd_fix_home_perms(dry_run=args.dry_run))
+    if args.cmd == "rebuild_mail_ratelimit":
+        sys.exit(cmd_rebuild_mail_ratelimit())
     if args.cmd == "backfill_caa":
         sys.exit(cmd_backfill_caa(dry_run=args.dry_run))
     if args.cmd == "migrate_mail_out_ip":
