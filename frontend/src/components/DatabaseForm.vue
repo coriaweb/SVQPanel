@@ -96,18 +96,8 @@
     <!-- Quota -->
     <div class="mb-3">
       <label class="form-label">Límite de almacenamiento</label>
-      <div class="input-group">
-        <input
-          v-model.number="form.quota_mb"
-          type="number"
-          class="form-control"
-          min="0"
-          max="102400"
-          value="1024"
-        />
-        <span class="input-group-text">MB</span>
-      </div>
-      <small class="text-muted">0 = sin límite, máx 102400 MB (100 GB)</small>
+      <SizeInput v-model="form.quota_mb" />
+      <small class="text-muted">0 = sin límite, máx 100 GB</small>
     </div>
 
     <!-- Botones -->
@@ -128,10 +118,11 @@ import { ref, computed, onMounted } from 'vue'
 import { useMainStore } from '../stores/useMainStore'
 import databaseService from '../services/databaseService'
 import PasswordField from './PasswordField.vue'
+import SizeInput from './SizeInput.vue'
 
 export default {
   name: 'DatabaseForm',
-  components: { PasswordField },
+  components: { PasswordField, SizeInput },
   props: {
     database: { type: Object, default: null },
     domains: { type: Array, default: () => [] },

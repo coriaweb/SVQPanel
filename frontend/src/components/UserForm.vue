@@ -126,15 +126,8 @@
         <small class="text-muted">0 = sin límite</small>
       </div>
       <div class="col-md-6 mb-3">
-        <label for="disk_quota_mb" class="form-label">Cuota de disco (MB)</label>
-        <input
-          id="disk_quota_mb"
-          v-model.number="form.disk_quota_mb"
-          type="number"
-          class="form-control"
-          min="0"
-          placeholder="1024"
-        />
+        <label class="form-label">Cuota de disco</label>
+        <SizeInput v-model="form.disk_quota_mb" />
         <small class="text-muted">0 = sin límite · se aplica con cuotas del SO</small>
       </div>
     </div>
@@ -176,10 +169,11 @@ import { ref, computed, onMounted } from 'vue'
 import { useMainStore } from '../stores/useMainStore'
 import api from '../services/api'
 import PasswordField from './PasswordField.vue'
+import SizeInput from './SizeInput.vue'
 
 export default {
   name: 'UserForm',
-  components: { PasswordField },
+  components: { PasswordField, SizeInput },
   props: {
     user:     { type: Object, default: null },
     parentId: { type: Number, default: null }

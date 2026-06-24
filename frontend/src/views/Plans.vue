@@ -112,16 +112,16 @@
 
           <hr class="my-1">
           <div class="col-12 small text-muted"><i class="bi bi-info-circle me-1"></i>
-            0 = sin límite. Las cuotas se cuentan en MB.
+            0 = sin límite. Elige la unidad (MB o GB) en cada cuota.
           </div>
 
           <div class="col-md-6">
-            <label class="form-label small">Cuota disco (MB)</label>
-            <input type="number" class="form-control form-control-sm" v-model.number="form.disk_quota_mb" min="0">
+            <label class="form-label small">Cuota disco</label>
+            <SizeInput v-model="form.disk_quota_mb" />
           </div>
           <div class="col-md-6">
-            <label class="form-label small">Cuota tráfico mensual (MB)</label>
-            <input type="number" class="form-control form-control-sm" v-model.number="form.traffic_quota_mb_month" min="0">
+            <label class="form-label small">Cuota tráfico mensual</label>
+            <SizeInput v-model="form.traffic_quota_mb_month" />
           </div>
 
           <div class="col-md-3">
@@ -168,6 +168,7 @@
 import { ref, computed, onMounted } from 'vue'
 import api from '../services/api'
 import Modal from '../components/Modal.vue'
+import SizeInput from '../components/SizeInput.vue'
 
 const plans     = ref([])
 const resellers = ref([])
