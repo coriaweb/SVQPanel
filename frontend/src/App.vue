@@ -253,6 +253,7 @@ export default {
           { to: '/mail',       label: 'Correo',         icon: 'bi-envelope' },
           { to: '/dns',        label: 'DNS',            icon: 'bi-diagram-3' },
           { to: '/mail-queue', label: 'Cola de correo', icon: 'bi-envelope-paper', roles: ['admin'] },
+          { to: '/outbound-mail', label: 'Envío saliente', icon: 'bi-send-check', roles: ['admin'] },
         ],
       },
       {

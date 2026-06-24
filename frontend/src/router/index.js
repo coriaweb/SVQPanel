@@ -11,6 +11,7 @@ const DomainDetail   = () => import('../views/DomainDetail.vue')
 const Databases      = () => import('../views/Databases.vue')
 const DbTuner        = () => import('../views/DbTuner.vue')
 const MailQueue      = () => import('../views/MailQueue.vue')
+const OutboundMail   = () => import('../views/OutboundMail.vue')
 const Processes      = () => import('../views/Processes.vue')
 const Migrations     = () => import('../views/Migrations.vue')
 const DNS            = () => import('../views/DNS.vue')
@@ -106,6 +107,12 @@ const routes = [
     path: '/mail-queue',
     name: 'MailQueue',
     component: MailQueue,
+    meta: { requiresAuth: true, requiresAdmin: true }
+  },
+  {
+    path: '/outbound-mail',
+    name: 'OutboundMail',
+    component: OutboundMail,
     meta: { requiresAuth: true, requiresAdmin: true }
   },
   {
