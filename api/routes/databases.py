@@ -855,6 +855,10 @@ def create_db_user(
             detail=f"El usuario '{full_username}' ya existe para esta BD",
         )
 
+    # Política de contraseñas del panel
+    from scripts.password_policy import enforce_or_400
+    enforce_or_400(data.password, db)
+
     # Construir sentencia GRANT
     safe_username = full_username.replace("'", "''")
     safe_password = data.password.replace("'", "''")
@@ -986,6 +990,8 @@ def update_db_user(
 
     # ── Actualizar contraseña en MariaDB ──────────────────────────────────
     if data.password is not None:
+        from scripts.password_policy import enforce_or_400
+        enforce_or_400(data.password, db)
         safe_password = data.password.replace("'", "''")
         try:
             _run_mariadb(

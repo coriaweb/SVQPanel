@@ -131,6 +131,8 @@ async def set_sftp_password(
     actor:   User    = Depends(get_current_user),
 ):
     target = _resolve_target(user_id, actor, db)
+    from scripts.password_policy import enforce_or_400
+    enforce_or_400(payload.password, db)
     ok, msg = sftp_manager.set_password(target.username, payload.password)
     if not ok:
         raise HTTPException(status_code=500, detail=f"chpasswd: {msg}")
@@ -273,6 +275,10 @@ async def create_sftp_account(
 ):
     target = _resolve_target(user_id, actor, db)
 
+    if payload.password:
+        from scripts.password_policy import enforce_or_400
+        enforce_or_400(payload.password, db)
+
     # username único previsible
     username = sftpacc.make_username(target.username, payload.label)
     if db.query(SftpAccount).filter(SftpAccount.username == username).first():
@@ -340,6 +346,8 @@ async def set_sftp_account_password(
 ):
     target = _resolve_target(user_id, actor, db)
     acc = _account_or_404(db, target, account_id)
+    from scripts.password_policy import enforce_or_400
+    enforce_or_400(payload.password, db)
     ok, msg = sftpacc.set_password(acc.username, payload.password)
     if not ok:
         raise HTTPException(status_code=500, detail=f"chpasswd: {msg}")

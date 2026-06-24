@@ -32,11 +32,10 @@
             <span v-if="status.password_set_at" class="sftp__muted">cambiada {{ formatDate(status.password_set_at) }}</span>
             <span v-else class="sftp__danger"><i class="bi bi-exclamation-triangle"></i> nunca asignada</span>
           </div>
-          <form @submit.prevent="changePassword" class="sftp__inline-form">
-            <input type="password" class="sftp__input" v-model="newPassword"
-                   placeholder="Nueva contraseña (min. 8)" minlength="8" required>
+          <form @submit.prevent="changePassword" class="sftp__pwd-form">
+            <PasswordField v-model="newPassword" placeholder="Nueva contraseña SFTP" />
             <button type="submit" class="sftp__btn sftp__btn--primary" :disabled="busy">
-              <span v-if="busy" class="sftp__spinner sftp__spinner--sm"></span>Guardar
+              <span v-if="busy" class="sftp__spinner sftp__spinner--sm"></span>Guardar contraseña
             </button>
           </form>
         </div>
@@ -163,6 +162,7 @@
 <script setup>
 import { ref, onMounted } from 'vue'
 import api from '../services/api'
+import PasswordField from './PasswordField.vue'
 
 const props = defineProps({
   userId: { type: Number, required: true },
@@ -376,6 +376,8 @@ onMounted(load)
 .sftp__input--mono { font-family: var(--font-mono, monospace); font-size: 11px; }
 .sftp__inline-form { display: flex; gap: .5rem; align-items: center; }
 .sftp__inline-form .sftp__input { flex: 1; }
+.sftp__pwd-form { display: flex; flex-direction: column; gap: .6rem; align-items: flex-start; }
+.sftp__pwd-form > :first-child { width: 100%; }
 .sftp__form-foot { display: flex; justify-content: space-between; align-items: center; gap: .5rem; margin-top: .6rem; }
 .sftp__form-foot--end { justify-content: flex-end; }
 .sftp__grid { display: grid; grid-template-columns: 1.2fr 1.4fr 1fr; gap: .75rem; }

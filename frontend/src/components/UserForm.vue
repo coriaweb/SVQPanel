@@ -52,15 +52,7 @@
     <!-- Contraseña al crear -->
     <div v-if="!isEditing" class="mb-3">
       <label for="password" class="form-label">Contraseña</label>
-      <input
-        id="password"
-        v-model="form.password"
-        type="password"
-        class="form-control"
-        placeholder="Mínimo 8 caracteres"
-        required
-        minlength="8"
-      />
+      <PasswordField v-model="form.password" placeholder="Contraseña del usuario" />
     </div>
 
     <!-- Cambiar contraseña al editar -->
@@ -78,14 +70,7 @@
       <div v-if="showPasswordChange" class="border rounded p-3 bg-light">
         <div class="mb-2">
           <label class="form-label small mb-1">Nueva contraseña</label>
-          <input
-            v-model="form.new_password"
-            type="password"
-            class="form-control form-control-sm"
-            :class="passwordError ? 'is-invalid' : ''"
-            placeholder="Mínimo 8 caracteres"
-            minlength="8"
-          />
+          <PasswordField v-model="form.new_password" placeholder="Nueva contraseña" />
         </div>
         <div class="mb-1">
           <label class="form-label small mb-1">Confirmar contraseña</label>
@@ -190,9 +175,11 @@
 import { ref, computed, onMounted } from 'vue'
 import { useMainStore } from '../stores/useMainStore'
 import api from '../services/api'
+import PasswordField from './PasswordField.vue'
 
 export default {
   name: 'UserForm',
+  components: { PasswordField },
   props: {
     user:     { type: Object, default: null },
     parentId: { type: Number, default: null }

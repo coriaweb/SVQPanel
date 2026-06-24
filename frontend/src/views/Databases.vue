@@ -220,15 +220,7 @@
               <!-- Nueva contraseña (opcional) -->
               <div class="mb-2">
                 <label class="form-label small mb-1">Nueva contraseña <span class="text-muted">(dejar vacío para no cambiar)</span></label>
-                <div class="input-group input-group-sm">
-                  <input v-model="editDbUserForm.new_password"
-                    :type="editDbUserForm.showPassword ? 'text' : 'password'"
-                    class="form-control" placeholder="Mínimo 8 caracteres" />
-                  <button type="button" class="btn btn-outline-secondary"
-                    @click="editDbUserForm.showPassword = !editDbUserForm.showPassword">
-                    <i :class="editDbUserForm.showPassword ? 'bi bi-eye-slash' : 'bi bi-eye'"></i>
-                  </button>
-                </div>
+                <PasswordField v-model="editDbUserForm.new_password" placeholder="Nueva contraseña (opcional)" />
               </div>
 
               <div class="d-flex gap-2">
@@ -262,22 +254,7 @@
             </div>
             <div class="col-sm-7">
               <label class="form-label small mb-1">Contraseña</label>
-              <div class="input-group input-group-sm">
-                <input
-                  v-model="newDbUser.password"
-                  :type="showDbUserPassword ? 'text' : 'password'"
-                  class="form-control"
-                  placeholder="Mínimo 8 caracteres"
-                  required
-                />
-                <button
-                  type="button"
-                  class="btn btn-outline-secondary"
-                  @click="showDbUserPassword = !showDbUserPassword"
-                >
-                  <i :class="showDbUserPassword ? 'bi bi-eye-slash' : 'bi bi-eye'"></i>
-                </button>
-              </div>
+              <PasswordField v-model="newDbUser.password" placeholder="Contraseña del usuario" />
             </div>
           </div>
 
@@ -326,22 +303,7 @@
         <form @submit.prevent="handlePasswordChange">
           <div class="mb-3">
             <label class="form-label">Nueva Contraseña</label>
-            <div class="input-group">
-              <input
-                v-model="newPassword"
-                :type="showNewPassword ? 'text' : 'password'"
-                class="form-control"
-                placeholder="Mínimo 8 caracteres"
-                required
-              />
-              <button
-                type="button"
-                class="btn btn-outline-secondary"
-                @click="showNewPassword = !showNewPassword"
-              >
-                <i :class="showNewPassword ? 'bi bi-eye-slash' : 'bi bi-eye'"></i>
-              </button>
-            </div>
+            <PasswordField v-model="newPassword" placeholder="Nueva contraseña de la BD" />
           </div>
           <div class="d-flex gap-2">
             <button type="submit" class="btn btn-warning" :disabled="passwordLoading">
@@ -418,10 +380,11 @@ import databaseService from '../services/databaseService'
 import api from '../services/api'
 import Modal from '../components/Modal.vue'
 import DatabaseForm from '../components/DatabaseForm.vue'
+import PasswordField from '../components/PasswordField.vue'
 
 export default {
   name: 'Databases',
-  components: { Modal, DatabaseForm },
+  components: { Modal, DatabaseForm, PasswordField },
   setup() {
     const store = useMainStore()
     const databases = ref([])

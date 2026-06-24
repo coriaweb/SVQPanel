@@ -834,18 +834,7 @@
               </div>
               <div class="mb-3">
                 <label class="form-label">Contraseña <span class="text-danger">*</span></label>
-                <div class="input-group">
-                  <input :type="showPwd ? 'text' : 'password'"
-                         class="form-control"
-                         v-model="newMailboxForm.password"
-                         required minlength="8"
-                         autocomplete="new-password">
-                  <button type="button" class="btn btn-outline-secondary"
-                          @click="showPwd = !showPwd">
-                    <i :class="showPwd ? 'bi bi-eye-slash' : 'bi bi-eye'"></i>
-                  </button>
-                </div>
-                <div class="form-text">Mínimo 8 caracteres.</div>
+                <PasswordField v-model="newMailboxForm.password" placeholder="Contraseña del buzón" />
               </div>
               <div class="mb-3">
                 <label class="form-label">Cuota (MB)</label>
@@ -899,18 +888,7 @@
           </div>
           <form @submit.prevent="changePassword">
             <div class="modal-body">
-              <div class="input-group">
-                <input :type="showPwd ? 'text' : 'password'"
-                       class="form-control"
-                       v-model="newPassword"
-                       placeholder="Nueva contraseña (mín. 8 caracteres)"
-                       required minlength="8"
-                       autocomplete="new-password">
-                <button type="button" class="btn btn-outline-secondary"
-                        @click="showPwd = !showPwd">
-                  <i :class="showPwd ? 'bi bi-eye-slash' : 'bi bi-eye'"></i>
-                </button>
-              </div>
+              <PasswordField v-model="newPassword" placeholder="Nueva contraseña del buzón" />
             </div>
             <div class="modal-footer">
               <button type="button" class="btn btn-secondary"
@@ -1141,9 +1119,11 @@
 import { ref, computed, onMounted } from 'vue'
 import { useMainStore } from '../stores/useMainStore'
 import api from '../services/api'
+import PasswordField from '../components/PasswordField.vue'
 
 export default {
   name: 'Mail',
+  components: { PasswordField },
   setup() {
     const store = useMainStore()
 
