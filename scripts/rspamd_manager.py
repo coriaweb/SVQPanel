@@ -269,13 +269,24 @@ local sysuser_map = rspamd_config:add_map({{
   description = 'SVQPanel: límite de envío NO autenticado (PHP/localhost) por usuario de sistema',
 }})
 
+-- Convierte el valor del mapa ("N / 1h") en el bucket estructurado que espera
+-- el módulo ratelimit moderno (Rspamd 3.x/4.x). Evita el warning "old style
+-- rate bucket config" y es la forma soportada a futuro.
+--   "50 / 1h" → {{ burst = 50, rate = '50 / 1h' }}
+local function svq_bucket(limstr)
+  if not limstr then return nil end
+  local burst = tonumber(limstr:match('^%s*(%d+)'))
+  if not burst then return nil end
+  return {{ burst = burst, rate = limstr }}
+end
+
 -- Por buzón autenticado (login SASL == email completo)
 custom_keywords.svq_user_send = function(task)
   local user = task:get_user()
   if not user then return end           -- sin auth → no es saliente de cliente
   local lim = user_map and user_map:get_key(user:lower())
   if lim then
-    return 'svq_user_' .. user:lower(), lim
+    return 'svq_user_' .. user:lower(), svq_bucket(lim)
   end
 end
 
@@ -287,7 +298,7 @@ custom_keywords.svq_domain_send = function(task)
   if not dom then return end
   local lim = domain_map and domain_map:get_key(dom:lower())
   if lim then
-    return 'svq_domain_' .. dom:lower(), lim
+    return 'svq_domain_' .. dom:lower(), svq_bucket(lim)
   end
 end
 
@@ -303,7 +314,7 @@ custom_keywords.svq_sysuser_send = function(task)
   local sysuser = from[1].user:lower()  -- parte local antes de @
   local lim = sysuser_map and sysuser_map:get_key(sysuser)
   if lim then
-    return 'svq_sysuser_' .. sysuser, lim
+    return 'svq_sysuser_' .. sysuser, svq_bucket(lim)
   end
 end
 
