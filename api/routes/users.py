@@ -52,6 +52,10 @@ async def create_user(
             detail="Los resellers solo pueden crear usuarios regulares"
         )
 
+    # Política de contraseñas del panel
+    from scripts.password_policy import enforce_or_400
+    enforce_or_400(user.password, db)
+
     try:
         # Crear usuario del sistema
         user_manager.create_user(user.username, user.email, user.password)
@@ -205,6 +209,8 @@ async def update_user(
 
         # Cambio de contraseña (opcional)
         if user_update.new_password:
+            from scripts.password_policy import enforce_or_400
+            enforce_or_400(user_update.new_password, db)
             db_user.set_password(user_update.new_password)
             # Cambiar también en el sistema operativo
             try:

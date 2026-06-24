@@ -30,6 +30,12 @@ class SettingsUpdate(BaseModel):
     timezone: Optional[str] = Field(None, max_length=64)
     dns_ns1: Optional[str] = Field(None, max_length=255)
     dns_ns2: Optional[str] = Field(None, max_length=255)
+    # Política de contraseñas
+    pwd_min_length: Optional[int] = Field(None, ge=6, le=128)
+    pwd_require_upper: Optional[bool] = None
+    pwd_require_lower: Optional[bool] = None
+    pwd_require_digit: Optional[bool] = None
+    pwd_require_symbol: Optional[bool] = None
 
     @field_validator("dns_ns1", "dns_ns2")
     @classmethod
@@ -90,6 +96,13 @@ class SettingsResponse(BaseModel):
     timezone: str = "UTC"
     dns_ns1: Optional[str] = None
     dns_ns2: Optional[str] = None
+
+    # Política de contraseñas
+    pwd_min_length: int = 12
+    pwd_require_upper: bool = True
+    pwd_require_lower: bool = True
+    pwd_require_digit: bool = True
+    pwd_require_symbol: bool = False
 
     # Información calculada
     ipv6_total_ips: Optional[int] = None      # IPs disponibles en el rango

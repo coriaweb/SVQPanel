@@ -91,6 +91,30 @@ async def get_settings(
     return result
 
 
+@router.get("/settings/password-policy")
+async def get_password_policy(
+    current_user=Depends(require_auth),
+    db: Session = Depends(get_db),
+):
+    """Política de contraseñas vigente. La leen los formularios del panel
+    (crear usuario/buzón, cambiar contraseña) para validar y generar. Accesible a
+    cualquier usuario autenticado (no es información sensible)."""
+    from scripts.password_policy import load_policy
+    return load_policy(db)
+
+
+@router.post("/settings/generate-password")
+async def generate_password_endpoint(
+    current_user=Depends(require_auth),
+    db: Session = Depends(get_db),
+):
+    """Genera una contraseña aleatoria que cumple la política vigente (server-side,
+    CSPRNG). El frontend también puede generar en cliente, pero este endpoint
+    garantiza que respeta la política real."""
+    from scripts.password_policy import load_policy, generate_password
+    return {"password": generate_password(load_policy(db))}
+
+
 @router.put("/settings", response_model=SettingsResponse)
 async def update_settings(
     data: SettingsUpdate,

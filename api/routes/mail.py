@@ -1355,6 +1355,10 @@ async def create_mailbox(
     md = _get_mail_domain_or_404(domain_id, db)
     _require_edit(md, current_user)
 
+    # Política de contraseñas del panel
+    from scripts.password_policy import enforce_or_400
+    enforce_or_400(data.password, db)
+
     # Comprobar límite de buzones por dominio de correo
     if md.max_mailboxes > 0:
         current_count = db.query(Mailbox).filter(
@@ -1464,6 +1468,10 @@ async def update_mailbox(
         raise HTTPException(404, "Buzón no encontrado")
 
     panel_username = md.user.username if md.user else current_user.username
+
+    if data.password is not None:
+        from scripts.password_policy import enforce_or_400
+        enforce_or_400(data.password, db)
 
     try:
         from scripts.mail_manager import MailManager

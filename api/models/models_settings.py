@@ -48,6 +48,16 @@ class Settings(Base):
     # Sistema
     timezone = Column(String(64), default="UTC")             # Zona horaria del servidor
 
+    # ── Política de contraseñas ────────────────────────────────────────────
+    # Reglas mínimas para las contraseñas que se establecen DESDE el panel
+    # (usuarios, buzones, BD…). Configurable por el admin en Settings. La API
+    # las valida (no solo el frontend) y el generador del panel las respeta.
+    pwd_min_length   = Column(Integer, default=12)            # longitud mínima
+    pwd_require_upper  = Column(Boolean, default=True)        # al menos 1 mayúscula
+    pwd_require_lower  = Column(Boolean, default=True)        # al menos 1 minúscula
+    pwd_require_digit  = Column(Boolean, default=True)        # al menos 1 número
+    pwd_require_symbol = Column(Boolean, default=False)       # al menos 1 símbolo
+
     # Nameservers propios del panel (Fase A). Si están vacíos y hay cluster, se
     # derivan de los hostnames de los nodos; si no, del placeholder histórico.
     dns_ns1 = Column(String(255), nullable=True)              # ns1.tudominio.com

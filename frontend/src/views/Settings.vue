@@ -395,6 +395,57 @@
 
       <!-- ══ SSL Y SISTEMA ══ -->
       <!-- SSL del Panel -->
+      <!-- Política de contraseñas -->
+      <div class="sv-full" v-show="tab==='sistema'">
+        <div class="card">
+          <div class="card-header">
+            <i class="bi bi-key me-2"></i> Política de contraseñas
+          </div>
+          <div class="card-body">
+            <p class="form-text" style="margin-top:0">
+              Requisitos mínimos para las contraseñas que se establecen desde el panel
+              (usuarios, buzones de correo…). Se valida también en el servidor y el
+              generador del panel los respeta.
+            </p>
+            <div class="row g-3">
+              <div class="sv-half">
+                <label class="form-label">Longitud mínima</label>
+                <input v-model.number="form.pwd_min_length" type="number" min="6" max="128" class="form-control" />
+                <div class="form-text">Recomendado: 12 o más.</div>
+              </div>
+              <div class="sv-half">
+                <label class="form-label">Composición obligatoria</label>
+                <div class="form-check form-switch">
+                  <input id="pwd_up" v-model="form.pwd_require_upper" class="form-check-input" type="checkbox" role="switch" />
+                  <label for="pwd_up" class="form-check-label">Al menos una mayúscula</label>
+                </div>
+                <div class="form-check form-switch">
+                  <input id="pwd_lo" v-model="form.pwd_require_lower" class="form-check-input" type="checkbox" role="switch" />
+                  <label for="pwd_lo" class="form-check-label">Al menos una minúscula</label>
+                </div>
+                <div class="form-check form-switch">
+                  <input id="pwd_di" v-model="form.pwd_require_digit" class="form-check-input" type="checkbox" role="switch" />
+                  <label for="pwd_di" class="form-check-label">Al menos un número</label>
+                </div>
+                <div class="form-check form-switch">
+                  <input id="pwd_sy" v-model="form.pwd_require_symbol" class="form-check-input" type="checkbox" role="switch" />
+                  <label for="pwd_sy" class="form-check-label">Al menos un símbolo</label>
+                </div>
+              </div>
+              <div class="sv-full">
+                <label class="form-label">Probar la política</label>
+                <PasswordField v-model="pwdTest" placeholder="Escribe o genera una contraseña de prueba" />
+              </div>
+            </div>
+            <div style="margin-top:1rem">
+              <button class="btn btn-primary" :disabled="saving" @click="saveSettings">
+                <i class="bi bi-save me-1"></i> Guardar política
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+
       <div class="sv-full" v-show="tab==='sistema'">
         <div class="card">
           <div class="card-header d-flex justify-content-between align-items-center">
@@ -937,15 +988,18 @@
 import { ref, reactive, computed, onMounted } from 'vue'
 import { useMainStore } from '../stores/useMainStore'
 import api from '../services/api'
+import PasswordField from '../components/PasswordField.vue'
 
 export default {
   name: 'Settings',
+  components: { PasswordField },
   setup() {
     const store = useMainStore()
     const loading = ref(true)
     const saving = ref(false)
     const settings = ref(null)
     const tab = ref('red')
+    const pwdTest = ref('')
 
     // ─── SMTP del panel ───
     const smtp = reactive({
@@ -1199,6 +1253,11 @@ export default {
       max_upload_mb: 100,
       max_text_file_mb: 2,
       max_extract_mb: 500,
+      pwd_min_length: 12,
+      pwd_require_upper: true,
+      pwd_require_lower: true,
+      pwd_require_digit: true,
+      pwd_require_symbol: false,
     })
 
     // ─── SMTP relay global ───
@@ -1305,6 +1364,12 @@ export default {
         form.max_upload_mb = data.max_upload_mb || 100
         form.max_text_file_mb = data.max_text_file_mb || 2
         form.max_extract_mb = data.max_extract_mb || 500
+        // Política de contraseñas
+        form.pwd_min_length = data.pwd_min_length ?? 12
+        form.pwd_require_upper = data.pwd_require_upper ?? true
+        form.pwd_require_lower = data.pwd_require_lower ?? true
+        form.pwd_require_digit = data.pwd_require_digit ?? true
+        form.pwd_require_symbol = data.pwd_require_symbol ?? false
         // SSL del panel
         sslForm.hostname = data.panel_hostname || ''
         sslForm.email = ''
@@ -1329,6 +1394,11 @@ export default {
           max_upload_mb: form.max_upload_mb,
           max_text_file_mb: form.max_text_file_mb,
           max_extract_mb: form.max_extract_mb,
+          pwd_min_length: form.pwd_min_length,
+          pwd_require_upper: form.pwd_require_upper,
+          pwd_require_lower: form.pwd_require_lower,
+          pwd_require_digit: form.pwd_require_digit,
+          pwd_require_symbol: form.pwd_require_symbol,
         }
         const data = await api.updateSettings(payload)
         settings.value = data
@@ -1513,6 +1583,7 @@ export default {
 
     return {
       tab,
+      pwdTest,
       smtp, smtpSaving, smtpTesting, smtpTestMsg, smtpTestOk,
       showSmtpTest, smtpTestTo, saveSmtp, openSmtpTest, sendSmtpTest,
       wl, wlSaving, showWlConfirm, previewIps, confirmSaveWhitelist, saveWhitelist,
