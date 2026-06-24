@@ -1289,6 +1289,23 @@ def cmd_setup_auto_updates() -> int:
     return 0
 
 
+def cmd_harden_services() -> int:
+    """Endurece servicios: banner SMTP genérico + VRFY off (Postfix) y
+    version "none" (BIND). Idempotente.
+    """
+    try:
+        from scripts.service_hardening import ServiceHardeningManager
+        res = ServiceHardeningManager().harden_all()
+    except PermissionError:
+        logger.error("Requiere root")
+        return 1
+    except Exception as e:
+        logger.error(f"No se pudo endurecer servicios: {e}")
+        return 0
+    logger.info(f"harden_services: {res}")
+    return 0
+
+
 def cmd_fix_mail_folders() -> int:
     """Suscribe las carpetas estándar (Sent/Drafts/Trash/Junk) en TODOS los
     buzones existentes, para que clientes como Thunderbird las muestren (no solo
@@ -1517,6 +1534,8 @@ def main():
         help="Configura el aprendizaje de spam (IMAPSieve + autolearn Bayes)")
     sub.add_parser("setup_auto_updates",
         help="Activa las actualizaciones automáticas de seguridad del SO (unattended-upgrades)")
+    sub.add_parser("harden_services",
+        help="Endurece Postfix (banner+VRFY) y BIND (version none)")
     sub.add_parser("fix_mail_folders",
         help="Suscribe Sent/Drafts/Trash/Junk en buzones existentes (Thunderbird los muestra)")
 
@@ -1623,6 +1642,8 @@ def main():
         sys.exit(cmd_setup_spam_learning())
     if args.cmd == "setup_auto_updates":
         sys.exit(cmd_setup_auto_updates())
+    if args.cmd == "harden_services":
+        sys.exit(cmd_harden_services())
     if args.cmd == "fix_mail_folders":
         sys.exit(cmd_fix_mail_folders())
     if args.cmd == "backfill_caa":

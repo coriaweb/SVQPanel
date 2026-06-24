@@ -3173,6 +3173,14 @@ echo -e "${YELLOW}Activando actualizaciones automáticas de seguridad...${NC}"
     echo -e "${YELLOW}⚠ setup_auto_updates tuvo incidencias (revisar logs)${NC}"
 echo ""
 
+# Endurecer servicios: banner SMTP genérico + VRFY off (Postfix), version none
+# (BIND). No revelar versiones/OS ni permitir enumeración de buzones.
+echo -e "${YELLOW}Endureciendo servicios (ocultar versiones, anti-enumeración)...${NC}"
+/opt/svqpanel/venv/bin/python -m api.cli harden_services && \
+    echo -e "${GREEN}✓ Servicios endurecidos${NC}" || \
+    echo -e "${YELLOW}⚠ harden_services tuvo incidencias (revisar logs)${NC}"
+echo ""
+
 ###############################################################################
 # 14b. SSL AUTOMÁTICO DEL PANEL (si el hostname apunta a este servidor)
 ###############################################################################
