@@ -183,6 +183,20 @@ code { font-family: var(--font-mono); color: var(--danger); background: var(--su
   transition: border-color var(--t-fast), box-shadow var(--t-fast);
   appearance: none;
 }
+/* La flecha del <select>: al poner appearance:none se pierde la nativa, hay que
+   redibujarla (igual que Bootstrap). SVG chevron inline; se reposiciona el
+   padding derecho para no solaparla con el texto. */
+.form-select {
+  padding-right: 2.25rem !important;
+  background-image: url("data:image/svg+xml,%3csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3e%3cpath fill='none' stroke='%23667085' stroke-linecap='round' stroke-linejoin='round' stroke-width='2' d='M2 5l6 6 6-6'/%3e%3c/svg%3e") !important;
+  background-repeat: no-repeat !important;
+  background-position: right .75rem center !important;
+  background-size: 14px 14px !important;
+}
+/* Listas (size/multiple) no son desplegables: sin flecha */
+.form-select[size]:not([size="1"]), .form-select[multiple] {
+  background-image: none !important; padding-right: 11px !important;
+}
 .form-control::placeholder { color: var(--text-muted) !important; }
 .form-control:focus, .form-select:focus {
   border-color: var(--ac) !important;
