@@ -847,7 +847,10 @@ MASTEREOF
 
     # ── 2. DOVECOT ────────────────────────────────────────────────────────
     echo -e "  ${YELLOW}→ Instalando Dovecot...${NC}"
-    apt-get install -y -qq dovecot-core dovecot-imapd dovecot-pop3d dovecot-lmtpd
+    # dovecot-sieve: necesario para el aprendizaje de spam (IMAPSieve dispara
+    # rspamc learn_spam/learn_ham al mover correos a/desde la carpeta Junk).
+    apt-get install -y -qq dovecot-core dovecot-imapd dovecot-pop3d dovecot-lmtpd \
+        dovecot-sieve
 
     # Usuario vmail uid/gid 5000 — propietario de todos los buzones
     groupadd -g 5000 vmail 2>/dev/null || true
@@ -3132,6 +3135,14 @@ echo -e "${YELLOW}Aplicando aislamiento PHP por dominio (open_basedir + tmp prop
 /opt/svqpanel/venv/bin/python -m api.cli migrate_php_pools --force && \
     echo -e "${GREEN}✓ Pools PHP-FPM con seguridad aplicados${NC}" || \
     echo -e "${YELLOW}⚠ migrate_php_pools tuvo incidencias (revisar logs)${NC}"
+echo ""
+
+# Aprendizaje de spam: IMAPSieve (rspamc learn al mover a/desde Junk) + autolearn
+# + Bayes global. Requiere dovecot-sieve (instalado arriba) y Rspamd.
+echo -e "${YELLOW}Configurando el aprendizaje de spam (Bayes + IMAPSieve)...${NC}"
+/opt/svqpanel/venv/bin/python -m api.cli setup_spam_learning && \
+    echo -e "${GREEN}✓ Aprendizaje de spam configurado${NC}" || \
+    echo -e "${YELLOW}⚠ setup_spam_learning tuvo incidencias (revisar logs)${NC}"
 echo ""
 
 ###############################################################################

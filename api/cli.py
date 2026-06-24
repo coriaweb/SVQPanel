@@ -1248,6 +1248,27 @@ def cmd_backfill_caa(dry_run: bool = False) -> int:
         db.close()
 
 
+def cmd_setup_spam_learning() -> int:
+    """Configura el aprendizaje de spam de Rspamd: IMAPSieve (learn al mover a/
+    desde Junk) + autolearn + Bayes global. Idempotente. Requiere dovecot-sieve.
+    """
+    try:
+        from scripts.spam_learning import SpamLearningManager
+        mgr = SpamLearningManager()
+    except PermissionError:
+        logger.error("Requiere root")
+        return 1
+    except Exception as e:
+        logger.error(f"No se pudo cargar SpamLearningManager: {e}")
+        return 0
+    res = mgr.install()
+    if not res.get("success"):
+        logger.warning(f"setup_spam_learning: {res.get('reason')}")
+        return 0
+    logger.info("setup_spam_learning: aprendizaje de spam configurado")
+    return 0
+
+
 def cmd_rebuild_mail_ratelimit() -> int:
     """Reconstruye la config de rate-limit de Rspamd desde la BD, incluyendo el
     NUEVO límite del correo NO autenticado (PHP/localhost) por usuario de sistema.
@@ -1423,6 +1444,8 @@ def main():
 
     sub.add_parser("rebuild_mail_ratelimit",
         help="Regenera rate-limit Rspamd (incl. límite del correo no autenticado de PHP/web)")
+    sub.add_parser("setup_spam_learning",
+        help="Configura el aprendizaje de spam (IMAPSieve + autolearn Bayes)")
 
     p_fhp = sub.add_parser("fix_home_perms",
         help="Repara homes en 750 → 711 (traverse de www-data; arregla 403 Forbidden)")
@@ -1523,6 +1546,8 @@ def main():
         sys.exit(cmd_fix_home_perms(dry_run=args.dry_run))
     if args.cmd == "rebuild_mail_ratelimit":
         sys.exit(cmd_rebuild_mail_ratelimit())
+    if args.cmd == "setup_spam_learning":
+        sys.exit(cmd_setup_spam_learning())
     if args.cmd == "backfill_caa":
         sys.exit(cmd_backfill_caa(dry_run=args.dry_run))
     if args.cmd == "migrate_mail_out_ip":
