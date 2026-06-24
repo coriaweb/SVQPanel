@@ -1269,6 +1269,26 @@ def cmd_setup_spam_learning() -> int:
     return 0
 
 
+def cmd_setup_auto_updates() -> int:
+    """Instala y configura unattended-upgrades (solo parches de seguridad, sin
+    reinicio automático). Idempotente. Solo Debian.
+    """
+    try:
+        from scripts.auto_updates import AutoUpdatesManager
+        res = AutoUpdatesManager().install()
+    except PermissionError:
+        logger.error("Requiere root")
+        return 1
+    except Exception as e:
+        logger.error(f"No se pudo cargar AutoUpdatesManager: {e}")
+        return 0
+    if not res.get("success"):
+        logger.warning(f"setup_auto_updates: {res.get('reason')}")
+        return 0
+    logger.info("setup_auto_updates: actualizaciones de seguridad automáticas activadas")
+    return 0
+
+
 def cmd_fix_mail_folders() -> int:
     """Suscribe las carpetas estándar (Sent/Drafts/Trash/Junk) en TODOS los
     buzones existentes, para que clientes como Thunderbird las muestren (no solo
@@ -1495,6 +1515,8 @@ def main():
         help="Regenera rate-limit Rspamd (incl. límite del correo no autenticado de PHP/web)")
     sub.add_parser("setup_spam_learning",
         help="Configura el aprendizaje de spam (IMAPSieve + autolearn Bayes)")
+    sub.add_parser("setup_auto_updates",
+        help="Activa las actualizaciones automáticas de seguridad del SO (unattended-upgrades)")
     sub.add_parser("fix_mail_folders",
         help="Suscribe Sent/Drafts/Trash/Junk en buzones existentes (Thunderbird los muestra)")
 
@@ -1599,6 +1621,8 @@ def main():
         sys.exit(cmd_rebuild_mail_ratelimit())
     if args.cmd == "setup_spam_learning":
         sys.exit(cmd_setup_spam_learning())
+    if args.cmd == "setup_auto_updates":
+        sys.exit(cmd_setup_auto_updates())
     if args.cmd == "fix_mail_folders":
         sys.exit(cmd_fix_mail_folders())
     if args.cmd == "backfill_caa":

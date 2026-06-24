@@ -220,3 +220,34 @@ async def update_bad_bots(data: BadBotsUpdate, current_user=Depends(require_admi
     except Exception as e:
         from fastapi import HTTPException
         raise HTTPException(status_code=500, detail=str(e))
+
+
+# ── Actualizaciones automáticas de seguridad del SO ──────────────────────────
+@router.get("/security/auto-updates")
+async def get_auto_updates(_: dict = Depends(require_admin)):
+    """Estado de las actualizaciones automáticas de seguridad (unattended-upgrades)."""
+    try:
+        from scripts.auto_updates import AutoUpdatesManager
+        return AutoUpdatesManager().status()
+    except PermissionError:
+        return {"available": False, "reason": "requiere root"}
+    except Exception as e:
+        return {"available": False, "reason": str(e)}
+
+
+@router.post("/security/auto-updates")
+async def set_auto_updates(data: dict, _: dict = Depends(require_admin)):
+    """Activa o desactiva las actualizaciones automáticas de seguridad.
+    Body: {"enabled": bool}."""
+    from scripts.auto_updates import AutoUpdatesManager
+    mgr = AutoUpdatesManager()
+    if data.get("enabled"):
+        return mgr.install()
+    return mgr.disable()
+
+
+@router.post("/security/auto-updates/run")
+async def run_auto_updates(_: dict = Depends(require_admin)):
+    """Aplica ahora las actualizaciones de seguridad pendientes (bajo demanda)."""
+    from scripts.auto_updates import AutoUpdatesManager
+    return AutoUpdatesManager().run_now()

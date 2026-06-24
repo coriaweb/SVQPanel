@@ -166,6 +166,52 @@
       </div>
     </div>
 
+    <!-- Actualizaciones automáticas de seguridad del SO -->
+    <div v-if="au && au.available" class="sec-card iso-card" style="margin-top:16px">
+      <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:1rem;flex-wrap:wrap">
+        <div style="display:flex;gap:.75rem;align-items:flex-start">
+          <div class="iso-icon" :class="au.enabled ? 'iso-icon--ok' : 'iso-icon--warn'">
+            <i class="bi bi-shield-fill-check"></i>
+          </div>
+          <div>
+            <div style="font-weight:600;font-size:1rem;margin-bottom:.25rem">
+              Actualizaciones automáticas de seguridad
+              <span v-if="au.enabled" class="sec-badge sec-badge--on" style="margin-left:.4rem">activas</span>
+              <span v-else class="sec-badge sec-badge--warn" style="margin-left:.4rem">inactivas</span>
+            </div>
+            <p style="font-size:.82rem;color:var(--text-muted);margin:0 0 .5rem;max-width:600px">
+              El sistema aplica solo los parches de <strong>seguridad</strong> del SO de forma
+              desatendida (sin reinicio automático: si un paquete lo requiere, lo decides tú).
+            </p>
+            <div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center">
+              <span class="sec-badge" :class="au.pending_security > 0 ? 'sec-badge--warn' : 'sec-badge--on'">
+                {{ au.pending_security }} de seguridad pendiente{{ au.pending_security === 1 ? '' : 's' }}
+              </span>
+              <span v-if="au.security_only" class="sec-badge sec-badge--off">solo seguridad</span>
+              <span class="sec-badge sec-badge--off">
+                <i class="bi" :class="au.auto_reboot ? 'bi-arrow-repeat' : 'bi-pause-circle'"></i>
+                reinicio {{ au.auto_reboot ? 'auto' : 'manual' }}
+              </span>
+              <span v-if="au.last_run" class="sec-badge sec-badge--off">última: {{ fmtAuDate(au.last_run) }}</span>
+            </div>
+          </div>
+        </div>
+        <div style="display:flex;gap:6px;flex-shrink:0;align-items:center">
+          <label class="form-switch" style="margin:0 .25rem 0 0;display:flex;align-items:center;gap:.4rem">
+            <input class="form-check-input" type="checkbox" :checked="au.enabled"
+                   :disabled="auSaving" @change="toggleAutoUpdates($event.target.checked)"
+                   style="width:3em;height:1.5em;cursor:pointer">
+            <span style="font-size:.82rem;color:var(--text-muted)">{{ au.enabled ? 'Activo' : 'Inactivo' }}</span>
+          </label>
+          <button class="sec-btn sec-btn--ghost sec-btn--sm" @click="runAutoUpdates"
+                  :disabled="auRunning || au.pending_security === 0" title="Aplicar ahora los parches pendientes">
+            <span v-if="auRunning" class="spinner-border spinner-border-sm"></span>
+            <i v-else class="bi bi-download"></i> Aplicar ahora
+          </button>
+        </div>
+      </div>
+    </div>
+
     <!-- Tabs -->
     <div class="sec-tabs">
       <button v-for="t in [
@@ -889,6 +935,44 @@ const av = ref(null)
 const avUpdating = ref(false)
 const avMilterSaving = ref(false)
 
+// ── Actualizaciones automáticas de seguridad ──
+const au = ref(null)
+const auSaving = ref(false)
+const auRunning = ref(false)
+function fmtAuDate(iso) {
+  if (!iso) return '—'
+  try { return new Date(iso).toLocaleDateString('es-ES', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' }) }
+  catch (_) { return iso }
+}
+async function loadAutoUpdates() {
+  try { au.value = await api.get('/api/security/auto-updates') }
+  catch (e) { au.value = null }
+}
+async function notify(msg, type) {
+  const { useMainStore } = await import('../stores/useMainStore')
+  useMainStore().showNotification(msg, type)
+}
+async function toggleAutoUpdates(enabled) {
+  auSaving.value = true
+  try {
+    await api.post('/api/security/auto-updates', { enabled })
+    await loadAutoUpdates()
+    notify(enabled ? 'Auto-actualizaciones activadas' : 'Auto-actualizaciones desactivadas', 'success')
+  } catch (e) {
+    notify('Error: ' + (e.message || e), 'danger')
+  } finally { auSaving.value = false }
+}
+async function runAutoUpdates() {
+  auRunning.value = true
+  try {
+    const r = await api.post('/api/security/auto-updates/run', {})
+    notify(r.success ? 'Parches de seguridad aplicados' : 'La aplicación terminó con avisos', r.success ? 'success' : 'warning')
+    await loadAutoUpdates()
+  } catch (e) {
+    notify('Error: ' + (e.message || e), 'danger')
+  } finally { auRunning.value = false }
+}
+
 const avSignaturesCount = computed(() => {
   const n = av.value?.signatures?.total_signatures || 0
   return n >= 1000000 ? (n / 1000000).toFixed(1) + 'M'
@@ -1406,7 +1490,7 @@ onMounted(() => {
   loadedTabs.value.add('firewall')
   loadFirewall()   // incluye loadStatus() + system-ports
   // Resumen superior, en segundo plano (no bloquea el render del firewall)
-  setTimeout(() => { loadIsolation(); loadAntivirus() }, 0)
+  setTimeout(() => { loadIsolation(); loadAntivirus(); loadAutoUpdates() }, 0)
 })
 </script>
 

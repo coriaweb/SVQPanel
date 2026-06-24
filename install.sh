@@ -3164,6 +3164,15 @@ echo -e "${YELLOW}Configurando el aprendizaje de spam (Bayes + IMAPSieve)...${NC
     echo -e "${YELLOW}⚠ setup_spam_learning tuvo incidencias (revisar logs)${NC}"
 echo ""
 
+# Actualizaciones automáticas de SEGURIDAD del SO (unattended-upgrades, solo
+# parches de seguridad, sin reinicio automático). Cierra vulnerabilidades del SO
+# sin intervención. Gestionable desde Seguridad → Auto-actualizaciones.
+echo -e "${YELLOW}Activando actualizaciones automáticas de seguridad...${NC}"
+/opt/svqpanel/venv/bin/python -m api.cli setup_auto_updates && \
+    echo -e "${GREEN}✓ Auto-actualizaciones de seguridad activadas${NC}" || \
+    echo -e "${YELLOW}⚠ setup_auto_updates tuvo incidencias (revisar logs)${NC}"
+echo ""
+
 ###############################################################################
 # 14b. SSL AUTOMÁTICO DEL PANEL (si el hostname apunta a este servidor)
 ###############################################################################
