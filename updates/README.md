@@ -77,3 +77,4 @@ exit 0
 | 0038 | Carpetas correo visibles en Thunderbird (auto-sub) | 2026-06-24 |
 | 0039 | Auto-actualizaciones de seguridad del SO (unattended)| 2026-06-24 |
 | 0040 | Endurecer servicios (banner SMTP/VRFY, BIND version)| 2026-06-24 |
+| 0041 | Protección anti zip-bomb del antispam (Rspamd)      | 2026-06-24 |

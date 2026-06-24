@@ -3181,6 +3181,14 @@ echo -e "${YELLOW}Endureciendo servicios (ocultar versiones, anti-enumeración).
     echo -e "${YELLOW}⚠ harden_services tuvo incidencias (revisar logs)${NC}"
 echo ""
 
+# Protección anti zip-bomb del antispam (Rspamd): sube el peso de los símbolos
+# de archivo para frenar adjuntos comprimidos maliciosos (ratio de bomba o exe).
+echo -e "${YELLOW}Aplicando protección anti zip-bomb del antispam...${NC}"
+/opt/svqpanel/venv/bin/python -m api.cli setup_archive_protection && \
+    echo -e "${GREEN}✓ Protección anti zip-bomb aplicada${NC}" || \
+    echo -e "${YELLOW}⚠ setup_archive_protection tuvo incidencias (revisar logs)${NC}"
+echo ""
+
 ###############################################################################
 # 14b. SSL AUTOMÁTICO DEL PANEL (si el hostname apunta a este servidor)
 ###############################################################################

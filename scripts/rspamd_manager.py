@@ -49,6 +49,13 @@ class RspamdManager:
     ANTIVIRUS_DOMAIN_MAP = "/etc/rspamd/maps/antivirus_domains.map"
     CLAMD_SOCKET         = "/var/run/clamav/clamd.ctl"
 
+    # Protección anti zip-bomb (Rspamd 4.1.1+): un adjunto comprimido con un
+    # ratio de descompresión enorme (p.ej. 10 KB → varios GB) puede saturar el
+    # escaneo. Subimos el peso de los símbolos del módulo `archives` (ratio bomba
+    # y ejecutable dentro de archivo) para que se marquen con fuerza. Vía un .lua
+    # en lua.local.d (rspamd lo carga solo), igual que el antivirus.
+    ARCHIVE_LUA = "/etc/rspamd/lua.local.d/svqpanel_archive.lua"
+
     # ─── Helpers ──────────────────────────────────────────────────────────
 
     def _safe_name(self, domain):
@@ -640,3 +647,49 @@ rspamd_config:register_symbol({{
 
         if reload:
             self._reload_rspamd()
+
+    # ─── Protección anti zip-bomb (Rspamd 4.1.1+) ─────────────────────────────
+    def setup_archive_protection(self, reload: bool = True) -> dict:
+        """Sube el peso de los símbolos del módulo `archives` para que un
+        adjunto comprimido tipo zip-bomb (ratio de descompresión enorme) o con
+        un ejecutable dentro se marque con fuerza. Idempotente.
+
+        Símbolos de Rspamd ajustados:
+          - UDF_COMPRESSION_500PLUS: ratio >= 500x (clásico zip-bomb).
+          - SINGLE_FILE_ARCHIVE_WITH_EXE / EXE_IN_ARCHIVE: ejecutable empaquetado.
+        """
+        os.makedirs(os.path.dirname(self.ARCHIVE_LUA), exist_ok=True)
+        tmp = self.ARCHIVE_LUA + ".tmp"
+        with open(tmp, "w") as f:
+            f.write(_ARCHIVE_LUA_CONTENT)
+        os.replace(tmp, self.ARCHIVE_LUA)
+        if reload:
+            self._reload_rspamd()
+        return {"success": True}
+
+
+# Lua que reajusta el score de los símbolos de archivo. set_metric_symbol
+# sobreescribe el peso por defecto sin tocar la lógica del módulo `archives`.
+_ARCHIVE_LUA_CONTENT = """-- SVQPanel — protección anti zip-bomb (NO editar a mano).
+-- Sube el peso de los símbolos del módulo `archives` para frenar adjuntos
+-- comprimidos maliciosos (ratio de descompresión enorme o ejecutable dentro).
+if rspamd_config.set_metric_symbol then
+  -- Ratio de descompresión >= 500x: zip-bomb casi seguro.
+  rspamd_config:set_metric_symbol({
+    name = 'UDF_COMPRESSION_500PLUS', score = 6.0,
+    description = 'Archivo con ratio de descompresión de bomba (>=500x)',
+    group = 'svqpanel',
+  })
+  -- Ejecutable dentro de un archivo (vector típico de malware).
+  rspamd_config:set_metric_symbol({
+    name = 'SINGLE_FILE_ARCHIVE_WITH_EXE', score = 4.0,
+    description = 'Archivo de un solo ejecutable (sospechoso)',
+    group = 'svqpanel',
+  })
+  rspamd_config:set_metric_symbol({
+    name = 'EXE_IN_ARCHIVE', score = 2.0,
+    description = 'Ejecutable empaquetado dentro de un archivo',
+    group = 'svqpanel',
+  })
+end
+"""
