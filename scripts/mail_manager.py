@@ -353,16 +353,20 @@ class MailManager(SystemManager):
         # Crear estructura Maildir (INBOX) y carpetas estándar IMAP
         for subdir in ("cur", "new", "tmp"):
             os.makedirs(os.path.join(maildir, subdir), exist_ok=True)
-        for folder in ("Sent", "Drafts", "Trash", "Spam"):
+        # Carpetas estándar IMAP. La de spam es "Junk" (special_use \Junk en
+        # Dovecot, donde aprende el antispam y que reconocen los clientes), NO
+        # "Spam": antes se creaban ambas y el buzón quedaba con carpeta de spam
+        # duplicada y descuadrada respecto a Thunderbird.
+        for folder in ("Sent", "Drafts", "Trash", "Junk"):
             for subdir in ("cur", "new", "tmp"):
                 os.makedirs(os.path.join(maildir, f".{folder}", subdir), exist_ok=True)
         self.execute_command(["chown", "-R", "vmail:vmail", maildir], check=False)
         # Crear carpetas y suscripciones vía doveadm (más fiable que Maildir manual)
         self.execute_command(
-            ["doveadm", "mailbox", "create", "-u", email, "Sent", "Drafts", "Trash", "Spam"],
+            ["doveadm", "mailbox", "create", "-u", email, "Sent", "Drafts", "Trash", "Junk"],
             check=False)
         self.execute_command(
-            ["doveadm", "mailbox", "subscribe", "-u", email, "INBOX", "Sent", "Drafts", "Trash", "Spam"],
+            ["doveadm", "mailbox", "subscribe", "-u", email, "INBOX", "Sent", "Drafts", "Trash", "Junk"],
             check=False)
         logger.info(f"Maildir creado: {maildir}")
 

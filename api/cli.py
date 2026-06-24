@@ -1269,6 +1269,55 @@ def cmd_setup_spam_learning() -> int:
     return 0
 
 
+def cmd_fix_mail_folders() -> int:
+    """Suscribe las carpetas estándar (Sent/Drafts/Trash/Junk) en TODOS los
+    buzones existentes, para que clientes como Thunderbird las muestren (no solo
+    INBOX+Trash). Idempotente: doveadm subscribe no falla si ya están. El drop-in
+    99-svqpanel-mailboxes.conf (auto=subscribe) cubre los buzones NUEVOS; esto
+    arregla los que ya existían con auto=no.
+    """
+    import os
+    import subprocess
+    USERS = "/etc/dovecot/users"
+    if not os.path.exists(USERS):
+        logger.info("fix_mail_folders: sin /etc/dovecot/users (correo no instalado)")
+        return 0
+    folders = ["INBOX", "Sent", "Drafts", "Trash", "Junk"]
+    emails = []
+    try:
+        with open(USERS) as f:
+            for line in f:
+                line = line.strip()
+                if line and not line.startswith("#") and "@" in line:
+                    emails.append(line.split(":", 1)[0])
+    except Exception as e:
+        logger.error(f"fix_mail_folders: no se pudo leer {USERS}: {e}")
+        return 0
+    fixed = 0
+    for email in emails:
+        # Crear (por si falta) y suscribir. check=False / errores ignorados:
+        # idempotente y no debe romper la cadena de updates.
+        subprocess.run(["doveadm", "mailbox", "create", "-u", email,
+                        "Sent", "Drafts", "Trash", "Junk"],
+                       capture_output=True)
+        r = subprocess.run(["doveadm", "mailbox", "subscribe", "-u", email] + folders,
+                           capture_output=True)
+        # Fusionar la antigua "Spam" (duplicada) en "Junk": mover sus mensajes a
+        # Junk (sin perder nada, y así el antispam los conserva) y desuscribirla
+        # para que no aparezca duplicada en el cliente. Solo si Spam existe.
+        chk = subprocess.run(["doveadm", "mailbox", "status", "-u", email,
+                              "messages", "Spam"], capture_output=True)
+        if chk.returncode == 0:
+            subprocess.run(["doveadm", "move", "-u", email, "Junk",
+                            "mailbox", "Spam", "ALL"], capture_output=True)
+            subprocess.run(["doveadm", "mailbox", "unsubscribe", "-u", email, "Spam"],
+                           capture_output=True)
+        if r.returncode == 0:
+            fixed += 1
+    logger.info(f"fix_mail_folders: carpetas suscritas en {fixed}/{len(emails)} buzones")
+    return 0
+
+
 def cmd_rebuild_mail_ratelimit() -> int:
     """Reconstruye la config de rate-limit de Rspamd desde la BD, incluyendo el
     NUEVO límite del correo NO autenticado (PHP/localhost) por usuario de sistema.
@@ -1446,6 +1495,8 @@ def main():
         help="Regenera rate-limit Rspamd (incl. límite del correo no autenticado de PHP/web)")
     sub.add_parser("setup_spam_learning",
         help="Configura el aprendizaje de spam (IMAPSieve + autolearn Bayes)")
+    sub.add_parser("fix_mail_folders",
+        help="Suscribe Sent/Drafts/Trash/Junk en buzones existentes (Thunderbird los muestra)")
 
     p_fhp = sub.add_parser("fix_home_perms",
         help="Repara homes en 750 → 711 (traverse de www-data; arregla 403 Forbidden)")
@@ -1548,6 +1599,8 @@ def main():
         sys.exit(cmd_rebuild_mail_ratelimit())
     if args.cmd == "setup_spam_learning":
         sys.exit(cmd_setup_spam_learning())
+    if args.cmd == "fix_mail_folders":
+        sys.exit(cmd_fix_mail_folders())
     if args.cmd == "backfill_caa":
         sys.exit(cmd_backfill_caa(dry_run=args.dry_run))
     if args.cmd == "migrate_mail_out_ip":

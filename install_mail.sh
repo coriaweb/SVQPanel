@@ -251,6 +251,35 @@ plugin {
 }
 DOVEQUOTAEOF
 
+# Carpetas especiales (Enviados/Borradores/Spam/Papelera) con auto-creación y
+# auto-suscripción. Por defecto Dovecot las trae con `auto = no`: existen como
+# definición pero NO se crean ni se suscriben en buzones nuevos, así que clientes
+# como Thunderbird solo muestran Bandeja de Entrada y Papelera (Roundcube las ve
+# porque las crea al vuelo). Con `auto = subscribe` Dovecot las crea y suscribe,
+# y al llevar special_use el cliente las reconoce por su rol (Sent/Drafts/Junk/
+# Trash) y las coloca bien. Este drop-in (99-) sobreescribe al 15-mailboxes.conf.
+cat > /etc/dovecot/conf.d/99-svqpanel-mailboxes.conf << 'DOVEMBOXEOF'
+# SVQPanel: carpetas especiales auto-creadas y auto-suscritas (Thunderbird et al)
+namespace inbox {
+  mailbox Drafts {
+    auto = subscribe
+    special_use = \Drafts
+  }
+  mailbox Sent {
+    auto = subscribe
+    special_use = \Sent
+  }
+  mailbox Junk {
+    auto = subscribe
+    special_use = \Junk
+  }
+  mailbox Trash {
+    auto = subscribe
+    special_use = \Trash
+  }
+}
+DOVEMBOXEOF
+
 # Asegurar que el servicio imap también carga el plugin quota.
 if ! grep -q 'mail_plugins.*quota' /etc/dovecot/conf.d/20-imap.conf 2>/dev/null; then
   cat >> /etc/dovecot/conf.d/20-imap.conf << 'DOVEIMAPQUOTAEOF'
