@@ -7,7 +7,7 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from scripts.outbound_mail import build_rows
+from scripts.outbound_mail import build_rows, accepted_hostnames
 
 
 def _row(rows, user):
@@ -49,3 +49,15 @@ def test_sin_limite_no_rompe():
     rows = build_rows({}, {"x": 3})
     r = _row(rows, "x")
     assert r["limit"] == 0 and r["pct"] == 0 and r["state"] == "ok"
+
+
+def test_hostnames_aceptados_fqdn_y_corto():
+    # Regresión del bug: el sender del log usa el FQDN, getfqdn daba el corto →
+    # contaba 0. Deben aceptarse AMBOS.
+    s = accepted_hostnames("svqhostpanel.svqhost.red")
+    assert "svqhostpanel.svqhost.red" in s
+    assert "svqhostpanel" in s
+
+
+def test_hostnames_solo_corto():
+    assert accepted_hostnames("svqhostpanel") == {"svqhostpanel"}

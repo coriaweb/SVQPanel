@@ -19,11 +19,21 @@ from datetime import datetime, timedelta
 
 SYSUSER_MAP = "/etc/rspamd/maps/sysuser_ratelimit.map"
 MAIL_LOGS = ["/var/log/mail.log", "/var/log/mail.log.1"]
+SYSTEM_PATH = "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
 
 # Línea qmgr con el envelope sender:  ... postfix/qmgr[..]: ABC123: from=<x@y>, size=..
 _FROM_RE = re.compile(r"from=<([^>]*)>")
 # Timestamp ISO al inicio: 2026-06-24T12:38:08.727909+02:00
 _TS_RE = re.compile(r"^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2})")
+
+
+def accepted_hostnames(host: str) -> set:
+    """Hostnames válidos del sender no autenticado: el FQDN y el nombre corto."""
+    host = (host or "").lower()
+    s = {host} if host else set()
+    if "." in host:
+        s.add(host.split(".", 1)[0])
+    return s
 
 
 def _read_limits() -> dict:
@@ -45,6 +55,20 @@ def _read_limits() -> dict:
 
 
 def _local_hostname() -> str:
+    """Hostname con el que Postfix firma el correo local (el dominio del envelope
+    sender del correo de PHP). Fuente de verdad: `postconf -h myhostname`; si no,
+    socket.getfqdn(). socket.gethostname() suele dar solo el nombre corto."""
+    import subprocess
+    try:
+        env = os.environ.copy()
+        env["PATH"] = SYSTEM_PATH
+        r = subprocess.run(["postconf", "-h", "myhostname"],
+                           capture_output=True, text=True, timeout=5, env=env)
+        h = (r.stdout or "").strip().lower()
+        if h:
+            return h
+    except Exception:
+        pass
     try:
         import socket
         return socket.getfqdn().lower()
@@ -60,6 +84,9 @@ def sent_last_hour() -> dict:
     """
     cutoff = datetime.now() - timedelta(hours=1)
     host = _local_hostname()
+    # Aceptar tanto el FQDN (svqhostpanel.svqhost.red) como el nombre corto
+    # (svqhostpanel): según la config, Postfix puede firmar con cualquiera.
+    accepted = accepted_hostnames(host)
     counts = {}
     # Evitar contar dos veces el mismo queue-id (qmgr loguea varias líneas).
     seen = set()
@@ -89,8 +116,11 @@ def sent_last_hour() -> dict:
                     continue
                 sender = fm.group(1).lower()
                 local, _, dom = sender.partition("@")
-                # Solo el correo no autenticado: sender en el hostname del server.
-                if host and dom != host:
+                # Solo el correo no autenticado: sender en el hostname del server
+                # (FQDN o nombre corto). Sin local válido, descartar.
+                if not local:
+                    continue
+                if host and dom not in accepted:
                     continue
                 # Dedup por queue-id (primer token "XXXX:" de la línea postfix).
                 qid_m = re.search(r"\]: ([0-9A-F]{6,}):", line)
