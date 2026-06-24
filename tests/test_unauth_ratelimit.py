@@ -32,8 +32,9 @@ def test_sysuser_tope_por_defecto():
 
 
 def test_default_es_conservador():
-    # El tope por defecto del no-auth debe ser bajo (<= 100/h)
-    assert RspamdManager.DEFAULT_UNAUTH_LIMIT_HOUR <= 100
+    # El tope por defecto del no-auth debe ser MUY bajo (empuja al cliente a SMTP).
+    # 10/h: un formulario ocasional pasa; una web que envía en serio toca techo.
+    assert RspamdManager.DEFAULT_UNAUTH_LIMIT_HOUR == 10
 
 
 def test_dominio_con_limite_menor_baja_el_sysuser():

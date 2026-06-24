@@ -34,10 +34,13 @@ class RspamdManager:
     # part). Cierra el agujero por el que un sitio hackeado enviaba sin límite.
     #   sysuser_ratelimit.map → "weblab94 200 / 1h"
     RATELIMIT_SYSUSER_MAP = "/etc/rspamd/maps/sysuser_ratelimit.map"
-    # Límite por defecto del correo NO autenticado (formularios web, scripts PHP).
-    # Conservador a propósito: un formulario de contacto legítimo manda muy poco;
-    # esto frena en seco a un sitio hackeado que intente enviar miles.
-    DEFAULT_UNAUTH_LIMIT_HOUR = 50
+    # Límite por defecto del correo NO autenticado (PHP mail()/sendmail por
+    # localhost). MUY bajo a propósito: mail() es solo un puente de cortesía, no
+    # la vía recomendada. El cliente que necesite enviar correo de su web debe
+    # configurar SMTP autenticado (mejor entregabilidad + sin este tope). Al
+    # llegar al límite, el correo se rechaza → empuja al cliente a usar SMTP, y
+    # de paso frena en seco a un sitio hackeado.
+    DEFAULT_UNAUTH_LIMIT_HOUR = 10
     RSPAMD_API      = "http://127.0.0.1:11334"
 
     # Antivirus por dominio: ClamAV escanea todo (símbolo CLAM_VIRUS); el Lua

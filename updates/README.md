@@ -70,3 +70,4 @@ exit 0
 | 0031 | IP de salida SMTP por dominio con IPv6 (pref)  | 2026-06-23 |
 | 0032 | Fix permisos home 750→711 (403 Forbidden web)  | 2026-06-23 |
 | 0033 | Límite correo no autenticado (sitios hackeados) | 2026-06-24 |
+| 0034 | Bajar límite no-auth a 10/h (empujar a SMTP)    | 2026-06-24 |
