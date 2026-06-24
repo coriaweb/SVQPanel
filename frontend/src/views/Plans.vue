@@ -52,6 +52,7 @@
             <td style="text-align:right">
               <div style="display:flex;gap:4px;justify-content:flex-end">
                 <button class="pl-icon-btn" @click="openForm(p)" title="Editar" :disabled="!canEdit(p)"><i class="bi bi-pencil"></i></button>
+                <button class="pl-icon-btn" @click="clonePlan(p)" title="Clonar"><i class="bi bi-copy"></i></button>
                 <button class="pl-icon-btn pl-icon-btn--danger" @click="deletePlan(p)" title="Eliminar" :disabled="!canEdit(p)"><i class="bi bi-trash"></i></button>
               </div>
             </td>
@@ -70,6 +71,7 @@
           </div>
           <div style="display:flex;gap:4px">
             <button class="pl-icon-btn" @click="openForm(p)" :disabled="!canEdit(p)"><i class="bi bi-pencil"></i></button>
+            <button class="pl-icon-btn" @click="clonePlan(p)" title="Clonar"><i class="bi bi-copy"></i></button>
             <button class="pl-icon-btn pl-icon-btn--danger" @click="deletePlan(p)" :disabled="!canEdit(p)"><i class="bi bi-trash"></i></button>
           </div>
         </div>
@@ -227,6 +229,27 @@ async function load() {
 
 function openForm(p = null) {
   form.value = p ? { ...p } : emptyForm()
+  showForm.value = true
+}
+
+function clonePlan(p) {
+  // Precarga el formulario de creación con los valores del plan (sin id, para
+  // que se cree uno nuevo). El nombre debe ser único → le añadimos "(copia)".
+  // No copiamos campos del registro (owner_username, users_count, fechas) ni
+  // is_default (solo puede haber uno por defecto).
+  form.value = {
+    ...emptyForm(),
+    name: `${p.name} (copia)`,
+    description: p.description || '',
+    owner_id: isAdmin.value ? p.owner_id : (isReseller.value ? currentUser.user_id : null),
+    disk_quota_mb: p.disk_quota_mb,
+    traffic_quota_mb_month: p.traffic_quota_mb_month,
+    domains_limit: p.domains_limit,
+    databases_limit: p.databases_limit,
+    mailboxes_limit: p.mailboxes_limit,
+    dns_zones_limit: p.dns_zones_limit,
+    is_default: false,
+  }
   showForm.value = true
 }
 
