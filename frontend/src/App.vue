@@ -254,6 +254,7 @@ export default {
           { to: '/dns',        label: 'DNS',            icon: 'bi-diagram-3' },
           { to: '/mail-queue', label: 'Cola de correo', icon: 'bi-envelope-paper', roles: ['admin'] },
           { to: '/outbound-mail', label: 'Envío saliente', icon: 'bi-send-check', roles: ['admin'] },
+          { to: '/antispam',   label: 'Antispam',       icon: 'bi-shield-check', roles: ['admin'] },
         ],
       },
       {

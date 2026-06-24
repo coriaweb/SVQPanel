@@ -174,19 +174,60 @@ class SpamLearningManager(SystemManager):
         return
 
     def stats(self) -> dict:
-        """Devuelve cuánto ha aprendido el Bayes (para mostrar en el panel)."""
-        rc, out, err = self.execute_command(["rspamc", "stat"], check=False)
-        learned_spam = learned_ham = 0
-        for line in (out or "").splitlines():
-            l = line.strip()
-            if l.startswith("Statfile: BAYES_SPAM"):
-                learned_spam = _extract_learned(l)
-            elif l.startswith("Statfile: BAYES_HAM"):
-                learned_ham = _extract_learned(l)
-        return {"learned_spam": learned_spam, "learned_ham": learned_ham}
+        """Salud del antispam para el panel: aprendizaje, actividad y acciones."""
+        rc, out, err = self.execute_command(
+            ["rspamc", "-h", "localhost:11334", "stat"], check=False)
+        if rc != 0 or not out:
+            return {"available": False}
+        data = parse_rspamc_stat(out)
+        data["available"] = True
+        data["min_learns"] = self._min_learns()
+        # ¿El Bayes ya tiene datos suficientes para puntuar bien?
+        data["bayes_ready"] = (data["learned_spam"] >= data["min_learns"]
+                               and data["learned_ham"] >= data["min_learns"])
+        return data
+
+    def _min_learns(self) -> int:
+        try:
+            with open(RSPAMD_CLASSIFIER) as f:
+                import re
+                m = re.search(r"min_learns\s*=\s*(\d+)", f.read())
+                if m:
+                    return int(m.group(1))
+        except Exception:
+            pass
+        return 30
 
 
-def _extract_learned(line: str) -> int:
+def parse_rspamc_stat(out: str) -> dict:
+    """Parsea la salida de `rspamc stat` a un dict. Función PURA (testeable)."""
     import re
-    m = re.search(r"learned:\s*(\d+)", line)
-    return int(m.group(1)) if m else 0
+
+    def _int(pat):
+        m = re.search(pat, out)
+        return int(m.group(1)) if m else 0
+
+    learned_spam = learned_ham = 0
+    for line in out.splitlines():
+        l = line.strip()
+        if l.startswith("Statfile: BAYES_SPAM"):
+            m = re.search(r"learned:\s*(\d+)", l)
+            learned_spam = int(m.group(1)) if m else 0
+        elif l.startswith("Statfile: BAYES_HAM"):
+            m = re.search(r"learned:\s*(\d+)", l)
+            learned_ham = int(m.group(1)) if m else 0
+
+    return {
+        "learned_spam": learned_spam,
+        "learned_ham": learned_ham,
+        "scanned": _int(r"Messages scanned:\s*(\d+)"),
+        "spam": _int(r"Messages treated as spam:\s*(\d+)"),
+        "ham": _int(r"Messages treated as ham:\s*(\d+)"),
+        "learned_total": _int(r"Messages learned:\s*(\d+)"),
+        # Acciones
+        "act_reject": _int(r"action reject:\s*(\d+)"),
+        "act_soft_reject": _int(r"action soft reject:\s*(\d+)"),
+        "act_add_header": _int(r"action add header:\s*(\d+)"),
+        "act_greylist": _int(r"action greylist:\s*(\d+)"),
+        "act_no_action": _int(r"action no action:\s*(\d+)"),
+    }
