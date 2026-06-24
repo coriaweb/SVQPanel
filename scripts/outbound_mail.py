@@ -76,20 +76,28 @@ def _local_hostname() -> str:
         return ""
 
 
-def sent_last_hour() -> dict:
-    """Cuenta envíos por parte-local del envelope sender en los últimos 60 min.
+# Línea qmgr: hay EXACTAMENTE una por correo entregado, con su queue-id y el
+# envelope sender. Es la fuente fiable para contar (no duplica como pickup/cleanup).
+#   ...postfix/qmgr[..]: <QID>: from=<x@y>, size=..., nrcpt=N (queue active)
+_QMGR_RE = re.compile(r"postfix/qmgr\[\d+\]:\s+([0-9A-F]{6,}):\s+from=<([^>]*)>")
+# Destinatario en líneas de entrega:  <QID>: to=<dest@dominio>, ...
+_TO_RE = re.compile(r"([0-9A-F]{6,}):\s+to=<([^>]*)>")
 
-    Solo cuenta el correo cuyo sender es 'algo@<hostname-del-servidor>' (el patrón
-    del correo no autenticado de PHP). Devuelve {usuario_sistema: n_enviados}.
+
+def scan_last_hour():
+    """Escanea el log de la última hora. Devuelve (counts, recipients):
+      counts:     {usuario_sistema: n_correos}   (1 por queue-id, sin duplicar)
+      recipients: {usuario_sistema: [dest, ...]} (destinatarios de esos correos)
+    Solo correo NO autenticado (sender = usuario@<hostname-del-servidor>).
     """
     cutoff = datetime.now() - timedelta(hours=1)
     host = _local_hostname()
-    # Aceptar tanto el FQDN (svqhostpanel.svqhost.red) como el nombre corto
-    # (svqhostpanel): según la config, Postfix puede firmar con cualquiera.
     accepted = accepted_hostnames(host)
-    counts = {}
-    # Evitar contar dos veces el mismo queue-id (qmgr loguea varias líneas).
-    seen = set()
+
+    # queue-id → usuario de sistema (solo de los correos no-auth recientes).
+    qid_user = {}
+    # queue-id → destinatarios (de cualquier línea con to=, en la ventana).
+    qid_rcpts = {}
 
     for path in MAIL_LOGS:
         if not os.path.isfile(path):
@@ -100,8 +108,6 @@ def sent_last_hour() -> dict:
             continue
         with f:
             for line in f:
-                if "from=<" not in line:
-                    continue
                 tsm = _TS_RE.match(line)
                 if not tsm:
                     continue
@@ -111,29 +117,45 @@ def sent_last_hour() -> dict:
                     continue
                 if ts < cutoff:
                     continue
-                fm = _FROM_RE.search(line)
-                if not fm or "@" not in fm.group(1):
+                # 1) línea qmgr → identifica el correo y su remitente
+                qm = _QMGR_RE.search(line)
+                if qm:
+                    qid, sender = qm.group(1), qm.group(2).lower()
+                    local, _, dom = sender.partition("@")
+                    if local and (not host or dom in accepted):
+                        qid_user[qid] = local
                     continue
-                sender = fm.group(1).lower()
-                local, _, dom = sender.partition("@")
-                # Solo el correo no autenticado: sender en el hostname del server
-                # (FQDN o nombre corto). Sin local válido, descartar.
-                if not local:
-                    continue
-                if host and dom not in accepted:
-                    continue
-                # Dedup por queue-id (primer token "XXXX:" de la línea postfix).
-                qid_m = re.search(r"\]: ([0-9A-F]{6,}):", line)
-                key = (qid_m.group(1) if qid_m else line)
-                if key in seen:
-                    continue
-                seen.add(key)
-                counts[local] = counts.get(local, 0) + 1
+                # 2) línea con destinatario → la guardamos por queue-id
+                tm = _TO_RE.search(line)
+                if tm:
+                    qid, rcpt = tm.group(1), tm.group(2)
+                    if rcpt:
+                        qid_rcpts.setdefault(qid, []).append(rcpt)
+
+    counts, recipients = {}, {}
+    for qid, user in qid_user.items():
+        counts[user] = counts.get(user, 0) + 1
+        for r in qid_rcpts.get(qid, []):
+            recipients.setdefault(user, []).append(r)
+    return counts, recipients
+
+
+def sent_last_hour() -> dict:
+    """Compat: solo los contadores por usuario."""
+    counts, _ = scan_last_hour()
     return counts
 
 
-def build_rows(limits: dict, sent: dict) -> list:
+def _top_recipients(rcpts, top=8):
+    """Lista de destinatarios con su conteo, los más frecuentes primero."""
+    from collections import Counter
+    c = Counter(r.lower() for r in (rcpts or []))
+    return [{"to": addr, "count": n} for addr, n in c.most_common(top)]
+
+
+def build_rows(limits: dict, sent: dict, recipients: dict = None) -> list:
     """Combina límites + enviados en filas con %/estado. Función PURA (testeable)."""
+    recipients = recipients or {}
     rows = []
     for u in sorted(set(limits) | set(sent)):
         limit = limits.get(u, 0)
@@ -148,6 +170,7 @@ def build_rows(limits: dict, sent: dict) -> list:
         rows.append({
             "user": u, "limit": limit, "sent_last_hour": n,
             "pct": pct, "state": state,
+            "recipients": _top_recipients(recipients.get(u)),
         })
     # Ordenar: primero los que más cerca/superan el límite.
     rows.sort(key=lambda r: (-r["pct"], -r["sent_last_hour"]))
@@ -155,6 +178,8 @@ def build_rows(limits: dict, sent: dict) -> list:
 
 
 def summary() -> dict:
-    """Resumen por usuario del sistema: límite no-auth + enviados última hora."""
-    rows = build_rows(_read_limits(), sent_last_hour())
+    """Resumen por usuario del sistema: límite no-auth + enviados última hora +
+    destinatarios (para ver a quién se ha enviado)."""
+    counts, recipients = scan_last_hour()
+    rows = build_rows(_read_limits(), counts, recipients)
     return {"available": True, "rows": rows, "hostname": _local_hostname()}

@@ -30,25 +30,45 @@
     <div v-else class="om-table-wrap">
       <table class="om-table">
         <thead>
-          <tr><th>Usuario (sistema)</th><th>Enviados (1h)</th><th>Límite/h</th><th>Uso</th><th>Estado</th></tr>
+          <tr><th></th><th>Usuario (sistema)</th><th>Enviados (1h)</th><th>Límite/h</th><th>Uso</th><th>Estado</th></tr>
         </thead>
         <tbody>
-          <tr v-for="r in rows" :key="r.user" :class="rowClass(r.state)">
-            <td class="om-mono">{{ r.user }}</td>
-            <td>{{ r.sent_last_hour }}</td>
-            <td>{{ r.limit || '—' }}</td>
-            <td>
-              <div class="om-bar">
-                <div class="om-bar-fill" :class="barClass(r.state)" :style="{ width: Math.min(r.pct,100)+'%' }"></div>
-              </div>
-              <span class="om-pct">{{ r.pct }}%</span>
-            </td>
-            <td>
-              <span class="om-badge" :class="badgeClass(r.state)">
-                <i class="bi" :class="badgeIcon(r.state)"></i> {{ stateLabel(r.state) }}
-              </span>
-            </td>
-          </tr>
+          <template v-for="r in rows" :key="r.user">
+            <tr :class="rowClass(r.state)">
+              <td class="om-toggle">
+                <button v-if="r.recipients && r.recipients.length" class="om-exp"
+                        @click="toggle(r.user)" :title="expanded === r.user ? 'Ocultar' : 'Ver destinatarios'">
+                  <i class="bi" :class="expanded === r.user ? 'bi-chevron-down' : 'bi-chevron-right'"></i>
+                </button>
+              </td>
+              <td class="om-mono">{{ r.user }}</td>
+              <td>{{ r.sent_last_hour }}</td>
+              <td>{{ r.limit || '—' }}</td>
+              <td>
+                <div class="om-bar">
+                  <div class="om-bar-fill" :class="barClass(r.state)" :style="{ width: Math.min(r.pct,100)+'%' }"></div>
+                </div>
+                <span class="om-pct">{{ r.pct }}%</span>
+              </td>
+              <td>
+                <span class="om-badge" :class="badgeClass(r.state)">
+                  <i class="bi" :class="badgeIcon(r.state)"></i> {{ stateLabel(r.state) }}
+                </span>
+              </td>
+            </tr>
+            <tr v-if="expanded === r.user && r.recipients.length" class="om-rcpt-row">
+              <td></td>
+              <td colspan="5">
+                <div class="om-rcpt-title">Destinatarios (última hora):</div>
+                <ul class="om-rcpt-list">
+                  <li v-for="d in r.recipients" :key="d.to">
+                    <code>{{ d.to }}</code>
+                    <span v-if="d.count > 1" class="om-rcpt-count">×{{ d.count }}</span>
+                  </li>
+                </ul>
+              </td>
+            </tr>
+          </template>
         </tbody>
       </table>
     </div>
@@ -64,6 +84,9 @@ const store = useMainStore()
 const loading = ref(true)
 const rows = ref([])
 const hostname = ref('')
+const expanded = ref(null)
+
+function toggle(user) { expanded.value = expanded.value === user ? null : user }
 
 function rowClass(s) { return s === 'blocked' ? 'om-row-blocked' : (s === 'warn' ? 'om-row-warn' : '') }
 function barClass(s) { return s === 'blocked' ? 'om-fill-danger' : (s === 'warn' ? 'om-fill-warn' : 'om-fill-ok') }
@@ -125,4 +148,14 @@ onMounted(load)
 
 .om-btn { display: inline-flex; align-items: center; gap: .35rem; padding: .4rem .8rem; font-size: .82rem; border-radius: var(--r-sm); border: 1px solid var(--border); background: var(--surface-2); color: var(--text); cursor: pointer; }
 .om-btn:disabled { opacity: .55; cursor: not-allowed; }
+
+.om-toggle { width: 32px; text-align: center; }
+.om-exp { background: none; border: none; color: var(--text-muted); cursor: pointer; padding: 2px 4px; font-size: .9rem; }
+.om-exp:hover { color: var(--ac); }
+.om-rcpt-row td { background: var(--surface-2); }
+.om-rcpt-title { font-size: .76rem; font-weight: 600; color: var(--text-muted); margin-bottom: .35rem; }
+.om-rcpt-list { list-style: none; padding: 0; margin: 0; display: flex; flex-wrap: wrap; gap: .4rem; }
+.om-rcpt-list li { font-size: .8rem; }
+.om-rcpt-list code { background: var(--surface-inset); padding: .1rem .4rem; border-radius: 4px; font-family: var(--font-mono, monospace); }
+.om-rcpt-count { color: var(--danger); font-weight: 600; margin-left: .2rem; font-size: .78rem; }
 </style>

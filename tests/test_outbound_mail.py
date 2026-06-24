@@ -61,3 +61,18 @@ def test_hostnames_aceptados_fqdn_y_corto():
 
 def test_hostnames_solo_corto():
     assert accepted_hostnames("svqhostpanel") == {"svqhostpanel"}
+
+
+def test_recipients_top_cuenta_y_ordena():
+    from scripts.outbound_mail import _top_recipients
+    top = _top_recipients(["a@x.com", "a@x.com", "b@y.com"])
+    # 'a@x.com' aparece 2 veces → primero
+    assert top[0] == {"to": "a@x.com", "count": 2}
+    assert {"to": "b@y.com", "count": 1} in top
+
+
+def test_build_rows_incluye_recipients():
+    rows = build_rows({"weblab94": 50}, {"weblab94": 2},
+                      recipients={"weblab94": ["x@a.com", "x@a.com"]})
+    r = _row(rows, "weblab94")
+    assert r["recipients"][0] == {"to": "x@a.com", "count": 2}
