@@ -19,6 +19,22 @@ def test_imapsieve_apunta_a_junk():
     assert "imap_sieve" in c
 
 
+def test_imapsieve_captura_tambien_el_flag():
+    # Además de mover a Junk (Roundcube/arrastrar), debe capturar el cambio de
+    # FLAG (botón "Basura" de Thunderbird = flag Junk sin mover).
+    c = sl._IMAP_SIEVE_CONF
+    assert "imapsieve_mailbox3_causes = FLAG" in c
+    assert "learn-flag.sieve" in c
+
+
+def test_sieve_flag_distingue_spam_y_ham():
+    c = sl._SIEVE_LEARN_FLAG
+    assert '"copy"' in c                 # pipe :copy requiere el require "copy"
+    assert "rspamd-learn-spam.sh" in c   # flag Junk → spam
+    assert "rspamd-learn-ham.sh" in c    # flag NonJunk/NotJunk → ham
+    assert "Junk" in c and "NonJunk" in c
+
+
 def test_wrappers_llaman_a_rspamc_learn():
     assert "learn_spam" in sl._PIPE_LEARN_SPAM
     assert "learn_ham" in sl._PIPE_LEARN_HAM

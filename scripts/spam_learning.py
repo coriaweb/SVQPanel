@@ -25,6 +25,7 @@ IMAP_SIEVE_CONF = f"{DOVECOT_CONF_D}/90-svqpanel-spam-learn.conf"
 # Scripts sieve que llaman a rspamc al mover correo.
 SIEVE_LEARN_SPAM = f"{SIEVE_DIR}/learn-spam.sieve"
 SIEVE_LEARN_HAM = f"{SIEVE_DIR}/learn-ham.sieve"
+SIEVE_LEARN_FLAG = f"{SIEVE_DIR}/learn-flag.sieve"
 # Wrappers que ejecutan rspamc (el sieve 'pipe' los invoca).
 PIPE_BIN_DIR = "/usr/lib/dovecot/sieve-pipe"
 PIPE_LEARN_SPAM = f"{PIPE_BIN_DIR}/rspamd-learn-spam.sh"
@@ -43,7 +44,11 @@ authenticated_headers = ["authentication-results"];
 """
 
 _IMAP_SIEVE_CONF = """# SVQPanel — Aprendizaje de spam (IMAPSieve → rspamc). NO editar manualmente.
-# Al mover un correo a Junk → learn_spam; al sacarlo de Junk → learn_ham.
+# Cubre los DOS hábitos de los clientes:
+#   a) Mover el correo a la carpeta Junk (Roundcube "marcar spam", arrastrar en
+#      Thunderbird) → COPY/APPEND a Junk → learn_spam. Sacar de Junk → learn_ham.
+#   b) Marcar el FLAG Junk SIN mover (botón "Basura" de Thunderbird en algunas
+#      configs) → reaccionamos al cambio de flag en cualquier carpeta.
 protocol imap {
   mail_plugins = $mail_plugins imap_sieve
 }
@@ -51,19 +56,25 @@ protocol imap {
 plugin {
   sieve_plugins = sieve_imapsieve sieve_extprograms
 
-  # Correo COPIADO/MOVIDO a la carpeta Junk → aprender como SPAM
+  # 1) Correo COPIADO/MOVIDO a la carpeta Junk → aprender como SPAM
   imapsieve_mailbox1_name = Junk
   imapsieve_mailbox1_causes = COPY APPEND
   imapsieve_mailbox1_before = file:%(sieve_dir)s/learn-spam.sieve
 
-  # Correo SACADO de Junk a otra carpeta → aprender como HAM (legítimo)
+  # 2) Correo SACADO de Junk a otra carpeta → aprender como HAM (legítimo)
   imapsieve_mailbox2_name = *
   imapsieve_mailbox2_from = Junk
   imapsieve_mailbox2_causes = COPY
   imapsieve_mailbox2_before = file:%(sieve_dir)s/learn-ham.sieve
 
+  # 3) Cambio de FLAG en cualquier carpeta (Thunderbird "Basura" = flag Junk sin
+  #    mover). El script decide spam/ham según si el flag Junk está presente.
+  imapsieve_mailbox3_name = *
+  imapsieve_mailbox3_causes = FLAG
+  imapsieve_mailbox3_before = file:%(sieve_dir)s/learn-flag.sieve
+
   sieve_pipe_bin_dir = %(pipe_bin_dir)s
-  sieve_global_extensions = +vnd.dovecot.pipe +vnd.dovecot.environment
+  sieve_global_extensions = +vnd.dovecot.pipe +vnd.dovecot.environment +vnd.dovecot.imapsieve
 }
 """.replace("%(sieve_dir)s", SIEVE_DIR).replace("%(pipe_bin_dir)s", PIPE_BIN_DIR)
 
@@ -75,6 +86,23 @@ pipe :copy "rspamd-learn-spam.sh" [ "${username}" ];
 _SIEVE_LEARN_HAM = """require ["vnd.dovecot.pipe", "copy", "imapsieve", "environment", "variables"];
 if environment :matches "imap.user" "*" { set "username" "${1}"; }
 pipe :copy "rspamd-learn-ham.sh" [ "${username}" ];
+"""
+
+# Cambio de flag: imap.changedflags contiene los flags que cambiaron. Si entre
+# ellos está Junk/$Junk → el usuario lo marcó como spam (learn_spam). Si el flag
+# que cambió es NonJunk/NotJunk → lo marcó como legítimo (learn_ham). Ignoramos
+# otros flags (\Seen, etc.) para no entrenar con cualquier cosa.
+_SIEVE_LEARN_FLAG = """require ["vnd.dovecot.pipe", "copy", "imapsieve", "environment", "variables", "imap4flags"];
+if environment :matches "imap.user" "*" { set "username" "${1}"; }
+if environment :matches "imap.changedflags" "*" { set "flags" "${1}"; }
+if anyof (string :contains "${flags}" "Junk", string :contains "${flags}" "$Junk") {
+  if not string :contains "${flags}" "NonJunk" {
+    pipe :copy "rspamd-learn-spam.sh" [ "${username}" ];
+  }
+}
+if anyof (string :contains "${flags}" "NonJunk", string :contains "${flags}" "NotJunk") {
+  pipe :copy "rspamd-learn-ham.sh" [ "${username}" ];
+}
 """
 
 # El correo a aprender llega por STDIN al wrapper. rspamc lo clasifica vía el
@@ -139,7 +167,8 @@ class SpamLearningManager(SystemManager):
         #    ensuciando el log (aunque el learn funcione en memoria).
         self._write(SIEVE_LEARN_SPAM, _SIEVE_LEARN_SPAM)
         self._write(SIEVE_LEARN_HAM, _SIEVE_LEARN_HAM)
-        for s in (SIEVE_LEARN_SPAM, SIEVE_LEARN_HAM):
+        self._write(SIEVE_LEARN_FLAG, _SIEVE_LEARN_FLAG)
+        for s in (SIEVE_LEARN_SPAM, SIEVE_LEARN_HAM, SIEVE_LEARN_FLAG):
             self.execute_command(["sievec", s], check=False)
 
         # 3) Config de Dovecot (IMAPSieve).
