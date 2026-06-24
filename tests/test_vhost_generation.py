@@ -188,3 +188,32 @@ def test_apache_vhost_protege_ficheros_sensibles():
     vhost = generate_apache_vhost("ejemplo.com", "user1", "8.3")
     # Debe denegar acceso a .env, .git, etc. aunque el .htaccess del cliente no lo haga
     assert "env" in vhost and "git" in vhost
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Coherencia de firmas: los wrappers que delegan en regenerate_vhost deben
+# aceptar los mismos kwargs que se les pasan desde las rutas. Caza el bug
+# "got an unexpected keyword argument 'canonical_domain'" al activar FastCGI
+# cache (set_fastcgi_cache no propagaba canonical_domain a regenerate_vhost).
+# ─────────────────────────────────────────────────────────────────────────────
+import inspect
+from scripts.domain_manager import DomainManager
+
+
+def test_set_fastcgi_cache_acepta_canonical_domain():
+    params = inspect.signature(DomainManager.set_fastcgi_cache).parameters
+    assert "canonical_domain" in params, \
+        "set_fastcgi_cache debe aceptar canonical_domain (lo pasa la ruta)"
+
+
+def test_set_fastcgi_cache_kwargs_son_subconjunto_de_regenerate_vhost():
+    # Todo kwarg con default de set_fastcgi_cache (salvo los propios de cache)
+    # debe existir en regenerate_vhost, o el passthrough peta en runtime.
+    fc = inspect.signature(DomainManager.set_fastcgi_cache).parameters
+    rv = set(inspect.signature(DomainManager.regenerate_vhost).parameters)
+    propios = {"self", "username", "domain_name", "php_version",
+               "enabled", "ttl_minutes"}
+    for name in fc:
+        if name in propios:
+            continue
+        assert name in rv, f"set_fastcgi_cache pasa '{name}' pero regenerate_vhost no lo acepta"
