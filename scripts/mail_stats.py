@@ -229,20 +229,31 @@ def sent_last_hour(emails=None) -> dict:
 
     wanted = set(e.lower() for e in emails) if emails else None
     cutoff = datetime.utcnow().timestamp() - 3600
+    return _count_sent_from_log(so.splitlines(), cutoff, wanted)
 
+
+def _count_sent_from_log(lines, cutoff, wanted=None) -> dict:
+    """Lógica pura (testeable) de sent_last_hour: correlaciona queue-id →
+    sasl_username y cuenta los status=sent dentro de la ventana. `lines` es la
+    salida del log ya troceada; `cutoff` epoch mínimo; `wanted` set de emails o
+    None para todos.
+    """
     qid_user = {}      # queue-id → sasl_username (remitente autenticado)
     counts = Counter()
 
-    for line in so.splitlines():
+    for line in lines:
         ts = _line_ts(line)
         if ts is not None and ts < cutoff:
-            # Línea antigua: si ya guardamos su qid, podemos olvidarlo luego.
             continue
 
-        # 1) Línea smtpd con sasl_username: asociar queue-id ↔ usuario.
-        if "sasl_username=" in line and "postfix/smtpd" in line:
+        # 1) Línea smtpd con sasl_username: asociar queue-id ↔ usuario. El envío
+        #    autenticado entra por submission (587) o smtps (465), cuyos procesos
+        #    syslog son postfix/submission/smtpd y postfix/smtps/smtpd (NO el
+        #    postfix/smtpd "pelado", que es el MX entrante en el 25). Aceptamos
+        #    cualquier .../smtpd.
+        if "sasl_username=" in line and "smtpd[" in line:
             mu = re.search(r"sasl_username=([^\s,]+)", line)
-            mq = re.search(r"postfix/smtpd\[\d+\]:\s+([0-9A-F]{6,}):", line)
+            mq = re.search(r"smtpd\[\d+\]:\s+([0-9A-F]{6,}):", line)
             if mu and mq:
                 user = mu.group(1).lower()
                 if user and user != "(unavailable)":
@@ -257,8 +268,7 @@ def sent_last_hour(emails=None) -> dict:
                 if user and (wanted is None or user in wanted):
                     counts[user] += 1
 
-    result = dict(counts)
-    return result
+    return dict(counts)
 
 
 def _line_ts(line: str):
