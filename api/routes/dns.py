@@ -260,11 +260,22 @@ async def create_zone(
         db.add(DnsRecord(zone_id=zone.id, **r))
     db.commit()
 
+    # Sincronizar con BIND (cluster si lo hay, o local). _sync_zone_to_bind hace
+    # el PRECHECK de "zona ya en otro panel" y lanza DNSClusterError con mensaje
+    # claro. Si falla, REVERTIMOS la zona recién creada en la BD (no dejar una
+    # zona huérfana que el cluster rechazó) y devolvemos el error al usuario.
     try:
-        all_zones = _get_all_active_zones(db)
-        DNSManager().reload_zone(data.domain_name, all_zones)
+        _sync_zone_to_bind(zone, db)
     except PermissionError:
         pass
+    except Exception as e:
+        from scripts.dns_cluster import DNSClusterError
+        db.query(DnsRecord).filter(DnsRecord.zone_id == zone.id).delete()
+        db.delete(zone)
+        db.commit()
+        if isinstance(e, DNSClusterError):
+            raise HTTPException(status_code=409, detail=str(e))
+        raise HTTPException(status_code=502, detail=f"Error sincronizando la zona: {e}")
 
     db.refresh(zone)
     records = db.query(DnsRecord).filter(DnsRecord.zone_id == zone.id).all()

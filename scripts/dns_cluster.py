@@ -556,6 +556,33 @@ class DNSCluster:
         return out
 
     # ── Empuje de una zona concreta (alta/edición desde el panel) ──────────────
+    def _check_zone_not_in_other_panel(self, master: Dict, domain: str, sudo: str) -> None:
+        """Falla con un mensaje CLARO si `domain` ya está declarado en el
+        zones.conf de OTRO panel del mismo master. Evita el conflicto de zona
+        duplicada en BIND (named-checkconf fallaría con un error técnico)."""
+        my_id = self._require_panel_id()
+        # Buscar `zone "domain"` en los zones.conf de todos los paneles MENOS el
+        # mío. grep -l lista los ficheros que casan; nos quedamos con el panel_id.
+        dom_re = domain.replace(".", r"\.")
+        cmd = (
+            f'for f in {REMOTE_BIND_ETC_BASE}/*/zones.conf; do '
+            f'  [ -e "$f" ] || continue; '
+            f'  pid=$(basename $(dirname "$f")); '
+            f'  [ "$pid" = "{my_id}" ] && continue; '
+            f'  if {sudo}grep -Eq \'^[[:space:]]*zone[[:space:]]+"{dom_re}"\' "$f"; then '
+            f'    echo "$pid"; fi; '
+            f'done'
+        )
+        rc, out, _ = self._run_remote(master, cmd, timeout=30)
+        other = (out or "").strip().splitlines()
+        if other:
+            raise DNSClusterError(
+                f"El dominio «{domain}» ya está gestionado por otro panel "
+                f"(id: {other[0]}) en este cluster DNS. Un cluster no puede "
+                f"servir la misma zona desde dos paneles a la vez. Elimina la "
+                f"zona en el otro panel antes de crearla aquí."
+            )
+
     def push_zone(self, master: Dict, slave: Dict, tsig: Dict[str, str],
                   domain: str, zone_text: str, all_zones: List[Dict],
                   dnssec: bool = False) -> Dict:
@@ -565,6 +592,13 @@ class DNSCluster:
         all_zones: [{domain, dnssec}] (incluye la que se empuja).
         """
         sudo = "" if master.get("ssh_user", "root") == "root" else "sudo "
+
+        # PRECHECK: ¿este dominio ya está gestionado por OTRO panel en el mismo
+        # cluster? Si así fuera, BIND tendría la zona declarada dos veces y el
+        # named-checkconf fallaría con un error críptico. Mejor avisar claro AHORA
+        # y no tocar nada.
+        self._check_zone_not_in_other_panel(master, domain, sudo)
+
         # Detectar si el estado DNSSEC cambió: si ya existe el fichero de la ruta
         # contraria, es que veníamos del otro modo (on↔off).
         other_file = self.master_zone_file(domain, not dnssec)
