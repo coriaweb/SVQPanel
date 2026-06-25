@@ -206,14 +206,30 @@ def _fetch_via_ssh(cfg: dict) -> str:
     fd, tmp = tempfile.mkstemp(prefix="svq_hestia_up_", suffix=".tar")
     os.close(fd)
     try:
-        # 1) Generar el backup en el remoto
+        # 1) Generar el backup en el remoto.
+        #    SSH no interactivo NO carga /etc/profile, así que el PATH es mínimo y
+        #    los binarios de Hestia (/usr/local/hestia/bin) no están. Usamos la
+        #    ruta absoluta del comando, con fallback al PATH si estuviera en otra
+        #    ubicación (instalaciones antiguas o forks tipo VestaCP).
         sshb, env = ssh_prefix("ssh")
         remote = f"{user}@{host}"
-        gen_cmd, env = _sub(sshb + [remote, f"v-backup-user {shlex.quote(hestia_user)}"], env)
+        hu = shlex.quote(hestia_user)
+        remote_gen = (
+            "if [ -x /usr/local/hestia/bin/v-backup-user ]; then "
+            f"/usr/local/hestia/bin/v-backup-user {hu}; "
+            "elif [ -x /usr/local/vesta/bin/v-backup-user ]; then "
+            f"/usr/local/vesta/bin/v-backup-user {hu}; "
+            f"else PATH=\"$PATH:/usr/local/hestia/bin:/usr/local/vesta/bin\" v-backup-user {hu}; fi"
+        )
+        gen_cmd, env = _sub(sshb + [remote, remote_gen], env)
         r = subprocess.run(gen_cmd, capture_output=True, text=True, env=env, timeout=1800)
         if r.returncode != 0:
+            msg = (r.stderr or r.stdout or "").strip()[:300]
+            if "command not found" in msg or "No such file" in msg:
+                msg += (" — ¿es este servidor realmente HestiaCP/VestaCP? "
+                        "No se encontró v-backup-user.")
             raise HTTPException(status_code=502,
-                detail=f"v-backup-user falló en el remoto: {(r.stderr or r.stdout)[:300]}")
+                detail=f"v-backup-user falló en el remoto: {msg}")
 
         # 2) Localizar el .tar más reciente del usuario en /backup/
         find_cmd, env = _sub(sshb + [remote,
