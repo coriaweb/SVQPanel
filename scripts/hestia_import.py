@@ -1417,4 +1417,53 @@ def run_import(tar_path: str, target_user_id: int, scope: List[str], db,
                     db.rollback()
                     report.fail("dns", zoneinfo["domain"], e)
 
+        # Aunque NO se importe el DNS del backup, todo dominio web migrado debe
+        # tener una zona DNS con el template por defecto (igual que un dominio
+        # creado normalmente en el panel) — si no, queda sin DNS propio. Solo
+        # para los que aún no tienen zona (no pisa lo importado).
+        if "web" in scope:
+            for web in manifest["web"]:
+                try:
+                    _ensure_default_zone(web["domain"], owner, db, report,
+                                         server_ipv4, server_ipv6)
+                except Exception as e:
+                    db.rollback()
+                    report.fail("dns", web["domain"], f"zona por defecto: {e}")
+
     return report.to_dict()
+
+
+def _ensure_default_zone(domain: str, owner, db, report, server_ipv4, server_ipv6):
+    """Crea la zona DNS con el template por defecto si el dominio no tiene ya una
+    (mismo comportamiento que crear un dominio en el panel). Idempotente."""
+    from api.models.models_dns import DnsZone, DnsRecord
+    from scripts.dns_manager import DNSManager, get_panel_nameservers
+    from api.routes.dns import _build_template_records
+
+    if db.query(DnsZone).filter(DnsZone.domain_name == domain).first():
+        return  # ya tiene zona (importada o previa)
+
+    mgr = DNSManager()
+    try:
+        ns1, ns2 = get_panel_nameservers(db)
+    except Exception:
+        ns1 = ns2 = None
+    try:
+        serial = mgr.create_zone(domain, ipv4=server_ipv4, ipv6=server_ipv6, ns1=ns1)
+    except PermissionError:
+        serial = 2026052501
+    zone = DnsZone(domain_name=domain, serial=serial,
+                   ip_address=server_ipv4, soa_ns=ns1 or None, ttl=14400)
+    db.add(zone)
+    db.commit()
+    db.refresh(zone)
+    for r in _build_template_records(domain, server_ipv4, server_ipv6, ns1, ns2):
+        db.add(DnsRecord(zone_id=zone.id, **r))
+    db.commit()
+    try:
+        all_zones = [z.domain_name for z in
+                     db.query(DnsZone).filter(DnsZone.is_active == True).all()]  # noqa: E712
+        mgr.reload_zone(domain, all_zones)
+    except Exception:
+        pass
+    report.ok("dns", domain, "zona por defecto creada")
