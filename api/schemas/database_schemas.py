@@ -139,6 +139,7 @@ class DatabaseResponse(BaseModel):
     size_mb: Optional[int] = 0
     quota_mb: Optional[int] = 0
     is_active: bool
+    is_suspended: bool = False
 
     created_at: datetime
     updated_at: datetime

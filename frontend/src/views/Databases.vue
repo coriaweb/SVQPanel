@@ -57,7 +57,7 @@
               </tr>
             </thead>
             <tbody>
-              <tr v-for="db in databases" :key="db.id">
+              <tr v-for="db in databases" :key="db.id" :class="{ 'db-row--suspended': db.is_suspended }">
                 <td>
                   <i class="bi bi-database text-primary me-1"></i>
                   <code class="fw-semibold">{{ db.db_name }}</code>
@@ -75,7 +75,10 @@
                   <span class="badge bg-secondary">{{ db.db_charset }}</span>
                 </td>
                 <td>
-                  <span v-if="db.is_active" class="badge bg-success">
+                  <span v-if="db.is_suspended" class="badge bg-warning text-dark">
+                    <i class="bi bi-pause-circle-fill me-1"></i>Suspendida
+                  </span>
+                  <span v-else-if="db.is_active" class="badge bg-success">
                     <i class="bi bi-check-circle me-1"></i>Activo
                   </span>
                   <span v-else class="badge bg-danger">
@@ -125,6 +128,16 @@
                       v-if="canManage(db)"
                     >
                       <i class="bi bi-hdd-network"></i>
+                    </button>
+                    <button v-if="canManage(db) && !db.is_suspended"
+                      class="btn btn-outline-warning" @click="suspendDb(db)"
+                      title="Suspender (revoca acceso, conserva datos)">
+                      <i class="bi bi-pause-circle"></i>
+                    </button>
+                    <button v-else-if="canManage(db)"
+                      class="btn btn-outline-success" @click="unsuspendDb(db)"
+                      title="Reactivar">
+                      <i class="bi bi-play-circle"></i>
                     </button>
                     <button
                       class="btn btn-outline-danger"
@@ -526,6 +539,22 @@ export default {
       }
     }
 
+    const suspendDb = async (db) => {
+      if (!confirm(`¿Suspender la BD "${db.db_name}"? Se revoca el acceso del usuario (los datos se conservan). Reversible.`)) return
+      try {
+        await api.post(`/api/databases/${db.id}/suspend`, {})
+        store.showNotification('BD suspendida', 'success')
+        await loadDatabases()
+      } catch (e) { store.showNotification('Error: ' + (e.message || e), 'danger') }
+    }
+    const unsuspendDb = async (db) => {
+      try {
+        await api.post(`/api/databases/${db.id}/unsuspend`, {})
+        store.showNotification('BD reactivada', 'success')
+        await loadDatabases()
+      } catch (e) { store.showNotification('Error: ' + (e.message || e), 'danger') }
+    }
+
     const openPhpMyAdmin = async (db) => {
       pmaLoading.value = db.id
       try {
@@ -741,6 +770,8 @@ export default {
       databases,
       users,
       loading,
+      suspendDb,
+      unsuspendDb,
       showFormModal,
       showPasswordModal,
       editingDatabase,
@@ -800,4 +831,6 @@ export default {
 <style scoped>
 .db-head { display: flex; align-items: flex-start; justify-content: space-between; gap: var(--sp-4); margin-bottom: var(--sp-5); flex-wrap: wrap; }
 .db-head h2 { margin: 0 0 2px; }
+/* BD suspendida: fila con tono ámbar tenue */
+.db-row--suspended > td { background: color-mix(in srgb, var(--warning) 7%, transparent); }
 </style>

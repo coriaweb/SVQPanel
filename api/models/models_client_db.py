@@ -57,6 +57,7 @@ class ClientDatabase(Base):
 
     # ── Estado ────────────────────────────────────────────────────────────────
     is_active = Column(Boolean, default=True)
+    is_suspended = Column(Boolean, default=False, nullable=False)  # suspensión admin (revoke)
 
     # ── Timestamps ────────────────────────────────────────────────────────────
     created_at = Column(DateTime, default=datetime.utcnow)

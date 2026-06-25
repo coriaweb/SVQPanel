@@ -38,6 +38,7 @@ class UserResponse(BaseModel):
     role: Optional[str] = "user"
     is_admin: bool
     is_active: bool
+    is_suspended: bool = False
     domains_limit: int
     parent_id: Optional[int] = None
     # Plan + límites extendidos (Fase 13)

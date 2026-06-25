@@ -314,6 +314,11 @@ def _run_migrations():
         "ALTER TABLE mail_domains ADD COLUMN IF NOT EXISTS spam_reject_threshold FLOAT DEFAULT 15.0",
         "ALTER TABLE mail_domains ADD COLUMN IF NOT EXISTS whitelist_senders TEXT DEFAULT ''",
         "ALTER TABLE mail_domains ADD COLUMN IF NOT EXISTS blacklist_senders TEXT DEFAULT ''",
+        # Suspensión administrativa (cascada de usuario + granular)
+        "ALTER TABLE users ADD COLUMN IF NOT EXISTS is_suspended BOOLEAN DEFAULT FALSE",
+        "ALTER TABLE mail_domains ADD COLUMN IF NOT EXISTS is_suspended BOOLEAN DEFAULT FALSE",
+        "ALTER TABLE mailboxes ADD COLUMN IF NOT EXISTS is_suspended BOOLEAN DEFAULT FALSE",
+        "ALTER TABLE client_databases ADD COLUMN IF NOT EXISTS is_suspended BOOLEAN DEFAULT FALSE",
         # Índices de correo para consultas frecuentes
         "CREATE INDEX IF NOT EXISTS ix_mail_domains_user_id ON mail_domains(user_id)",
         "CREATE INDEX IF NOT EXISTS ix_mailboxes_mail_domain_id ON mailboxes(mail_domain_id)",

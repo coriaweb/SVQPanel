@@ -33,7 +33,7 @@
             </tr>
           </thead>
           <tbody>
-            <tr v-for="user in users" :key="user.id">
+            <tr v-for="user in users" :key="user.id" :class="{ 'us-row--suspended': user.is_suspended }">
               <td>
                 <div class="us-user">
                   <i class="bi bi-person-circle"></i>
@@ -60,7 +60,10 @@
               <td><UsageBar :used="user.disk_used_mb || 0" :quota="user.disk_quota_mb || 0" /></td>
               <td><UsageBar :used="user.traffic_used_mb_month || 0" :quota="user.traffic_quota_mb_month || 0" /></td>
               <td>
-                <span class="us-status" :class="user.is_active ? 'us-status--on' : 'us-status--off'">
+                <span v-if="user.is_suspended" class="us-status us-status--suspended">
+                  <i class="bi bi-pause-circle-fill"></i> Suspendido
+                </span>
+                <span v-else class="us-status" :class="user.is_active ? 'us-status--on' : 'us-status--off'">
                   {{ user.is_active ? 'Activo' : 'Inactivo' }}
                 </span>
               </td>
@@ -69,6 +72,14 @@
                   <BaseButton variant="secondary" size="sm" @click="goToAccount(user.id)" title="Gestionar cuenta">
                     <i class="bi bi-box-arrow-in-right"></i> Gestionar
                   </BaseButton>
+                  <button v-if="!user.is_admin && !user.is_suspended" class="us-iconbtn us-iconbtn--warn"
+                          title="Suspender (corta webs, correo, BD, accesos)" @click="suspendUser(user)">
+                    <i class="bi bi-pause-circle"></i>
+                  </button>
+                  <button v-else-if="!user.is_admin" class="us-iconbtn us-iconbtn--ok"
+                          title="Reactivar" @click="unsuspendUser(user)">
+                    <i class="bi bi-play-circle"></i>
+                  </button>
                   <button class="us-iconbtn" title="Editar" @click="openEditForm(user)"><i class="bi bi-pencil"></i></button>
                   <button class="us-iconbtn us-iconbtn--danger" title="Eliminar" @click="deleteUserConfirm(user)"><i class="bi bi-trash"></i></button>
                 </div>
@@ -188,6 +199,26 @@ export default {
       }
     }
 
+    const suspendUser = async (user) => {
+      if (!confirm(`¿Suspender a "${user.username}"?\n\nSe cortarán sus webs (página de cortesía), su correo, sus bases de datos y sus accesos (panel, SSH/FTP). No se borra nada y es reversible.`)) return
+      try {
+        await api.post(`/api/users/${user.id}/suspend`, {})
+        store.showNotification(`Usuario "${user.username}" suspendido`, 'success')
+        loadUsers()
+      } catch (e) {
+        store.showNotification('Error al suspender: ' + (e.message || e), 'danger')
+      }
+    }
+    const unsuspendUser = async (user) => {
+      try {
+        await api.post(`/api/users/${user.id}/unsuspend`, {})
+        store.showNotification(`Usuario "${user.username}" reactivado`, 'success')
+        loadUsers()
+      } catch (e) {
+        store.showNotification('Error al reactivar: ' + (e.message || e), 'danger')
+      }
+    }
+
     onMounted(loadUsers)
 
     return {
@@ -202,7 +233,9 @@ export default {
       openEditForm,
       closeUserForm,
       handleUserSubmit,
-      deleteUserConfirm
+      deleteUserConfirm,
+      suspendUser,
+      unsuspendUser,
     }
   }
 }
@@ -241,10 +274,18 @@ export default {
 .us-status { display: inline-block; font-size: var(--fs-xs); font-weight: var(--fw-semibold); padding: 2px 9px; border-radius: var(--r-pill); }
 .us-status--on  { background: var(--success-bg); color: var(--success); }
 .us-status--off { background: var(--danger-bg); color: var(--danger); }
+.us-status--suspended { background: color-mix(in srgb, var(--warning) 18%, transparent); color: var(--warning); display:inline-flex; align-items:center; gap:4px; }
+
+/* Fila de usuario suspendido: tono ámbar tenue para distinguirla de un vistazo */
+.us-row--suspended > td { background: color-mix(in srgb, var(--warning) 7%, transparent); }
+.us-row--suspended .us-name { opacity: .7; }
 
 /* Acciones */
 .us-actions { display: inline-flex; align-items: center; gap: 4px; }
 .us-iconbtn { width: 32px; height: 32px; display: inline-grid; place-items: center; border: 1px solid var(--border); background: var(--surface); color: var(--text-secondary); border-radius: var(--r-sm); cursor: pointer; transition: all .12s; }
 .us-iconbtn:hover { background: var(--surface-inset); color: var(--text); border-color: var(--border-strong); }
 .us-iconbtn--danger:hover { color: var(--danger); border-color: var(--danger); }
+.us-iconbtn--warn:hover { color: var(--warning); border-color: var(--warning); }
+.us-iconbtn--ok { color: var(--success); }
+.us-iconbtn--ok:hover { border-color: var(--success); }
 </style>

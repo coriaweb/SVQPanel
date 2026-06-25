@@ -31,6 +31,7 @@ class User(Base):
     role = Column(String(50), default="user")  # admin, reseller, user
     is_admin = Column(Boolean, default=False)  # Para compatibilidad hacia atrás
     is_active = Column(Boolean, default=True)
+    is_suspended = Column(Boolean, default=False, nullable=False)  # suspensión admin (cascada)
 
     # Reseller: parent_id apunta al reseller propietario de este usuario
     # NULL = cuenta de nivel superior (admin o reseller directo del sistema)

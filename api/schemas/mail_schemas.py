@@ -110,6 +110,7 @@ class MailDomainListItem(BaseModel):
     user_id:       int
     domain_name:   str
     is_active:     bool
+    is_suspended:  bool          = False
     dkim_enabled:  bool
     dkim_selector: str
     catch_all:     Optional[str] = None

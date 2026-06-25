@@ -80,7 +80,7 @@
               </tr>
             </thead>
             <tbody>
-              <tr v-for="md in mailDomains" :key="md.id">
+              <tr v-for="md in mailDomains" :key="md.id" :class="{ 'sv-row--suspended': md.is_suspended }">
                 <td>
                   <div style="font-weight:600">{{ md.domain_name }}</div>
                   <div v-if="md.max_mailboxes > 0" style="font-size:.8rem;color:var(--text-muted)">
@@ -111,14 +111,25 @@
                 </td>
                 <td style="font-size:.85rem;color:var(--text-muted)">{{ md.catch_all || '—' }}</td>
                 <td style="text-align:center">
-                  <span class="sv-badge" :class="md.is_active ? 'sv-badge--on' : 'sv-badge--off'">
-                    {{ md.is_active ? 'Activo' : 'Suspendido' }}
+                  <span v-if="md.is_suspended" class="sv-badge sv-badge--suspended">
+                    <i class="bi bi-pause-circle-fill"></i> Suspendido
+                  </span>
+                  <span v-else class="sv-badge" :class="md.is_active ? 'sv-badge--on' : 'sv-badge--off'">
+                    {{ md.is_active ? 'Activo' : 'Inactivo' }}
                   </span>
                 </td>
                 <td style="text-align:right">
                   <div style="display:flex;gap:6px;justify-content:flex-end">
                     <button class="sv-icon-btn" @click="openDetail(md)" title="Gestionar">
                       <i class="bi bi-gear"></i>
+                    </button>
+                    <button v-if="!md.is_suspended" class="sv-icon-btn sv-icon-btn--warn"
+                            @click="suspendMailDomain(md)" title="Suspender el correo de este dominio">
+                      <i class="bi bi-pause-circle"></i>
+                    </button>
+                    <button v-else class="sv-icon-btn sv-icon-btn--ok"
+                            @click="unsuspendMailDomain(md)" title="Reactivar el correo">
+                      <i class="bi bi-play-circle"></i>
                     </button>
                     <button v-if="md.can_edit" class="sv-icon-btn sv-icon-btn--danger"
                             @click="confirmDelete('domain', md, `¿Eliminar el dominio de correo '${md.domain_name}'? Se borrarán todos los buzones y datos.`)"
@@ -1227,6 +1238,22 @@ export default {
       }
     }
 
+    const suspendMailDomain = async (md) => {
+      if (!confirm(`¿Suspender el correo de "${md.domain_name}"? Todos sus buzones dejarán de recibir/enviar (los emails se conservan). Reversible.`)) return
+      try {
+        await api.post(`/api/mail/domains/${md.id}/suspend`, {})
+        store.showNotification('Correo suspendido', 'success')
+        loadDomains()
+      } catch (e) { store.showNotification('Error: ' + (e.message || e), 'danger') }
+    }
+    const unsuspendMailDomain = async (md) => {
+      try {
+        await api.post(`/api/mail/domains/${md.id}/unsuspend`, {})
+        store.showNotification('Correo reactivado', 'success')
+        loadDomains()
+      } catch (e) { store.showNotification('Error: ' + (e.message || e), 'danger') }
+    }
+
     const loadDomains = async () => {
       loading.value = true
       try {
@@ -2006,7 +2033,7 @@ export default {
       // Monitoreo de envío
       mailLogs, loadingLogs, logFilter, logFilters,
       loadMailLogs, filteredLogEvents, logBadge, logLabel,
-      loadDomains, openDetail, switchTab,
+      loadDomains, openDetail, switchTab, suspendMailDomain, unsuspendMailDomain,
       openNewDomain, createDomain, saveSettings,
       loadSpamSettings, saveSpamSettings,
       generateDkim, rotateDkim, copyText,
@@ -2066,6 +2093,11 @@ export default {
   font-size:.7rem; font-weight:600; white-space:nowrap; }
 .ssl-chip--on { background:color-mix(in srgb,var(--success) 15%,transparent); color:var(--success); }
 .ssl-chip--off { background:var(--surface-2); color:var(--text-muted); }
+.sv-badge--suspended { background:color-mix(in srgb,var(--warning) 18%,transparent); color:var(--warning); display:inline-flex; align-items:center; gap:4px; }
+.sv-row--suspended > td { background:color-mix(in srgb,var(--warning) 7%,transparent); }
+.sv-icon-btn--warn:hover { color:var(--warning); border-color:var(--warning); }
+.sv-icon-btn--ok { color:var(--success); }
+.sv-icon-btn--ok:hover { border-color:var(--success); }
 .sv-badge--warn { background:color-mix(in srgb,var(--warning,#f59e0b) 15%,transparent); color:var(--warning,#f59e0b); }
 .sv-badge--danger { background:color-mix(in srgb,var(--danger) 15%,transparent); color:var(--danger); }
 

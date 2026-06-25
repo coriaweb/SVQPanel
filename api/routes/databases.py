@@ -1345,3 +1345,33 @@ async def remove_remote_host(db_id: int, ip: str,
     if not _any_remote_hosts(db):
         _ensure_mysql_bind(db, False)
     return {"status": "success", "message": f"IP {ip} revocada"}
+
+
+@router.post("/databases/{db_id}/suspend", tags=["Databases"])
+def suspend_database_endpoint(
+    db_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_admin),
+):
+    """[Admin] Suspende una BD: REVOKE ALL del usuario MariaDB (datos intactos)."""
+    client_db = db.query(ClientDatabase).filter(ClientDatabase.id == db_id).first()
+    if not client_db:
+        raise HTTPException(status_code=404, detail="Base de datos no encontrada")
+    from scripts.suspend_manager import suspend_database
+    suspend_database(client_db, suspend=True, db=db)
+    return {"status": "ok", "suspended": True}
+
+
+@router.post("/databases/{db_id}/unsuspend", tags=["Databases"])
+def unsuspend_database_endpoint(
+    db_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_admin),
+):
+    """[Admin] Reactiva una BD: re-GRANT de los permisos."""
+    client_db = db.query(ClientDatabase).filter(ClientDatabase.id == db_id).first()
+    if not client_db:
+        raise HTTPException(status_code=404, detail="Base de datos no encontrada")
+    from scripts.suspend_manager import suspend_database
+    suspend_database(client_db, suspend=False, db=db)
+    return {"status": "ok", "suspended": False}

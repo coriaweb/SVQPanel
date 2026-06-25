@@ -143,6 +143,7 @@ def _mail_domain_to_dict(md: MailDomain, current_user) -> dict:
         "domain_id":     md.domain_id,
         "domain_name":   md.domain_name,
         "is_active":     md.is_active,
+        "is_suspended":  bool(getattr(md, "is_suspended", False)),
         "dkim_enabled":  md.dkim_enabled,
         "dkim_selector": md.dkim_selector,
         "catch_all":     md.catch_all,
@@ -2288,3 +2289,31 @@ async def get_domain_mail_logs(
     result["domain"] = md.domain_name
     result["log_lines_read"] = len(raw)
     return result
+
+
+@router.post("/mail/domains/{domain_id}/suspend")
+async def suspend_mail_domain_endpoint(
+    domain_id: int,
+    current_user=Depends(require_admin),
+    db: Session = Depends(get_db),
+):
+    """[Admin] Suspende todo el correo de un dominio (todos sus buzones)."""
+    md = _get_mail_domain_or_404(domain_id, db)
+    panel_username = md.user.username if md.user else None
+    from scripts.suspend_manager import suspend_mail_domain
+    res = suspend_mail_domain(md, panel_username, suspend=True, db=db)
+    return {"status": "ok", **res}
+
+
+@router.post("/mail/domains/{domain_id}/unsuspend")
+async def unsuspend_mail_domain_endpoint(
+    domain_id: int,
+    current_user=Depends(require_admin),
+    db: Session = Depends(get_db),
+):
+    """[Admin] Reactiva el correo de un dominio."""
+    md = _get_mail_domain_or_404(domain_id, db)
+    panel_username = md.user.username if md.user else None
+    from scripts.suspend_manager import suspend_mail_domain
+    res = suspend_mail_domain(md, panel_username, suspend=False, db=db)
+    return {"status": "ok", **res}

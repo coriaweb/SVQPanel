@@ -28,6 +28,7 @@ class MailDomain(Base):
                          nullable=True, index=True)
     domain_name = Column(String(255), unique=True, nullable=False, index=True)
     is_active   = Column(Boolean, default=True)
+    is_suspended = Column(Boolean, default=False, nullable=False)  # suspensión admin
 
     # ── DKIM ──────────────────────────────────────────────────────────────
     # Clave generada en /etc/rspamd/dkim/{domain}.{selector}.key
@@ -120,6 +121,7 @@ class Mailbox(Base):
     # Rate-limit de envío de ESTE buzón (Rspamd): correos/hora. 0 = sin límite.
     send_limit_hour    = Column(Integer, default=200)
     is_active          = Column(Boolean, default=True)
+    is_suspended       = Column(Boolean, default=False, nullable=False)  # suspensión admin
     # ── Reenvío ───────────────────────────────────────────────────────────
     forward_to         = Column(Text, nullable=True)        # emails separados por coma
     forward_keep_copy  = Column(Boolean, default=True)      # guardar copia local

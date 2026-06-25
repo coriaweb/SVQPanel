@@ -386,3 +386,36 @@ async def apply_user_quota(
         raise HTTPException(403, "Se necesitan privilegios root")
     except Exception as e:
         raise HTTPException(500, f"Error aplicando cuota: {e}")
+
+
+@router.post("/users/{user_id}/suspend")
+async def suspend_user_endpoint(
+    user_id: int,
+    current_user: User = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
+    """[Admin] Suspende un usuario EN CASCADA: webs, correo, BDs, cuenta del
+    sistema (SSH/FTP) y acceso al panel. No borra nada; reversible."""
+    u = db.query(User).filter(User.id == user_id).first()
+    if not u:
+        raise HTTPException(404, "Usuario no encontrado")
+    if u.is_admin or u.role == "admin":
+        raise HTTPException(403, "No se puede suspender a un administrador")
+    from scripts.suspend_manager import suspend_user
+    res = suspend_user(u, suspend=True, db=db)
+    return {"status": "ok", **res}
+
+
+@router.post("/users/{user_id}/unsuspend")
+async def unsuspend_user_endpoint(
+    user_id: int,
+    current_user: User = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
+    """[Admin] Reactiva un usuario suspendido (revierte la cascada)."""
+    u = db.query(User).filter(User.id == user_id).first()
+    if not u:
+        raise HTTPException(404, "Usuario no encontrado")
+    from scripts.suspend_manager import suspend_user
+    res = suspend_user(u, suspend=False, db=db)
+    return {"status": "ok", **res}
