@@ -480,11 +480,11 @@
         <p class="dd-muted">Informe de tráfico de este dominio (GoAccess), generado al momento desde su registro de accesos.</p>
         <div v-if="statsLoading" class="stats-state"><span class="spinner"></span> Generando informe…</div>
         <div v-else-if="statsError" class="stats-state stats-state--err"><i class="bi bi-exclamation-triangle"></i> {{ statsError }}</div>
-        <!-- sandbox con allow-scripts + allow-same-origin (GoAccess necesita
-             localStorage para sus menús, si no se queda en gris al pinchar),
-             pero SIN allow-top-navigation: sus enlaces no pueden sacar al
-             usuario del informe ni cargar el panel dentro del marco. -->
-        <iframe v-else-if="statsHtml" :srcdoc="statsHtml" class="stats-frame"
+        <!-- El informe va por BLOB URL (src), no srcdoc: el iframe tiene location
+             propia y el menú de GoAccess (window.location.hash) funciona dentro
+             sin navegar el panel. sandbox SIN allow-top-navigation: sus enlaces
+             no pueden sacar al usuario ni cargar el panel dentro del marco. -->
+        <iframe v-else-if="statsUrl" :src="statsUrl" class="stats-frame"
                 sandbox="allow-scripts allow-same-origin" title="Estadísticas"></iframe>
         <div v-else class="stats-state">
           <BaseButton variant="primary" icon="bar-chart" @click="loadStats">Ver estadísticas</BaseButton>
@@ -770,7 +770,7 @@
 </template>
 
 <script>
-import { ref, computed, onMounted, watch } from 'vue'
+import { ref, computed, onMounted, onBeforeUnmount, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useMainStore } from '../stores/useMainStore'
 import api from '../services/api'
@@ -906,17 +906,27 @@ location @maintenance {
     const authError = ref('')
 
     // ── Estadísticas (GoAccess) ──
-    const statsHtml = ref('')
+    // El informe se sirve como BLOB URL (no srcdoc): así el iframe tiene una
+    // location propia y el menú lateral de GoAccess (que usa window.location.hash)
+    // funciona DENTRO del iframe sin navegar el panel padre. Con srcdoc, el hash
+    // resolvía contra el documento del panel y cargaba la web dentro del marco.
+    const statsUrl = ref('')
     const statsLoading = ref(false)
     const statsError = ref('')
+    const _revokeStatsUrl = () => {
+      if (statsUrl.value) { URL.revokeObjectURL(statsUrl.value); statsUrl.value = '' }
+    }
     const loadStats = async () => {
       statsLoading.value = true; statsError.value = ''
       try {
-        statsHtml.value = await api.getDomainStats(domainId.value)
+        const html = await api.getDomainStats(domainId.value)
+        _revokeStatsUrl()
+        statsUrl.value = URL.createObjectURL(new Blob([html], { type: 'text/html' }))
       } catch (e) {
         statsError.value = e.message || 'No se pudo generar el informe'
       } finally { statsLoading.value = false }
     }
+    onBeforeUnmount(_revokeStatsUrl)
 
     const _syncAdv = () => {
       advNginx.value  = domain.value?.custom_nginx_config  || ''
@@ -1501,7 +1511,7 @@ location @maintenance {
       advNginx, advApache, advSaving, advError, saveCustomConfig,
       showNginxEx, showApacheEx, nginxExamples, apacheExamples, insertExample,
       authEnabled, authUser, authPass, authSaving, authError, saveHttpauth,
-      statsHtml, statsLoading, statsError, loadStats,
+      statsUrl, statsLoading, statsError, loadStats,
       appForm, installing, installResult, doInstallApp, appNeedsAdmin, appNeedsEmail, wpLocales,
       detectedApp, appLabel,
       git, gitDeployments, gitLoading, gitSaving, gitDeploying, gitKeyGen, gitRolling, gitForm,
