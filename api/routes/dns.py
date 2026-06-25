@@ -255,7 +255,8 @@ async def create_zone(
     db.commit()
     db.refresh(zone)
 
-    default_records = _build_template_records(data.domain_name, ipv4, ipv6, ns1, ns2)
+    default_records = _build_template_records(data.domain_name, ipv4, ipv6, ns1, ns2,
+                                              template=data.template or "default")
     for r in default_records:
         db.add(DnsRecord(zone_id=zone.id, **r))
     db.commit()
@@ -327,7 +328,8 @@ async def regenerate_all_zones(current_user=Depends(require_admin), db: Session 
             ipv6 = domain_obj.ipv6 if domain_obj else None
             zone.soa_ns = ns1
             db.query(DnsRecord).filter(DnsRecord.zone_id == zone.id).delete()
-            for r in _build_template_records(zone.domain_name, ipv4, ipv6, ns1, ns2):
+            for r in _build_template_records(zone.domain_name, ipv4, ipv6, ns1, ns2,
+                                             template=zone.template):
                 db.add(DnsRecord(zone_id=zone.id, **r))
             zone.serial = _bump_serial(zone.serial)
             db.commit()
@@ -438,9 +440,11 @@ async def regenerate_zone(
     ipv6 = domain_obj.ipv6 if domain_obj else None
 
     # Regenerar adopta los nameservers actuales del panel (SOA + registros NS)
+    # y RESPETA la plantilla elegida en la zona (default/minimal/mail).
     zone.soa_ns = ns1
     db.query(DnsRecord).filter(DnsRecord.zone_id == zone_id).delete()
-    for r in _build_template_records(zone.domain_name, ipv4, ipv6, ns1, ns2):
+    for r in _build_template_records(zone.domain_name, ipv4, ipv6, ns1, ns2,
+                                     template=zone.template):
         db.add(DnsRecord(zone_id=zone.id, **r))
 
     zone.serial = _bump_serial(zone.serial)
@@ -807,51 +811,82 @@ def sync_aaaa_records_for_domain(domain_name: str, ipv6, db: Session) -> dict:
     return {"managed": True, "added": added, "removed": removed, "spf_updated": spf_updated}
 
 
+# Plantillas DNS disponibles (clave interna → contenido). El frontend ofrece
+# estas mismas. 'default' = completa (compat: zonas viejas que tengan 'minimal'
+# o 'mail' caen en su equivalente más cercano vía _TEMPLATE_ALIASES).
+DNS_TEMPLATES = ("web", "mail", "dns", "default")
+_TEMPLATE_ALIASES = {"minimal": "dns", "full": "default", "complete": "default"}
+
+
 def _build_template_records(domain: str, ipv4: str, ipv6: str = None,
-                            ns1: str = None, ns2: str = None) -> list:
+                            ns1: str = None, ns2: str = None,
+                            template: str = "default") -> list:
     """
-    Registros por defecto — plantilla Hestia default.
-    NS×2, A(@+mail), CNAME(www+ftp+webmail), MX, TXT(SPF+DMARC), SRV(mail)
+    Registros de una zona según la plantilla elegida:
+      - dns:     NS×2 + A/AAAA(@). Zona mínima para resolver el dominio.
+      - web:     dns + CNAME www. Sitio web sin correo.
+      - mail:    NS×2 + A/AAAA(mail) + MX + SPF + DMARC + CNAME webmail. Solo correo.
+      - default: TODO (web + correo + SRV + CAA). La plantilla completa.
     ns1/ns2: nameservers del panel (de get_panel_nameservers).
     """
     from scripts.dns_manager import DEFAULT_NS1, DEFAULT_NS2
     ns1 = (ns1 or DEFAULT_NS1).rstrip(".")
     ns2 = (ns2 or DEFAULT_NS2).rstrip(".")
+    template = (template or "default").lower()
+    template = _TEMPLATE_ALIASES.get(template, template)
+    if template not in DNS_TEMPLATES:
+        template = "default"
     records = []
 
-    # NS
-    records.append({"record_type": "NS", "name": "@", "content": f"{ns1}.", "ttl": 86400, "priority": 0})
-    records.append({"record_type": "NS", "name": "@", "content": f"{ns2}.", "ttl": 86400, "priority": 0})
+    def add(rtype, name, content, ttl=14400, prio=0):
+        records.append({"record_type": rtype, "name": name, "content": content,
+                        "ttl": ttl, "priority": prio})
 
-    # A
+    # NS (en todas las plantillas)
+    add("NS", "@", f"{ns1}.", 86400)
+    add("NS", "@", f"{ns2}.", 86400)
+
+    # ── Solo DNS: NS + A/AAAA del dominio raíz ──
+    if template in ("dns", "web", "default"):
+        if ipv4:
+            add("A", "@", ipv4)
+        if ipv6:
+            add("AAAA", "@", ipv6)
+
+    if template == "dns":
+        return records
+
+    # ── Solo web: + CNAME www ──
+    if template == "web":
+        add("CNAME", "www", f"{domain}.")
+        return records
+
+    # A/AAAA de mail (mail y default)
     if ipv4:
-        records.append({"record_type": "A",    "name": "@",    "content": ipv4, "ttl": 14400, "priority": 0})
-        records.append({"record_type": "A",    "name": "mail", "content": ipv4, "ttl": 14400, "priority": 0})
-
-    # AAAA
+        add("A", "mail", ipv4)
     if ipv6:
-        records.append({"record_type": "AAAA", "name": "@",    "content": ipv6, "ttl": 14400, "priority": 0})
-        records.append({"record_type": "AAAA", "name": "mail", "content": ipv6, "ttl": 14400, "priority": 0})
+        add("AAAA", "mail", ipv6)
 
-    # CNAME
-    records.append({"record_type": "CNAME", "name": "www",     "content": f"{domain}.",      "ttl": 14400, "priority": 0})
-    records.append({"record_type": "CNAME", "name": "ftp",     "content": f"{domain}.",      "ttl": 14400, "priority": 0})
-    records.append({"record_type": "CNAME", "name": "webmail", "content": f"mail.{domain}.", "ttl": 14400, "priority": 0})
+    # ── Solo correo: A(mail) + MX + SPF + DMARC + CNAME webmail (sin web) ──
+    if template == "mail":
+        add("MX", "@", f"mail.{domain}.")
+        add("TXT", "@", build_spf(ipv4, ipv6))
+        add("TXT", "_dmarc", "v=DMARC1; p=quarantine; pct=100")
+        add("CNAME", "webmail", f"mail.{domain}.")
+        return records
 
-    # MX
-    records.append({"record_type": "MX", "name": "@", "content": f"mail.{domain}.", "ttl": 14400, "priority": 0})
-
-    # TXT SPF + DMARC
-    spf = build_spf(ipv4, ipv6)
-    records.append({"record_type": "TXT", "name": "@",     "content": spf,                               "ttl": 14400, "priority": 0})
-    records.append({"record_type": "TXT", "name": "_dmarc","content": "v=DMARC1; p=quarantine; pct=100", "ttl": 14400, "priority": 0})
-
-    # SRV mail
-    records.append({"record_type": "SRV", "name": "_submission._tcp", "content": f"0 587 mail.{domain}.", "ttl": 14400, "priority": 1})
-    records.append({"record_type": "SRV", "name": "_imap._tcp",       "content": f"0 143 mail.{domain}.", "ttl": 14400, "priority": 1})
-    records.append({"record_type": "SRV", "name": "_imaps._tcp",      "content": f"0 993 mail.{domain}.", "ttl": 14400, "priority": 1})
-    records.append({"record_type": "SRV", "name": "_pop3._tcp",       "content": f"0 110 mail.{domain}.", "ttl": 14400, "priority": 1})
-    records.append({"record_type": "SRV", "name": "_pop3s._tcp",      "content": f"0 995 mail.{domain}.", "ttl": 14400, "priority": 1})
+    # ── default: la plantilla COMPLETA (web + correo) ──
+    add("CNAME", "www",     f"{domain}.")
+    add("CNAME", "ftp",     f"{domain}.")
+    add("CNAME", "webmail", f"mail.{domain}.")
+    add("MX", "@", f"mail.{domain}.")
+    add("TXT", "@",      build_spf(ipv4, ipv6))
+    add("TXT", "_dmarc", "v=DMARC1; p=quarantine; pct=100")
+    add("SRV", "_submission._tcp", f"0 587 mail.{domain}.", prio=1)
+    add("SRV", "_imap._tcp",       f"0 143 mail.{domain}.", prio=1)
+    add("SRV", "_imaps._tcp",      f"0 993 mail.{domain}.", prio=1)
+    add("SRV", "_pop3._tcp",       f"0 110 mail.{domain}.", prio=1)
+    add("SRV", "_pop3s._tcp",      f"0 995 mail.{domain}.", prio=1)
 
     # CAA — solo Let's Encrypt puede emitir certs (normales y wildcard) para el
     # dominio. El panel emite todo con LE, así que esto no rompe renovaciones y
