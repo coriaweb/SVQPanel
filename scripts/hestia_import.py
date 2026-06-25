@@ -734,10 +734,16 @@ def import_web(backup: "HestiaBackup", web: Dict, owner, db, report: ImportRepor
             _copy_into(data_dir, public_html)
         else:
             _restore_web_files(data_tar, web_root, public_html)
-        # Permisos: todo al usuario del dominio (ver svqpanel-php-pool-user)
+        # Permisos: el CONTENIDO al usuario del dominio (ver svqpanel-php-pool-user).
         import subprocess
         subprocess.run(["chown", "-R", f"{owner.username}:{owner.username}", web_root],
                        capture_output=True)
+        # PERO el directorio del dominio debe tener grupo www-data + 750 para que
+        # nginx (www-data) pueda atravesarlo; si no, da 403 Forbidden. El chown -R
+        # de arriba lo había puesto a grupo del usuario → lo restauramos aquí.
+        # (Mismo estado que un dominio creado por el panel normalmente.)
+        subprocess.run(["chgrp", "www-data", web_root], capture_output=True)
+        subprocess.run(["chmod", "750", web_root], capture_output=True)
 
     # 3) Persistir el Domain en la BD del panel
     ipv4 = None

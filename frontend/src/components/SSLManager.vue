@@ -106,10 +106,19 @@
         </div>
         <div class="d-flex gap-2">
           <button class="btn btn-success btn-sm" @click="createSSL" :disabled="loading || !email">
-            <span v-if="loading" class="spinner-border spinner-border-sm me-1"></span>
-            <i v-else class="bi bi-shield-check me-1"></i>Emitir certificado
+            <span v-if="loading" class="ssl-spin"></span>
+            <i v-else class="bi bi-shield-check me-1"></i>
+            {{ loading ? 'Emitiendo…' : 'Emitir certificado' }}
           </button>
           <button class="btn btn-secondary btn-sm" @click="showForm = false" :disabled="loading">Cancelar</button>
+        </div>
+        <!-- Aviso de progreso bien visible mientras certbot trabaja (~30s) -->
+        <div v-if="loading" class="ssl-progress">
+          <span class="ssl-spin ssl-spin--lg"></span>
+          <div>
+            <strong>Emitiendo el certificado…</strong>
+            <div class="ssl-hint">Validando el dominio con Let's Encrypt. Puede tardar ~30 segundos, no cierres esta ventana.</div>
+          </div>
         </div>
       </div>
     </div>
@@ -366,4 +375,20 @@ export default {
 .ssl-field label { font-size: .82rem; font-weight: 600; color: var(--text-secondary); }
 .ssl-required { color: var(--danger); }
 .ssl-hint { font-size: .75rem; color: var(--text-muted); }
+
+/* Spinner propio (no depende del bootstrap-compat) para que SIEMPRE se vea. */
+.ssl-spin {
+  display: inline-block; width: .9rem; height: .9rem; vertical-align: -2px;
+  margin-right: .4rem; border: 2px solid currentColor; border-right-color: transparent;
+  border-radius: 50%; animation: ssl-spin-kf .7s linear infinite;
+}
+.ssl-spin--lg { width: 1.4rem; height: 1.4rem; border-width: 3px; color: var(--ac); margin: 0; }
+@keyframes ssl-spin-kf { to { transform: rotate(360deg); } }
+
+.ssl-progress {
+  display: flex; align-items: center; gap: .75rem; margin-top: .9rem;
+  padding: .75rem 1rem; border-radius: var(--r-md, 10px);
+  background: color-mix(in srgb, var(--ac) 8%, transparent);
+  border: 1px solid color-mix(in srgb, var(--ac) 25%, transparent);
+}
 </style>
