@@ -246,21 +246,28 @@ def safe_extract_tar(tar_path: str, dest: str) -> None:
             "genera Hestia (v-backup-user), sin comprimir en .zip ni renombrar.")
     with tar:
         members = tar.getmembers()
+        safe_members = []
         for m in members:
             member_path = os.path.join(dest, m.name)
+            # Una ruta de fichero que escapa del destino SÍ es un ataque → abortar.
             if not _is_within(dest, member_path):
                 raise HestiaImportError(
                     f"El backup contiene una ruta no segura: {m.name!r}")
-            # No seguimos enlaces fuera del destino
+            # Symlinks/hardlinks que apuntan FUERA del destino: NO abortamos. Los
+            # backups de Hestia traen symlinks de config (p.ej. nginx.ssl.conf →
+            # /etc/letsencrypt/...) que apuntan a rutas del sistema origen. No nos
+            # sirven (regeneramos la config en SVQPanel) y extraerlos sería un
+            # riesgo, así que simplemente los OMITIMOS y seguimos.
             if m.issym() or m.islnk():
                 link_target = os.path.join(dest, os.path.dirname(m.name), m.linkname)
                 if not _is_within(dest, link_target):
-                    raise HestiaImportError(
-                        f"El backup contiene un enlace no seguro: {m.name!r}")
+                    logger.info(f"Omitido enlace que apunta fuera del backup: {m.name!r}")
+                    continue
+            safe_members.append(m)
         try:
-            tar.extractall(dest, filter="data")   # Python ≥ 3.12
+            tar.extractall(dest, members=safe_members, filter="data")  # Python ≥ 3.12
         except TypeError:
-            tar.extractall(dest)                   # validado arriba
+            tar.extractall(dest, members=safe_members)                 # validado arriba
 
 
 # ─────────────────────────────────────────────────────────────────────────────
