@@ -2452,6 +2452,11 @@ F2BPSASLEOF
 mkdir -p /opt/svqpanel/logs
 touch /opt/svqpanel/logs/auth.log
 
+# Caché de staging de migraciones: el backup descargado en el análisis se guarda
+# aquí y se reutiliza en la importación (no se vuelve a traer). Solo root.
+mkdir -p /var/lib/svqpanel/migrations
+chmod 700 /var/lib/svqpanel/migrations
+
 # Directorio raíz de copias de seguridad (destino local por defecto)
 mkdir -p /backups
 chmod 700 /backups

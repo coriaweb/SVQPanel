@@ -29,6 +29,62 @@ router = APIRouter()
 # Límite de tamaño del backup subido (configurable a futuro).
 MAX_BACKUP_MB = 5120  # 5 GB
 
+# Caché de staging: el backup descargado en el ANÁLISIS (subida/URL/SSH) se
+# guarda aquí y se REUTILIZA en la importación, en vez de volver a generarlo y
+# traerlo. Sin esto, migrar por SSH descargaba el backup DOS veces (analyze +
+# import) — con 20 GB eran 40 GB de transferencia y doble v-backup-user. Los
+# tars cacheados se borran al importar o por TTL (huérfanos).
+import time
+import uuid
+
+MIGRATION_CACHE_DIR = "/var/lib/svqpanel/migrations"
+MIGRATION_CACHE_TTL = 6 * 3600  # 6 h: si no se importa, se considera huérfano
+
+
+def _cache_dir() -> str:
+    os.makedirs(MIGRATION_CACHE_DIR, mode=0o700, exist_ok=True)
+    return MIGRATION_CACHE_DIR
+
+
+def _purge_stale_cache() -> None:
+    """Borra los tars de staging más viejos que el TTL (análisis sin importar)."""
+    try:
+        now = time.time()
+        for fn in os.listdir(MIGRATION_CACHE_DIR):
+            p = os.path.join(MIGRATION_CACHE_DIR, fn)
+            try:
+                if os.path.isfile(p) and now - os.path.getmtime(p) > MIGRATION_CACHE_TTL:
+                    os.remove(p)
+                    logger.info(f"Migración: tar de staging huérfano eliminado: {fn}")
+            except OSError:
+                pass
+    except FileNotFoundError:
+        pass
+
+
+def _stage_tar(tar_path: str) -> str:
+    """Mueve el tar descargado a la caché de staging y devuelve su token."""
+    _purge_stale_cache()
+    token = uuid.uuid4().hex
+    dest = os.path.join(_cache_dir(), f"{token}.tar")
+    shutil.move(tar_path, dest)
+    try:
+        os.chmod(dest, 0o600)
+    except OSError:
+        pass
+    return token
+
+
+def _staged_path(token: str) -> Optional[str]:
+    """Ruta del tar cacheado si el token es válido y el fichero existe."""
+    if not token:
+        return None
+    # token = 32 hex (uuid4). Validar para no salir del directorio.
+    if len(token) != 32 or any(c not in "0123456789abcdef" for c in token.lower()):
+        return None
+    p = os.path.join(MIGRATION_CACHE_DIR, f"{token}.tar")
+    return p if os.path.isfile(p) else None
+
 
 def _create_target_user(db: Session, username: str, email: str,
                         password: Optional[str]) -> User:
@@ -340,10 +396,20 @@ async def migration_analyze(
     except Exception:
         pass
 
-    tar_path = await _receive_backup(file, path, url, ssh)
-    cleanup = _is_temp_upload(tar_path)
+    # NS de ESTE servidor (nssvq1/nssvq2…) para mostrarlos en la propuesta DNS.
+    panel_ns = []
     try:
-        with open_backup(source_panel, tar_path) as backup:
+        from scripts.dns_manager import get_panel_nameservers
+        ns1, ns2 = get_panel_nameservers(db)
+        panel_ns = [n for n in (ns1, ns2) if n]
+    except Exception:
+        pass
+
+    tar_path = await _receive_backup(file, path, url, ssh)
+    downloaded = _is_temp_upload(tar_path)  # subido/URL/SSH → es nuestro temporal
+    try:
+        # config_only: el análisis solo necesita los .conf, no los datos pesados.
+        with open_backup(source_panel, tar_path, config_only=True) as backup:
             manifest = backup.analyze()
             conflicts = find_conflicts(manifest, db, scope_list)
             # Propuesta DNS por zona (clasifica reescrituras) — dentro del with
@@ -351,15 +417,29 @@ async def migration_analyze(
             dns_proposals = {}
             for z in manifest["dns"]:
                 dns_proposals[z["domain"]] = build_dns_proposal(
-                    z, server_ipv4, server_ipv6, z.get("ip"))
+                    z, server_ipv4, server_ipv6, z.get("ip"), panel_ns=panel_ns)
     except (HestiaImportError, CpanelImportError) as e:
+        if downloaded and os.path.exists(tar_path):
+            os.remove(tar_path)
         raise HTTPException(status_code=422, detail=str(e))
     except Exception as e:
+        if downloaded and os.path.exists(tar_path):
+            os.remove(tar_path)
         logger.exception("Error analizando backup")
         raise HTTPException(status_code=500, detail=f"Error analizando el backup: {e}")
-    finally:
-        if cleanup and os.path.exists(tar_path):
-            os.remove(tar_path)
+
+    # Reutilización: si el backup lo hemos DESCARGADO nosotros (subida/URL/SSH),
+    # lo movemos a la caché de staging y devolvemos un token para que la
+    # importación NO lo vuelva a traer. Los backups por 'path' (ruta local del
+    # usuario) no se cachean: ya están en el servidor y no se tocan.
+    cache_token = None
+    if downloaded and os.path.exists(tar_path):
+        try:
+            cache_token = _stage_tar(tar_path)
+        except Exception as e:
+            logger.warning(f"No se pudo cachear el tar de migración: {e}")
+            if os.path.exists(tar_path):
+                os.remove(tar_path)
 
     # ¿Hay datos comprimidos en zst y no tenemos soporte? Avisar (no bloquea analyze).
     warnings = []
@@ -392,6 +472,9 @@ async def migration_analyze(
             "conflicts": conflicts,
             "importable": len(conflicts) == 0,
             "warnings": warnings,
+            # Token del backup ya descargado: la importación lo reutiliza para no
+            # volver a traerlo. None si el origen es una ruta local del servidor.
+            "cache_token": cache_token,
         },
     }
 
@@ -466,6 +549,9 @@ async def migration_import(
     scope: str = Form("web,db,mail,dns"),
     dns_records: Optional[str] = Form(None),
     source_panel: str = Form("hestia"),
+    # Token del backup ya descargado en el análisis: si viene y el tar sigue en
+    # caché, se reutiliza (no se vuelve a generar/descargar).
+    cache_token: Optional[str] = Form(None),
     db: Session = Depends(get_db),
     current_user: User = Depends(require_admin),
 ):
@@ -507,9 +593,17 @@ async def migration_import(
             raise HTTPException(status_code=403,
                 detail="El destino debe ser una cuenta de cliente, no un administrador.")
 
-    ssh = _ssh_from_form(ssh_host, ssh_user, ssh_password, ssh_key, ssh_port, hestia_user)
-    tar_path = await _receive_backup(file, path, url, ssh)
-    cleanup_tar = _is_temp_upload(tar_path)
+    # Reutilizar el backup ya descargado en el análisis si hay token válido. Así
+    # NO se vuelve a generar/descargar (clave con backups grandes por SSH).
+    staged = _staged_path(cache_token)
+    if staged:
+        tar_path = staged
+        cleanup_tar = True   # es nuestro (caché de staging); el job lo borra
+        logger.info(f"Migración: reutilizando backup cacheado {cache_token}")
+    else:
+        ssh = _ssh_from_form(ssh_host, ssh_user, ssh_password, ssh_key, ssh_port, hestia_user)
+        tar_path = await _receive_backup(file, path, url, ssh)
+        cleanup_tar = _is_temp_upload(tar_path)
 
     # Preflight: analizar y comprobar conflictos SOLO de lo que se importa.
     # config_only: el preflight no necesita extraer los datos pesados; el job de

@@ -1230,7 +1230,8 @@ _DNS_DISCARD_TYPES = {"NS", "SOA"}
 
 
 def build_dns_proposal(zoneinfo: Dict, server_ipv4: Optional[str],
-                       server_ipv6: Optional[str], old_ip: Optional[str]) -> List[Dict]:
+                       server_ipv6: Optional[str], old_ip: Optional[str],
+                       panel_ns: Optional[List[str]] = None) -> List[Dict]:
     """Convierte los registros crudos del backup en una propuesta clasificada.
 
     Cada registro propuesto: {name, type, content, ttl, priority,
@@ -1247,6 +1248,25 @@ def build_dns_proposal(zoneinfo: Dict, server_ipv4: Optional[str],
     """
     proposal = []
     default_ttl = int(zoneinfo.get("ttl") or 14400)
+
+    # Los NS de ESTE servidor (nssvq1/nssvq2…) se añaden como registros nuevos
+    # para que el usuario los vea en la propuesta. Los NS del backup se descartan
+    # más abajo (apuntan al panel viejo). create_zone los pondrá igualmente, pero
+    # mostrarlos aquí evita la sensación de "se queda sin NS".
+    for ns in (panel_ns or []):
+        ns = (ns or "").strip()
+        if not ns:
+            continue
+        if not ns.endswith("."):
+            ns += "."
+        proposal.append({
+            "name": "@", "type": "NS", "content": ns,
+            "ttl": default_ttl, "priority": 0,
+            "original_content": ns, "new_content": ns,
+            "rewrite_suggested": False, "action": "add", "include": True,
+            "note": "Nameserver de este servidor (lo añade SVQPanel).",
+        })
+
     for rec in zoneinfo.get("_records", []):
         rtype = (rec.get("TYPE") or "").upper()
         name = rec.get("RECORD") or "@"
@@ -1286,6 +1306,15 @@ def build_dns_proposal(zoneinfo: Dict, server_ipv4: Optional[str],
             item["new_content"] = server_ipv6
             item["include"] = True
             item["note"] = "Apuntaba al servidor antiguo → se reescribe a este servidor."
+        elif rtype == "TXT" and _is_spf(content) and old_ip and old_ip.strip() in content:
+            # SPF con la IP del servidor antiguo embebida (ip4:/ip6:): reescribir
+            # esa IP a la de este servidor; el resto del registro se respeta.
+            new_spf = _rewrite_spf_ip(content, old_ip.strip(), server_ipv4, server_ipv6)
+            item["action"] = "rewrite"
+            item["rewrite_suggested"] = True
+            item["new_content"] = new_spf
+            item["include"] = True
+            item["note"] = "El SPF incluía la IP del servidor antiguo → se reescribe a esta."
         else:
             item["action"] = "keep"
             item["include"] = True
@@ -1294,6 +1323,28 @@ def build_dns_proposal(zoneinfo: Dict, server_ipv4: Optional[str],
 
         proposal.append(item)
     return proposal
+
+
+def _is_spf(content: str) -> bool:
+    c = (content or "").strip().strip('"').lower()
+    return c.startswith("v=spf1")
+
+
+def _rewrite_spf_ip(content: str, old_ip: str, new_ipv4: Optional[str],
+                    new_ipv6: Optional[str]) -> str:
+    """Sustituye la IP antigua dentro de un SPF (ip4:/ip6:) por la de este
+    servidor. Conserva las comillas y el resto de mecanismos intactos."""
+    new = content
+    if new_ipv4:
+        # ip4:OLD  (con o sin máscara /NN)
+        new = re.sub(r"(ip4:)" + re.escape(old_ip) + r"(\b)",
+                     r"\g<1>" + new_ipv4 + r"\g<2>", new)
+        # old_ip suelta usada como ip4 sin prefijo no es válida en SPF; el caso
+        # real es ip4:old_ip, ya cubierto arriba.
+    if new_ipv6 and ":" in old_ip:
+        new = re.sub(r"(ip6:)" + re.escape(old_ip) + r"(\b)",
+                     r"\g<1>" + new_ipv6 + r"\g<2>", new)
+    return new
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -1338,7 +1389,11 @@ def import_dns(backup: "HestiaBackup", zoneinfo: Dict, owner, db, report: Import
             if not rec.get("include", True):
                 continue
             rtype = (rec.get("type") or "").upper()
-            if not rtype or rtype in _DNS_DISCARD_TYPES:
+            if not rtype:
+                continue
+            # NS/SOA del BACKUP se descartan (apuntan al panel viejo). Pero los NS
+            # de ESTE servidor (action='add') SÍ se crean: son los nuestros.
+            if rtype in _DNS_DISCARD_TYPES and rec.get("action") != "add":
                 continue
             # El valor final: si la acción es rewrite usamos new_content; si no,
             # el content (que el usuario pudo editar en la UI).

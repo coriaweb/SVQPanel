@@ -82,3 +82,4 @@ exit 0
 | 0043 | Apache DirectoryIndex: index.php antes que index.html  | 2026-06-25 |
 | 0044 | Página de suspensión escucha en IPv6 (cert válido)    | 2026-06-25 |
 | 0045 | proxy_read_timeout /api/ a 1800s (504 en migraciones) | 2026-06-25 |
+| 0046 | Carpeta de staging de migraciones (reutilizar backup) | 2026-06-25 |

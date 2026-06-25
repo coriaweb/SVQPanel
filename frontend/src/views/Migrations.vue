@@ -201,21 +201,22 @@
             <table class="mig-table mig-dnstbl">
               <thead><tr><th></th><th>Nombre</th><th>Tipo</th><th>Valor</th><th>TTL</th><th>Acción</th></tr></thead>
               <tbody>
-                <tr v-for="(r,ri) in z.records" :key="ri" :class="{ 'is-discard': r.type==='NS'||r.type==='SOA', 'is-off': !r.include }">
-                  <td><input type="checkbox" v-model="r.include" :disabled="r.type==='NS'||r.type==='SOA'" /></td>
+                <tr v-for="(r,ri) in z.records" :key="ri" :class="{ 'is-discard': r.action==='discard', 'is-off': !r.include }">
+                  <td><input type="checkbox" v-model="r.include" :disabled="r.action==='discard'||r.action==='add'" /></td>
                   <td class="mono">{{ r.name }}</td>
                   <td>{{ r.type }}</td>
                   <td>
-                    <template v-if="r.type==='NS'||r.type==='SOA'"><span class="dd-muted mono">{{ r.content }}</span></template>
+                    <template v-if="r.action==='discard'||r.action==='add'"><span class="dd-muted mono">{{ r.content }}</span></template>
                     <template v-else-if="r.action==='rewrite'">
                       <input class="svq-input mono mig-dnsinput" v-model="r.new_content" />
                       <span class="mig-old">antes: {{ r.original_content }}</span>
                     </template>
                     <input v-else class="svq-input mono mig-dnsinput" v-model="r.content" />
                   </td>
-                  <td><input class="svq-input mono mig-dnsttl" v-model.number="r.ttl" :disabled="r.type==='NS'||r.type==='SOA'" /></td>
+                  <td><input class="svq-input mono mig-dnsttl" v-model.number="r.ttl" :disabled="r.action==='discard'||r.action==='add'" /></td>
                   <td>
-                    <span v-if="r.type==='NS'||r.type==='SOA'" class="mig-badge mig-badge--discard">descartado</span>
+                    <span v-if="r.action==='add'" class="mig-badge mig-badge--keep" :title="r.note">NS de este servidor</span>
+                    <span v-else-if="r.action==='discard'" class="mig-badge mig-badge--discard">descartado</span>
                     <span v-else-if="r.action==='rewrite'" class="mig-badge mig-badge--rewrite" :title="r.note">reescrito → SVQ</span>
                     <span v-else class="mig-badge mig-badge--keep" :title="r.note">se mantiene</span>
                   </td>
@@ -315,6 +316,7 @@ export default {
     const manifest = ref(null)
     const dnsZones = ref([])   // zonas DNS con registros editables (clon de proposed_records)
     const job = ref(null)
+    const cacheToken = ref(null)  // backup ya descargado en el análisis (reutilizable)
     let pollTimer = null
 
     const canAnalyze = computed(() => {
@@ -417,14 +419,17 @@ export default {
         for (const z of dnsZones.value) payload[z.domain] = z.records
         fd.append('dns_records', JSON.stringify(payload))
       }
+      // Reutilizar el backup ya descargado en el análisis (no volver a traerlo).
+      if (forImport && cacheToken.value) fd.append('cache_token', cacheToken.value)
       return fd
     }
 
     const analyze = async () => {
-      analyzing.value = true; manifest.value = null; job.value = null; dnsZones.value = []
+      analyzing.value = true; manifest.value = null; job.value = null; dnsZones.value = []; cacheToken.value = null
       try {
         const r = await api.migrationAnalyze(_formData())
         manifest.value = r.data
+        cacheToken.value = r.data.cache_token || null   // backup reutilizable
         // Si vamos a crear cliente nuevo, prerellenar nombre/email del backup
         // (solo si el admin no los ha escrito ya).
         if (targetUserId.value === '__new__') {
