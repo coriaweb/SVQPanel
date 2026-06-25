@@ -2457,6 +2457,17 @@ touch /opt/svqpanel/logs/auth.log
 mkdir -p /var/lib/svqpanel/migrations
 chmod 700 /var/lib/svqpanel/migrations
 
+# GeoIP (países en las estadísticas de dominio con GoAccess): base gratuita de
+# DB-IP + cron mensual para mantenerla al día.
+mkdir -p /var/lib/svqpanel/geoip
+(cd /opt/svqpanel && /opt/svqpanel/venv/bin/python -m api.cli update_geoip) || \
+    echo "  ⚠ GeoIP no descargada (se reintentará por cron)"
+cat > /etc/cron.d/svqpanel-geoip <<'CRONEOF'
+# SVQPanel — actualización mensual de la base GeoIP (países en estadísticas)
+15 4 5 * * root cd /opt/svqpanel && /opt/svqpanel/venv/bin/python -m api.cli update_geoip >> /var/log/svqpanel-update.log 2>&1
+CRONEOF
+chmod 644 /etc/cron.d/svqpanel-geoip
+
 # Directorio raíz de copias de seguridad (destino local por defecto)
 mkdir -p /backups
 chmod 700 /backups

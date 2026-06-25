@@ -128,6 +128,64 @@ def goaccess_available() -> bool:
     return shutil.which("goaccess") is not None
 
 
+# ── GeoIP (DB-IP gratis) para mostrar países en el informe ───────────────────
+GEOIP_DIR = "/var/lib/svqpanel/geoip"
+GEOIP_DB = os.path.join(GEOIP_DIR, "dbip-country.mmdb")
+# Base gratuita de DB-IP (sin registro ni license key). El nombre lleva el mes.
+DBIP_URL_TMPL = "https://download.db-ip.com/free/dbip-country-lite-{ym}.mmdb.gz"
+
+
+def geoip_db_path() -> "str | None":
+    """Ruta de la base GeoIP si existe (para pasarla a GoAccess), o None."""
+    return GEOIP_DB if os.path.isfile(GEOIP_DB) and os.path.getsize(GEOIP_DB) > 0 else None
+
+
+def update_geoip_db(force: bool = False) -> bool:
+    """Descarga/actualiza la base GeoIP de DB-IP (gratis). Idempotente: si ya hay
+    una base de este mes y no se fuerza, no hace nada. Devuelve True si quedó una
+    base utilizable. No lanza: ante fallo de red deja la base previa si la había."""
+    import gzip
+    import shutil as _sh
+    from datetime import date
+
+    os.makedirs(GEOIP_DIR, exist_ok=True)
+    ym = date.today().strftime("%Y-%m")
+    stamp = os.path.join(GEOIP_DIR, ".month")
+    have = geoip_db_path() is not None
+    if have and not force:
+        try:
+            with open(stamp) as f:
+                if f.read().strip() == ym:
+                    return True  # ya está la de este mes
+        except OSError:
+            pass
+
+    url = DBIP_URL_TMPL.format(ym=ym)
+    tmp_gz = GEOIP_DB + ".gz.tmp"
+    try:
+        req = urllib.request.Request(url, headers={"User-Agent": "SVQPanel"})
+        with urllib.request.urlopen(req, timeout=60) as resp, open(tmp_gz, "wb") as fh:
+            _sh.copyfileobj(resp, fh)
+        # Descomprimir a un .tmp y mover atómicamente sobre la base final.
+        tmp_db = GEOIP_DB + ".tmp"
+        with gzip.open(tmp_gz, "rb") as gz, open(tmp_db, "wb") as out:
+            _sh.copyfileobj(gz, out)
+        os.replace(tmp_db, GEOIP_DB)
+        with open(stamp, "w") as f:
+            f.write(ym)
+        logger.info(f"GeoIP DB-IP actualizada ({ym})")
+        return True
+    except Exception as e:
+        logger.warning(f"No se pudo actualizar la base GeoIP ({url}): {e}")
+        return have  # si ya teníamos una, seguimos sirviéndola
+    finally:
+        if os.path.exists(tmp_gz):
+            try:
+                os.remove(tmp_gz)
+            except OSError:
+                pass
+
+
 def _domain_access_logs(username: str, domain: str) -> list:
     """Logs de acceso del dominio, del más reciente al más antiguo (incluye .1)."""
     from scripts.utils import get_domain_logs
@@ -169,6 +227,10 @@ def generate_goaccess_report(username: str, domain: str) -> str:
            "--no-global-config",
            "--html-report-title=" + domain,
            "--html-prefs={\"theme\":\"darkBlue\"}"]
+    # Geolocalización: si hay base GeoIP, GoAccess añade el panel de PAÍSES.
+    geo = geoip_db_path()
+    if geo:
+        cmd += ["--geoip-database=" + geo]
     try:
         r = subprocess.run(cmd, capture_output=True, text=True, timeout=60, env=_ENV)
     except subprocess.TimeoutExpired:

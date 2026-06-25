@@ -1373,6 +1373,19 @@ def cmd_setup_ipv6_persistence() -> int:
     return 0
 
 
+def cmd_update_geoip(force: bool = False) -> int:
+    """Descarga/actualiza la base GeoIP (DB-IP gratis) para los países en las
+    estadísticas de dominio. Idempotente (no re-baja la del mes salvo --force)."""
+    try:
+        from scripts.web_stats import update_geoip_db
+    except Exception as e:
+        logger.error(f"No se pudo importar web_stats: {e}")
+        return 0
+    ok = update_geoip_db(force=force)
+    logger.info("GeoIP actualizada" if ok else "GeoIP no disponible (sin red?)")
+    return 0  # nunca bloquea la cadena de updates/install
+
+
 def cmd_refresh_suspended_vhosts() -> int:
     """Regenera el vhost de los dominios SUSPENDIDOS (aplica el listen IPv6 a la
     página de suspensión). Idempotente."""
@@ -1707,6 +1720,9 @@ def main():
         help="Regenera el vhost de todos los dominios desde la BD")
     sub.add_parser("refresh_suspended_vhosts",
         help="Regenera el vhost de los dominios suspendidos (listen IPv6)")
+    p_geo = sub.add_parser("update_geoip",
+        help="Descarga/actualiza la base GeoIP (países en estadísticas)")
+    p_geo.add_argument("--force", action="store_true", help="Re-descargar aunque ya esté la del mes")
     sub.add_parser("setup_ipv6_persistence",
         help="Migra IPv6 a systemd-networkd + ruta default persistente (arregla red rota al reiniciar)")
     sub.add_parser("fix_mail_folders",
@@ -1823,6 +1839,8 @@ def main():
         sys.exit(cmd_regenerate_all_vhosts())
     if args.cmd == "refresh_suspended_vhosts":
         sys.exit(cmd_refresh_suspended_vhosts())
+    if args.cmd == "update_geoip":
+        sys.exit(cmd_update_geoip(force=getattr(args, "force", False)))
     if args.cmd == "setup_ipv6_persistence":
         sys.exit(cmd_setup_ipv6_persistence())
     if args.cmd == "fix_mail_folders":
