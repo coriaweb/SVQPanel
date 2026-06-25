@@ -105,10 +105,34 @@ def _get_mail_domain_or_404(domain_id: int, db: Session) -> MailDomain:
 # Helpers de serialización (evita DetachedInstanceError con propiedades lazy)
 # ─────────────────────────────────────────────────────────────────────────────
 
-def _has_cert(host: str) -> bool:
-    """¿Existe un certificado Let's Encrypt para este host? (rápido, solo I/O)."""
+def _cert_covers(host: str, parent_domain: str) -> bool:
+    """¿Hay un certificado SSL que cubra `host`? True si:
+      1) existe un cert propio /etc/letsencrypt/live/{host}/, o
+      2) el cert del dominio padre incluye `host` como SAN (caso típico de
+         webmail.{dom} cubierto por el cert de {dom}).
+    Solo I/O + lectura de un fichero; rápido.
+    """
     import os
-    return os.path.exists(f"/etc/letsencrypt/live/{host}/fullchain.pem")
+    if os.path.exists(f"/etc/letsencrypt/live/{host}/fullchain.pem"):
+        return True
+    # Mirar el cert del dominio padre y ver si lista `host` en su texto (SAN).
+    parent_cert = f"/etc/letsencrypt/live/{parent_domain}/cert.pem"
+    try:
+        if os.path.exists(parent_cert):
+            with open(parent_cert, "rb") as f:
+                pem = f.read()
+            from cryptography import x509
+            cert = x509.load_pem_x509_certificate(pem)
+            try:
+                san = cert.extensions.get_extension_for_class(
+                    x509.SubjectAlternativeName).value
+                names = san.get_values_for_type(x509.DNSName)
+                return host in names
+            except x509.ExtensionNotFound:
+                return False
+    except Exception:
+        pass
+    return False
 
 
 def _mail_domain_to_dict(md: MailDomain, current_user) -> dict:
@@ -127,9 +151,10 @@ def _mail_domain_to_dict(md: MailDomain, current_user) -> dict:
         "antivirus_enabled": bool(getattr(md, "antivirus_enabled", False)),
         "mailbox_count": len(md.mailboxes),
         "alias_count":   len(md.aliases),
-        # SSL de webmail.{dom} y mail.{dom}: si tienen certificado propio emitido.
-        "webmail_ssl":   _has_cert(f"webmail.{dom}"),
-        "mail_ssl":      _has_cert(f"mail.{dom}"),
+        # SSL de webmail.{dom} y mail.{dom}: cert propio O cubierto por el cert
+        # del dominio padre como SAN (webmail suele ir en el cert del dominio).
+        "webmail_ssl":   _cert_covers(f"webmail.{dom}", dom),
+        "mail_ssl":      _cert_covers(f"mail.{dom}", dom),
         "created_at":    md.created_at,
         "updated_at":    md.updated_at,
         "can_edit":      _can_edit(md, current_user),
