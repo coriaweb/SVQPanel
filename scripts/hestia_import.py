@@ -1061,7 +1061,25 @@ def import_mail(backup: "HestiaBackup", mailinfo: Dict, owner, db, report: Impor
     except Exception as e:
         report.fail("mail-data", domain, f"maildir no restaurado: {e}")
 
+    # Suscribir INBOX + carpetas estándar en cada buzón. Sin esto, el maildir
+    # restaurado puede quedar con la INBOX NO suscrita → muchos clientes (y la
+    # vista del panel) no muestran los correos aunque estén ahí. (Bug observado
+    # en migraciones de Hestia.)
+    for acc in mailinfo.get("accounts", []):
+        _subscribe_mailboxes(f"{acc['account']}@{domain}")
+
     report.ok("mail", domain, f"{n_ok} buzón(es)")
+
+
+def _subscribe_mailboxes(email: str) -> None:
+    """Suscribe INBOX + carpetas estándar en un buzón (idempotente)."""
+    import subprocess
+    folders = ["INBOX", "Sent", "Drafts", "Trash", "Junk", "Archive"]
+    try:
+        subprocess.run(["doveadm", "mailbox", "subscribe", "-u", email] + folders,
+                       capture_output=True, timeout=30)
+    except Exception as e:
+        logger.warning(f"No se pudieron suscribir carpetas de {email}: {e}")
 
 
 def _restore_maildirs_dir(src_dir: str, panel_username: str, domain: str) -> None:

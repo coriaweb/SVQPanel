@@ -158,6 +158,20 @@ def _download_url(url: str) -> str:
         raise HTTPException(status_code=502, detail=f"No pude descargar el backup: {e}")
 
 
+def _remote_cleanup(sshb, remote, remote_tar, env, _sub):
+    """Borra el .tar generado en el servidor remoto (no dejar basura en /backup/).
+    Best-effort: si falla, solo se loguea."""
+    import subprocess, shlex
+    if not remote_tar or "/backup/" not in remote_tar:
+        return  # solo borramos dentro de /backup/, nunca otra cosa
+    try:
+        cmd, env2 = _sub(sshb + [remote, f"rm -f {shlex.quote(remote_tar)}"], env)
+        subprocess.run(cmd, capture_output=True, text=True, env=env2, timeout=60)
+        logger.info(f"Backup remoto eliminado: {remote_tar}")
+    except Exception as e:
+        logger.warning(f"No se pudo borrar el backup remoto {remote_tar}: {e}")
+
+
 def _fetch_via_ssh(cfg: dict) -> str:
     """Genera el backup en un Hestia remoto y lo trae por scp.
 
@@ -246,8 +260,14 @@ def _fetch_via_ssh(cfg: dict) -> str:
         scp_cmd, env = _sub(scpb + [f"{remote}:{remote_tar}", tmp], env)
         r = subprocess.run(scp_cmd, capture_output=True, text=True, env=env, timeout=1800)
         if r.returncode != 0:
+            # Limpiar el .tar del remoto aunque el scp falle (no dejar basura).
+            _remote_cleanup(sshb, remote, remote_tar, env, _sub)
             raise HTTPException(status_code=502,
                 detail=f"scp del backup falló: {(r.stderr or r.stdout)[:300]}")
+
+        # 4) Borrar el .tar generado en el remoto: lo generamos nosotros y ya lo
+        #    tenemos local; si no, /backup/ del Hestia origen acumularía basura.
+        _remote_cleanup(sshb, remote, remote_tar, env, _sub)
         return tmp
     except HTTPException:
         os.path.exists(tmp) and os.remove(tmp)
