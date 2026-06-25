@@ -51,6 +51,7 @@ COUNTRY_CATALOG: List[Dict] = [
     {"cc": "id", "name": "Indonesia",           "flag": "🇮🇩", "risk": "high"},
     {"cc": "iq", "name": "Irak",                "flag": "🇮🇶", "risk": "medium"},
     {"cc": "ir", "name": "Irán",                "flag": "🇮🇷", "risk": "high"},
+    {"cc": "jp", "name": "Japón",               "flag": "🇯🇵", "risk": "medium"},
     {"cc": "kz", "name": "Kazajistán",          "flag": "🇰🇿", "risk": "medium"},
     {"cc": "ke", "name": "Kenia",               "flag": "🇰🇪", "risk": "medium"},
     {"cc": "kg", "name": "Kirguistán",          "flag": "🇰🇬", "risk": "medium"},
