@@ -105,7 +105,14 @@ def _get_mail_domain_or_404(domain_id: int, db: Session) -> MailDomain:
 # Helpers de serialización (evita DetachedInstanceError con propiedades lazy)
 # ─────────────────────────────────────────────────────────────────────────────
 
+def _has_cert(host: str) -> bool:
+    """¿Existe un certificado Let's Encrypt para este host? (rápido, solo I/O)."""
+    import os
+    return os.path.exists(f"/etc/letsencrypt/live/{host}/fullchain.pem")
+
+
 def _mail_domain_to_dict(md: MailDomain, current_user) -> dict:
+    dom = md.domain_name
     return {
         "id":            md.id,
         "user_id":       md.user_id,
@@ -120,6 +127,9 @@ def _mail_domain_to_dict(md: MailDomain, current_user) -> dict:
         "antivirus_enabled": bool(getattr(md, "antivirus_enabled", False)),
         "mailbox_count": len(md.mailboxes),
         "alias_count":   len(md.aliases),
+        # SSL de webmail.{dom} y mail.{dom}: si tienen certificado propio emitido.
+        "webmail_ssl":   _has_cert(f"webmail.{dom}"),
+        "mail_ssl":      _has_cert(f"mail.{dom}"),
         "created_at":    md.created_at,
         "updated_at":    md.updated_at,
         "can_edit":      _can_edit(md, current_user),

@@ -73,6 +73,7 @@
                 <th style="text-align:center">Buzones</th>
                 <th style="text-align:center">Alias</th>
                 <th style="text-align:center">DKIM</th>
+                <th style="text-align:center">SSL correo</th>
                 <th>Catch-all</th>
                 <th style="text-align:center">Estado</th>
                 <th style="text-align:right">Acciones</th>
@@ -95,6 +96,18 @@
                 <td style="text-align:center">
                   <i v-if="md.dkim_enabled" class="bi bi-shield-check" style="color:var(--success);font-size:1.1rem" title="DKIM activo"></i>
                   <i v-else class="bi bi-shield-x" style="color:var(--text-muted);font-size:1.1rem" title="DKIM inactivo"></i>
+                </td>
+                <td style="text-align:center">
+                  <div style="display:inline-flex;gap:.4rem;align-items:center">
+                    <span class="ssl-chip" :class="md.webmail_ssl ? 'ssl-chip--on' : 'ssl-chip--off'"
+                          :title="'webmail.' + md.domain_name + (md.webmail_ssl ? ': SSL emitido' : ': sin SSL')">
+                      <i class="bi" :class="md.webmail_ssl ? 'bi-lock-fill' : 'bi-unlock'"></i> webmail
+                    </span>
+                    <span class="ssl-chip" :class="md.mail_ssl ? 'ssl-chip--on' : 'ssl-chip--off'"
+                          :title="'mail.' + md.domain_name + (md.mail_ssl ? ': SSL emitido' : ': sin SSL')">
+                      <i class="bi" :class="md.mail_ssl ? 'bi-lock-fill' : 'bi-unlock'"></i> mail
+                    </span>
+                  </div>
                 </td>
                 <td style="font-size:.85rem;color:var(--text-muted)">{{ md.catch_all || '—' }}</td>
                 <td style="text-align:center">
@@ -2049,6 +2062,10 @@ export default {
 .sv-badge--off { background:var(--surface-2); color:var(--text-muted); }
 .sv-badge--blue { background:color-mix(in srgb,var(--ac) 15%,transparent); color:var(--ac); }
 .sv-badge--teal { background:color-mix(in srgb,var(--info,#06b6d4) 15%,transparent); color:var(--info,#06b6d4); }
+.ssl-chip { display:inline-flex; align-items:center; gap:3px; padding:.12rem .4rem; border-radius:999px;
+  font-size:.7rem; font-weight:600; white-space:nowrap; }
+.ssl-chip--on { background:color-mix(in srgb,var(--success) 15%,transparent); color:var(--success); }
+.ssl-chip--off { background:var(--surface-2); color:var(--text-muted); }
 .sv-badge--warn { background:color-mix(in srgb,var(--warning,#f59e0b) 15%,transparent); color:var(--warning,#f59e0b); }
 .sv-badge--danger { background:color-mix(in srgb,var(--danger) 15%,transparent); color:var(--danger); }
 
