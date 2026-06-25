@@ -51,6 +51,30 @@
         </template>
       </p>
 
+      <!-- Servidores de origen guardados (reconectar sin rellenar todo) -->
+      <div v-if="source === 'ssh'" class="mig-saved">
+        <label class="mig-field">
+          <span>Servidor guardado</span>
+          <div style="display:flex;gap:.5rem;align-items:center">
+            <select class="svq-select" v-model="selectedSource" @change="applySource">
+              <option :value="null">— Conexión nueva —</option>
+              <option v-for="s in savedSources" :key="s.id" :value="s.id">
+                {{ s.label }} ({{ s.ssh_user }}@{{ s.host }})
+              </option>
+            </select>
+            <button v-if="selectedSource" type="button" class="mig-mini-btn mig-mini-btn--danger"
+                    title="Borrar este servidor guardado" @click="deleteSource">
+              <i class="bi bi-trash"></i>
+            </button>
+          </div>
+        </label>
+        <label class="mig-field" style="align-self:flex-end">
+          <button type="button" class="mig-mini-btn" @click="saveSource" :disabled="!ssh.host">
+            <i class="bi bi-save"></i> Guardar este servidor
+          </button>
+        </label>
+      </div>
+
       <!-- Campos SSH (origen = ssh, solo Hestia) -->
       <div v-if="source === 'ssh'" class="mig-grid mig-ssh">
         <label class="mig-field"><span>Host del servidor Hestia origen</span>
@@ -276,6 +300,8 @@ export default {
     const serverPath = ref('')
     const url = ref('')
     const ssh = ref({ host: '', user: 'root', port: '22', hestia_user: '', password: '', key: '' })
+    const savedSources = ref([])
+    const selectedSource = ref(null)
     const targetUserId = ref(null)
     const newUser = ref({ username: '', email: '', password: '' })
     const clientUsers = ref([])
@@ -314,6 +340,50 @@ export default {
         const list = Array.isArray(r) ? r : (r.users || r.data || [])
         clientUsers.value = list.filter(u => !(u.is_admin || u.role === 'admin'))
       } catch (e) { store.showNotification('No pude cargar los usuarios', 'danger') }
+    }
+
+    // ── Servidores de origen guardados ──
+    const loadSources = async () => {
+      try { savedSources.value = await api.get('/api/migration-sources') || [] }
+      catch (e) { /* silencioso: feature opcional */ }
+    }
+    const applySource = async () => {
+      if (!selectedSource.value) return
+      try {
+        const c = await api.get(`/api/migration-sources/${selectedSource.value}/credentials`)
+        sourcePanel.value = c.panel || 'hestia'
+        ssh.value.host = c.host || ''
+        ssh.value.user = c.ssh_user || 'root'
+        ssh.value.port = String(c.ssh_port || 22)
+        ssh.value.password = c.ssh_password || ''
+        ssh.value.key = c.ssh_key || ''
+        if (c.last_remote_user) ssh.value.hestia_user = c.last_remote_user
+        store.showNotification('Servidor cargado', 'success')
+      } catch (e) { store.showNotification('No pude cargar el servidor: ' + e.message, 'danger') }
+    }
+    const saveSource = async () => {
+      const label = prompt('Nombre para este servidor (ej. "Hestia cliente X"):',
+        ssh.value.host)
+      if (!label) return
+      try {
+        await api.post('/api/migration-sources', {
+          label, panel: sourcePanel.value, host: ssh.value.host,
+          ssh_user: ssh.value.user, ssh_port: parseInt(ssh.value.port) || 22,
+          ssh_password: ssh.value.password || null, ssh_key: ssh.value.key || null,
+          last_remote_user: ssh.value.hestia_user || null,
+        })
+        await loadSources()
+        store.showNotification('Servidor guardado', 'success')
+      } catch (e) { store.showNotification('Error al guardar: ' + e.message, 'danger') }
+    }
+    const deleteSource = async () => {
+      if (!selectedSource.value || !confirm('¿Borrar este servidor guardado?')) return
+      try {
+        await api.delete(`/api/migration-sources/${selectedSource.value}`)
+        selectedSource.value = null
+        await loadSources()
+        store.showNotification('Servidor borrado', 'success')
+      } catch (e) { store.showNotification('Error al borrar: ' + e.message, 'danger') }
     }
 
     const onFile = (e) => { file.value = e.target.files?.[0] || null }
@@ -415,9 +485,11 @@ export default {
 
     onUnmounted(() => { if (pollTimer) clearTimeout(pollTimer) })
     loadUsers()
+    loadSources()
 
     return {
       sourcePanel, source, file, serverPath, url, ssh, targetUserId, newUser, clientUsers, scope, scopeOptions,
+      savedSources, selectedSource, applySource, saveSource, deleteSource,
       analyzing, importing, manifest, dnsZones, job, canAnalyze, mailAccounts, targetUsername,
       onFile, analyze, startImport,
     }
@@ -447,6 +519,15 @@ input[type="file"].svq-input { padding: var(--sp-2); height: auto; }
 .mig-field--wide { grid-column: 1 / -1; }
 .mig-ssh { margin-top: var(--sp-3); padding-top: var(--sp-3); border-top: 1px solid var(--border); }
 .mig-ssh textarea { resize: vertical; }
+.mig-saved { display: grid; grid-template-columns: 1fr auto; gap: var(--sp-3); align-items: end; margin-top: var(--sp-3); }
+.mig-mini-btn { display: inline-flex; align-items: center; gap: 4px; white-space: nowrap;
+  background: var(--surface-2); color: var(--text); border: 1px solid var(--border);
+  border-radius: var(--r-md); padding: 0 .8rem; height: 38px; font-size: var(--fs-sm); cursor: pointer; }
+.mig-mini-btn:hover:not(:disabled) { border-color: var(--ac); color: var(--ac); }
+.mig-mini-btn:disabled { opacity: .5; cursor: not-allowed; }
+.mig-mini-btn--danger { padding: 0 .6rem; }
+.mig-mini-btn--danger:hover { border-color: var(--danger); color: var(--danger); }
+@media (max-width: 640px) { .mig-saved { grid-template-columns: 1fr; } }
 .mig-scope { display: flex; align-items: center; gap: var(--sp-3); flex-wrap: wrap; margin-top: var(--sp-3); }
 .mig-scope__label { font-size: var(--fs-sm); color: var(--text-muted); }
 .mig-check { display: inline-flex; align-items: center; gap: 6px; font-size: var(--fs-sm); }

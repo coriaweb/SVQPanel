@@ -13,7 +13,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from api.models.database import create_tables, get_db
 from config.config import PANEL_NAME, PANEL_VERSION
 
-from api.routes import users, domains, php, ssl, ipv6, auth, settings, dns, system, mail, databases, firewall, fail2ban, security_monitor, ip_lists, file_manager, crowdsec, plans, sftp, crons, server_ips, backups, templates, notifications, dns_cluster, git, git_webhook, monitoring, db_tuner, migrations, terminal, license, api_tokens, mail_queue, process_manager, outbound_mail, antispam
+from api.routes import users, domains, php, ssl, ipv6, auth, settings, dns, system, mail, databases, firewall, fail2ban, security_monitor, ip_lists, file_manager, crowdsec, plans, sftp, crons, server_ips, backups, templates, notifications, dns_cluster, git, git_webhook, monitoring, db_tuner, migrations, migration_sources, terminal, license, api_tokens, mail_queue, process_manager, outbound_mail, antispam
 
 # ── Descripción de la API (se muestra en /docs y /redoc) ──────────────────────
 API_DESCRIPTION = f"""
@@ -912,6 +912,7 @@ app.include_router(git.router,               prefix="/api", tags=["Git Deploy"])
 app.include_router(monitoring.router,        prefix="/api", tags=["Monitoring"])
 app.include_router(db_tuner.router,          prefix="/api", tags=["DB Tuner"])
 app.include_router(migrations.router,        prefix="/api", tags=["Migrations"])
+app.include_router(migration_sources.router, prefix="/api", tags=["Migration Sources"])
 app.include_router(api_tokens.router,        prefix="/api", tags=["API Tokens"])
 app.include_router(mail_queue.router,        prefix="/api", tags=["Mail Queue"])
 app.include_router(process_manager.router,   prefix="/api", tags=["Processes"])
