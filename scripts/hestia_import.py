@@ -307,9 +307,18 @@ class HestiaBackup:
     def __exit__(self, *exc):
         self.cleanup()
 
+    def __del__(self):
+        # Red de seguridad: si el objeto se creó sin 'with' o falló antes de
+        # entrar al with, el GC limpia igualmente el tmpdir (no dejar basura).
+        try:
+            self.cleanup()
+        except Exception:
+            pass
+
     def cleanup(self):
         if self.tmpdir and os.path.isdir(self.tmpdir):
             shutil.rmtree(self.tmpdir, ignore_errors=True)
+            self.tmpdir = None
 
     # ── extracción ──────────────────────────────────────────────────────────
     def extract(self):
