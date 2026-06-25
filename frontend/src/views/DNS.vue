@@ -399,9 +399,10 @@
               <div class="col-md-6">
                 <label class="form-label fw-semibold">Plantilla</label>
                 <select v-model="zoneForm.template" class="form-select">
-                  <option value="default">BIND9 (default)</option>
-                  <option value="minimal">Mínima (solo NS + A)</option>
-                  <option value="mail">Con correo (NS + A + MX + SPF)</option>
+                  <option value="default">Completa (web + correo)</option>
+                  <option value="web">Solo web (A + www)</option>
+                  <option value="mail">Solo correo (MX + SPF + DMARC)</option>
+                  <option value="dns">Solo DNS (NS + A)</option>
                 </select>
               </div>
 
@@ -612,8 +613,9 @@
             <button class="btn-close" @click="showRegenerateConfirm = false"></button>
           </div>
           <div class="modal-body">
-            <p>¿Regenerar los registros de <strong>{{ selectedZone?.domain_name }}</strong> con la plantilla <strong>{{ selectedZone?.template || 'default' }}</strong>?</p>
-            <p class="text-warning small"><i class="bi bi-exclamation-triangle me-1"></i>Se borrarán todos los registros actuales y se crearán de nuevo con la plantilla Hestia.</p>
+            <p>¿Regenerar los registros de <strong>{{ selectedZone?.domain_name }}</strong> con la plantilla <strong>{{ templateLabel(selectedZone?.template) }}</strong>?</p>
+            <p class="text-muted small">{{ templateHint(selectedZone?.template) }}</p>
+            <p class="text-warning small"><i class="bi bi-exclamation-triangle me-1"></i>Se borrarán todos los registros actuales y se crearán de nuevo con esa plantilla.</p>
           </div>
           <div class="modal-footer">
             <button class="btn btn-secondary" @click="showRegenerateConfirm = false">Cancelar</button>
@@ -1021,6 +1023,22 @@ export default {
 
     const confirmRegenerate = () => { showRegenerateConfirm.value = true }
 
+    // Compat: zonas viejas pueden tener 'minimal' (→ dns).
+    const _tplKey = (t) => ({ minimal: 'dns' })[t] || t || 'default'
+    const templateLabel = (t) => ({
+      dns: 'Solo DNS (NS + A)',
+      web: 'Solo web (A + www)',
+      mail: 'Solo correo (MX + SPF + DMARC)',
+      default: 'Completa (web + correo)',
+    })[_tplKey(t)] || 'Completa (web + correo)'
+
+    const templateHint = (t) => ({
+      dns: 'Zona mínima: los NS del servidor y el A/AAAA del dominio. Nada más.',
+      web: 'Web sin correo: NS, A/AAAA del dominio y CNAME www.',
+      mail: 'Solo correo: NS, A/AAAA de mail, MX, SPF, DMARC y webmail. Sin web.',
+      default: 'Todo: NS, A/AAAA, CNAME (www/ftp/webmail), MX, SPF, DMARC, SRV y CAA.',
+    })[_tplKey(t)] || ''
+
     const regenerateZone = async () => {
       if (!selectedZone.value) return
       regenerating.value = true
@@ -1286,7 +1304,7 @@ export default {
       typeClass,
       openZoneRecords, openCreateZone, openEditZone, saveZone, confirmDeleteZone, deleteZone,
       openAddRecord, openEditRecord, saveRecord, confirmDeleteRecord, deleteRecord,
-      confirmRegenerate, regenerateZone,
+      confirmRegenerate, regenerateZone, templateLabel, templateHint,
       inlineEditId, inlineForm, startInlineEdit, saveInlineEdit, cancelInlineEdit,
       showTemplates, applyMailTemplate,
     }
