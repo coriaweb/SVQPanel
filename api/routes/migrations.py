@@ -177,15 +177,19 @@ def _fetch_via_ssh(cfg: dict) -> str:
         raise HTTPException(status_code=400,
             detail="Para SSH indica al menos host y usuario de Hestia a exportar.")
 
-    opts = ["-o", "StrictHostKeyChecking=no", "-o", "UserKnownHostsFile=/dev/null",
-            "-o", "ConnectTimeout=15", "-p", port]
+    # Opciones comunes (sin el flag de puerto: ssh usa -p, pero scp usa -P).
+    common_opts = ["-o", "StrictHostKeyChecking=no", "-o", "UserKnownHostsFile=/dev/null",
+                   "-o", "ConnectTimeout=15"]
 
     def ssh_prefix(binary):
-        base = []
+        # El flag de puerto difiere: ssh => -p, scp => -P (en scp, -p significa
+        # "preservar timestamps", y pasarle el número de puerto como -p hacía que
+        # scp interpretara el "22" como una ruta → error "Not a directory").
+        port_flag = "-P" if binary == "scp" else "-p"
+        opts = common_opts + [port_flag, port]
         env = dict(os.environ)
         if key:
-            opts2 = opts + ["-i", "__KEYFILE__"]
-            base = [binary] + opts2
+            base = [binary] + opts + ["-i", "__KEYFILE__"]
         elif password:
             env["SSHPASS"] = password
             base = ["sshpass", "-e", binary] + opts
