@@ -3189,6 +3189,15 @@ echo -e "${YELLOW}Aplicando protección anti zip-bomb del antispam...${NC}"
     echo -e "${YELLOW}⚠ setup_archive_protection tuvo incidencias (revisar logs)${NC}"
 echo ""
 
+# Persistencia de IPv6 vía systemd-networkd + ruta default IPv6 persistente.
+# (Las IPv6 de dominios NO se gestionan con netplan: redefinir eth0 en netplan
+# rompe la red al reiniciar. Ver scripts/ipv6_manager.py y ipv6_route_service.py)
+echo -e "${YELLOW}Configurando persistencia de IPv6 (systemd-networkd)...${NC}"
+/opt/svqpanel/venv/bin/python -m api.cli setup_ipv6_persistence && \
+    echo -e "${GREEN}✓ Persistencia de IPv6 configurada${NC}" || \
+    echo -e "${YELLOW}⚠ setup_ipv6_persistence tuvo incidencias (revisar logs)${NC}"
+echo ""
+
 ###############################################################################
 # 14b. SSL AUTOMÁTICO DEL PANEL (si el hostname apunta a este servidor)
 ###############################################################################

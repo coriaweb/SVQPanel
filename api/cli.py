@@ -1289,6 +1289,63 @@ def cmd_setup_auto_updates() -> int:
     return 0
 
 
+def cmd_setup_ipv6_persistence() -> int:
+    """Migra la persistencia de IPv6 de netplan (defectuoso) a systemd-networkd y
+    asegura la ruta default IPv6 persistente. Idempotente. Arregla el bug que
+    dejaba el servidor SIN RED al reiniciar.
+    """
+    try:
+        from scripts.ipv6_route_service import (IPv6RouteService,
+                                                cleanup_legacy_netplan)
+        from scripts.ipv6_manager import (_dropin_path, _read_managed_ips,
+                                          _write_dropin, LEGACY_NETPLAN_FILE)
+        import re, subprocess
+    except PermissionError:
+        logger.error("Requiere root")
+        return 1
+    except Exception as e:
+        logger.error(f"No se pudo cargar el módulo IPv6: {e}")
+        return 0
+
+    # 1) Migrar las IPs del netplan viejo (si existe) al drop-in de networkd.
+    try:
+        if LEGACY_NETPLAN_FILE.exists():
+            ips = []
+            in_addr = False
+            for line in LEGACY_NETPLAN_FILE.read_text().splitlines():
+                s = line.strip()
+                if s == "addresses:":
+                    in_addr = True
+                    continue
+                if in_addr:
+                    if s.startswith("- "):
+                        ips.append(s[2:].strip())
+                    elif s and not s.startswith("#"):
+                        in_addr = False
+            if ips:
+                _write_dropin("eth0", ips)
+                logger.info(f"Migradas {len(ips)} IPv6 de dominios al drop-in networkd")
+    except Exception as e:
+        logger.warning(f"Migración de IPs del netplan viejo con incidencias: {e}")
+
+    # 2) Eliminar el netplan defectuoso.
+    cleanup_legacy_netplan()
+
+    # 3) Instalar el servicio de ruta IPv6 default persistente.
+    try:
+        res = IPv6RouteService().install()
+        logger.info(f"setup_ipv6_persistence: {res}")
+    except Exception as e:
+        logger.warning(f"IPv6RouteService con incidencias: {e}")
+
+    # 4) Recargar networkd para aplicar el drop-in.
+    try:
+        subprocess.run(["networkctl", "reload"], capture_output=True, timeout=30)
+    except Exception:
+        pass
+    return 0
+
+
 def cmd_setup_archive_protection() -> int:
     """Sube el peso de los símbolos de archivo de Rspamd (anti zip-bomb: ratio de
     descompresión enorme y ejecutables empaquetados). Idempotente.
@@ -1555,6 +1612,8 @@ def main():
         help="Endurece Postfix (banner+VRFY) y BIND (version none)")
     sub.add_parser("setup_archive_protection",
         help="Protección anti zip-bomb de Rspamd (sube peso de símbolos de archivo)")
+    sub.add_parser("setup_ipv6_persistence",
+        help="Migra IPv6 a systemd-networkd + ruta default persistente (arregla red rota al reiniciar)")
     sub.add_parser("fix_mail_folders",
         help="Suscribe Sent/Drafts/Trash/Junk en buzones existentes (Thunderbird los muestra)")
 
@@ -1665,6 +1724,8 @@ def main():
         sys.exit(cmd_harden_services())
     if args.cmd == "setup_archive_protection":
         sys.exit(cmd_setup_archive_protection())
+    if args.cmd == "setup_ipv6_persistence":
+        sys.exit(cmd_setup_ipv6_persistence())
     if args.cmd == "fix_mail_folders":
         sys.exit(cmd_fix_mail_folders())
     if args.cmd == "backfill_caa":

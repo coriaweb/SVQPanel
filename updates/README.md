@@ -78,3 +78,4 @@ exit 0
 | 0039 | Auto-actualizaciones de seguridad del SO (unattended)| 2026-06-24 |
 | 0040 | Endurecer servicios (banner SMTP/VRFY, BIND version)| 2026-06-24 |
 | 0041 | Protección anti zip-bomb del antispam (Rspamd)      | 2026-06-24 |
+| 0042 | Fix IPv6: netplan→networkd + ruta persistente (red rota al reiniciar) | 2026-06-25 |
