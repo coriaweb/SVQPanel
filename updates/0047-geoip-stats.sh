@@ -8,10 +8,19 @@
 
 set -euo pipefail
 
-echo "→ 0047: GeoIP (países) en las estadísticas de dominio…"
+echo "→ 0047: GeoIP (países) + informe en español en las estadísticas…"
 
 PYBIN=/opt/svqpanel/venv/bin/python
 [ -x "$PYBIN" ] || { echo "  Sin venv del panel — nada que hacer."; exit 0; }
+
+# Locale español para que los informes de GoAccess salgan traducidos.
+if ! locale -a 2>/dev/null | grep -qiE "^es_ES\.(utf8|UTF-8)$"; then
+    grep -q "^es_ES.UTF-8" /etc/locale.gen 2>/dev/null || echo "es_ES.UTF-8 UTF-8" >> /etc/locale.gen
+    locale-gen es_ES.UTF-8 >/dev/null 2>&1 && echo "  ✓ locale es_ES.UTF-8 generado" \
+        || echo "  ⚠ no se pudo generar el locale es_ES (informe quedará en inglés)."
+else
+    echo "  locale es_ES.UTF-8 ya disponible."
+fi
 
 mkdir -p /var/lib/svqpanel/geoip
 

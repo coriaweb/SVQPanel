@@ -2457,6 +2457,13 @@ touch /opt/svqpanel/logs/auth.log
 mkdir -p /var/lib/svqpanel/migrations
 chmod 700 /var/lib/svqpanel/migrations
 
+# Locale español para que los informes de GoAccess salgan en español (la
+# traducción goaccess.mo viene con el paquete; falta generar el locale).
+if ! locale -a 2>/dev/null | grep -qiE "^es_ES\.(utf8|UTF-8)$"; then
+    grep -q "^es_ES.UTF-8" /etc/locale.gen 2>/dev/null || echo "es_ES.UTF-8 UTF-8" >> /etc/locale.gen
+    locale-gen es_ES.UTF-8 >/dev/null 2>&1 || true
+fi
+
 # GeoIP (países en las estadísticas de dominio con GoAccess): base gratuita de
 # DB-IP + cron mensual para mantenerla al día.
 mkdir -p /var/lib/svqpanel/geoip

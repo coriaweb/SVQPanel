@@ -480,7 +480,11 @@
         <p class="dd-muted">Informe de tráfico de este dominio (GoAccess), generado al momento desde su registro de accesos.</p>
         <div v-if="statsLoading" class="stats-state"><span class="spinner"></span> Generando informe…</div>
         <div v-else-if="statsError" class="stats-state stats-state--err"><i class="bi bi-exclamation-triangle"></i> {{ statsError }}</div>
-        <iframe v-else-if="statsHtml" :srcdoc="statsHtml" class="stats-frame" title="Estadísticas"></iframe>
+        <!-- sandbox sin allow-top-navigation: los clics en el menú lateral de
+             GoAccess (tabs JS) funcionan, pero NINGÚN enlace puede sacar al
+             usuario del informe ni cargar el panel dentro del marco. -->
+        <iframe v-else-if="statsHtml" :srcdoc="statsHtml" class="stats-frame"
+                sandbox="allow-scripts" title="Estadísticas"></iframe>
         <div v-else class="stats-state">
           <BaseButton variant="primary" icon="bar-chart" @click="loadStats">Ver estadísticas</BaseButton>
         </div>

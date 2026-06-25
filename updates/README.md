@@ -84,3 +84,4 @@ exit 0
 | 0045 | proxy_read_timeout /api/ a 1800s (504 en migraciones) | 2026-06-25 |
 | 0046 | Carpeta de staging de migraciones (reutilizar backup) | 2026-06-25 |
 | 0047 | GeoIP (países) en estadísticas de dominio + cron mensual | 2026-06-25 |
+| 0048 | Informes de GoAccess en español (locale es_ES.UTF-8)   | 2026-06-26 |

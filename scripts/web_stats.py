@@ -231,8 +231,11 @@ def generate_goaccess_report(username: str, domain: str) -> str:
     geo = geoip_db_path()
     if geo:
         cmd += ["--geoip-database=" + geo]
+    # Informe en ESPAÑOL: GoAccess traduce su UI según el locale. La traducción
+    # (goaccess.mo) viene con el paquete; install/update generan es_ES.UTF-8.
+    env = {**_ENV, "LANG": "es_ES.UTF-8", "LC_ALL": "es_ES.UTF-8"}
     try:
-        r = subprocess.run(cmd, capture_output=True, text=True, timeout=60, env=_ENV)
+        r = subprocess.run(cmd, capture_output=True, text=True, timeout=60, env=env)
     except subprocess.TimeoutExpired:
         os.path.exists(tmp_html) and os.remove(tmp_html)
         raise WebStatsError("GoAccess tardó demasiado (log muy grande).")
