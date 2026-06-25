@@ -242,3 +242,19 @@ def test_apache_vhost_socket_php_correcto():
         "el vhost Apache debe usar el socket real del pool (svqpanel-{domain}.sock)"
     # NO debe usar el patrón viejo inventado.
     assert "php8.4-fpm-svqpanel" not in vhost
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# El vhost Apache debe poner index.php ANTES de index.html en DirectoryIndex.
+# El global de Debian pone .html primero → un sitio con ambos serviría el .html
+# en vez de la app PHP.
+# ─────────────────────────────────────────────────────────────────────────────
+def test_apache_vhost_directoryindex_php_primero():
+    vhost = generate_apache_vhost("ejemplo.com", "user1", "8.3")
+    # Buscar la DIRECTIVA real (línea que empieza por DirectoryIndex), no el
+    # comentario que la menciona.
+    di = next((l for l in vhost.splitlines()
+               if l.strip().startswith("DirectoryIndex")), None)
+    assert di is not None, "falta la directiva DirectoryIndex en el vhost Apache"
+    assert di.index("index.php") < di.index("index.html"), \
+        "index.php debe ir antes que index.html en DirectoryIndex"

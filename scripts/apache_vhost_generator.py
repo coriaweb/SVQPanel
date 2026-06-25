@@ -122,6 +122,11 @@ def generate_apache_vhost(
     # indica que la petición original era https.
     SetEnvIf X-Forwarded-Proto "https" HTTPS=on
 
+    # Prioridad de índice: index.php ANTES que index.html (el DirectoryIndex
+    # global de Debian pone .html primero, así un sitio con ambos serviría el
+    # .html en vez de la app PHP). Lo fijamos por vhost.
+    DirectoryIndex index.php index.html index.htm
+
     ErrorLog {error_log}
     CustomLog {access_log} svq_combined
 
