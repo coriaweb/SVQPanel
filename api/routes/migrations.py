@@ -512,9 +512,11 @@ async def migration_import(
     cleanup_tar = _is_temp_upload(tar_path)
 
     # Preflight: analizar y comprobar conflictos SOLO de lo que se importa.
+    # config_only: el preflight no necesita extraer los datos pesados; el job de
+    # importación (en background) reabre el backup y extrae todo.
     scope_list = [s for s in (scope or "").split(",") if s]
     try:
-        with open_backup(source_panel, tar_path) as backup:
+        with open_backup(source_panel, tar_path, config_only=True) as backup:
             manifest = backup.analyze()
             conflicts = find_conflicts(manifest, db, scope_list)
     except (HestiaImportError, CpanelImportError) as e:

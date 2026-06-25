@@ -1987,6 +1987,10 @@ server {
         proxy_set_header X-Real-IP $remote_addr;
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
         proxy_set_header X-Forwarded-Proto $scheme;
+        # Operaciones legítimamente largas (migración de backups, emisión SSL,
+        # restauraciones) pueden superar el default de 60s y dar un 504.
+        proxy_read_timeout 1800s;
+        proxy_send_timeout 1800s;
     }
 
     # Docs API → proxy al backend (Swagger /docs, ReDoc /redoc, esquema OpenAPI)

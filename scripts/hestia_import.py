@@ -232,10 +232,31 @@ def _is_within(base: str, target: str) -> bool:
     return target == base or target.startswith(base + os.sep)
 
 
-def safe_extract_tar(tar_path: str, dest: str) -> None:
+# Sufijos de los archivos de DATOS pesados de un backup Hestia: los datos web,
+# los buzones y los dumps de BD. Para el ANÁLISIS (leer el manifiesto) no hacen
+# falta — solo los .conf pequeños —, así que se omiten al extraer en modo
+# config_only. Extraerlos de un backup de varios GB es lo que provocaba el 504.
+_DATA_ARCHIVE_HINTS = ("domain_data.tar", "accounts.tar")
+
+
+def _is_heavy_data_member(name: str) -> bool:
+    base = os.path.basename(name)
+    if any(h in base for h in _DATA_ARCHIVE_HINTS):
+        return True
+    # dumps de BD: {db}.{type}.sql(.gz|.zst|…)
+    if ".sql" in base and (base.endswith((".gz", ".zst", ".zstd", ".sql", ".bz2", ".xz"))):
+        return True
+    return False
+
+
+def safe_extract_tar(tar_path: str, dest: str, config_only: bool = False) -> list:
     """Extrae un .tar(.gz) validando que ningún miembro escape de `dest`.
 
     Soporta el filtro 'data' de Python 3.12+; en versiones previas valida a mano.
+    Si `config_only`, omite los archivos de datos pesados (web data, buzones,
+    dumps de BD): basta para analizar el manifiesto y evita extraer varios GB.
+    Devuelve la lista de TODOS los nombres del tar (extraídos u omitidos), para
+    que el análisis pueda saber qué datos existen sin haberlos extraído.
     """
     mode = "r:*"  # autodetecta gz/bz2/xz/plano
     try:
@@ -253,6 +274,9 @@ def safe_extract_tar(tar_path: str, dest: str) -> None:
             if not _is_within(dest, member_path):
                 raise HestiaImportError(
                     f"El backup contiene una ruta no segura: {m.name!r}")
+            # Modo análisis: saltar los datos pesados (no se leen para el manifiesto).
+            if config_only and m.isfile() and _is_heavy_data_member(m.name):
+                continue
             # Symlinks/hardlinks que apuntan FUERA del destino: NO abortamos. Los
             # backups de Hestia traen symlinks de config (p.ej. nginx.ssl.conf →
             # /etc/letsencrypt/...) que apuntan a rutas del sistema origen. No nos
@@ -268,6 +292,7 @@ def safe_extract_tar(tar_path: str, dest: str) -> None:
             tar.extractall(dest, members=safe_members, filter="data")  # Python ≥ 3.12
         except TypeError:
             tar.extractall(dest, members=safe_members)                 # validado arriba
+        return [m.name for m in members]
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -292,13 +317,17 @@ def is_zst(path: str) -> bool:
 class HestiaBackup:
     """Abre y analiza un backup de Hestia/Vesta. Context manager: limpia el tmp."""
 
-    def __init__(self, tar_path: str):
+    def __init__(self, tar_path: str, config_only: bool = False):
         if not os.path.isfile(tar_path):
             raise HestiaImportError(f"No existe el archivo de backup: {tar_path}")
         self.tar_path = tar_path
         self.tmpdir = tempfile.mkdtemp(prefix="svq_hestia_")
         self.system: Optional[str] = None   # "hestia" | "vesta"
         self._extracted = False
+        # En modo análisis no se extraen los datos pesados; guardamos los nombres
+        # del tar para poder reportar has_data/has_dump sin haberlos extraído.
+        self.config_only = config_only
+        self._tar_names: List[str] = []
 
     def __enter__(self):
         self.extract()
@@ -324,7 +353,8 @@ class HestiaBackup:
     def extract(self):
         if self._extracted:
             return
-        safe_extract_tar(self.tar_path, self.tmpdir)
+        self._tar_names = safe_extract_tar(
+            self.tar_path, self.tmpdir, config_only=self.config_only)
         self._extracted = True
         # Detectar sistema de origen: hay un fichero/carpeta marcador.
         for marker in ("hestia", "vesta"):
@@ -476,22 +506,38 @@ class HestiaBackup:
 
     # ── localizar archivos de datos comprimidos ───────────────────────────────
     def _find_data_archive(self, kind: str, name: str, base: str) -> Optional[str]:
-        """Busca {base}.tar.gz / .tar.zst en {kind}/{name}/."""
+        """Busca {base}.tar.gz / .tar.zst en {kind}/{name}/.
+
+        En modo config_only los datos no se extrajeron: buscamos en la lista de
+        nombres del tar y devolvemos la ruta donde ESTARÁ tras la extracción real.
+        """
         d = os.path.join(self.root, kind, name)
         for ext in (".tar.gz", ".tar.zst", ".tar.zstd", ".tar"):
             p = os.path.join(d, base + ext)
             if os.path.isfile(p):
                 return p
+        if self.config_only:
+            suffix = f"{kind}/{name}/{base}"
+            for n in self._tar_names:
+                nn = n.rstrip("/")
+                if (suffix in nn) and nn.split(suffix, 1)[1] in (
+                        ".tar.gz", ".tar.zst", ".tar.zstd", ".tar"):
+                    return os.path.join(d, os.path.basename(nn))
         return None
 
     def _find_db_dump(self, dbname: str, dbtype: str) -> Optional[str]:
         d = os.path.join(self.root, "db", dbname)
-        if not os.path.isdir(d):
-            return None
-        # {db}.{type}.sql.{gz,zst} — pero por robustez buscamos cualquier .sql.*
-        for fn in os.listdir(d):
-            if fn.startswith(dbname) and ".sql" in fn:
-                return os.path.join(d, fn)
+        if os.path.isdir(d):
+            # {db}.{type}.sql.{gz,zst} — por robustez buscamos cualquier .sql.*
+            for fn in os.listdir(d):
+                if fn.startswith(dbname) and ".sql" in fn:
+                    return os.path.join(d, fn)
+        if self.config_only:
+            frag = f"db/{dbname}/"
+            for n in self._tar_names:
+                base = os.path.basename(n.rstrip("/"))
+                if frag in n and base.startswith(dbname) and ".sql" in base:
+                    return os.path.join(d, base)
         return None
 
     # ── manifiesto completo ────────────────────────────────────────────────────
@@ -1328,16 +1374,23 @@ def import_dns(backup: "HestiaBackup", zoneinfo: Dict, owner, db, report: Import
 # ─────────────────────────────────────────────────────────────────────────────
 # Orquestador de la importación (lo invoca el job en segundo plano)
 # ─────────────────────────────────────────────────────────────────────────────
-def open_backup(source_panel: str, tar_path: str):
+def open_backup(source_panel: str, tar_path: str, config_only: bool = False):
     """Factory: devuelve el backup adecuado según el panel de origen.
 
     Tanto HestiaBackup como CpanelBackup exponen analyze() y son context managers,
     así que el resto del pipeline los usa indistintamente.
+
+    `config_only`: en el ANÁLISIS, no extrae los datos pesados (web/buzones/dumps)
+    — basta con los .conf para el manifiesto y evita extraer varios GB (el 504).
+    La importación real abre el backup SIN config_only (extrae todo).
     """
     if (source_panel or "hestia").lower() == "cpanel":
         from scripts.cpanel_import import CpanelBackup
-        return CpanelBackup(tar_path)
-    return HestiaBackup(tar_path)
+        try:
+            return CpanelBackup(tar_path, config_only=config_only)
+        except TypeError:
+            return CpanelBackup(tar_path)  # cpanel aún no soporta config_only
+    return HestiaBackup(tar_path, config_only=config_only)
 
 
 def run_import(tar_path: str, target_user_id: int, scope: List[str], db,
