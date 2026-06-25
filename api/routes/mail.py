@@ -197,25 +197,18 @@ def _dns_add_dkim_record(domain_name: str, selector: str,
         ))
         logger.info(f"DKIM TXT añadido a zona DNS: {dkim_name}.{domain_name}")
 
+    # Subir el serial y sincronizar la zona DE VERDAD: reescribir BIND + recargar
+    # + empujar al cluster (slaves). Antes solo se reescribía el fichero sin subir
+    # serial ni recargar/resync → BIND seguía sirviendo la versión vieja sin DKIM
+    # y los slaves nunca recibían la clave pública (DKIM "no válido" en destino).
+    from api.routes.dns import _bump_serial, _sync_zone_to_bind
+    zone.serial = _bump_serial(zone.serial)
     db.commit()
-
-    # Regenerar el fichero de zona BIND9 si está disponible
+    db.refresh(zone)
     try:
-        from scripts.dns_manager import DNSManager
-        from api.models.models_dns import DnsRecord as DR
-        records = db.query(DR).filter(DR.zone_id == zone.id).all()
-        record_dicts = [
-            {"record_type": r.record_type, "name": r.name,
-             "content": r.content, "ttl": r.ttl, "priority": r.priority}
-            for r in records
-        ]
-        dns_mgr = DNSManager()
-        dns_mgr.write_zone_from_records(
-            domain_name, zone.serial, record_dicts,
-            soa_ns=zone.soa_ns, ttl=zone.ttl or 14400
-        )
+        _sync_zone_to_bind(zone, db)
     except Exception as e:
-        logger.warning(f"No se pudo regenerar zona BIND9 tras DKIM: {e}")
+        logger.warning(f"No se pudo sincronizar la zona tras DKIM: {e}")
 
     return True
 
