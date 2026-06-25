@@ -1331,14 +1331,41 @@ def cmd_setup_ipv6_persistence() -> int:
     # 2) Eliminar el netplan defectuoso.
     cleanup_legacy_netplan()
 
-    # 3) Instalar el servicio de ruta IPv6 default persistente.
+    # 3) Re-asignar las IPv6 de dominios desde la BD. Si el netplan defectuoso se
+    #    borró durante un rescate de red, las IPv6 dedicadas de los dominios se
+    #    perdieron de la interfaz (la web deja de cargar por IPv6). Esto las
+    #    restaura (en caliente + drop-in persistente). Idempotente.
+    try:
+        from api.models.database import SessionLocal, load_all_models
+        from api.models.models_domain import Domain
+        from scripts.ipv6_manager import IPv6Manager
+        load_all_models()
+        db = SessionLocal()
+        mgr = IPv6Manager()
+        n = 0
+        for d in db.query(Domain).all():
+            ip = getattr(d, "ipv6", None)
+            if ip:
+                cidr = ip if "/" in ip else ip + "/64"
+                try:
+                    mgr.assign_ipv6("eth0", cidr)
+                    n += 1
+                except Exception as e:
+                    logger.warning(f"No se pudo reasignar IPv6 de {d.domain_name}: {e}")
+        db.close()
+        if n:
+            logger.info(f"Reasignadas {n} IPv6 de dominios desde la BD")
+    except Exception as e:
+        logger.warning(f"Reasignación de IPv6 de dominios con incidencias: {e}")
+
+    # 4) Instalar el servicio de ruta IPv6 default persistente.
     try:
         res = IPv6RouteService().install()
         logger.info(f"setup_ipv6_persistence: {res}")
     except Exception as e:
         logger.warning(f"IPv6RouteService con incidencias: {e}")
 
-    # 4) Recargar networkd para aplicar el drop-in.
+    # 5) Recargar networkd para aplicar el drop-in.
     try:
         subprocess.run(["networkctl", "reload"], capture_output=True, timeout=30)
     except Exception:
