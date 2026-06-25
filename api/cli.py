@@ -1373,6 +1373,42 @@ def cmd_setup_ipv6_persistence() -> int:
     return 0
 
 
+def cmd_regenerate_all_vhosts() -> int:
+    """Regenera el vhost de TODOS los dominios desde la BD (aplica cambios de la
+    plantilla de vhost a dominios existentes). Idempotente.
+    """
+    try:
+        from api.models.database import SessionLocal, load_all_models
+        from api.models.models_domain import Domain
+        from scripts.domain_manager import DomainManager
+        load_all_models()
+    except PermissionError:
+        logger.error("Requiere root")
+        return 1
+    except Exception as e:
+        logger.error(f"No se pudo cargar: {e}")
+        return 0
+    db = SessionLocal()
+    mgr = DomainManager()
+    ok = fail = 0
+    for d in db.query(Domain).all():
+        try:
+            mgr.regenerate_vhost(
+                d.user.username, d.domain_name, d.php_version,
+                ssl_enabled=d.ssl_enabled, ipv6=d.ipv6, ipv4=d.ipv4,
+                force_https=getattr(d, "force_https", False) or False,
+                hsts=getattr(d, "hsts_enabled", False) or False,
+                canonical_domain=getattr(d, "canonical_domain", "www") or "www",
+            )
+            ok += 1
+        except Exception as e:
+            logger.warning(f"No se pudo regenerar {d.domain_name}: {e}")
+            fail += 1
+    db.close()
+    logger.info(f"regenerate_all_vhosts: {ok} regenerados, {fail} con error")
+    return 0
+
+
 def cmd_setup_archive_protection() -> int:
     """Sube el peso de los símbolos de archivo de Rspamd (anti zip-bomb: ratio de
     descompresión enorme y ejecutables empaquetados). Idempotente.
@@ -1639,6 +1675,8 @@ def main():
         help="Endurece Postfix (banner+VRFY) y BIND (version none)")
     sub.add_parser("setup_archive_protection",
         help="Protección anti zip-bomb de Rspamd (sube peso de símbolos de archivo)")
+    sub.add_parser("regenerate_all_vhosts",
+        help="Regenera el vhost de todos los dominios desde la BD")
     sub.add_parser("setup_ipv6_persistence",
         help="Migra IPv6 a systemd-networkd + ruta default persistente (arregla red rota al reiniciar)")
     sub.add_parser("fix_mail_folders",
@@ -1751,6 +1789,8 @@ def main():
         sys.exit(cmd_harden_services())
     if args.cmd == "setup_archive_protection":
         sys.exit(cmd_setup_archive_protection())
+    if args.cmd == "regenerate_all_vhosts":
+        sys.exit(cmd_regenerate_all_vhosts())
     if args.cmd == "setup_ipv6_persistence":
         sys.exit(cmd_setup_ipv6_persistence())
     if args.cmd == "fix_mail_folders":
