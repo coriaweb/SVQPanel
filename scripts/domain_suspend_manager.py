@@ -101,9 +101,13 @@ _SUSPENDED_HTML = '''<!DOCTYPE html>
 
 
 def _server_block(domain: str, listen: str, ssl_lines: str = "") -> str:
+    # Escuchar en IPv4 E IPv6: si el dominio tiene AAAA, el navegador entra por
+    # IPv6 y, sin el listen [::], nginx cae al server por defecto y presenta un
+    # cert ajeno → ERR_CERT_COMMON_NAME_INVALID en la página de suspensión.
     return (
         f"server {{\n"
         f"    listen {listen};\n"
+        f"    listen [::]:{listen};\n"
         f"{ssl_lines}"
         f"    server_name {domain} www.{domain};\n"
         f"    error_page 503 /suspended.html;\n"

@@ -80,3 +80,4 @@ exit 0
 | 0041 | Protección anti zip-bomb del antispam (Rspamd)      | 2026-06-24 |
 | 0042 | Fix IPv6: netplan→networkd + ruta persistente (red rota al reiniciar) | 2026-06-25 |
 | 0043 | Apache DirectoryIndex: index.php antes que index.html  | 2026-06-25 |
+| 0044 | Página de suspensión escucha en IPv6 (cert válido)    | 2026-06-25 |

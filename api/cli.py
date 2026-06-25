@@ -1373,6 +1373,34 @@ def cmd_setup_ipv6_persistence() -> int:
     return 0
 
 
+def cmd_refresh_suspended_vhosts() -> int:
+    """Regenera el vhost de los dominios SUSPENDIDOS (aplica el listen IPv6 a la
+    página de suspensión). Idempotente."""
+    try:
+        from api.models.database import SessionLocal, load_all_models
+        from api.models.models_domain import Domain
+        from scripts.domain_suspend_manager import DomainSuspendManager
+        load_all_models()
+    except PermissionError:
+        logger.error("Requiere root")
+        return 1
+    except Exception as e:
+        logger.error(f"No se pudo cargar: {e}")
+        return 0
+    db = SessionLocal()
+    mgr = DomainSuspendManager()
+    n = 0
+    for d in db.query(Domain).filter(Domain.is_suspended == True).all():  # noqa: E712
+        try:
+            mgr.suspend_domain(d.domain_name)  # regenera el vhost (con IPv6)
+            n += 1
+        except Exception as e:
+            logger.warning(f"No se pudo refrescar suspensión de {d.domain_name}: {e}")
+    db.close()
+    logger.info(f"refresh_suspended_vhosts: {n} vhosts de suspensión regenerados")
+    return 0
+
+
 def cmd_regenerate_all_vhosts() -> int:
     """Regenera el vhost de TODOS los dominios desde la BD (aplica cambios de la
     plantilla de vhost a dominios existentes). Idempotente.
@@ -1677,6 +1705,8 @@ def main():
         help="Protección anti zip-bomb de Rspamd (sube peso de símbolos de archivo)")
     sub.add_parser("regenerate_all_vhosts",
         help="Regenera el vhost de todos los dominios desde la BD")
+    sub.add_parser("refresh_suspended_vhosts",
+        help="Regenera el vhost de los dominios suspendidos (listen IPv6)")
     sub.add_parser("setup_ipv6_persistence",
         help="Migra IPv6 a systemd-networkd + ruta default persistente (arregla red rota al reiniciar)")
     sub.add_parser("fix_mail_folders",
@@ -1791,6 +1821,8 @@ def main():
         sys.exit(cmd_setup_archive_protection())
     if args.cmd == "regenerate_all_vhosts":
         sys.exit(cmd_regenerate_all_vhosts())
+    if args.cmd == "refresh_suspended_vhosts":
+        sys.exit(cmd_refresh_suspended_vhosts())
     if args.cmd == "setup_ipv6_persistence":
         sys.exit(cmd_setup_ipv6_persistence())
     if args.cmd == "fix_mail_folders":
