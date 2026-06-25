@@ -437,9 +437,17 @@
                 </div>
                 <div v-if="webmail.enabled && !webmail.ssl" style="margin-top:.75rem">
                   <button class="sv-btn sv-btn--ghost sv-btn--sm" @click="issueWebmailSsl" :disabled="webmailSslIssuing">
-                    <span v-if="webmailSslIssuing" class="spinner-border spinner-border-sm"></span>
-                    <i v-else class="bi bi-lock"></i> Activar HTTPS (Let's Encrypt)
+                    <span v-if="webmailSslIssuing" class="sv-spin"></span>
+                    <i v-else class="bi bi-lock"></i>
+                    {{ webmailSslIssuing ? 'Emitiendo…' : 'Activar HTTPS (Let\'s Encrypt)' }}
                   </button>
+                  <div v-if="webmailSslIssuing" class="sv-ssl-progress">
+                    <span class="sv-spin sv-spin--lg"></span>
+                    <div>
+                      <strong>Emitiendo el certificado…</strong>
+                      <div style="font-size:.78rem;color:var(--text-muted)">Validando el dominio con Let's Encrypt (~30s). No cierres esta pestaña.</div>
+                    </div>
+                  </div>
                 </div>
                 <p v-if="!webmail.enabled" style="font-size:.85rem;color:var(--text-muted);margin-top:.5rem">
                   Actívalo para crear <code>{{ webmail.host }}</code> automáticamente.
@@ -2098,6 +2106,14 @@ export default {
 .sv-icon-btn--warn:hover { color:var(--warning); border-color:var(--warning); }
 .sv-icon-btn--ok { color:var(--success); }
 .sv-icon-btn--ok:hover { border-color:var(--success); }
+/* Spinner propio (no depende del bootstrap-compat) para que SIEMPRE se vea */
+.sv-spin { display:inline-block; width:.9rem; height:.9rem; vertical-align:-2px; margin-right:.4rem;
+  border:2px solid currentColor; border-right-color:transparent; border-radius:50%; animation:sv-spin-kf .7s linear infinite; }
+.sv-spin--lg { width:1.4rem; height:1.4rem; border-width:3px; color:var(--ac); margin:0; }
+@keyframes sv-spin-kf { to { transform:rotate(360deg); } }
+.sv-ssl-progress { display:flex; align-items:center; gap:.75rem; margin-top:.7rem; padding:.7rem 1rem;
+  border-radius:var(--r-md,10px); background:color-mix(in srgb,var(--ac) 8%,transparent);
+  border:1px solid color-mix(in srgb,var(--ac) 25%,transparent); }
 .sv-badge--warn { background:color-mix(in srgb,var(--warning,#f59e0b) 15%,transparent); color:var(--warning,#f59e0b); }
 .sv-badge--danger { background:color-mix(in srgb,var(--danger) 15%,transparent); color:var(--danger); }
 
