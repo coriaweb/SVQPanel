@@ -224,12 +224,9 @@ def _fetch_via_ssh(cfg: dict) -> str:
         gen_cmd, env = _sub(sshb + [remote, remote_gen], env)
         r = subprocess.run(gen_cmd, capture_output=True, text=True, env=env, timeout=1800)
         if r.returncode != 0:
-            msg = (r.stderr or r.stdout or "").strip()[:300]
-            if "command not found" in msg or "No such file" in msg:
-                msg += (" — ¿es este servidor realmente HestiaCP/VestaCP? "
-                        "No se encontró v-backup-user.")
+            from scripts.migration_helpers import explain_backup_error
             raise HTTPException(status_code=502,
-                detail=f"v-backup-user falló en el remoto: {msg}")
+                detail=explain_backup_error(r.stderr, r.stdout, hestia_user))
 
         # 2) Localizar el .tar más reciente del usuario en /backup/
         find_cmd, env = _sub(sshb + [remote,
