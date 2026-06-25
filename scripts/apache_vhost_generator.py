@@ -70,8 +70,18 @@ def generate_apache_vhost(
     access_log = f"{logs_dir}/apache.access.log"
     error_log = f"{logs_dir}/apache.error.log"
 
-    # Socket PHP-FPM del dominio (mismo que usa Nginx para este dominio)
-    php_socket = php_socket_override or f"/run/php/php{php_version}-fpm-svqpanel-{domain_name}.sock"
+    # Socket PHP-FPM del dominio (MISMO que crea el pool real y usa Nginx). El
+    # nombre lo define php_ini_manager.pool_socket_path (/run/php/svqpanel-
+    # {domain}.sock); usar otro patrón aquí dejaba Apache apuntando a un socket
+    # inexistente → 503. Por eso derivamos del helper, no de un patrón inventado.
+    if php_socket_override:
+        php_socket = php_socket_override
+    else:
+        try:
+            from scripts.php_ini_manager import pool_socket_path
+            php_socket = pool_socket_path(domain_name)
+        except Exception:
+            php_socket = f"/run/php/svqpanel-{domain_name}.sock"
 
     # Modo redirección: si el dominio redirige a otra URL, el Nginx front ya
     # hace el 301; el backend Apache no necesita vhost real. Devolvemos uno
@@ -105,6 +115,12 @@ def generate_apache_vhost(
     ServerName {domain_name}
     ServerAlias www.{domain_name}
     DocumentRoot {docroot}
+
+    # Nginx termina el SSL y reenvía por HTTP a Apache con X-Forwarded-Proto.
+    # Sin esto, PHP ve HTTPS vacío y apps como WordPress redirigen a HTTPS en
+    # bucle infinito (ERR_TOO_MANY_REDIRECTS). Marcamos HTTPS=on cuando el front
+    # indica que la petición original era https.
+    SetEnvIf X-Forwarded-Proto "https" HTTPS=on
 
     ErrorLog {error_log}
     CustomLog {access_log} svq_combined

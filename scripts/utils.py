@@ -540,6 +540,10 @@ def generate_nginx_config(
             f"        fastcgi_pass php_{backend_name};\n"
             f"        fastcgi_index index.php;\n"
             f"        fastcgi_param SCRIPT_FILENAME $document_root$fastcgi_script_name;\n"
+            # Decirle a PHP que la petición llega por HTTPS. Sin esto, apps como
+            # WordPress detectan $_SERVER['HTTPS'] vacío (nginx terminó el SSL) y
+            # redirigen a HTTPS en bucle infinito → ERR_TOO_MANY_REDIRECTS.
+            f"        fastcgi_param HTTPS on;\n"
             f"        include fastcgi_params;{cache_block_ssl}\n"
             f"    }}\n"
         )

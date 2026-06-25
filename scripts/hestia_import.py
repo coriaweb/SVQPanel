@@ -734,6 +734,11 @@ def import_web(backup: "HestiaBackup", web: Dict, owner, db, report: ImportRepor
             _copy_into(data_dir, public_html)
         else:
             _restore_web_files(data_tar, web_root, public_html)
+        # Neutralizar en el .htaccess la regla "RewriteCond %{HTTPS} off → 301 a
+        # https": es redundante (nginx ya fuerza https en el front) y en nuestra
+        # arquitectura Apache-tras-Nginx causa un bucle infinito de redirección
+        # (Apache siempre ve HTTPS off tras el proxy) → ERR_TOO_MANY_REDIRECTS.
+        _neutralize_htaccess_https_redirect(public_html)
         # Permisos: el CONTENIDO al usuario del dominio (ver svqpanel-php-pool-user).
         import subprocess
         subprocess.run(["chown", "-R", f"{owner.username}:{owner.username}", web_root],
@@ -781,6 +786,40 @@ def import_web(backup: "HestiaBackup", web: Dict, owner, db, report: ImportRepor
     report.ok("web", domain_name, f"PHP {php_version}"
               + (" + archivos" if has_data else " (sin datos)") + php_note)
     return db_domain
+
+
+def _neutralize_htaccess_https_redirect(public_html: str) -> None:
+    """Comenta la regla de redirección-a-https del .htaccess (redundante con el
+    front Nginx y causa de bucle en Apache-tras-Nginx). Idempotente; deja backup."""
+    import re
+    ht = os.path.join(public_html, ".htaccess")
+    if not os.path.isfile(ht):
+        return
+    try:
+        with open(ht) as f:
+            content = f.read()
+    except OSError:
+        return
+    # Par: RewriteCond %{HTTPS} off  +  RewriteRule ... https://... [R=301]
+    pat = re.compile(
+        r'(^[ \t]*RewriteCond[ \t]+%\{HTTPS\}[ \t]+off[ \t]*\n'
+        r'[ \t]*RewriteRule[ \t]+\^.*https://.*\[[^\]]*R=301[^\]]*\][ \t]*\n)',
+        re.M | re.I)
+
+    def _comment(m):
+        return "".join("    # [SVQPanel] " + l if l.strip() else l
+                       for l in m.group(1).splitlines(True))
+
+    new, n = pat.subn(_comment, content)
+    if n:
+        try:
+            with open(ht + ".svqbak", "w") as f:
+                f.write(content)
+            with open(ht, "w") as f:
+                f.write(new)
+            logger.info(f"Neutralizada la redirección https redundante en {ht} ({n})")
+        except OSError as e:
+            logger.warning(f"No se pudo editar {ht}: {e}")
 
 
 def _restore_web_files(data_tar: str, web_root: str, public_html: str) -> None:

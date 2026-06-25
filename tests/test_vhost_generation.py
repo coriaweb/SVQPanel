@@ -217,3 +217,28 @@ def test_set_fastcgi_cache_kwargs_son_subconjunto_de_regenerate_vhost():
         if name in propios:
             continue
         assert name in rv, f"set_fastcgi_cache pasa '{name}' pero regenerate_vhost no lo acepta"
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# El bloque SSL debe pasar HTTPS a PHP-FPM. Sin "fastcgi_param HTTPS on",
+# WordPress (y otras apps) detectan $_SERVER['HTTPS'] vacío tras la terminación
+# SSL de nginx y redirigen a HTTPS en bucle → ERR_TOO_MANY_REDIRECTS.
+# ─────────────────────────────────────────────────────────────────────────────
+def test_vhost_ssl_pasa_https_a_php():
+    cfg = generate_nginx_config("ejemplo.com", "user1", "8.3", ssl_enabled=True)
+    # En el bloque SSL (location php del 443) debe ir el fastcgi_param HTTPS on.
+    assert "fastcgi_param HTTPS on" in cfg, \
+        "el vhost SSL debe pasar HTTPS a PHP-FPM (evita bucle de redirección)"
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# El vhost de Apache debe apuntar al MISMO socket PHP-FPM que crea el pool real
+# (/run/php/svqpanel-{domain}.sock). Un patrón distinto deja Apache apuntando a
+# un socket inexistente → 503.
+# ─────────────────────────────────────────────────────────────────────────────
+def test_apache_vhost_socket_php_correcto():
+    vhost = generate_apache_vhost("ejemplo.com", "user1", "8.4")
+    assert "/run/php/svqpanel-ejemplo.com.sock" in vhost, \
+        "el vhost Apache debe usar el socket real del pool (svqpanel-{domain}.sock)"
+    # NO debe usar el patrón viejo inventado.
+    assert "php8.4-fpm-svqpanel" not in vhost
