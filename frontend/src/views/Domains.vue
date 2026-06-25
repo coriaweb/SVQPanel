@@ -114,7 +114,7 @@
             </tr>
           </thead>
           <tbody>
-            <tr v-for="domain in domains" :key="domain.id">
+            <tr v-for="domain in domains" :key="domain.id" :class="{ 't-row--suspended': domain.is_suspended }">
               <td>
                 <router-link :to="`/domains/${domain.id}`" class="t-domain"><i class="bi bi-globe2"></i>{{ domain.domain_name }}</router-link>
               </td>
@@ -133,6 +133,8 @@
                   <button class="icon-act" @click="openSSLManager(domain)" title="SSL"><i class="bi bi-lock"></i></button>
                   <button class="icon-act" @click="openFileManager(domain)" title="Archivos"><i class="bi bi-folder2-open"></i></button>
                   <button class="icon-act" @click="openEditForm(domain)" title="Editar"><i class="bi bi-pencil"></i></button>
+                  <button v-if="!domain.is_suspended" class="icon-act is-warn" @click="suspendDomain(domain)" title="Suspender"><i class="bi bi-pause-circle"></i></button>
+                  <button v-else class="icon-act is-ok" @click="unsuspendDomain(domain)" title="Reactivar"><i class="bi bi-play-circle"></i></button>
                   <button class="icon-act is-danger" @click="deleteDomainConfirm(domain.id)" title="Eliminar"><i class="bi bi-trash"></i></button>
                 </div>
               </td>
@@ -799,6 +801,10 @@ export default {
 .icon-act { display: inline-flex; align-items: center; justify-content: center; width: 30px; height: 30px; border: 1px solid var(--border); background: var(--surface); border-radius: var(--r-sm); color: var(--text-secondary); cursor: pointer; transition: all var(--t-fast); text-decoration: none; }
 .icon-act:hover { background: var(--surface-inset); color: var(--text); }
 .icon-act.is-danger:hover { background: var(--danger-bg); color: var(--danger); border-color: var(--danger-border); }
+.icon-act.is-warn:hover { color: var(--warning); border-color: var(--warning); }
+.icon-act.is-ok { color: var(--success); }
+.icon-act.is-ok:hover { border-color: var(--success); }
+.t-row--suspended > td { background: color-mix(in srgb, var(--warning) 7%, transparent); }
 
 @media (max-width: 600px) {
   .cards-grid { grid-template-columns: 1fr; }
