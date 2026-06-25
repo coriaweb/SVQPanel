@@ -72,8 +72,32 @@
           <span>Cliente destino</span>
           <select class="svq-select" v-model="targetUserId">
             <option :value="null" disabled>Elige un cliente…</option>
+            <option :value="'__new__'">➕ Crear cliente nuevo desde el backup</option>
             <option v-for="u in clientUsers" :key="u.id" :value="u.id">{{ u.username }} ({{ u.email }})</option>
           </select>
+        </label>
+      </div>
+
+      <!-- Crear cliente nuevo: datos (el username se prerellena del backup tras analizar) -->
+      <div v-if="targetUserId === '__new__'" class="mig-newuser">
+        <p class="dd-muted" style="margin:0 0 .6rem">
+          <i class="bi bi-info-circle"></i>
+          Se creará un cliente nuevo con estos datos y la importación irá bajo él.
+          Tras «Analizar», el nombre y el email se rellenan con los del backup (puedes cambiarlos).
+        </p>
+        <div class="mig-grid">
+          <label class="mig-field">
+            <span>Nombre de usuario</span>
+            <input class="svq-input mono" v-model="newUser.username" placeholder="(del backup)" />
+          </label>
+          <label class="mig-field">
+            <span>Email</span>
+            <input class="svq-input" v-model="newUser.email" placeholder="cliente@dominio.com" />
+          </label>
+        </div>
+        <label class="mig-field" style="margin-top:.6rem;display:block">
+          <span>Contraseña <small class="dd-muted">(vacío = se genera una segura)</small></span>
+          <PasswordField v-model="newUser.password" placeholder="Déjalo vacío para autogenerar" />
         </label>
       </div>
 
@@ -239,10 +263,11 @@ import api from '../services/api'
 import { useMainStore } from '../stores/useMainStore'
 import BaseCard from '../components/ui/BaseCard.vue'
 import BaseButton from '../components/ui/BaseButton.vue'
+import PasswordField from '../components/PasswordField.vue'
 
 export default {
   name: 'Migrations',
-  components: { BaseCard, BaseButton },
+  components: { BaseCard, BaseButton, PasswordField },
   setup() {
     const store = useMainStore()
     const sourcePanel = ref('hestia')
@@ -252,6 +277,7 @@ export default {
     const url = ref('')
     const ssh = ref({ host: '', user: 'root', port: '22', hestia_user: '', password: '', key: '' })
     const targetUserId = ref(null)
+    const newUser = ref({ username: '', email: '', password: '' })
     const clientUsers = ref([])
     const scope = ref(['web', 'db', 'mail', 'dns'])
     const scopeOptions = [
@@ -267,6 +293,8 @@ export default {
 
     const canAnalyze = computed(() => {
       if (targetUserId.value == null) return false
+      // Para "crear nuevo" no exigimos datos antes de analizar: se prerellenan
+      // del backup tras el análisis. Para cliente existente, basta con el id.
       if (source.value === 'upload') return !!file.value
       if (source.value === 'path') return !!serverPath.value.trim()
       if (source.value === 'url') return !!url.value.trim()
@@ -275,8 +303,10 @@ export default {
     })
     const mailAccounts = computed(() =>
       (manifest.value?.mail || []).reduce((n, m) => n + (m.accounts_count || 0), 0))
-    const targetUsername = computed(() =>
-      clientUsers.value.find(u => u.id === targetUserId.value)?.username || '')
+    const targetUsername = computed(() => {
+      if (targetUserId.value === '__new__') return newUser.value.username || '(nuevo cliente)'
+      return clientUsers.value.find(u => u.id === targetUserId.value)?.username || ''
+    })
 
     const loadUsers = async () => {
       try {
@@ -301,7 +331,14 @@ export default {
         if (ssh.value.password) fd.append('ssh_password', ssh.value.password)
         if (ssh.value.key) fd.append('ssh_key', ssh.value.key)
       }
-      fd.append('target_user_id', String(targetUserId.value))
+      if (targetUserId.value === '__new__') {
+        fd.append('create_new', 'true')
+        if (newUser.value.username) fd.append('new_username', newUser.value.username.trim())
+        if (newUser.value.email) fd.append('new_email', newUser.value.email.trim())
+        if (newUser.value.password) fd.append('new_password', newUser.value.password)
+      } else if (targetUserId.value != null) {
+        fd.append('target_user_id', String(targetUserId.value))
+      }
       fd.append('scope', scope.value.join(','))
       fd.append('source_panel', sourcePanel.value)
       // En la importación, enviar los registros DNS aprobados/editados.
@@ -318,6 +355,12 @@ export default {
       try {
         const r = await api.migrationAnalyze(_formData())
         manifest.value = r.data
+        // Si vamos a crear cliente nuevo, prerellenar nombre/email del backup
+        // (solo si el admin no los ha escrito ya).
+        if (targetUserId.value === '__new__') {
+          if (!newUser.value.username) newUser.value.username = (r.data.system || '').toLowerCase()
+          if (!newUser.value.email) newUser.value.email = r.data.user?.contact || ''
+        }
         // Clonar las zonas DNS para edición local (registros + estado abierto).
         dnsZones.value = (r.data.dns || []).map((z, i) => ({
           domain: z.domain,
@@ -374,7 +417,7 @@ export default {
     loadUsers()
 
     return {
-      sourcePanel, source, file, serverPath, url, ssh, targetUserId, clientUsers, scope, scopeOptions,
+      sourcePanel, source, file, serverPath, url, ssh, targetUserId, newUser, clientUsers, scope, scopeOptions,
       analyzing, importing, manifest, dnsZones, job, canAnalyze, mailAccounts, targetUsername,
       onFile, analyze, startImport,
     }

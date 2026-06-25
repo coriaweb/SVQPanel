@@ -30,6 +30,53 @@ router = APIRouter()
 MAX_BACKUP_MB = 5120  # 5 GB
 
 
+def _create_target_user(db: Session, username: str, email: str,
+                        password: Optional[str]) -> User:
+    """Crea el cliente destino de la migración (sistema + BD) a partir de los
+    datos del backup. Si no se da contraseña, se genera una que cumple la
+    política. Devuelve el User ya persistido."""
+    from scripts.user_manager import UserManager
+    from scripts.utils import validate_username, validate_email
+    from scripts.password_policy import generate_password, load_policy, validate_password
+
+    username = (username or "").strip().lower()
+    email = (email or "").strip()
+    if not username or not validate_username(username):
+        raise HTTPException(status_code=400,
+            detail="Nombre de usuario del cliente no válido (a-z, 0-9, sin espacios).")
+    if not email or not validate_email(email):
+        # El backup puede no traer email; usamos uno placeholder del propio panel.
+        email = f"{username}@local.invalid"
+    # Username único.
+    if db.query(User).filter(User.username == username).first():
+        raise HTTPException(status_code=409,
+            detail=f"Ya existe un usuario «{username}». Elige otro nombre o usa el cliente existente.")
+
+    # Contraseña: la indicada (validada) o una generada que cumple la política.
+    if password:
+        errs = validate_password(password, load_policy(db))
+        if errs:
+            raise HTTPException(status_code=400,
+                detail="La contraseña no cumple la política: " + "; ".join(errs))
+    else:
+        password = generate_password(load_policy(db))
+
+    try:
+        UserManager().create_user(username, email, password)
+    except Exception as e:
+        raise HTTPException(status_code=500,
+            detail=f"No se pudo crear el usuario del sistema: {e}")
+
+    db_user = User(username=username, email=email, role="user",
+                   is_admin=False, domains_limit=10)
+    db_user.set_password(password)
+    db.add(db_user)
+    db.commit()
+    db.refresh(db_user)
+    logger.info(f"Migración: cliente destino «{username}» creado desde el backup")
+    return db_user
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # Obtención del .tar según el origen (upload / path local). URL y SSH: fase 6.
 # ─────────────────────────────────────────────────────────────────────────────
@@ -372,7 +419,13 @@ async def migration_import(
     ssh_key: Optional[str] = Form(None),
     ssh_port: Optional[int] = Form(None),
     hestia_user: Optional[str] = Form(None),
-    target_user_id: int = Form(...),
+    target_user_id: Optional[int] = Form(None),
+    # Crear el cliente destino SOBRE LA MARCHA desde el backup (en vez de elegir
+    # uno existente). Si create_new=true, se crea con estos datos.
+    create_new: Optional[bool] = Form(False),
+    new_username: Optional[str] = Form(None),
+    new_email: Optional[str] = Form(None),
+    new_password: Optional[str] = Form(None),
     scope: str = Form("web,db,mail,dns"),
     dns_records: Optional[str] = Form(None),
     source_panel: str = Form("hestia"),
@@ -401,13 +454,21 @@ async def migration_import(
         except (ValueError, TypeError):
             raise HTTPException(status_code=400, detail="dns_records no es un JSON válido")
 
-    # Validar usuario destino (cliente, no admin)
-    target = db.query(User).filter(User.id == target_user_id).first()
-    if not target:
-        raise HTTPException(status_code=404, detail="Usuario destino no encontrado")
-    if target.role == "admin" or target.is_admin:
-        raise HTTPException(status_code=403,
-            detail="El destino debe ser una cuenta de cliente, no un administrador.")
+    # Resolver el usuario destino: o se crea uno nuevo desde el backup, o se usa
+    # uno existente.
+    if create_new:
+        target = _create_target_user(db, new_username, new_email, new_password)
+        target_user_id = target.id
+    else:
+        if not target_user_id:
+            raise HTTPException(status_code=400,
+                detail="Indica un cliente destino o marca «crear cliente nuevo».")
+        target = db.query(User).filter(User.id == target_user_id).first()
+        if not target:
+            raise HTTPException(status_code=404, detail="Usuario destino no encontrado")
+        if target.role == "admin" or target.is_admin:
+            raise HTTPException(status_code=403,
+                detail="El destino debe ser una cuenta de cliente, no un administrador.")
 
     ssh = _ssh_from_form(ssh_host, ssh_user, ssh_password, ssh_key, ssh_port, hestia_user)
     tar_path = await _receive_backup(file, path, url, ssh)
