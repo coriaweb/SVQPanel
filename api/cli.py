@@ -1416,9 +1416,10 @@ def cmd_convert_subdomains(domains=None, dry_run: bool = False) -> int:
         purge_dns_zones(db, {d.domain_name}, warnings)
         for w in warnings:
             logger.warning(f"  {w}")
-        # 3) Marcar.
+        # 3) Marcar (y sin canónico www: un subdominio no tiene variante www).
         d.is_subdomain = True
         d.parent_domain = parent.domain_name
+        d.canonical_domain = "none"
         db.commit()
         n += 1
     db.close()

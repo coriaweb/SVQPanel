@@ -362,6 +362,7 @@ def generate_nginx_config(
     custom_nginx_config: Optional[str] = None,
     httpauth: Optional[dict] = None,
     canonical_domain: Optional[str] = "www",
+    is_subdomain: bool = False,
 ) -> str:
     """
     Generate Nginx vhost configuration (Hestia-style paths).
@@ -409,13 +410,19 @@ def generate_nginx_config(
         if lines:
             bots_block = "\n" + "\n".join(lines) + "\n"
 
-    # server_name incluye IPv6 cuando está asignada (para acceso por IP directa)
-    server_names = f"{domain} www.{domain}"
+    # server_name incluye IPv6 cuando está asignada (para acceso por IP directa).
+    # Un SUBDOMINIO (gestion.zococoria.es) NO lleva www. (nadie usa
+    # www.gestion.zococoria.es) ni redirección canónica: se sirve tal cual.
+    if is_subdomain:
+        server_names = domain
+    else:
+        server_names = f"{domain} www.{domain}"
     if ipv6:
         server_names += f" {ipv6}"   # nginx acepta IPv6 sin corchetes en server_name
 
-    # Redirección al dominio canónico (www / non-www). Vacío si 'none'/None.
-    canonical_block = _canonical_redirect_block(domain, canonical_domain)
+    # Redirección al dominio canónico (www / non-www). Vacío si 'none'/None o si
+    # es un subdominio (no aplica el concepto www).
+    canonical_block = "" if is_subdomain else _canonical_redirect_block(domain, canonical_domain)
 
     # Inyección dentro del server{}: primero la plantilla, luego las directivas
     # personalizadas del dominio (pueden complementar/sobrescribir a la plantilla).

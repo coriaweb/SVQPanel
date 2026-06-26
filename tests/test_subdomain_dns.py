@@ -25,3 +25,21 @@ def test_subdomain_label_mismo_dominio_es_arroba():
 def test_subdomain_label_sin_relacion_devuelve_fqdn():
     # Si no es sufijo, devuelve el fqdn tal cual (no debería pasar en uso real).
     assert subdomain_label("otro.com", "zococoria.es") == "otro.com"
+
+
+def test_vhost_subdominio_sin_www_ni_canonical():
+    """El vhost de un subdominio no lleva www. ni redirección canónica."""
+    from scripts.utils import generate_nginx_config
+    sub = generate_nginx_config("gestion.zococoria.es", "zococori", "8.2",
+                                is_subdomain=True, canonical_domain="www")
+    assert "server_name gestion.zococoria.es;" in sub
+    assert "www.gestion.zococoria.es" not in sub
+    assert "301" not in sub or "www." not in sub.split("server_name")[1][:200]
+
+
+def test_vhost_dominio_normal_si_lleva_www():
+    """Un dominio normal sí incluye www. en server_name."""
+    from scripts.utils import generate_nginx_config
+    dom = generate_nginx_config("zococoria.es", "zococori", "8.2",
+                                is_subdomain=False, canonical_domain="www")
+    assert "www.zococoria.es" in dom

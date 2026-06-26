@@ -181,6 +181,8 @@ async def create_domain(
             ipv6=getattr(domain, 'ipv6', None) or None,
             is_subdomain=is_subdomain,
             parent_domain=parent_name,
+            # Un subdominio no tiene variante www → sin redirección canónica.
+            canonical_domain="none" if is_subdomain else "www",
         )
         db.add(db_domain)
         db.commit()

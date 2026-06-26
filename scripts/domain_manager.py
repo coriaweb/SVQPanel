@@ -423,6 +423,7 @@ class DomainManager(SystemManager):
         custom_apache_config: str = None,
         httpauth: dict = None,
         canonical_domain: str = "www",
+        is_subdomain: bool = False,
     ) -> dict:
         """
         Regenera la vhost completa del dominio con TODO el estado actual
@@ -434,6 +435,22 @@ class DomainManager(SystemManager):
         """
         if not validate_domain(domain_name):
             raise ValueError(f"Invalid domain: {domain_name}")
+
+        # Subdominio: si el caller no lo indicó, consultarlo en la BD (los
+        # subdominios NO llevan www. ni redirección canónica en el vhost). Una
+        # sola consulta aquí evita propagar el flag por todos los callers.
+        if not is_subdomain:
+            try:
+                from api.models.database import SessionLocal
+                from api.models.models_domain import Domain as _D
+                _db = SessionLocal()
+                try:
+                    _d = _db.query(_D).filter(_D.domain_name == domain_name).first()
+                    is_subdomain = bool(_d and _d.is_subdomain)
+                finally:
+                    _db.close()
+            except Exception:
+                is_subdomain = False
 
         # Auto-detectar webserver
         if webserver is None:
@@ -505,6 +522,7 @@ class DomainManager(SystemManager):
                 custom_nginx_config=custom_nginx_config,
                 httpauth=httpauth,
                 canonical_domain=canonical_domain,
+                is_subdomain=is_subdomain,
             )
             with open(config_path, "w") as f:
                 f.write(config_content)
@@ -555,6 +573,7 @@ class DomainManager(SystemManager):
                 custom_nginx_config=custom_nginx_config,
                 httpauth=httpauth,
                 canonical_domain=canonical_domain,
+                is_subdomain=is_subdomain,
             )
             with open(config_path, "w") as f:
                 f.write(config_content)

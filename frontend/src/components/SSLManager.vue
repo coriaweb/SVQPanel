@@ -1,7 +1,8 @@
 <template>
   <div>
-    <!-- Dominio canónico (www / sin www / ninguno) — aplica con o sin SSL -->
-    <div class="ssl-options canonical-box">
+    <!-- Dominio canónico (www / sin www / ninguno) — aplica con o sin SSL.
+         No tiene sentido en subdominios (nadie usa www.sub.dominio.com): oculto. -->
+    <div v-if="!domain.is_subdomain" class="ssl-options canonical-box">
       <div class="canonical-head">
         <span class="ssl-opt-title">Dominio canónico</span>
         <span class="ssl-opt-desc">Redirige (301) a la variante elegida. Por defecto: forzar www.</span>
