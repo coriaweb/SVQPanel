@@ -68,10 +68,22 @@ def _compile_sieve(path: str) -> bool:
 
 
 def _ensure_dropin() -> bool:
-    """Asegura el drop-in que activa sieve_before. True si cambió."""
+    """Asegura el drop-in que activa sieve_before. True si cambió.
+
+    IMPORTANTE: para que un Sieve se ejecute EN LA ENTREGA, el plugin 'sieve'
+    debe estar en mail_plugins de los protocolos que entregan (lmtp y lda). Por
+    defecto Dovecot NO lo incluye ahí (solo imap_sieve en imap, para aprendizaje),
+    así que sieve_before nunca corría en la entrega. Lo añadimos aquí."""
     content = (
-        "# SVQPanel — activa el Sieve global 'before' para mover spam a Junk.\n"
-        "# NO editar manualmente.\n"
+        "# SVQPanel — Sieve global 'before' para mover spam a Junk. NO editar.\n"
+        "# El plugin 'sieve' en lmtp/lda es lo que ejecuta los Sieve EN LA ENTREGA\n"
+        "# (sin esto, sieve_before y el sieve del usuario no se aplican al recibir).\n"
+        "protocol lmtp {\n"
+        "  mail_plugins = $mail_plugins sieve\n"
+        "}\n"
+        "protocol lda {\n"
+        "  mail_plugins = $mail_plugins sieve\n"
+        "}\n"
         "plugin {\n"
         f"  sieve_before = file:{SIEVE_BEFORE_DIR}\n"
         "}\n"
@@ -104,10 +116,12 @@ def apply(enabled: bool) -> dict:
     dropin_changed = _ensure_dropin()
 
     if dropin_changed:
+        # El drop-in cambia mail_plugins de lmtp/lda → requiere restart (un
+        # simple reload no recarga los plugins de protocolo de forma fiable).
         try:
-            subprocess.run(["systemctl", "reload", "dovecot"],
+            subprocess.run(["systemctl", "restart", "dovecot"],
                            check=False, capture_output=True, timeout=30)
         except Exception as e:
-            logger.warning(f"No se pudo recargar dovecot: {e}")
+            logger.warning(f"No se pudo reiniciar dovecot: {e}")
 
     return {"success": compiled, "enabled": enabled, "compiled": compiled}

@@ -1276,7 +1276,11 @@ PYEOF
 \$config['sent_mbox']   = 'Sent';
 \$config['trash_mbox']  = 'Trash';
 \$config['drafts_mbox'] = 'Drafts';
-\$config['junk_mbox']   = 'Spam';
+# Junk = carpeta de spam canónica del sistema (Dovecot special_use \\Junk y a la
+# que está enganchado el aprendizaje imapsieve de Rspamd). NO usar 'Spam': sería
+# una carpeta paralela que el filtro no aprende. Roundcube la muestra traducida
+# como "Correo no deseado".
+\$config['junk_mbox']   = 'Junk';
 \$config['create_default_folders'] = true;
 RCCONFEOF
 
