@@ -19,6 +19,7 @@ from urllib.request import urlopen, Request
 
 class RspamdManager:
     SETTINGS_FILE   = "/etc/rspamd/local.d/settings.conf"
+    GREYLIST_FILE   = "/etc/rspamd/local.d/greylist.conf"
     MULTIMAP_FILE   = "/etc/rspamd/local.d/multimap.conf"
     CONTROLLER_FILE = "/etc/rspamd/local.d/worker-controller.inc"
     RATELIMIT_FILE  = "/etc/rspamd/local.d/ratelimit.conf"
@@ -88,6 +89,10 @@ class RspamdManager:
             safe   = self._safe_name(domain)
             tag    = float(cfg.get("tag_threshold", 6.0))
             reject = float(cfg.get("reject_threshold", 15.0))
+            # greylist_enabled=False → umbral inalcanzable (999): ese dominio NO
+            # hace greylisting (entrega inmediata). Los demás umbrales (marcar/
+            # rechazar spam) NO cambian: el filtrado anti-spam sigue igual.
+            greylist = 4.0 if cfg.get("greylist_enabled", True) else 999.0
 
             # ── Umbrales de spam ──────────────────────────────────────────
             out.append(f"""\
@@ -99,7 +104,7 @@ class RspamdManager:
     actions {{
       "add header" = {tag:.1f};
       reject = {reject:.1f};
-      greylist = 4.0;
+      greylist = {greylist:.1f};
     }}
   }}
 }}
@@ -132,6 +137,27 @@ class RspamdManager:
         with open(tmp, "w") as f:
             f.write(content)
         os.replace(tmp, self.SETTINGS_FILE)
+
+    # ─── Greylisting global (servidor completo) ───────────────────────────────
+
+    def set_global_greylisting(self, enabled: bool) -> dict:
+        """Activa/desactiva el greylisting para TODO el servidor.
+
+        enabled=True  → greylist.conf con 'enabled = true' (cada dominio puede
+                        excluirse vía settings.conf greylist=999).
+        enabled=False → 'enabled = false': nadie hace greylisting.
+        """
+        content = (
+            "# SVQPanel — greylisting global. NO editar manualmente.\n"
+            f"enabled = {'true' if enabled else 'false'};\n"
+        )
+        tmp = self.GREYLIST_FILE + ".tmp"
+        os.makedirs(os.path.dirname(self.GREYLIST_FILE), exist_ok=True)
+        with open(tmp, "w") as f:
+            f.write(content)
+        os.replace(tmp, self.GREYLIST_FILE)
+        self._reload_rspamd()
+        return {"success": True, "greylisting_enabled": enabled}
 
     # ─── multimap.conf (blacklist prefilter) ──────────────────────────────
 
@@ -227,6 +253,7 @@ class RspamdManager:
                 "domain":            md.domain_name,
                 "tag_threshold":     md.spam_tag_threshold    or 6.0,
                 "reject_threshold":  md.spam_reject_threshold or 15.0,
+                "greylist_enabled":  bool(getattr(md, "greylist_enabled", True)),
                 "whitelist_entries": wl_entries,
                 "blacklist_entries": bl_entries,
             })

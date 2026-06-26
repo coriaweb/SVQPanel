@@ -771,6 +771,7 @@ def _run_migrations():
         "ALTER TABLE mail_domains ADD COLUMN IF NOT EXISTS mail_tls_enabled BOOLEAN NOT NULL DEFAULT FALSE",
         # Antivirus ClamAV por dominio de correo
         "ALTER TABLE mail_domains ADD COLUMN IF NOT EXISTS antivirus_enabled BOOLEAN NOT NULL DEFAULT FALSE",
+        "ALTER TABLE mail_domains ADD COLUMN IF NOT EXISTS greylist_enabled BOOLEAN NOT NULL DEFAULT TRUE",
         # ─────────────────────────────────────────────────────────────────
         # Fase 21b: Despliegue Git por dominio (clone + webhook + releases)
         # ─────────────────────────────────────────────────────────────────

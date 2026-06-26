@@ -79,6 +79,12 @@ class MailDomain(Base):
     # Si está activo, el correo entrante a este dominio con virus se RECHAZA.
     antivirus_enabled     = Column(Boolean, default=False)
 
+    # ── Greylisting por dominio ───────────────────────────────────────────
+    # True (por defecto) = se aplica el greylisting global. False = este dominio
+    # NO hace greylisting (entrega inmediata, sin retraso). Solo tiene efecto si
+    # el greylisting está activo a nivel de servidor.
+    greylist_enabled      = Column(Boolean, default=True, nullable=False)
+
     # ── Timestamps ────────────────────────────────────────────────────────
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)

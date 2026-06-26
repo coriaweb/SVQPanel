@@ -110,6 +110,10 @@ class Settings(Base):
     license_checked_at = Column(DateTime, nullable=True)      # última validación
     license_reason     = Column(String(48), nullable=True)    # ok | no_key | offline | ...
 
+    # Greylisting global del correo. True = activo (cada dominio puede excluirse
+    # con MailDomain.greylist_enabled=False). False = desactivado para TODOS.
+    greylisting_enabled = Column(Boolean, default=True, nullable=False)
+
     # Timestamps
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 

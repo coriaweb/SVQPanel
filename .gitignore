@@ -49,8 +49,8 @@ ENV/
 .env.local
 .env.*.local
 
-# Claude Code: settings locales pueden contener rutas/comandos con secretos
-.claude/settings.local.json
+# Claude Code: configuración local (settings, memoria, etc.) — no subir
+.claude/
 
 # Credenciales locales de servidores (nunca subir a git)
 SERVER_CREDENTIALS.md

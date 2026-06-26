@@ -1056,10 +1056,15 @@ RSPAMDMILTEREOF
 backend = "redis";
 RSPAMDBAYESEOF
 
-    # Greylisting activado
-    cat > /etc/rspamd/local.d/greylisting.conf << 'RSPAMDGREYEOF'
+    # Greylisting activado. El módulo se llama 'greylist' → el fichero debe ser
+    # greylist.conf (greylisting.conf NO lo lee Rspamd). El panel lo activa/
+    # desactiva globalmente desde aquí (Settings.greylisting_enabled).
+    cat > /etc/rspamd/local.d/greylist.conf << 'RSPAMDGREYEOF'
+# SVQPanel — greylisting global. NO editar manualmente.
 enabled = true;
 RSPAMDGREYEOF
+    # Limpiar el nombre antiguo erróneo si existe de instalaciones previas.
+    rm -f /etc/rspamd/local.d/greylisting.conf 2>/dev/null || true
 
     # ── Rate-limit de envío saliente (anti-abuso) ─────────────────────────
     # Límite de correos/hora por buzón y por dominio del remitente AUTENTICADO.

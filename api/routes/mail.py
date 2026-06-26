@@ -1136,6 +1136,75 @@ async def set_mail_antivirus(domain_id: int, enabled: bool = True,
             "enabled": md.antivirus_enabled}
 
 
+@router.get("/mail/domains/{domain_id}/greylist")
+async def get_mail_greylist(domain_id: int, current_user=Depends(require_auth),
+                            db: Session = Depends(get_db)):
+    """Estado del greylisting del dominio + si está activo a nivel de servidor."""
+    md = _get_mail_domain_or_404(domain_id, db)
+    _require_edit(md, current_user)
+    # ¿Está el greylisting activo a nivel global?
+    from api.models.models_settings import Settings
+    s = db.query(Settings).filter(Settings.id == 1).first()
+    global_on = bool(getattr(s, "greylisting_enabled", True)) if s else True
+    return {
+        "domain": md.domain_name,
+        "enabled": bool(getattr(md, "greylist_enabled", True)),
+        "global_enabled": global_on,
+    }
+
+
+@router.post("/mail/domains/{domain_id}/greylist")
+async def set_mail_greylist(domain_id: int, enabled: bool = True,
+                            current_user=Depends(require_auth),
+                            db: Session = Depends(get_db)):
+    """Activa/desactiva el greylisting (retraso anti-spam) SOLO de este dominio.
+
+    Desactivarlo = entrega inmediata (sin retraso); el resto del filtrado
+    anti-spam (marcar/rechazar) NO cambia. Solo tiene efecto si el greylisting
+    está activo a nivel de servidor."""
+    md = _get_mail_domain_or_404(domain_id, db)
+    _require_edit(md, current_user)
+    md.greylist_enabled = bool(enabled)
+    db.commit()
+    db.refresh(md)
+    _rebuild_rspamd(db)
+    return {"status": "success", "domain": md.domain_name,
+            "enabled": md.greylist_enabled}
+
+
+@router.get("/mail/greylisting")
+async def get_global_greylisting(current_user=Depends(require_admin),
+                                 db: Session = Depends(get_db)):
+    """[Admin] Estado del greylisting global del servidor."""
+    from api.models.models_settings import Settings
+    s = db.query(Settings).filter(Settings.id == 1).first()
+    return {"enabled": bool(getattr(s, "greylisting_enabled", True)) if s else True}
+
+
+@router.put("/mail/greylisting")
+async def set_global_greylisting(enabled: bool = True,
+                                 current_user=Depends(require_admin),
+                                 db: Session = Depends(get_db)):
+    """[Admin] Activa/desactiva el greylisting para TODO el servidor.
+
+    Si se desactiva, ningún dominio hace greylisting (entrega inmediata para
+    todos). Si se activa, cada dominio puede excluirse individualmente."""
+    from api.models.models_settings import Settings
+    s = db.query(Settings).filter(Settings.id == 1).first()
+    if not s:
+        s = Settings(id=1)
+        db.add(s)
+    s.greylisting_enabled = bool(enabled)
+    db.commit()
+    try:
+        from scripts.rspamd_manager import RspamdManager
+        RspamdManager().set_global_greylisting(bool(enabled))
+    except Exception as e:
+        raise HTTPException(status_code=500,
+            detail=f"Guardado en BD pero falló aplicar en Rspamd: {e}")
+    return {"status": "success", "enabled": bool(enabled)}
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # Antivirus — estado global del servidor, firmas y modo milter (admin)
 # ─────────────────────────────────────────────────────────────────────────────
