@@ -27,14 +27,51 @@ _BLOCK_END   = "# SVQPanel-END-{cron_id}"
 # ejecuta esta línea; el wrapper corre el comando real y encola el historial.
 CRON_WRAPPER = "/usr/local/bin/svq-cron-run"
 CRON_QUEUE_DIR = "/var/lib/svqpanel/cron-runs"
-_WRAPPER_CONTENT = """#!/bin/bash
-# SVQPanel — wrapper de ejecución de cron. Registra estado/duración/salida.
-# Generado automáticamente. NO editar.
-# Uso: svq-cron-run <cron_id> -- <comando...>
-CRON_ID="$1"; shift
-[ "$1" = "--" ] && shift
-exec /opt/svqpanel/venv/bin/python -m api.cli cron_run "$CRON_ID" -- "$@"
-"""
+# Wrapper AUTÓNOMO (Python puro): NO importa nada del panel ni lee el .env (el
+# cliente no tiene acceso a los secretos). Solo ejecuta el comando, mide y deja
+# un .json en la cola. El panel (root) lo ingiere a BD aparte. Así el cliente
+# nunca toca BD/secretos/red → cero superficie de escalada.
+_WRAPPER_CONTENT = '''#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+# SVQPanel - wrapper de cron. Registra estado/duracion/salida.
+# Generado automaticamente. NO editar. Uso: svq-cron-run <cron_id> "<comando>"
+import sys, os, json, time, uuid, subprocess
+from datetime import datetime, timezone
+
+QUEUE = "/var/lib/svqpanel/cron-runs"
+CAP = 8000
+cron_id = sys.argv[1] if len(sys.argv) > 1 else "0"
+cmd = sys.argv[2] if len(sys.argv) > 2 else ""
+
+started = datetime.now(timezone.utc)
+t0 = time.monotonic()
+try:
+    p = subprocess.run(["/bin/bash", "-lc", cmd], capture_output=True, text=True,
+                       timeout=3600)
+    code = p.returncode
+    out = (p.stdout or "") + (("\\n" + p.stderr) if p.stderr else "")
+except subprocess.TimeoutExpired:
+    code, out = 124, "[svq-cron] timeout (>3600s)"
+except Exception as e:
+    code, out = 127, "[svq-cron] error: %s" % e
+dur = int((time.monotonic() - t0) * 1000)
+
+try:
+    if os.path.isdir(QUEUE):
+        payload = {"cron_id": int(cron_id), "started_at": started.isoformat(),
+                   "duration_ms": dur, "exit_code": code, "output": out[:CAP]}
+        fn = "%s.%d.%s.json" % (cron_id, int(time.time()), uuid.uuid4().hex[:8])
+        fd = os.open(os.path.join(QUEUE, fn),
+                     os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
+        with os.fdopen(fd, "w") as f:
+            json.dump(payload, f)
+except Exception:
+    pass
+
+# Reemitir salida (para MAILTO si lo hay) y devolver el código real.
+sys.stdout.write(out)
+sys.exit(code)
+'''
 
 
 def install_cron_wrapper() -> dict:
@@ -58,9 +95,12 @@ def _cron_line(minute, hour, day, month, weekday, command, cron_id, comment=""):
     if comment:
         parts.append(f"# {comment}")
     # Envolver el comando con el wrapper de historial si está instalado. El
-    # comando real va literal tras '--' (el wrapper lo pasa a bash -lc).
+    # comando real se pasa como UN único argumento entre comillas simples (así
+    # &&, ;, | y demás no se parten a nivel del crontab). Las comillas simples
+    # internas se escapan con la secuencia '\'' estándar de shell.
     if os.path.exists(CRON_WRAPPER):
-        wrapped = f"{CRON_WRAPPER} {cron_id} -- {command}"
+        safe = command.replace("'", "'\\''")
+        wrapped = f"{CRON_WRAPPER} {cron_id} '{safe}'"
     else:
         wrapped = command  # sin wrapper (compat): se ejecuta tal cual
     parts.append(f"{minute} {hour} {day} {month} {weekday} {wrapped}")

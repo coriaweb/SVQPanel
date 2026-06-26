@@ -1791,10 +1791,9 @@ def main():
         help="Descarga/actualiza la base GeoIP (países en estadísticas)")
     p_geo.add_argument("--force", action="store_true", help="Re-descargar aunque ya esté la del mes")
     p_cr = sub.add_parser("cron_run",
-        help="Wrapper de ejecución de un cron (registra historial). Uso: cron_run <id> -- <cmd...>")
+        help="Wrapper de ejecución de un cron (registra historial). Uso: cron_run <id> '<cmd>'")
     p_cr.add_argument("cron_id", type=int)
-    p_cr.add_argument("command", nargs=argparse.REMAINDER,
-                      help="El comando a ejecutar (tras --)")
+    p_cr.add_argument("command", help="El comando completo a ejecutar (un solo argumento)")
     p_sub = sub.add_parser("convert_subdomains",
         help="Convierte dominios que son subdominios (zona padre en el panel) al nuevo tratamiento")
     p_sub.add_argument("domains", nargs="*", help="Dominios concretos (vacío = autodetectar todos)")
@@ -1918,9 +1917,7 @@ def main():
     if args.cmd == "update_geoip":
         sys.exit(cmd_update_geoip(force=getattr(args, "force", False)))
     if args.cmd == "cron_run":
-        # args.command incluye el '--' separador si vino; lo quitamos.
-        parts = [a for a in (args.command or []) if a != "--"]
-        sys.exit(cmd_cron_run(args.cron_id, " ".join(parts)))
+        sys.exit(cmd_cron_run(args.cron_id, args.command))
     if args.cmd == "convert_subdomains":
         sys.exit(cmd_convert_subdomains(domains=args.domains or None,
                                         dry_run=getattr(args, "dry_run", False)))

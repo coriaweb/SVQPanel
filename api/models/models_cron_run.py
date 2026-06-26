@@ -9,7 +9,7 @@ inicio, fin, duración, código de salida y salida (cap). Se conservan solo las
 
 from datetime import datetime
 from sqlalchemy import Column, Integer, String, Text, DateTime, ForeignKey
-from sqlalchemy.orm import relationship
+from sqlalchemy.orm import relationship, backref
 from api.models.database import Base
 
 
@@ -27,4 +27,7 @@ class CronRun(Base):
     output      = Column(Text, nullable=True)        # stdout+stderr, cap ~8 KB
     trigger     = Column(String(10), default="auto", nullable=False)  # auto | manual
 
-    cron = relationship("CronJob", backref="runs", lazy="select")
+    cron = relationship("CronJob",
+                        backref=backref("runs", cascade="all, delete-orphan",
+                                        passive_deletes=True),
+                        lazy="select")

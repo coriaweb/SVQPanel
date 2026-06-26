@@ -10,6 +10,10 @@
         </p>
       </div>
       <div class="cr-head-actions">
+        <div class="cr-search">
+          <i class="bi bi-search"></i>
+          <input v-model="search" type="search" class="svq-input" placeholder="Buscar comando, comentario…" />
+        </div>
         <select v-if="isAdminOrReseller" class="svq-input cr-filter"
                 v-model.number="filterUserId" @change="loadCrons">
           <option :value="null">Todos los usuarios</option>
@@ -42,7 +46,7 @@
             </tr>
           </thead>
           <tbody>
-            <tr v-for="cron in crons" :key="cron.id" :class="{ 'cr-row--off': !cron.is_active }">
+            <tr v-for="cron in filteredCrons" :key="cron.id" :class="{ 'cr-row--off': !cron.is_active }">
               <td v-if="isAdminOrReseller">
                 <span class="cr-userbadge"><i class="bi bi-person"></i> {{ cron.username || '—' }}</span>
               </td>
@@ -50,7 +54,16 @@
                 <code class="cr-code">{{ cron.minute }} {{ cron.hour }} {{ cron.day }} {{ cron.month }} {{ cron.weekday }}</code>
                 <div class="cr-muted">{{ describeCron(cron) }}</div>
               </td>
-              <td><code class="cr-code cr-cmd">{{ cron.command }}</code></td>
+              <td>
+                <div class="cr-cmd-cell">
+                  <code class="cr-code" :class="expandedCmd === cron.id ? 'cr-cmd-full' : 'cr-cmd'" :title="cron.command">{{ cron.command }}</code>
+                  <button v-if="cron.command && cron.command.length > 42" class="cr-cmd-toggle"
+                          :title="expandedCmd === cron.id ? 'Contraer' : 'Ver completo'"
+                          @click="expandedCmd = expandedCmd === cron.id ? null : cron.id">
+                    <i class="bi" :class="expandedCmd === cron.id ? 'bi-chevron-up' : 'bi-arrows-angle-expand'"></i>
+                  </button>
+                </div>
+              </td>
               <td class="cr-muted">{{ cron.comment || '—' }}</td>
               <td>
                 <span class="cr-status" :class="cron.is_active ? 'cr-status--on' : 'cr-status--off'">
@@ -295,6 +308,18 @@ export default {
     const runningId    = ref(null)
     const runResult    = ref(null)
     const showRunResult = ref(false)
+    // Búsqueda + comando expandible
+    const search       = ref('')
+    const expandedCmd  = ref(null)
+    const filteredCrons = computed(() => {
+      const q = search.value.trim().toLowerCase()
+      if (!q) return crons.value
+      return (crons.value || []).filter(c =>
+        (c.command || '').toLowerCase().includes(q) ||
+        (c.comment || '').toLowerCase().includes(q) ||
+        (c.username || '').toLowerCase().includes(q)
+      )
+    })
     // Historial de ejecuciones
     const lastRun      = ref({})      // { cronId: ultimaRun }
     const showHistory  = ref(false)
@@ -477,6 +502,7 @@ export default {
       presets: PRESETS,
       openCreate, openEdit, closeForm,
       applyPreset, submitForm,
+      search, expandedCmd, filteredCrons,
       toggleCron, deleteCron, runCron,
       runningId, runResult, showRunResult,
       lastRun, fmtDur, openHistory,
@@ -513,7 +539,17 @@ export default {
 .cr-row--off { opacity: .55; }
 .cr-right { text-align: right; }
 .cr-code { font-family: var(--font-mono); font-size: var(--fs-xs); color: var(--text-secondary); }
-.cr-cmd { display: block; max-width: 320px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cr-cmd-cell { display:flex; align-items:flex-start; gap:.4rem; }
+.cr-cmd { display:block; max-width:320px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.cr-cmd-full { display:block; max-width:420px; white-space:pre-wrap; word-break:break-all;
+  background:var(--surface-inset); padding:.4rem .6rem; border-radius:var(--r-sm); }
+.cr-cmd-toggle { flex:none; width:24px; height:24px; display:inline-grid; place-items:center;
+  border:1px solid var(--border); background:var(--surface); color:var(--text-secondary);
+  border-radius:var(--r-sm); cursor:pointer; font-size:.75rem; }
+.cr-cmd-toggle:hover { color:var(--text); border-color:var(--border-strong); }
+.cr-search { position:relative; display:flex; align-items:center; }
+.cr-search i { position:absolute; left:.6rem; color:var(--text-muted); pointer-events:none; font-size:.85rem; }
+.cr-search .svq-input { padding-left:1.9rem; min-width:220px; }
 .cr-userbadge {
   display: inline-flex; align-items: center; gap: 4px;
   font-size: var(--fs-xs); padding: 2px 8px; border-radius: var(--r-pill);
