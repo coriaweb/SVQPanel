@@ -114,6 +114,10 @@ class Settings(Base):
     # con MailDomain.greylist_enabled=False). False = desactivado para TODOS.
     greylisting_enabled = Column(Boolean, default=True, nullable=False)
 
+    # Mover spam (X-Spam: Yes de Rspamd) a la carpeta Junk. True = activo (cada
+    # dominio puede excluirse con MailDomain.spam_to_junk_enabled=False).
+    spam_to_junk_enabled = Column(Boolean, default=True, nullable=False)
+
     # Timestamps
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 

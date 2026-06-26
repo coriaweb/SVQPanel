@@ -774,6 +774,9 @@ def _run_migrations():
         "ALTER TABLE mail_domains ADD COLUMN IF NOT EXISTS greylist_enabled BOOLEAN NOT NULL DEFAULT TRUE",
         # Greylisting global del correo (servidor completo)
         "ALTER TABLE settings ADD COLUMN IF NOT EXISTS greylisting_enabled BOOLEAN NOT NULL DEFAULT TRUE",
+        # Mover spam (X-Spam: Yes) a la carpeta Junk (global + por dominio)
+        "ALTER TABLE settings ADD COLUMN IF NOT EXISTS spam_to_junk_enabled BOOLEAN NOT NULL DEFAULT TRUE",
+        "ALTER TABLE mail_domains ADD COLUMN IF NOT EXISTS spam_to_junk_enabled BOOLEAN NOT NULL DEFAULT TRUE",
         # ─────────────────────────────────────────────────────────────────
         # Fase 21b: Despliegue Git por dominio (clone + webhook + releases)
         # ─────────────────────────────────────────────────────────────────

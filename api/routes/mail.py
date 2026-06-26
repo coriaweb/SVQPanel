@@ -1205,6 +1205,74 @@ async def set_global_greylisting(enabled: bool = True,
     return {"status": "success", "enabled": bool(enabled)}
 
 
+# ─── Mover spam a Junk (global + por dominio) ─────────────────────────────────
+
+@router.get("/mail/domains/{domain_id}/spam-to-junk")
+async def get_mail_spam_to_junk(domain_id: int, current_user=Depends(require_auth),
+                                db: Session = Depends(get_db)):
+    """Estado de 'mover spam a Junk' del dominio + si está activo globalmente."""
+    md = _get_mail_domain_or_404(domain_id, db)
+    _require_edit(md, current_user)
+    from api.models.models_settings import Settings
+    s = db.query(Settings).filter(Settings.id == 1).first()
+    global_on = bool(getattr(s, "spam_to_junk_enabled", True)) if s else True
+    return {
+        "domain": md.domain_name,
+        "enabled": bool(getattr(md, "spam_to_junk_enabled", True)),
+        "global_enabled": global_on,
+    }
+
+
+@router.post("/mail/domains/{domain_id}/spam-to-junk")
+async def set_mail_spam_to_junk(domain_id: int, enabled: bool = True,
+                                current_user=Depends(require_auth),
+                                db: Session = Depends(get_db)):
+    """Activa/desactiva el envío de spam a la carpeta Junk SOLO de este dominio.
+
+    Desactivarlo = el dominio NO clasifica spam a Junk (Rspamd deja de marcar
+    X-Spam); el rechazo de spam claro se mantiene. Solo tiene efecto si está
+    activo a nivel de servidor."""
+    md = _get_mail_domain_or_404(domain_id, db)
+    _require_edit(md, current_user)
+    md.spam_to_junk_enabled = bool(enabled)
+    db.commit()
+    db.refresh(md)
+    _rebuild_rspamd(db)
+    return {"status": "success", "domain": md.domain_name,
+            "enabled": md.spam_to_junk_enabled}
+
+
+@router.get("/mail/spam-to-junk")
+async def get_global_spam_to_junk(current_user=Depends(require_admin),
+                                  db: Session = Depends(get_db)):
+    """[Admin] Estado global de 'mover spam a Junk'."""
+    from api.models.models_settings import Settings
+    s = db.query(Settings).filter(Settings.id == 1).first()
+    return {"enabled": bool(getattr(s, "spam_to_junk_enabled", True)) if s else True}
+
+
+@router.put("/mail/spam-to-junk")
+async def set_global_spam_to_junk(enabled: bool = True,
+                                  current_user=Depends(require_admin),
+                                  db: Session = Depends(get_db)):
+    """[Admin] Activa/desactiva mover el spam a la carpeta Junk para TODO el
+    servidor. Instala/actualiza el Sieve global de Dovecot."""
+    from api.models.models_settings import Settings
+    s = db.query(Settings).filter(Settings.id == 1).first()
+    if not s:
+        s = Settings(id=1)
+        db.add(s)
+    s.spam_to_junk_enabled = bool(enabled)
+    db.commit()
+    try:
+        from scripts import dovecot_spam_sieve
+        dovecot_spam_sieve.apply(bool(enabled))
+    except Exception as e:
+        raise HTTPException(status_code=500,
+            detail=f"Guardado en BD pero falló aplicar en Dovecot: {e}")
+    return {"status": "success", "enabled": bool(enabled)}
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # Antivirus — estado global del servidor, firmas y modo milter (admin)
 # ─────────────────────────────────────────────────────────────────────────────

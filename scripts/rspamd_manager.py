@@ -93,6 +93,11 @@ class RspamdManager:
             # hace greylisting (entrega inmediata). Los demás umbrales (marcar/
             # rechazar spam) NO cambian: el filtrado anti-spam sigue igual.
             greylist = 4.0 if cfg.get("greylist_enabled", True) else 999.0
+            # spam_to_junk desactivado → subir "add header" a 999: ese dominio NO
+            # marca correos como spam (no añade X-Spam: Yes), así el Sieve global
+            # no los mueve a Junk. El rechazo de spam claro (reject) se mantiene.
+            if not cfg.get("spam_to_junk_enabled", True):
+                tag = 999.0
 
             # ── Umbrales de spam ──────────────────────────────────────────
             out.append(f"""\
@@ -254,6 +259,7 @@ class RspamdManager:
                 "tag_threshold":     md.spam_tag_threshold    or 6.0,
                 "reject_threshold":  md.spam_reject_threshold or 15.0,
                 "greylist_enabled":  bool(getattr(md, "greylist_enabled", True)),
+                "spam_to_junk_enabled": bool(getattr(md, "spam_to_junk_enabled", True)),
                 "whitelist_entries": wl_entries,
                 "blacklist_entries": bl_entries,
             })

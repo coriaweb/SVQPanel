@@ -84,6 +84,26 @@
         </div>
       </div>
 
+      <!-- Mover spam a la carpeta Junk — global (solo admin) -->
+      <div v-if="isAdminOrReseller && !selectedDomain" class="sv-card" style="margin-bottom:1rem">
+        <div style="display:flex;align-items:center;justify-content:space-between;gap:1rem;padding:.9rem 1.1rem;flex-wrap:wrap">
+          <div>
+            <div style="font-weight:600"><i class="bi bi-inboxes" style="color:var(--warning)"></i> Mover spam a la carpeta Junk</div>
+            <div style="font-size:.82rem;color:var(--text-muted);margin-top:.2rem">
+              El spam detectado (no el rechazado) se mueve a la carpeta Junk en vez de a la
+              bandeja de entrada. Si la desactivas, ese correo llega a la bandeja. Cada dominio
+              puede excluirse en sus Ajustes.
+            </div>
+          </div>
+          <label class="form-check form-switch" style="display:flex;align-items:center;gap:.5rem;white-space:nowrap">
+            <input class="form-check-input" type="checkbox" :checked="globalSpamJunk"
+                   :disabled="globalSpamJunkSaving" @change="toggleGlobalSpamJunk($event.target.checked)" />
+            <span>{{ globalSpamJunk ? 'Activado' : 'Desactivado' }}</span>
+            <span v-if="globalSpamJunkSaving" class="spinner-border spinner-border-sm"></span>
+          </label>
+        </div>
+      </div>
+
       <div class="sv-card">
         <div class="sv-card-head">
           <span class="sv-card-title"><i class="bi bi-envelope-check"></i> Dominios de correo</span>
@@ -759,6 +779,31 @@
 
             <div style="border-top:1px solid var(--border)"></div>
 
+            <!-- Mover spam a Junk (por dominio) -->
+            <div>
+              <h6 style="font-weight:600;font-size:.95rem;margin-bottom:.4rem">
+                <i class="bi bi-inboxes" style="color:var(--warning)"></i> Mover spam a la carpeta Junk
+              </h6>
+              <p style="font-size:.83rem;color:var(--text-muted);margin-bottom:.8rem">
+                Cuando un correo se detecta como spam (sin llegar a ser rechazado), se entrega en
+                la carpeta <strong>Junk</strong> en vez de la bandeja de entrada. Desactívalo si este
+                dominio prefiere recibir todo en la bandeja y filtrar por su cuenta. El rechazo de
+                spam evidente no cambia.
+              </p>
+              <div v-if="spamJunk.global_enabled === false" class="sv-info-box" style="margin-bottom:.8rem">
+                <i class="bi bi-info-circle"></i> El envío de spam a Junk está <strong>desactivado a nivel de servidor</strong>, así que no se aplica a ningún dominio.
+              </div>
+              <label class="form-check form-switch" style="display:flex;align-items:center;gap:.6rem">
+                <input class="form-check-input" type="checkbox" :checked="spamJunk.enabled"
+                       :disabled="spamJunkSaving || spamJunk.global_enabled === false"
+                       @change="toggleSpamJunk($event.target.checked)" />
+                <span>{{ spamJunk.enabled ? 'Activado para este dominio' : 'Desactivado (el spam llega a la bandeja)' }}</span>
+                <span v-if="spamJunkSaving" class="spinner-border spinner-border-sm"></span>
+              </label>
+            </div>
+
+            <div style="border-top:1px solid var(--border)"></div>
+
             <!-- TLS del correo -->
             <div>
               <h6 style="font-weight:600;font-size:.95rem;margin-bottom:1rem"><i class="bi bi-shield-lock" style="color:var(--success)"></i> Seguridad TLS del correo</h6>
@@ -1268,8 +1313,12 @@ export default {
     const savingSpam     = ref(false)
     const greylist       = ref({ enabled: true, global_enabled: true })
     const greylistSaving = ref(false)
+    const spamJunk       = ref({ enabled: true, global_enabled: true })
+    const spamJunkSaving = ref(false)
     const globalGreylist = ref(true)
     const globalGreylistSaving = ref(false)
+    const globalSpamJunk = ref(true)
+    const globalSpamJunkSaving = ref(false)
     const savingSettings = ref(false)
 
     // ── Modales ───────────────────────────────────────────────────────
@@ -1335,6 +1384,7 @@ export default {
         // Estado del greylisting global (solo admin lo ve/cambia).
         if (isAdminOrReseller.value) {
           try { globalGreylist.value = (await api.getGlobalGreylisting()).enabled } catch { /* */ }
+          try { globalSpamJunk.value = (await api.getGlobalSpamToJunk()).enabled } catch { /* */ }
         }
       } catch (e) {
         if (e.message && e.message.toLowerCase().includes('instalado')) {
@@ -1358,6 +1408,19 @@ export default {
       } catch (e) {
         store.showNotification('Error: ' + (e.message || e), 'danger')
       } finally { globalGreylistSaving.value = false }
+    }
+
+    const toggleGlobalSpamJunk = async (enabled) => {
+      globalSpamJunkSaving.value = true
+      try {
+        await api.setGlobalSpamToJunk(enabled)
+        globalSpamJunk.value = enabled
+        store.showNotification(
+          enabled ? 'Spam → carpeta Junk activado'
+                  : 'Spam → Junk desactivado (el spam llegará a la bandeja)', 'success')
+      } catch (e) {
+        store.showNotification('Error: ' + (e.message || e), 'danger')
+      } finally { globalSpamJunkSaving.value = false }
     }
 
     const loadMailboxes = async (domainId) => {
@@ -1729,6 +1792,8 @@ export default {
       finally { loadingSpam.value = false }
       // Estado del greylisting del dominio (+ si está activo a nivel servidor).
       try { greylist.value = await api.getMailGreylist(domainId) } catch { /* */ }
+      // Estado de 'mover spam a Junk' del dominio.
+      try { spamJunk.value = await api.getMailSpamToJunk(domainId) } catch { /* */ }
     }
 
     const toggleGreylist = async (enabled) => {
@@ -1742,6 +1807,19 @@ export default {
       } catch (e) {
         store.showNotification('Error: ' + (e.message || e), 'danger')
       } finally { greylistSaving.value = false }
+    }
+
+    const toggleSpamJunk = async (enabled) => {
+      spamJunkSaving.value = true
+      try {
+        await api.setMailSpamToJunk(selectedDomain.value.id, enabled)
+        spamJunk.value = { ...spamJunk.value, enabled }
+        store.showNotification(
+          enabled ? 'Spam → Junk activado para este dominio'
+                  : 'Spam → Junk desactivado (el spam llega a la bandeja)', 'success')
+      } catch (e) {
+        store.showNotification('Error: ' + (e.message || e), 'danger')
+      } finally { spamJunkSaving.value = false }
     }
 
     const saveSpamSettings = async () => {
@@ -2148,7 +2226,9 @@ export default {
       openNewDomain, createDomain, saveSettings,
       loadSpamSettings, saveSpamSettings,
       greylist, greylistSaving, toggleGreylist,
+      spamJunk, spamJunkSaving, toggleSpamJunk,
       globalGreylist, globalGreylistSaving, toggleGlobalGreylist,
+      globalSpamJunk, globalSpamJunkSaving, toggleGlobalSpamJunk,
       generateDkim, rotateDkim, copyText,
       createMailbox, toggleMailbox, openChangePassword, changePassword,
       openWebmail,

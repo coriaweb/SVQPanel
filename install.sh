@@ -3262,6 +3262,15 @@ echo -e "${YELLOW}Configurando el aprendizaje de spam (Bayes + IMAPSieve)...${NC
     echo -e "${YELLOW}⚠ setup_spam_learning tuvo incidencias (revisar logs)${NC}"
 echo ""
 
+# Mover el spam marcado por Rspamd (X-Spam: Yes) a la carpeta Junk del buzón,
+# vía Sieve global "before" de Dovecot. Sin esto, el spam intermedio (score>=6)
+# llega a la bandeja de entrada en vez de a Junk.
+echo -e "${YELLOW}Configurando 'mover spam a Junk' (Sieve global)...${NC}"
+/opt/svqpanel/venv/bin/python -m api.cli setup_spam_to_junk && \
+    echo -e "${GREEN}✓ Spam → carpeta Junk configurado${NC}" || \
+    echo -e "${YELLOW}⚠ setup_spam_to_junk tuvo incidencias (revisar logs)${NC}"
+echo ""
+
 # Actualizaciones automáticas de SEGURIDAD del SO (unattended-upgrades, solo
 # parches de seguridad, sin reinicio automático). Cierra vulnerabilidades del SO
 # sin intervención. Gestionable desde Seguridad → Auto-actualizaciones.

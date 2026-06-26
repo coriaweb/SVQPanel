@@ -490,6 +490,18 @@ class APIClient {
   setGlobalGreylisting(enabled) {
     return this.put(`/api/mail/greylisting?enabled=${enabled ? 'true' : 'false'}`, {})
   }
+  getMailSpamToJunk(domainId) {
+    return this.get(`/api/mail/domains/${domainId}/spam-to-junk`)
+  }
+  setMailSpamToJunk(domainId, enabled) {
+    return this.post(`/api/mail/domains/${domainId}/spam-to-junk?enabled=${enabled ? 'true' : 'false'}`, {})
+  }
+  getGlobalSpamToJunk() {
+    return this.get('/api/mail/spam-to-junk')
+  }
+  setGlobalSpamToJunk(enabled) {
+    return this.put(`/api/mail/spam-to-junk?enabled=${enabled ? 'true' : 'false'}`, {})
+  }
   mailMonitor({ date, domain, search } = {}) {
     const p = new URLSearchParams()
     if (date) p.set('date', date)

@@ -85,6 +85,12 @@ class MailDomain(Base):
     # el greylisting está activo a nivel de servidor.
     greylist_enabled      = Column(Boolean, default=True, nullable=False)
 
+    # ── Mover spam a Junk por dominio ─────────────────────────────────────
+    # True (por defecto) = el spam marcado (X-Spam: Yes) va a la carpeta Junk.
+    # False = este dominio NO clasifica spam a Junk (Rspamd no lo marca); el
+    # rechazo de spam claro se mantiene. Solo aplica si está activo a nivel global.
+    spam_to_junk_enabled  = Column(Boolean, default=True, nullable=False)
+
     # ── Timestamps ────────────────────────────────────────────────────────
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)

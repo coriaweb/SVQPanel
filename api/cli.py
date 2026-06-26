@@ -1308,6 +1308,33 @@ def cmd_setup_spam_learning() -> int:
     return 0
 
 
+def cmd_setup_spam_to_junk() -> int:
+    """Instala el Sieve global que mueve el spam (X-Spam: Yes de Rspamd) a la
+    carpeta Junk. Respeta el estado guardado en Settings.spam_to_junk_enabled
+    (por defecto activo). Idempotente. Requiere dovecot-sieve."""
+    enabled = True
+    try:
+        from api.models.database import SessionLocal, load_all_models
+        load_all_models()
+        from api.models.models_settings import Settings
+        db = SessionLocal()
+        s = db.query(Settings).filter(Settings.id == 1).first()
+        if s is not None:
+            enabled = bool(getattr(s, "spam_to_junk_enabled", True))
+        db.close()
+    except Exception as e:
+        logger.warning(f"setup_spam_to_junk: no se pudo leer Settings ({e}); usando activo")
+    try:
+        from scripts import dovecot_spam_sieve
+        res = dovecot_spam_sieve.apply(enabled)
+    except Exception as e:
+        logger.error(f"setup_spam_to_junk: {e}")
+        return 0
+    logger.info(f"setup_spam_to_junk: spam→Junk {'activo' if enabled else 'desactivado'} "
+                f"(compilado={res.get('compiled')})")
+    return 0
+
+
 def cmd_setup_auto_updates() -> int:
     """Instala y configura unattended-upgrades (solo parches de seguridad, sin
     reinicio automático). Idempotente. Solo Debian.
@@ -1816,6 +1843,8 @@ def main():
         help="Regenera rate-limit Rspamd (incl. límite del correo no autenticado de PHP/web)")
     sub.add_parser("setup_spam_learning",
         help="Configura el aprendizaje de spam (IMAPSieve + autolearn Bayes)")
+    sub.add_parser("setup_spam_to_junk",
+        help="Instala el Sieve global que mueve el spam marcado a la carpeta Junk")
     sub.add_parser("setup_auto_updates",
         help="Activa las actualizaciones automáticas de seguridad del SO (unattended-upgrades)")
     sub.add_parser("harden_services",
@@ -1943,6 +1972,9 @@ def main():
         sys.exit(cmd_rebuild_mail_ratelimit())
     if args.cmd == "setup_spam_learning":
         sys.exit(cmd_setup_spam_learning())
+
+    if args.cmd == "setup_spam_to_junk":
+        sys.exit(cmd_setup_spam_to_junk())
     if args.cmd == "setup_auto_updates":
         sys.exit(cmd_setup_auto_updates())
     if args.cmd == "harden_services":
