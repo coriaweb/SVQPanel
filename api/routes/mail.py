@@ -2235,9 +2235,22 @@ _RE_VIRTUAL = re.compile(
 _RE_FROM = re.compile(
     r"^" + _TS + r"\s+\S+\s+postfix/\S+\[\d+\]:\s+([A-F0-9]+):\s+from=<([^>]*)>"
 )
-# Rechazados: NOQUEUE reject
+# Rechazados en SMTP: NOQUEUE reject (smtpd). Formato real:
+#   NOQUEUE: reject: RCPT from host[ip]: 454 4.7.1 <dest>: motivo; from=<X> to=<Y> ...
+# Capturamos el motivo (todo lo previo a "; from=") y, si están, from/to.
 _RE_REJECT = re.compile(
-    r"^" + _TS + r"\s+\S+\s+postfix/\S+smtpd\[\d+\]:\s+NOQUEUE:\s+reject:\s+RCPT\s+from\s+[^:]+:\s+\d+\s+\S+;\s*(.*)"
+    r"^" + _TS + r"\s+\S+\s+postfix/\S*smtpd\[\d+\]:\s+NOQUEUE:\s+reject:\s+"
+    r"\w+\s+from\s+\S+:\s+(?P<reason>.*?)(?:;\s*from=<(?P<from>[^>]*)>)?"
+    r"(?:\s+to=<(?P<to>[^>]*)>)?(?:\s+proto=.*)?$"
+)
+# Rechazados por milter (Rspamd rechaza el mensaje ya encolado en postfix/cleanup):
+#   QID: milter-reject: END-OF-MESSAGE from host[ip]: 5.7.1 Spam message rejected;
+#        from=<X> to=<Y> proto=ESMTP ...
+_RE_MILTER_REJECT = re.compile(
+    r"^" + _TS + r"\s+\S+\s+postfix/(?:cleanup|\S*smtpd)\[\d+\]:\s+"
+    r"(?P<qid>[A-F0-9]+):\s+milter-reject:\s+\S+\s+from\s+\S+:\s+"
+    r"(?P<reason>.*?)(?:;\s*from=<(?P<from>[^>]*)>)?"
+    r"(?:\s+to=<(?P<to>[^>]*)>)?(?:\s+proto=.*)?$"
 )
 
 
@@ -2489,16 +2502,37 @@ def _parse_mail_log(raw_lines: list[str], domain_filter: Optional[str] = None,
             })
             continue
 
-        # Rechazados (NOQUEUE reject)
-        m = _RE_REJECT.match(line)
+        # Rechazados por milter (Rspamd ya tiene el qid → cruzamos su veredicto)
+        m = _RE_MILTER_REJECT.match(line)
         if m:
-            ts, reason = m.groups()
-            if domain_filter and domain_filter not in line:
+            ts = m.group(1)
+            qid = m.group("qid") or ""
+            reason = (m.group("reason") or "").strip()
+            sender = m.group("from") or from_map.get(qid, "")
+            to_addr = m.group("to") or ""
+            if domain_filter and domain_filter not in (to_addr + sender + line):
                 continue
             counts["rejected"] += 1
             events.append({
                 "ts": ts[:16].replace("T", " "), "type": "rejected", "status": "rejected",
-                "from": "", "to": "", "relay": "",
+                "from": sender, "to": to_addr, "relay": "",
+                "reason": reason[:120], "qid": qid,
+            })
+            continue
+
+        # Rechazados en SMTP (NOQUEUE reject)
+        m = _RE_REJECT.match(line)
+        if m:
+            ts = m.group(1)
+            reason = (m.group("reason") or "").strip()
+            sender = m.group("from") or ""
+            to_addr = m.group("to") or ""
+            if domain_filter and domain_filter not in (to_addr + sender + line):
+                continue
+            counts["rejected"] += 1
+            events.append({
+                "ts": ts[:16].replace("T", " "), "type": "rejected", "status": "rejected",
+                "from": sender, "to": to_addr, "relay": "",
                 "reason": reason[:120], "qid": "",
             })
 
