@@ -478,6 +478,18 @@ class APIClient {
   getMailDomains() {
     return this.get('/api/mail/domains')
   }
+  getMailGreylist(domainId) {
+    return this.get(`/api/mail/domains/${domainId}/greylist`)
+  }
+  setMailGreylist(domainId, enabled) {
+    return this.post(`/api/mail/domains/${domainId}/greylist?enabled=${enabled ? 'true' : 'false'}`, {})
+  }
+  getGlobalGreylisting() {
+    return this.get('/api/mail/greylisting')
+  }
+  setGlobalGreylisting(enabled) {
+    return this.put(`/api/mail/greylisting?enabled=${enabled ? 'true' : 'false'}`, {})
+  }
   mailMonitor({ date, domain, search } = {}) {
     const p = new URLSearchParams()
     if (date) p.set('date', date)

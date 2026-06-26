@@ -64,7 +64,27 @@
         </button>
       </div>
 
-      <div v-else class="sv-card">
+      <template v-else>
+      <!-- Greylisting global (solo admin) -->
+      <div v-if="isAdminOrReseller && !selectedDomain" class="sv-card" style="margin-bottom:1rem">
+        <div style="display:flex;align-items:center;justify-content:space-between;gap:1rem;padding:.9rem 1.1rem;flex-wrap:wrap">
+          <div>
+            <div style="font-weight:600"><i class="bi bi-hourglass-split" style="color:var(--warning)"></i> Lista gris (greylisting) global</div>
+            <div style="font-size:.82rem;color:var(--text-muted);margin-top:.2rem">
+              Si la desactivas, ningún dominio hará greylisting (entrega inmediata para todos).
+              Si está activa, cada dominio puede excluirse en sus Ajustes.
+            </div>
+          </div>
+          <label class="form-check form-switch" style="display:flex;align-items:center;gap:.5rem;white-space:nowrap">
+            <input class="form-check-input" type="checkbox" :checked="globalGreylist"
+                   :disabled="globalGreylistSaving" @change="toggleGlobalGreylist($event.target.checked)" />
+            <span>{{ globalGreylist ? 'Activada' : 'Desactivada' }}</span>
+            <span v-if="globalGreylistSaving" class="spinner-border spinner-border-sm"></span>
+          </label>
+        </div>
+      </div>
+
+      <div class="sv-card">
         <div class="sv-card-head">
           <span class="sv-card-title"><i class="bi bi-envelope-check"></i> Dominios de correo</span>
           <span class="sv-count">{{ mailDomains.length }}</span>
@@ -151,6 +171,7 @@
           </table>
         </div>
       </div>
+      </template>
     </template>
 
     <!-- ══════════ DETALLE DE DOMINIO ══════════ -->
@@ -713,6 +734,31 @@
 
             <div style="border-top:1px solid var(--border)"></div>
 
+            <!-- Lista gris (greylisting) -->
+            <div>
+              <h6 style="font-weight:600;font-size:.95rem;margin-bottom:.6rem">
+                <i class="bi bi-hourglass-split" style="color:var(--warning)"></i> Lista gris (greylisting)
+              </h6>
+              <p style="font-size:.83rem;color:var(--text-muted);margin-bottom:.8rem">
+                El greylisting rechaza temporalmente el primer intento de correos desconocidos
+                (el servidor legítimo reintenta a los minutos). Frena mucho spam, pero
+                <strong>retrasa</strong> la primera entrega. Desactívalo si este dominio necesita
+                recibir al instante (confirmaciones, códigos 2FA…). El resto del filtrado anti-spam no cambia.
+              </p>
+              <div v-if="greylist.global_enabled === false" class="sv-info-box" style="margin-bottom:.8rem">
+                <i class="bi bi-info-circle"></i> El greylisting está <strong>desactivado a nivel de servidor</strong>, así que ya no se aplica a ningún dominio.
+              </div>
+              <label class="form-check form-switch" style="display:flex;align-items:center;gap:.6rem">
+                <input class="form-check-input" type="checkbox" :checked="greylist.enabled"
+                       :disabled="greylistSaving || greylist.global_enabled === false"
+                       @change="toggleGreylist($event.target.checked)" />
+                <span>{{ greylist.enabled ? 'Activado para este dominio' : 'Desactivado (entrega inmediata)' }}</span>
+                <span v-if="greylistSaving" class="spinner-border spinner-border-sm"></span>
+              </label>
+            </div>
+
+            <div style="border-top:1px solid var(--border)"></div>
+
             <!-- TLS del correo -->
             <div>
               <h6 style="font-weight:600;font-size:.95rem;margin-bottom:1rem"><i class="bi bi-shield-lock" style="color:var(--success)"></i> Seguridad TLS del correo</h6>
@@ -1220,6 +1266,10 @@ export default {
     const spamForm       = ref({ spam_tag_threshold: 6.0, spam_reject_threshold: 15.0, whitelist_senders: '', blacklist_senders: '' })
     const loadingSpam    = ref(false)
     const savingSpam     = ref(false)
+    const greylist       = ref({ enabled: true, global_enabled: true })
+    const greylistSaving = ref(false)
+    const globalGreylist = ref(true)
+    const globalGreylistSaving = ref(false)
     const savingSettings = ref(false)
 
     // ── Modales ───────────────────────────────────────────────────────
@@ -1282,6 +1332,10 @@ export default {
       try {
         mailDomains.value = await api.getMailDomains()
         mailEnabled.value = true
+        // Estado del greylisting global (solo admin lo ve/cambia).
+        if (isAdminOrReseller.value) {
+          try { globalGreylist.value = (await api.getGlobalGreylisting()).enabled } catch { /* */ }
+        }
       } catch (e) {
         if (e.message && e.message.toLowerCase().includes('instalado')) {
           mailEnabled.value = false
@@ -1291,6 +1345,19 @@ export default {
       } finally {
         loading.value = false
       }
+    }
+
+    const toggleGlobalGreylist = async (enabled) => {
+      globalGreylistSaving.value = true
+      try {
+        await api.setGlobalGreylisting(enabled)
+        globalGreylist.value = enabled
+        store.showNotification(
+          enabled ? 'Greylisting global activado'
+                  : 'Greylisting global desactivado (entrega inmediata para todos)', 'success')
+      } catch (e) {
+        store.showNotification('Error: ' + (e.message || e), 'danger')
+      } finally { globalGreylistSaving.value = false }
     }
 
     const loadMailboxes = async (domainId) => {
@@ -1660,6 +1727,21 @@ export default {
         }
       } catch { /* si Rspamd no está instalado no bloqueamos */ }
       finally { loadingSpam.value = false }
+      // Estado del greylisting del dominio (+ si está activo a nivel servidor).
+      try { greylist.value = await api.getMailGreylist(domainId) } catch { /* */ }
+    }
+
+    const toggleGreylist = async (enabled) => {
+      greylistSaving.value = true
+      try {
+        await api.setMailGreylist(selectedDomain.value.id, enabled)
+        greylist.value = { ...greylist.value, enabled }
+        store.showNotification(
+          enabled ? 'Lista gris activada para este dominio'
+                  : 'Lista gris desactivada (entrega inmediata)', 'success')
+      } catch (e) {
+        store.showNotification('Error: ' + (e.message || e), 'danger')
+      } finally { greylistSaving.value = false }
     }
 
     const saveSpamSettings = async () => {
@@ -2065,6 +2147,8 @@ export default {
       loadDomains, openDetail, switchTab, suspendMailDomain, unsuspendMailDomain,
       openNewDomain, createDomain, saveSettings,
       loadSpamSettings, saveSpamSettings,
+      greylist, greylistSaving, toggleGreylist,
+      globalGreylist, globalGreylistSaving, toggleGlobalGreylist,
       generateDkim, rotateDkim, copyText,
       createMailbox, toggleMailbox, openChangePassword, changePassword,
       openWebmail,
