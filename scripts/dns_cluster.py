@@ -635,6 +635,23 @@ class DNSCluster:
         if rc != 0:
             raise DNSClusterError(f"rndc reload master: {err or out}")
 
+        # Declarar la zona en el SLAVE: su named.conf.zones debe incluir cada zona
+        # como 'type slave' para transferirla del master. Sin esto, una zona NUEVA
+        # llega al master pero el slave nunca la conoce (no replica). Regeneramos
+        # el zones.conf del slave con TODAS las zonas y lo recargamos.
+        if slave and slave.get("ip") and slave.get("ip") != master.get("ip"):
+            sudo_s = "" if slave.get("ssh_user", "root") == "root" else "sudo "
+            slave_conf = self._slave_zones_conf(all_zones, master["ip"], tsig["name"])
+            rc_s, _, err_s = self._upload(slave, slave_conf, self._zones_conf)
+            if rc_s == 0:
+                self._fix_bind_perms(slave)
+                self._run_remote(
+                    slave, f"{sudo_s}named-checkconf && {sudo_s}rndc reload", timeout=45)
+            else:
+                # No abortamos el push entero: el master ya tiene la zona. Pero
+                # avisamos en el log (el slave quedará desfasado hasta el próximo).
+                logger.warning(f"push_zone: no se pudo actualizar zones.conf del slave: {err_s}")
+
         # Si cambió el estado DNSSEC, el serial del master pudo bajar respecto al
         # que el slave ya tenía (inline-signing lo había subido). El slave rechaza
         # AXFR con serial menor (anti-rollback) y se queda pegado. Forzamos una
@@ -879,8 +896,19 @@ def compute_cluster_health(db, auto_resync: bool = True) -> Optional[Dict]:
     if auto_resync:
         for r in rows:
             ms = r["master_serial"]
-            # Solo el caso recuperable: BD por delante del master (push perdido).
-            if r["status"] == "desync" and ms is not None and r["db_serial"] > ms:
+            ss = r.get("slave_serial")
+            # Casos recuperables con un re-push (push_zone reconfigura master Y
+            # slave, así que cura ambos):
+            #   a) BD por delante del master (push al master perdido).
+            #   b) el slave va por detrás del master o NO tiene la zona (slave_serial
+            #      None o < master): zona nueva que no se declaró en el slave.
+            need = (
+                r["status"] == "desync" and ms is not None and (
+                    r["db_serial"] > ms or
+                    ss is None or ss < ms
+                )
+            )
+            if need:
                 try:
                     if resync_zone(db, r["domain"]):
                         import logging, time

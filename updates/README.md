@@ -85,3 +85,4 @@ exit 0
 | 0046 | Carpeta de staging de migraciones (reutilizar backup) | 2026-06-25 |
 | 0047 | GeoIP (países) en estadísticas de dominio + cron mensual | 2026-06-25 |
 | 0048 | Informes de GoAccess en español (locale es_ES.UTF-8)   | 2026-06-26 |
+| 0049 | Fix cluster DNS: declarar zonas nuevas en el slave     | 2026-06-26 |
