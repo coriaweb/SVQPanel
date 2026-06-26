@@ -689,8 +689,10 @@ async def get_domain_logs(
     db:           Session = Depends(get_db),
 ):
     """
-    Devuelve las últimas N líneas del log nginx (access o error) del dominio.
-    Path: /home/{user}/web/{dominio}/logs/nginx.{access|error}.log
+    Devuelve las últimas N líneas del log (access o error) del dominio.
+    En modo Apache+Nginx, los errores PHP (500, fatal de WordPress…) van al log de
+    APACHE, no al de nginx. Por eso combinamos AMBOS logs si existen: nginx.{type}
+    + apache.{type}. Path: /home/{user}/web/{dominio}/logs/{nginx,apache}.{type}.log
     """
     import os
     from collections import deque
@@ -701,27 +703,40 @@ async def get_domain_logs(
     _check_access(current_user, domain, db)
 
     base = _domain_owner_dir(domain, db)
-    log_path = os.path.join(base, "logs", f"nginx.{log_type}.log")
+    logs_dir = os.path.join(base, "logs")
+    candidates = [
+        ("nginx",  os.path.join(logs_dir, f"nginx.{log_type}.log")),
+        ("apache", os.path.join(logs_dir, f"apache.{log_type}.log")),
+    ]
+    existing = [(src, p) for src, p in candidates if os.path.isfile(p)]
 
-    if not os.path.isfile(log_path):
+    if not existing:
         return {
             "domain":   domain.domain_name,
             "type":     log_type,
-            "path":     log_path,
+            "path":     candidates[0][1],
             "exists":   False,
             "lines":    [],
             "message":  "El archivo de log aún no existe (sin tráfico todavía)",
         }
 
     try:
-        with open(log_path, "r", encoding="utf-8", errors="replace") as f:
-            tail = deque(f, maxlen=lines)
+        merged = []
+        for src, p in existing:
+            with open(p, "r", encoding="utf-8", errors="replace") as f:
+                # Prefijar con el origen solo cuando hay más de un log (modo dual),
+                # para que se distinga de dónde viene cada línea.
+                prefix = f"[{src}] " if len(existing) > 1 else ""
+                for line in deque(f, maxlen=lines):
+                    merged.append(prefix + line.rstrip("\n"))
+        # Quedarnos con las últimas N del conjunto combinado.
+        tail = merged[-lines:]
         return {
             "domain":   domain.domain_name,
             "type":     log_type,
-            "path":     log_path,
+            "path":     ", ".join(p for _, p in existing),
             "exists":   True,
-            "lines":    [l.rstrip("\n") for l in tail],
+            "lines":    tail,
             "count":    len(tail),
         }
     except OSError as e:

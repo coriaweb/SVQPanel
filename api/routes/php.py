@@ -251,15 +251,63 @@ async def update_domain_php(
         # Sin root (dev) — no validamos
         pass
 
-    try:
-        domain_manager = DomainManager()
-        domain_manager.change_php_version(domain.domain_name, request.php_version)
-    except PermissionError:
-        pass  # Entorno dev sin root
-
+    # Persistir la versión ANTES de regenerar (el vhost/pool se generan a partir
+    # del estado del dominio).
     domain.php_version = request.php_version
     db.commit()
     db.refresh(domain)
+
+    # Cambio REAL de versión:
+    #  1) write_pool crea el pool dedicado en la versión nueva y BORRA el de la
+    #     vieja (remove_pool except_version) — antes esto no se hacía y el dominio
+    #     seguía corriendo con el pool de la versión anterior.
+    #  2) regenerate_vhost reescribe el vhost (nginx y/o Apache) apuntando al
+    #     socket del pool nuevo. El regex viejo de change_php_version no tocaba el
+    #     socket dedicado ni el vhost de Apache.
+    try:
+        from scripts import php_ini_manager as phpini
+        from api.models.models_user import User as _User
+        owner = db.query(_User).filter(_User.id == domain.user_id).first()
+        overrides = {}
+        if domain.php_ini_overrides:
+            import json
+            try:
+                overrides = json.loads(domain.php_ini_overrides) or {}
+            except (ValueError, TypeError):
+                overrides = {}
+        fpm_tuning = None
+        if domain.fpm_pool_overrides:
+            import json
+            try:
+                fpm_tuning = json.loads(domain.fpm_pool_overrides)
+            except (ValueError, TypeError):
+                fpm_tuning = None
+        ok, msg = phpini.write_pool(domain.domain_name, request.php_version,
+                                    owner.username, overrides,
+                                    relax_hardening=bool(domain.php_hardening_relaxed),
+                                    fpm_tuning=fpm_tuning)
+        if not ok:
+            raise HTTPException(status_code=500,
+                detail=f"No se pudo crear el pool PHP {request.php_version}: {msg}")
+        php_socket = phpini.pool_socket_path(domain.domain_name)
+        DomainManager().regenerate_vhost(
+            owner.username, domain.domain_name, request.php_version,
+            ssl_enabled=domain.ssl_enabled, ipv6=domain.ipv6, ipv4=domain.ipv4,
+            php_socket_override=php_socket,
+            template_nginx_extra=domain.template_nginx_extra,
+            custom_nginx_config=domain.custom_nginx_config,
+            custom_apache_config=domain.custom_apache_config,
+            redirect_to=domain.redirect_to, custom_docroot=domain.custom_docroot,
+            force_https=domain.force_https or False, hsts=domain.hsts_enabled or False,
+            canonical_domain=domain.canonical_domain or "www",
+        )
+    except HTTPException:
+        raise
+    except PermissionError:
+        pass  # Entorno dev sin root
+    except Exception as e:
+        raise HTTPException(status_code=500,
+            detail=f"Versión actualizada en BD pero falló la aplicación: {e}")
 
     return {
         "status": "success",
