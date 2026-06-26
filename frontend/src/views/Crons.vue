@@ -60,6 +60,10 @@
               <td class="cr-muted">{{ formatDate(cron.created_at) }}</td>
               <td class="cr-right">
                 <div class="cr-actions">
+                  <button class="cr-iconbtn" title="Ejecutar ahora" :disabled="runningId === cron.id" @click="runCron(cron)">
+                    <span v-if="runningId === cron.id" class="cr-spin"></span>
+                    <i v-else class="bi bi-lightning-charge"></i>
+                  </button>
                   <button class="cr-iconbtn" :title="cron.is_active ? 'Desactivar' : 'Activar'" @click="toggleCron(cron)">
                     <i :class="cron.is_active ? 'bi bi-pause' : 'bi bi-play'"></i>
                   </button>
@@ -166,6 +170,32 @@
         </div>
       </div>
     </div>
+
+    <!-- Modal: resultado de "Ejecutar ahora" -->
+    <div v-if="showRunResult" class="cr-modal" @click.self="showRunResult = false">
+      <div class="cr-modal__dialog">
+        <div class="cr-modal__head">
+          <h5 class="cr-modal__title">
+            <i class="bi" :class="runResult?.status === 'success' ? 'bi-check-circle text-success' : 'bi-exclamation-triangle text-warning'"></i>
+            Resultado de la ejecución
+          </h5>
+          <button type="button" class="cr-modal__close" @click="showRunResult = false"><i class="bi bi-x-lg"></i></button>
+        </div>
+        <div class="cr-modal__body">
+          <p class="cr-run-meta">
+            <span :class="runResult?.exit_code === 0 ? 'cr-badge cr-badge--ok' : 'cr-badge cr-badge--err'">
+              código {{ runResult?.exit_code }}
+            </span>
+            <code class="cr-run-cmd">{{ runResult?.command }}</code>
+          </p>
+          <pre v-if="runResult?.output" class="cr-run-out">{{ runResult.output }}</pre>
+          <p v-else class="cr-run-empty">(la tarea no produjo salida)</p>
+        </div>
+        <div class="cr-modal__foot">
+          <BaseButton variant="ghost" size="sm" @click="showRunResult = false">Cerrar</BaseButton>
+        </div>
+      </div>
+    </div>
   </div>
 </template>
 
@@ -215,6 +245,10 @@ export default {
     const form     = ref(emptyForm())
     const formError = ref('')
     const saving   = ref(false)
+    // Ejecutar ahora
+    const runningId    = ref(null)
+    const runResult    = ref(null)
+    const showRunResult = ref(false)
 
     // Usuarios (para asignar propietario y filtrar — solo admin/reseller)
     const users = ref([])
@@ -302,6 +336,24 @@ export default {
       }
     }
 
+    const runCron = async (cron) => {
+      runningId.value = cron.id
+      try {
+        const r = await api.runCron(cron.id)
+        runResult.value = { ...r, cronComment: cron.comment }
+        showRunResult.value = true
+        if (r.status === 'success') {
+          store.showNotification('Tarea ejecutada (código 0)', 'success')
+        } else {
+          store.showNotification(`La tarea terminó con código ${r.exit_code}`, 'warning')
+        }
+      } catch (e) {
+        store.showNotification('Error al ejecutar: ' + (e.message || e), 'danger')
+      } finally {
+        runningId.value = null
+      }
+    }
+
     const toggleCron = async (cron) => {
       try {
         await api.toggleCron(cron.id)
@@ -340,7 +392,8 @@ export default {
       presets: PRESETS,
       openCreate, openEdit, closeForm,
       applyPreset, submitForm,
-      toggleCron, deleteCron,
+      toggleCron, deleteCron, runCron,
+      runningId, runResult, showRunResult,
       describeCron, formatDate,
     }
   }
@@ -391,6 +444,18 @@ export default {
   border-radius: var(--r-sm); cursor: pointer; transition: all .12s;
 }
 .cr-iconbtn:hover { background: var(--surface-inset); color: var(--text); border-color: var(--border-strong); }
+.cr-iconbtn:disabled { opacity: .6; cursor: default; }
+.cr-spin { display:inline-block; width:14px; height:14px; border:2px solid currentColor;
+  border-right-color:transparent; border-radius:50%; animation:cr-spin-kf .7s linear infinite; }
+@keyframes cr-spin-kf { to { transform: rotate(360deg); } }
+.cr-run-meta { display:flex; align-items:center; gap:.5rem; margin-bottom:.6rem; flex-wrap:wrap; }
+.cr-run-cmd { font-size:.8rem; color:var(--text-secondary); word-break:break-all; }
+.cr-badge { font-size:.72rem; font-weight:600; padding:.1rem .5rem; border-radius:999px; }
+.cr-badge--ok  { color:var(--success); background:color-mix(in srgb,var(--success) 14%,transparent); }
+.cr-badge--err { color:var(--warning); background:color-mix(in srgb,var(--warning) 14%,transparent); }
+.cr-run-out { background:#0b1020; color:#e6e9f0; padding:.8rem 1rem; border-radius:var(--r-md,10px);
+  font-size:.8rem; max-height:340px; overflow:auto; white-space:pre-wrap; word-break:break-word; }
+.cr-run-empty { color:var(--text-muted); font-size:.85rem; }
 .cr-iconbtn--danger:hover { color: var(--danger); border-color: var(--danger); }
 
 /* Modal */

@@ -974,6 +974,9 @@ class APIClient {
   toggleCron(cronId) {
     return this.post(`/api/crons/${cronId}/toggle`)
   }
+  runCron(cronId) {
+    return this.post(`/api/crons/${cronId}/run`)
+  }
 
   // Backups
   getBackupJobs() {

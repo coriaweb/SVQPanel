@@ -418,6 +418,7 @@ apt-get install -y -qq -o Dpkg::Options::="--force-confold" \
     unzip \
     zip \
     acl \
+    cron \
     sshpass \
     dnsutils \
     openssl \
@@ -437,6 +438,11 @@ apt-get install -y -qq -o Dpkg::Options::="--force-confold" \
     quota \
     quotatool \
     mailutils
+
+# El daemon cron es IMPRESCINDIBLE: los cronjobs de cliente se escriben a
+# /var/spool/cron/crontabs/{user} y los ejecuta cron. Sin él, nada programado
+# corre (ni crons de cliente ni tareas del panel). Habilitar + arrancar.
+systemctl enable --now cron 2>/dev/null || true
 
 echo -e "${GREEN}✓ Dependencias instaladas${NC}\n"
 

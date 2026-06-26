@@ -87,3 +87,4 @@ exit 0
 | 0048 | Informes de GoAccess en español (locale es_ES.UTF-8)   | 2026-06-26 |
 | 0049 | Fix cluster DNS: declarar zonas nuevas en el slave     | 2026-06-26 |
 | 0050 | Seguridad: cerrar recursión DNS (open resolver/DDoS)  | 2026-06-26 |
+| 0051 | Instalar daemon cron (no corría ningún cronjob)       | 2026-06-26 |

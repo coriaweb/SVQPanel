@@ -249,3 +249,44 @@ async def toggle_cron(
         logging.getLogger(__name__).warning(f"No se pudo actualizar crontab: {e}")
 
     return _cron_to_response(cron, db)
+
+
+@router.post("/crons/{cron_id}/run")
+async def run_cron_now(
+    cron_id: int,
+    current_user: User = Depends(require_auth),
+    db: Session = Depends(get_db),
+):
+    """Ejecuta AHORA el comando del cron (como el usuario del sistema), sin esperar
+    a su horario. Devuelve el codigo de salida y la salida. Util para probar un
+    cron tras crearlo/migrarlo, igual que en Hestia."""
+    import os
+    import subprocess
+    cron = _get_cron_or_404(cron_id, db)
+    _check_cron_access(current_user, cron)
+
+    owner = db.query(User).filter(User.id == cron.user_id).first()
+    sys_user = _get_username_for_user(owner)
+
+    env = {**os.environ, "PATH": "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"}
+    try:
+        proc = subprocess.run(
+            ["runuser", "-u", sys_user, "--", "/bin/bash", "-lc", cron.command],
+            capture_output=True, text=True, timeout=120, env=env,
+        )
+    except subprocess.TimeoutExpired:
+        raise HTTPException(status_code=504,
+            detail="La tarea tardo mas de 120s y se cancelo.")
+    except FileNotFoundError:
+        raise HTTPException(status_code=500, detail="No se pudo lanzar la tarea (runuser no disponible).")
+
+    cron.last_run = datetime.utcnow()
+    db.commit()
+
+    output = (proc.stdout or "") + (("\n" + proc.stderr) if proc.stderr else "")
+    return {
+        "status": "success" if proc.returncode == 0 else "error",
+        "exit_code": proc.returncode,
+        "output": output.strip()[:8000],
+        "command": cron.command,
+    }

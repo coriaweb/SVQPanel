@@ -9,6 +9,7 @@ Este manager lee/escribe esa entrada marcando las líneas gestionadas por SVQPan
 import logging
 import os
 import re
+import shutil
 import subprocess
 from pathlib import Path
 from typing import List
@@ -52,11 +53,15 @@ class CronManager(SystemManager):
 
     def _write_crontab(self, username: str, content: str):
         """Escribe el crontab de un usuario usando `crontab -` para mantener permisos."""
+        # Ruta absoluta: en contextos sin PATH completo (jobs en background,
+        # importación de migración) `crontab` a secas no se encuentra (FileNotFound).
+        crontab_bin = shutil.which("crontab") or "/usr/bin/crontab"
         proc = subprocess.run(
-            ["crontab", "-u", username, "-"],
+            [crontab_bin, "-u", username, "-"],
             input=content,
             text=True,
             capture_output=True,
+            env={**os.environ, "PATH": "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"},
         )
         if proc.returncode != 0:
             raise RuntimeError(f"Error escribiendo crontab: {proc.stderr.strip()}")
