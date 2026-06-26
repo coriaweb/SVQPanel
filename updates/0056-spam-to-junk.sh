@@ -7,9 +7,11 @@
 # sí sola no hace nada y no había sieve_before que lo filtrara.
 #
 # Invoca el código del panel (idempotente): cmd_setup_spam_to_junk instala/
-# compila el Sieve y activa sieve_before, respetando Settings.spam_to_junk_enabled.
-# Luego regenera Rspamd para aplicar el override por dominio (un dominio con
-# spam_to_junk desactivado no marca X-Spam, así su spam no se mueve).
+# compila el Sieve, activa sieve_before (apuntando al FICHERO .sieve) y, lo más
+# importante, hace que Postfix ENTREGUE VÍA DOVECOT LMTP en vez de su agente
+# 'virtual' (que se salta Dovecot y no ejecuta ningún Sieve). Respeta
+# Settings.spam_to_junk_enabled. Luego regenera Rspamd para el override por
+# dominio (un dominio con spam_to_junk desactivado no marca X-Spam → no se mueve).
 #
 # Idempotente y no interactivo.
 
