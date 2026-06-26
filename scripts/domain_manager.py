@@ -436,21 +436,27 @@ class DomainManager(SystemManager):
         if not validate_domain(domain_name):
             raise ValueError(f"Invalid domain: {domain_name}")
 
-        # Subdominio: si el caller no lo indicó, consultarlo en la BD (los
-        # subdominios NO llevan www. ni redirección canónica en el vhost). Una
-        # sola consulta aquí evita propagar el flag por todos los callers.
-        if not is_subdomain:
+        # Recuperar de la BD lo que el caller no haya indicado, en UNA consulta:
+        #  - is_subdomain: los subdominios no llevan www. ni redirección canónica.
+        #  - docroot_subdir: la subcarpeta de la plantilla (Laravel/Symfony
+        #    'public'). Si se pierde, el dominio sirve desde la raíz y da 404.
+        # Esto evita propagar ambos flags por TODOS los callers de regenerate_vhost.
+        if not is_subdomain or docroot_subdir is None:
             try:
                 from api.models.database import SessionLocal
                 from api.models.models_domain import Domain as _D
                 _db = SessionLocal()
                 try:
                     _d = _db.query(_D).filter(_D.domain_name == domain_name).first()
-                    is_subdomain = bool(_d and _d.is_subdomain)
+                    if _d:
+                        if not is_subdomain:
+                            is_subdomain = bool(_d.is_subdomain)
+                        if docroot_subdir is None:
+                            docroot_subdir = getattr(_d, "docroot_subdir", None) or None
                 finally:
                     _db.close()
             except Exception:
-                is_subdomain = False
+                pass
 
         # Auto-detectar webserver
         if webserver is None:

@@ -506,6 +506,9 @@ def _run_migrations():
         # Subdominios: tipo + zona padre
         "ALTER TABLE domains ADD COLUMN IF NOT EXISTS is_subdomain BOOLEAN NOT NULL DEFAULT FALSE",
         "ALTER TABLE domains ADD COLUMN IF NOT EXISTS parent_domain VARCHAR(255)",
+        # Subcarpeta docroot de la plantilla (Laravel/Symfony 'public') — debe
+        # persistir para no perderla al regenerar el vhost (404).
+        "ALTER TABLE domains ADD COLUMN IF NOT EXISTS docroot_subdir VARCHAR(64)",
         # Cron jobs de clientes
         """CREATE TABLE IF NOT EXISTS cron_jobs (
             id         SERIAL PRIMARY KEY,

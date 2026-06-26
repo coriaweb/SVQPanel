@@ -67,6 +67,12 @@ class Domain(Base):
     redirect_to    = Column(String(512), nullable=True)   # ej: https://otro.com
     custom_docroot = Column(String(512), nullable=True)   # ej: /home/user/web/domain/app/public
 
+    # Subcarpeta del docroot que sirve la app (la aporta la plantilla: Laravel/
+    # Symfony usan "public", algunos "web"). Debe PERSISTIR aquí para que cualquier
+    # regeneración del vhost la conserve (si no, un dominio Laravel pierde el
+    # /public al regenerar y da 404). NULL = sirve desde la raíz del docroot.
+    docroot_subdir = Column(String(64), nullable=True)
+
     # SSL avanzado
     force_https  = Column(Boolean, default=False, nullable=False)
     hsts_enabled = Column(Boolean, default=False, nullable=False)

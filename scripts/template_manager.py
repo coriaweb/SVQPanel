@@ -692,6 +692,9 @@ class TemplateManager(SystemManager):
         domain_row.applied_template_id   = template_row.id
         domain_row.applied_template_name = template_row.name
         domain_row.template_nginx_extra  = template_row.nginx_extra
+        # Persistir la subcarpeta del docroot (Laravel/Symfony 'public') para que
+        # toda regeneración posterior del vhost la conserve (si no, da 404).
+        domain_row.docroot_subdir = getattr(template_row, 'docroot_subdir', None) or None
 
         if template_row.php_ini_overrides:
             domain_row.php_ini_overrides = template_row.php_ini_overrides
