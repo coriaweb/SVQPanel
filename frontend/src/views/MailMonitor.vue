@@ -79,7 +79,7 @@
                   <span v-if="e.spam_score != null" class="mm-score">{{ e.spam_score }}/{{ e.spam_threshold }}</span>
                 </span>
                 <div v-if="e.spam_symbols && e.spam_symbols.length" class="mm-syms">
-                  <span v-for="s in e.spam_symbols" :key="s.name" :title="s.name + ' +' + s.weight">{{ shortSym(s.name) }}</span>
+                  <span v-for="s in e.spam_symbols" :key="s.name" :title="s.name + ' (+' + s.weight + ')'">{{ s.label || s.name }}</span>
                 </div>
               </template>
               <span v-else class="mm-status" :class="'mm-status--' + e.status">{{ statusLabel(e.status) }}</span>
@@ -136,8 +136,7 @@ export default {
       return 'mm-spam--ok'
     }
     const symbolsTitle = (e) =>
-      (e.spam_symbols || []).map(s => `${s.name} +${s.weight}`).join('\n') || ''
-    const shortSym = (name) => name.replace(/^HFILTER_/, '').replace(/_/g, ' ').slice(0, 18)
+      (e.spam_symbols || []).map(s => `${s.label || s.name} (+${s.weight})`).join('\n') || ''
 
     const reload = async () => {
       loading.value = true
@@ -160,7 +159,7 @@ export default {
       loading, data, search, typeFilter, date, todayStr,
       isToday, isYesterday, filteredEvents,
       typeLabel, statusLabel, reload, setDay,
-      spamClass, symbolsTitle, shortSym,
+      spamClass, symbolsTitle,
     }
   },
 }
@@ -220,8 +219,9 @@ export default {
 .mm-spam--warn { color:#f59e0b; background:color-mix(in srgb,#f59e0b 14%,transparent); }
 .mm-spam--bad  { color:#ef4444; background:color-mix(in srgb,#ef4444 14%,transparent); }
 .mm-spam--grey { color:#6b7280; background:color-mix(in srgb,#6b7280 14%,transparent); }
-.mm-syms { display:flex; gap:.3rem; margin-top:.25rem; flex-wrap:wrap; }
-.mm-syms span { font-size:.64rem; color:var(--text-muted); background:var(--surface-inset); padding:.05rem .35rem; border-radius:4px; white-space:nowrap; }
+.mm-syms { display:flex; flex-direction:column; gap:.15rem; margin-top:.3rem; }
+.mm-syms span { font-size:.7rem; color:var(--text-muted); line-height:1.25; }
+.mm-syms span::before { content:"· "; opacity:.6; }
 .mm-spin { display:inline-block; width:14px; height:14px; border:2px solid currentColor; border-right-color:transparent; border-radius:50%; animation:mm-spin .7s linear infinite; vertical-align:-2px; }
 @keyframes mm-spin { to { transform:rotate(360deg); } }
 </style>

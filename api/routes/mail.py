@@ -2260,16 +2260,68 @@ def _safe_float(s):
         return None
 
 
+# Traducción de los símbolos de Rspamd más comunes a lenguaje claro (admin).
+# Si un símbolo no está aquí, se muestra una versión "humanizada" del nombre.
+_SYMBOL_ES = {
+    "HFILTER_FROMHOST_NORES_A_OR_MX": "El servidor del remitente no resuelve bien (DNS)",
+    "HFILTER_FROMHOST_NORESOLVE_MX": "El dominio del remitente no tiene MX",
+    "HFILTER_HELO_IP_A": "El HELO no coincide con la IP del remitente",
+    "HFILTER_HELO_NORESOLVE": "El HELO del remitente no resuelve",
+    "ARC_REJECT": "Falló la validación ARC (cadena de reenvío)",
+    "ARC_NA": "Sin firma ARC",
+    "DMARC_POLICY_REJECT": "DMARC del dominio dice rechazar",
+    "DMARC_POLICY_QUARANTINE": "DMARC del dominio dice cuarentena",
+    "DMARC_POLICY_SOFTFAIL": "DMARC falló (soft)",
+    "DMARC_DNSFAIL": "No se pudo comprobar DMARC (DNS)",
+    "R_SPF_FAIL": "Falló SPF (IP no autorizada por el dominio)",
+    "R_SPF_SOFTFAIL": "SPF dudoso (soft fail)",
+    "R_SPF_DNSFAIL": "No se pudo comprobar SPF (DNS)",
+    "R_SPF_NA": "El dominio no tiene SPF",
+    "R_DKIM_REJECT": "Falló la firma DKIM",
+    "R_DKIM_TEMPFAIL": "No se pudo comprobar DKIM (temporal)",
+    "R_DKIM_NA": "Sin firma DKIM",
+    "FORGED_SENDER": "El remitente visible no coincide con el real",
+    "FROM_NEQ_ENVFROM": "El From no coincide con el sobre",
+    "MISSING_TO": "Le falta la cabecera 'Para'",
+    "MISSING_DATE": "Le falta la cabecera de fecha",
+    "MISSING_MID": "Le falta el Message-ID",
+    "FAKE_REPLY": "Simula ser una respuesta (Re:) sin serlo",
+    "MANY_INVISIBLE_PARTS": "Contiene muchas partes invisibles (típico de spam)",
+    "MIME_GOOD": "Estructura del mensaje correcta",
+    "BAYES_SPAM": "El filtro aprendido lo cree spam",
+    "BAYES_HAM": "El filtro aprendido lo cree legítimo",
+    "GREYLIST": "Greylisting (rechazo temporal para verificar)",
+    "RBL_SPAMHAUS": "La IP está en lista negra (Spamhaus)",
+    "RECEIVED_SPAMHAUS_XBL": "IP en lista negra de Spamhaus",
+    "URIBL_BLACK": "Contiene un enlace en lista negra",
+    "MID_RHS_NOT_FQDN": "El Message-ID tiene un dominio inválido",
+    "URI_COUNT_ODD": "Número inusual de enlaces",
+    "EXT_CSS": "Usa CSS externo (común en marketing/spam)",
+    "INFO_TO_INFO_LU": "Enviado de info@ a info@ (patrón de spam)",
+    "MV_CASE": "Asunto con mayúsculas/minúsculas sospechosas",
+}
+
+
+def _humanize_symbol(name: str) -> str:
+    """Texto claro de un símbolo. Si no está mapeado, limpia el nombre técnico."""
+    if name in _SYMBOL_ES:
+        return _SYMBOL_ES[name]
+    # Fallback: quitar prefijos técnicos y poner legible.
+    h = re.sub(r"^(HFILTER_|R_|RBL_|RECEIVED_|URIBL_|MIME_)", "", name)
+    return h.replace("_", " ").capitalize()
+
+
 def _top_symbols(syms_str: str, n: int = 3) -> list:
     """De la lista de símbolos 'SYM(peso){...},...' devuelve los n de mayor peso
-    POSITIVO (los que empujan a spam), como [{name, weight}]."""
+    POSITIVO (los que empujan a spam), como [{name, label, weight}]."""
     out = []
     for chunk in syms_str.split("},"):
         m = re.match(r"\s*([A-Z0-9_]+)\(([\-\d.]+)\)", chunk)
         if m:
             w = _safe_float(m.group(2)) or 0.0
             if w > 0:
-                out.append({"name": m.group(1), "weight": w})
+                out.append({"name": m.group(1), "label": _humanize_symbol(m.group(1)),
+                            "weight": w})
     out.sort(key=lambda x: x["weight"], reverse=True)
     return out[:n]
 
@@ -2438,6 +2490,33 @@ async def get_mail_logs(
     return result
 
 
+# Cache corto del log LEÍDO por fecha (la parte cara: leer/descomprimir MB). El
+# filtrado por domain/search se hace en cada petición sobre lo cacheado, que es
+# barato. TTL 30s → recargas y cambios de filtro no re-leen el log.
+import time as _time
+_MONITOR_CACHE: dict[str, tuple] = {}   # day → (expira_ts, raw_lines, rspamd_map)
+_MONITOR_TTL = 30
+
+
+def _monitor_raw_for_day(day: str):
+    """Devuelve (raw_lines, rspamd_map) para un día, con cache TTL."""
+    now = _time.monotonic()
+    hit = _MONITOR_CACHE.get(day)
+    if hit and hit[0] > now:
+        return hit[1], hit[2]
+    raw = _read_mail_log_for_date(day)
+    from datetime import date as _date
+    if not raw and day == _date.today().isoformat():
+        raw = _read_mail_log(2000)
+    rspamd_map = _rspamd_logs_for_date(day) if raw else {}
+    _MONITOR_CACHE[day] = (now + _MONITOR_TTL, raw, rspamd_map)
+    # Limpieza simple: no dejar crecer el cache (días viejos).
+    if len(_MONITOR_CACHE) > 8:
+        for k in [k for k, v in _MONITOR_CACHE.items() if v[0] <= now]:
+            _MONITOR_CACHE.pop(k, None)
+    return raw, rspamd_map
+
+
 @router.get("/mail/monitor")
 async def mail_monitor(
     date: Optional[str] = None,
@@ -2451,19 +2530,14 @@ async def mail_monitor(
     - domain: filtro opcional por dominio.
     - search: texto libre (remitente / destinatario / motivo).
     Estados por evento: enviado / recibido / rechazado / rebotado / diferido.
+    El log leído se cachea 30s (el filtrado se aplica sobre lo cacheado).
     """
     from datetime import date as _date
     day = (date or _date.today().isoformat()).strip()
-    # Validación simple de fecha.
     if not re.match(r"^\d{4}-\d{2}-\d{2}$", day):
         raise HTTPException(status_code=400, detail="Fecha inválida (use YYYY-MM-DD).")
 
-    raw = _read_mail_log_for_date(day)
-    if not raw and day == _date.today().isoformat():
-        # Hoy puede no haber prefijo de fecha aún si el log es muy reciente; cae a
-        # leer el final del log activo.
-        raw = _read_mail_log(2000)
-
+    raw, rspamd_map = _monitor_raw_for_day(day)
     if not raw:
         return {
             "available": False, "date": day,
@@ -2471,7 +2545,6 @@ async def mail_monitor(
             "counts": {"sent": 0, "received": 0, "rejected": 0, "bounced": 0, "deferred": 0},
             "events": [], "total_events": 0,
         }
-    rspamd_map = _rspamd_logs_for_date(day)
     result = _parse_mail_log(raw, domain_filter=domain, search=search,
                              max_events=500, rspamd_map=rspamd_map)
     result["available"] = True
