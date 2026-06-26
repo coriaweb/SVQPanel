@@ -2593,6 +2593,38 @@ async def get_mail_logs(
     return result
 
 
+@router.get("/mail/account-alerts")
+async def mail_account_alerts(
+    current_user=Depends(require_auth),
+    db: Session = Depends(get_db),
+):
+    """Alertas de cuentas de correo mal configuradas (contraseña/usuario erróneo
+    que provoca bloqueo por fail2ban), detectadas en los fallos de login del
+    journal. Filtra por rol igual que list_mail_domains: admin=todos,
+    reseller=sus clientes + propios, usuario=propios."""
+    query = db.query(MailDomain)
+    if current_user.role == "admin":
+        domains = query.all()
+    elif current_user.role == "reseller":
+        from api.models.models_user import User
+        client_ids = [
+            u.id for u in db.query(User).filter(User.parent_id == current_user.id).all()
+        ]
+        domains = query.filter(
+            MailDomain.user_id.in_(client_ids + [current_user.id])
+        ).all()
+    else:
+        domains = query.filter(MailDomain.user_id == current_user.id).all()
+
+    try:
+        from scripts.mail_auth_alerts import detect_account_issues
+        alerts = detect_account_issues(domains, db)
+    except Exception as e:
+        logger.warning(f"mail_account_alerts: {e}")
+        alerts = []
+    return {"alerts": alerts, "count": len(alerts)}
+
+
 # Cache corto del log LEÍDO por fecha (la parte cara: leer/descomprimir MB). El
 # filtrado por domain/search se hace en cada petición sobre lo cacheado, que es
 # barato. TTL 30s → recargas y cambios de filtro no re-leen el log.

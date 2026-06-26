@@ -14,6 +14,9 @@
       </BaseButton>
     </header>
 
+    <!-- ===== Alertas de cuentas de correo mal configuradas ===== -->
+    <MailAuthAlert />
+
     <!-- ===== Métricas ===== -->
     <div class="metrics-grid">
       <MetricCard
@@ -190,10 +193,11 @@ import MetricCard from '../components/ui/MetricCard.vue'
 import StatusBadge from '../components/ui/StatusBadge.vue'
 import ResourceGauge from '../components/ui/ResourceGauge.vue'
 import EmptyState from '../components/ui/EmptyState.vue'
+import MailAuthAlert from '../components/MailAuthAlert.vue'
 
 export default {
   name: 'Dashboard',
-  components: { BaseCard, BaseButton, MetricCard, StatusBadge, ResourceGauge, EmptyState },
+  components: { BaseCard, BaseButton, MetricCard, StatusBadge, ResourceGauge, EmptyState, MailAuthAlert },
   setup() {
     const store = useMainStore()
     const currentUser = computed(() => store.currentUser)

@@ -499,6 +499,10 @@ class APIClient {
     return this.get('/api/mail/monitor' + (qs ? '?' + qs : ''))
   }
 
+  mailAccountAlerts() {
+    return this.get('/api/mail/account-alerts')
+  }
+
   createMailDomain(data) {
     return this.post('/api/mail/domains', data)
   }
