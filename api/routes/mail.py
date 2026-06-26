@@ -2381,6 +2381,29 @@ _SYMBOL_ES = {
     "EXT_CSS": "Usa CSS externo (común en marketing/spam)",
     "INFO_TO_INFO_LU": "Enviado de info@ a info@ (patrón de spam)",
     "MV_CASE": "Asunto con mayúsculas/minúsculas sospechosas",
+    "FROM_EXCESS_QP": "Remitente con codificación rara (típico de spam)",
+    "REPLYTO_EXCESS_QP": "Responder-a con codificación rara (típico de spam)",
+    "TO_EXCESS_QP": "Destinatario con codificación rara (típico de spam)",
+    "SUBJ_EXCESS_QP": "Asunto con codificación rara (típico de spam)",
+    "URL_MULTIPLE_AT_SIGNS": "Enlace con varias '@' (ocultación de URL)",
+    "URL_QUERY_MULTIPLE_URLS": "Enlace que esconde otras URLs (redirección)",
+    "SUSPICIOUS_IMAGES": "Imágenes sospechosas (spam visual)",
+    "MIXED_CHARSET": "Mezcla de alfabetos (truco anti-filtro)",
+    "PHISHING": "Posible phishing (suplantación)",
+    "MID_RHS_WWW": "El Message-ID usa un dominio con 'www' (sospechoso)",
+    "HTML_ONLY": "Solo HTML, sin versión de texto (común en spam)",
+    "PARTS_DIFFER": "Las versiones texto y HTML no coinciden",
+    "BAD_EXTENSION": "Adjunto con extensión peligrosa",
+    "HOSTNAME_UNKNOWN": "El servidor del remitente no tiene nombre (DNS inverso)",
+    "DATE_IN_PAST": "Fecha del mensaje en el pasado",
+    "DATE_IN_FUTURE": "Fecha del mensaje en el futuro",
+    "RDNS_NONE": "La IP del remitente no tiene DNS inverso",
+    "RCVD_IN_DNSWL_NONE": "Remitente no está en listas blancas",
+    "MANY_INVISIBLE_PARTS": "Contiene muchas partes invisibles (típico de spam)",
+    "ONCE_RECEIVED": "Cadena de entrega demasiado corta (sospechoso)",
+    "R_BAD_CTE_7BIT": "Codificación del cuerpo incorrecta",
+    "MIME_HTML_ONLY": "Solo HTML, sin versión de texto (común en spam)",
+    "FORGED_RECIPIENTS": "Destinatarios falsificados",
 }
 
 
@@ -2447,6 +2470,24 @@ def _read_mail_log_for_date(date_str: str, max_bytes: int = 30_000_000) -> list[
     return out
 
 
+# Un rechazo con código SMTP 4.x es TEMPORAL (greylisting / "Try again later"):
+# el servidor legítimo reintenta y normalmente acaba entregándose. Un 5.x es un
+# rechazo DEFINITIVO (spam, buzón inexistente, relay denegado). Distinguirlos
+# evita que el contador de "Rechazados" se infle con greylisting.
+_RE_SMTP_CODE = re.compile(r"\b([45])\.\d+\.\d+\b|\b(4|5)\d\d\b")
+
+
+def _is_temporary_reject(reason: str) -> bool:
+    """True si el motivo del rechazo es un código SMTP 4.x (temporal)."""
+    if not reason:
+        return False
+    m = _RE_SMTP_CODE.search(reason)
+    if not m:
+        # Sin código explícito: 'Try again later' es la firma del greylisting.
+        return "try again later" in reason.lower()
+    return (m.group(1) or m.group(2)) == "4"
+
+
 def _parse_mail_log(raw_lines: list[str], domain_filter: Optional[str] = None,
                     search: Optional[str] = None, max_events: int = 500,
                     rspamd_map: Optional[dict] = None) -> dict:
@@ -2460,7 +2501,8 @@ def _parse_mail_log(raw_lines: list[str], domain_filter: Optional[str] = None,
     """
     from_map: dict[str, str] = {}
     events: list[dict] = []
-    counts = {"sent": 0, "received": 0, "rejected": 0, "bounced": 0, "deferred": 0}
+    counts = {"sent": 0, "received": 0, "rejected": 0, "bounced": 0,
+              "deferred": 0, "greylisted": 0}
 
     for line in raw_lines:
         # Acumular from= → queueid para enriquecer entregas posteriores
@@ -2512,9 +2554,12 @@ def _parse_mail_log(raw_lines: list[str], domain_filter: Optional[str] = None,
             to_addr = m.group("to") or ""
             if domain_filter and domain_filter not in (to_addr + sender + line):
                 continue
-            counts["rejected"] += 1
+            temp = _is_temporary_reject(reason)
+            counts["greylisted" if temp else "rejected"] += 1
             events.append({
-                "ts": ts[:16].replace("T", " "), "type": "rejected", "status": "rejected",
+                "ts": ts[:16].replace("T", " "),
+                "type": "greylisted" if temp else "rejected",
+                "status": "greylisted" if temp else "rejected",
                 "from": sender, "to": to_addr, "relay": "",
                 "reason": reason[:120], "qid": qid,
             })
@@ -2529,9 +2574,12 @@ def _parse_mail_log(raw_lines: list[str], domain_filter: Optional[str] = None,
             to_addr = m.group("to") or ""
             if domain_filter and domain_filter not in (to_addr + sender + line):
                 continue
-            counts["rejected"] += 1
+            temp = _is_temporary_reject(reason)
+            counts["greylisted" if temp else "rejected"] += 1
             events.append({
-                "ts": ts[:16].replace("T", " "), "type": "rejected", "status": "rejected",
+                "ts": ts[:16].replace("T", " "),
+                "type": "greylisted" if temp else "rejected",
+                "status": "greylisted" if temp else "rejected",
                 "from": sender, "to": to_addr, "relay": "",
                 "reason": reason[:120], "qid": "",
             })

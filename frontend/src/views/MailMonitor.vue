@@ -25,6 +25,7 @@
       <div class="mm-stat mm-stat--sent"><span class="mm-stat__n">{{ data.counts?.sent || 0 }}</span><span class="mm-stat__k"><i class="bi bi-send"></i> Enviados</span></div>
       <div class="mm-stat mm-stat--recv"><span class="mm-stat__n">{{ data.counts?.received || 0 }}</span><span class="mm-stat__k"><i class="bi bi-inbox"></i> Recibidos</span></div>
       <div class="mm-stat mm-stat--rej"><span class="mm-stat__n">{{ data.counts?.rejected || 0 }}</span><span class="mm-stat__k"><i class="bi bi-shield-x"></i> Rechazados</span></div>
+      <div class="mm-stat mm-stat--grey"><span class="mm-stat__n">{{ data.counts?.greylisted || 0 }}</span><span class="mm-stat__k"><i class="bi bi-hourglass"></i> En espera</span></div>
       <div class="mm-stat mm-stat--bounce"><span class="mm-stat__n">{{ data.counts?.bounced || 0 }}</span><span class="mm-stat__k"><i class="bi bi-arrow-return-left"></i> Rebotados</span></div>
       <div class="mm-stat mm-stat--defer"><span class="mm-stat__n">{{ data.counts?.deferred || 0 }}</span><span class="mm-stat__k"><i class="bi bi-hourglass-split"></i> Diferidos</span></div>
     </div>
@@ -40,6 +41,7 @@
         <option value="sent">Enviados</option>
         <option value="received">Recibidos</option>
         <option value="rejected">Rechazados</option>
+        <option value="greylisted">En espera (greylist)</option>
         <option value="bounced">Rebotados</option>
         <option value="deferred">Diferidos</option>
       </select>
@@ -121,11 +123,11 @@ export default {
 
     const typeLabel = (t) => ({
       sent: 'Enviado', received: 'Recibido', rejected: 'Rechazado',
-      bounced: 'Rebotado', deferred: 'Diferido',
+      greylisted: 'En espera', bounced: 'Rebotado', deferred: 'Diferido',
     })[t] || t
     const statusLabel = (s) => ({
       sent: 'Entregado', received: 'Recibido', rejected: 'Rechazado',
-      bounced: 'Rebotado', deferred: 'Diferido',
+      greylisted: 'En espera', bounced: 'Rebotado', deferred: 'Diferido',
     })[s] || s
 
     const spamClass = (e) => {
@@ -184,6 +186,7 @@ export default {
 .mm-stat--sent   { border-top:3px solid #3b82f6; }
 .mm-stat--recv   { border-top:3px solid #10b981; }
 .mm-stat--rej    { border-top:3px solid #ef4444; }
+.mm-stat--grey   { border-top:3px solid #64748b; }
 .mm-stat--bounce { border-top:3px solid #f59e0b; }
 .mm-stat--defer  { border-top:3px solid #a78bfa; }
 
@@ -208,10 +211,12 @@ export default {
 .mm-type--sent     { color:#3b82f6; background:color-mix(in srgb,#3b82f6 14%,transparent); }
 .mm-type--received { color:#10b981; background:color-mix(in srgb,#10b981 14%,transparent); }
 .mm-type--rejected { color:#ef4444; background:color-mix(in srgb,#ef4444 14%,transparent); }
+.mm-type--greylisted { color:#64748b; background:color-mix(in srgb,#64748b 16%,transparent); }
 .mm-type--bounced  { color:#f59e0b; background:color-mix(in srgb,#f59e0b 14%,transparent); }
 .mm-type--deferred { color:#a78bfa; background:color-mix(in srgb,#a78bfa 14%,transparent); }
 .mm-status--sent, .mm-status--received { color:#10b981; background:color-mix(in srgb,#10b981 12%,transparent); }
 .mm-status--rejected, .mm-status--bounced { color:#ef4444; background:color-mix(in srgb,#ef4444 12%,transparent); }
+.mm-status--greylisted { color:#64748b; background:color-mix(in srgb,#64748b 14%,transparent); }
 .mm-status--deferred { color:#f59e0b; background:color-mix(in srgb,#f59e0b 12%,transparent); }
 .mm-spam { display:inline-flex; align-items:center; gap:.3rem; font-size:.74rem; font-weight:600; padding:.12rem .5rem; border-radius:999px; }
 .mm-spam .mm-score { font-weight:500; opacity:.8; font-variant-numeric:tabular-nums; }
