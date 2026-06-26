@@ -164,6 +164,14 @@ async def create_domain(
             except Exception:
                 ipv4_assigned = None
 
+        # ¿Es en realidad un SUBDOMINIO? Lo es si su zona padre ya está en el
+        # panel (gestion.zococoria.es y existe la zona zococoria.es). Se puede
+        # forzar con domain.is_subdomain, pero por defecto se autodetecta.
+        from api.routes.dns import find_parent_zone
+        parent_zone = find_parent_zone(db, domain.domain_name)
+        is_subdomain = bool(getattr(domain, "is_subdomain", False)) or parent_zone is not None
+        parent_name = parent_zone.domain_name if parent_zone else None
+
         db_domain = Domain(
             user_id=domain.user_id,
             domain_name=domain.domain_name,
@@ -171,6 +179,8 @@ async def create_domain(
             public_html=f"/home/{user.username}/web/{domain.domain_name}/public_html",
             ipv4=ipv4_assigned,
             ipv6=getattr(domain, 'ipv6', None) or None,
+            is_subdomain=is_subdomain,
+            parent_domain=parent_name,
         )
         db.add(db_domain)
         db.commit()
@@ -181,14 +191,31 @@ async def create_domain(
             try:
                 from api.models.models_dns import DnsZone, DnsRecord
                 from api.models.models_settings import Settings
-                from api.routes.dns import _build_template_records, _get_server_ipv4
+                from api.routes.dns import (_build_template_records, _get_server_ipv4,
+                                            apply_subdomain_dns)
                 from scripts.dns_manager import DNSManager
+
+                # Subdominio con padre en el panel → registro A/AAAA en la zona
+                # padre (no zona separada). Si apply devuelve 'own', no había
+                # padre gestionada y caemos a crear zona propia (como un dominio).
+                handled_as_sub = False
+                if is_subdomain and parent_name:
+                    res = apply_subdomain_dns(db, domain.domain_name,
+                                              ipv4=ipv4_assigned,
+                                              ipv6=getattr(domain, "ipv6", None) or None)
+                    handled_as_sub = (res == "parent")
+                    if not handled_as_sub:
+                        # La padre dejó de estar gestionada entre medias: lo
+                        # tratamos como dominio normal (zona propia).
+                        db_domain.is_subdomain = False
+                        db_domain.parent_domain = None
+                        db.commit()
 
                 existing_zone = db.query(DnsZone).filter(
                     DnsZone.domain_name == domain.domain_name
                 ).first()
 
-                if not existing_zone:
+                if not handled_as_sub and not existing_zone:
                     ipv4 = _get_server_ipv4(db)
                     try:
                         dns_mgr = DNSManager()
@@ -594,7 +621,16 @@ async def delete_domain(
                             .filter(MailDomain.domain_name == db_domain.domain_name)
                             .all())
             purge_mail_domains(db, mail_domains, username, dns_warnings)
-            purge_dns_zones(db, {db_domain.domain_name}, dns_warnings)
+            # Si es subdominio, quitar su A/AAAA de la zona padre (no tiene zona
+            # propia que purgar). Si no, purgar su zona como un dominio normal.
+            if getattr(db_domain, "is_subdomain", False):
+                try:
+                    from api.routes.dns import remove_subdomain_dns
+                    remove_subdomain_dns(db, db_domain.domain_name)
+                except Exception as e:
+                    dns_warnings.append(f"subdominio DNS: {e}")
+            else:
+                purge_dns_zones(db, {db_domain.domain_name}, dns_warnings)
             # Por si hubo webmail sin fila MailDomain (o quedó de antes):
             try:
                 from scripts.webmail_manager import WebmailManager

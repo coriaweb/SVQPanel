@@ -31,6 +31,14 @@ class Domain(Base):
     # Estado
     is_active     = Column(Boolean, default=True)
     is_suspended  = Column(Boolean, default=False, nullable=False)  # suspendido individualmente
+
+    # Subdominio: si is_subdomain=True, este "dominio" es en realidad un
+    # subdominio (ej. gestion.zococoria.es) de parent_domain (zococoria.es).
+    # Web (vhost/docroot) propios igual que un dominio, pero en DNS NO crea una
+    # zona separada: añade un registro A/AAAA en la zona padre si esta vive en el
+    # panel. Si la padre no está en el panel, cae a zona propia (como un dominio).
+    is_subdomain  = Column(Boolean, default=False, nullable=False)
+    parent_domain = Column(String(255), nullable=True, index=True)  # zona padre, ej: zococoria.es
     
     # FastCGI cache (Fase 14)
     fastcgi_cache_enabled    = Column(Boolean, default=False, nullable=False)

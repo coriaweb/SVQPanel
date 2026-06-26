@@ -16,6 +16,8 @@ class DomainCreate(BaseModel):
     mail_enabled: Optional[bool] = False
     ipv4: Optional[str] = None
     ipv6: Optional[str] = None
+    # Forzar tratarlo como subdominio (si no, se autodetecta por la zona padre).
+    is_subdomain: Optional[bool] = None
 
 
 class DomainUpdate(BaseModel):
@@ -88,6 +90,8 @@ class DomainResponse(BaseModel):
     ipv6: Optional[str] = None
     is_active: Optional[bool] = True
     is_suspended: Optional[bool] = False
+    is_subdomain: Optional[bool] = False
+    parent_domain: Optional[str] = None
     disk_usage: Optional[int] = 0
     # FastCGI cache (Fase 14)
     fastcgi_cache_enabled:     Optional[bool] = False

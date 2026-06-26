@@ -1530,7 +1530,9 @@ def run_import(tar_path: str, target_user_id: int, scope: List[str], db,
         # creado normalmente en el panel) — si no, queda sin DNS propio. Solo
         # para los que aún no tienen zona (no pisa lo importado).
         if "web" in scope:
-            for web in manifest["web"]:
+            # Procesar primero los dominios "padre" (menos etiquetas) y luego los
+            # subdominios, para que la zona padre exista cuando se cuelgue el sub.
+            for web in sorted(manifest["web"], key=lambda w: w["domain"].count(".")):
                 try:
                     _ensure_default_zone(web["domain"], owner, db, report,
                                          server_ipv4, server_ipv6)
@@ -1543,13 +1545,32 @@ def run_import(tar_path: str, target_user_id: int, scope: List[str], db,
 
 def _ensure_default_zone(domain: str, owner, db, report, server_ipv4, server_ipv6):
     """Crea la zona DNS con el template por defecto si el dominio no tiene ya una
-    (mismo comportamiento que crear un dominio en el panel). Idempotente."""
+    (mismo comportamiento que crear un dominio en el panel). Idempotente.
+
+    Si el dominio es en realidad un SUBDOMINIO de una zona ya gestionada en el
+    panel, NO crea zona separada: añade su A/AAAA en la zona padre y marca el
+    Domain como subdominio."""
     from api.models.models_dns import DnsZone, DnsRecord
     from scripts.dns_manager import DNSManager, get_panel_nameservers
-    from api.routes.dns import _build_template_records
+    from api.routes.dns import (_build_template_records, find_parent_zone,
+                                apply_subdomain_dns)
+    from api.models.models_domain import Domain as _Domain
 
     if db.query(DnsZone).filter(DnsZone.domain_name == domain).first():
         return  # ya tiene zona (importada o previa)
+
+    # ¿Subdominio de una zona del panel? → registro en la padre, no zona propia.
+    parent = find_parent_zone(db, domain)
+    if parent:
+        res = apply_subdomain_dns(db, domain, ipv4=server_ipv4, ipv6=server_ipv6)
+        if res == "parent":
+            d = db.query(_Domain).filter(_Domain.domain_name == domain).first()
+            if d:
+                d.is_subdomain = True
+                d.parent_domain = parent.domain_name
+                db.commit()
+            report.ok("dns", domain, f"subdominio de {parent.domain_name} (A en la zona padre)")
+            return
 
     mgr = DNSManager()
     try:

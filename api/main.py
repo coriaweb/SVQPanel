@@ -503,6 +503,9 @@ def _run_migrations():
         "ALTER TABLE users ALTER COLUMN totp_secret TYPE VARCHAR(256)",
         # Suspensión individual de dominio
         "ALTER TABLE domains ADD COLUMN IF NOT EXISTS is_suspended BOOLEAN DEFAULT FALSE",
+        # Subdominios: tipo + zona padre
+        "ALTER TABLE domains ADD COLUMN IF NOT EXISTS is_subdomain BOOLEAN NOT NULL DEFAULT FALSE",
+        "ALTER TABLE domains ADD COLUMN IF NOT EXISTS parent_domain VARCHAR(255)",
         # Cron jobs de clientes
         """CREATE TABLE IF NOT EXISTS cron_jobs (
             id         SERIAL PRIMARY KEY,

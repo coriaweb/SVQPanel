@@ -694,6 +694,94 @@ def _bump_serial(current: int) -> int:
     return max(current + 1, today + 1)
 
 
+def find_parent_zone(db: Session, fqdn: str):
+    """Devuelve la DnsZone padre de un FQDN si existe en el panel, o None.
+
+    Para gestion.zococoria.es busca la zona más específica que sea sufijo:
+    zococoria.es. Así un subdominio se cuelga de su zona real aunque haya varios
+    niveles (a.b.zococoria.es → zona zococoria.es si b.zococoria.es no es zona)."""
+    from api.models.models_dns import DnsZone
+    labels = fqdn.split(".")
+    # Probar sufijos cada vez más cortos: gestion.zococoria.es → zococoria.es → es
+    for i in range(1, len(labels)):
+        candidate = ".".join(labels[i:])
+        z = db.query(DnsZone).filter(DnsZone.domain_name == candidate,
+                                     DnsZone.is_active == True).first()  # noqa: E712
+        if z:
+            return z
+    return None
+
+
+def subdomain_label(fqdn: str, parent_domain: str) -> str:
+    """'gestion.zococoria.es' + 'zococoria.es' → 'gestion' (la parte izquierda)."""
+    if fqdn == parent_domain:
+        return "@"
+    suffix = "." + parent_domain
+    return fqdn[:-len(suffix)] if fqdn.endswith(suffix) else fqdn
+
+
+def apply_subdomain_dns(db: Session, fqdn: str, ipv4: str = None, ipv6: str = None) -> str:
+    """DNS de un SUBDOMINIO. Si su zona padre vive en el panel, añade A/AAAA del
+    subdominio DENTRO de esa zona (sin crear zona separada) y resincroniza.
+
+    Devuelve: 'parent' si se añadió a la zona padre, 'own' si no hay padre en el
+    panel (el caller debe crear zona propia como un dominio normal).
+    """
+    from api.models.models_dns import DnsRecord
+    parent = find_parent_zone(db, fqdn)
+    if not parent:
+        return "own"  # padre no gestionada aquí → zona propia (comportamiento dominio)
+
+    label = subdomain_label(fqdn, parent.domain_name)
+    ipv4 = ipv4 or _get_server_ipv4(db)
+
+    def _ensure(rtype, content):
+        if not content:
+            return
+        exists = db.query(DnsRecord).filter(
+            DnsRecord.zone_id == parent.id, DnsRecord.name == label,
+            DnsRecord.record_type == rtype).first()
+        if exists:
+            exists.content = content
+        else:
+            db.add(DnsRecord(zone_id=parent.id, name=label, record_type=rtype,
+                             content=content, ttl=parent.ttl or 14400, priority=0))
+
+    _ensure("A", ipv4)
+    _ensure("AAAA", ipv6)
+    parent.serial = _bump_serial(parent.serial)
+    db.commit()
+    db.refresh(parent)
+    try:
+        _sync_zone_to_bind(parent, db)
+    except Exception:
+        pass
+    return "parent"
+
+
+def remove_subdomain_dns(db: Session, fqdn: str) -> bool:
+    """Quita los registros A/AAAA de un subdominio de su zona padre (al borrarlo).
+    Devuelve True si tocó algo."""
+    from api.models.models_dns import DnsRecord
+    parent = find_parent_zone(db, fqdn)
+    if not parent:
+        return False
+    label = subdomain_label(fqdn, parent.domain_name)
+    q = db.query(DnsRecord).filter(DnsRecord.zone_id == parent.id,
+                                   DnsRecord.name == label)
+    n = q.count()
+    if n:
+        q.delete()
+        parent.serial = _bump_serial(parent.serial)
+        db.commit()
+        db.refresh(parent)
+        try:
+            _sync_zone_to_bind(parent, db)
+        except Exception:
+            pass
+    return n > 0
+
+
 def build_spf(ipv4, ipv6=None) -> str:
     """Construye el registro SPF incluyendo ip4 e ip6 según disponibilidad."""
     mechs = ["v=spf1", "a", "mx"]

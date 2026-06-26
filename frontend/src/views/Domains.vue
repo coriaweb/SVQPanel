@@ -40,8 +40,9 @@
       <article v-for="domain in domains" :key="domain.id" class="dcard" :class="`dcard--${domainTone(domain)}`">
         <div class="dcard__head">
           <div class="dcard__title">
-            <i class="bi bi-globe2"></i>
+            <i class="bi" :class="domain.is_subdomain ? 'bi-diagram-3' : 'bi-globe2'"></i>
             <a :href="'http://' + domain.domain_name" target="_blank" class="dcard__name" @click.stop>{{ domain.domain_name }}</a>
+            <span v-if="domain.is_subdomain" class="sub-chip" :title="'Subdominio de ' + domain.parent_domain">sub</span>
           </div>
           <StatusBadge
             :status="domain.is_suspended ? 'warning' : (domain.is_active ? 'active' : 'error')"
@@ -116,7 +117,8 @@
           <tbody>
             <tr v-for="domain in domains" :key="domain.id" :class="{ 't-row--suspended': domain.is_suspended }">
               <td>
-                <router-link :to="`/domains/${domain.id}`" class="t-domain"><i class="bi bi-globe2"></i>{{ domain.domain_name }}</router-link>
+                <router-link :to="`/domains/${domain.id}`" class="t-domain"><i class="bi" :class="domain.is_subdomain ? 'bi-diagram-3' : 'bi-globe2'"></i>{{ domain.domain_name }}</router-link>
+                <span v-if="domain.is_subdomain" class="sub-chip" :title="'Subdominio de ' + domain.parent_domain">sub</span>
               </td>
               <td v-if="isAdminOrReseller" class="t-muted">{{ getUserName(domain.user_id) }}</td>
               <td class="mono">{{ domain.php_version || '—' }}</td>
@@ -805,6 +807,11 @@ export default {
 .icon-act.is-ok { color: var(--success); }
 .icon-act.is-ok:hover { border-color: var(--success); }
 .t-row--suspended > td { background: color-mix(in srgb, var(--warning) 7%, transparent); }
+.sub-chip { display: inline-block; margin-left: .4rem; padding: .05rem .4rem; font-size: .68rem;
+  font-weight: var(--fw-semibold); text-transform: uppercase; letter-spacing: .03em;
+  border-radius: var(--r-sm, 6px); color: var(--color-primary);
+  background: color-mix(in srgb, var(--color-primary) 12%, transparent);
+  border: 1px solid color-mix(in srgb, var(--color-primary) 25%, transparent); vertical-align: middle; }
 
 @media (max-width: 600px) {
   .cards-grid { grid-template-columns: 1fr; }
