@@ -11,7 +11,8 @@
 # update deja todo preparado e instala el hook; tras reiniciar, las cuotas
 # internas (user/group/project) quedan activas y se migran los maildirs.
 
-set -euo pipefail
+# Sin pipefail: 'find | head' provoca SIGPIPE (exit 141) y abortaría con set -e.
+set -u
 
 echo "→ 0053: project quota para que el correo cuente en el disco…"
 
