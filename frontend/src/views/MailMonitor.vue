@@ -59,10 +59,10 @@
         <thead>
           <tr>
             <th style="width:130px">Hora</th>
-            <th style="width:110px">Tipo</th>
+            <th style="width:100px">Tipo</th>
             <th>De</th>
             <th>Para</th>
-            <th style="width:120px">Estado</th>
+            <th style="width:180px">Antispam</th>
             <th>Detalle</th>
           </tr>
         </thead>
@@ -72,7 +72,18 @@
             <td><span class="mm-type" :class="'mm-type--' + e.type">{{ typeLabel(e.type) }}</span></td>
             <td class="mm-mono mm-addr" :title="e.from">{{ e.from || '—' }}</td>
             <td class="mm-mono mm-addr" :title="e.to">{{ e.to || '—' }}</td>
-            <td><span class="mm-status" :class="'mm-status--' + e.status">{{ statusLabel(e.status) }}</span></td>
+            <td>
+              <template v-if="e.spam_action">
+                <span class="mm-spam" :class="spamClass(e)" :title="symbolsTitle(e)">
+                  {{ e.spam_action }}
+                  <span v-if="e.spam_score != null" class="mm-score">{{ e.spam_score }}/{{ e.spam_threshold }}</span>
+                </span>
+                <div v-if="e.spam_symbols && e.spam_symbols.length" class="mm-syms">
+                  <span v-for="s in e.spam_symbols" :key="s.name" :title="s.name + ' +' + s.weight">{{ shortSym(s.name) }}</span>
+                </div>
+              </template>
+              <span v-else class="mm-status" :class="'mm-status--' + e.status">{{ statusLabel(e.status) }}</span>
+            </td>
             <td class="mm-detail" :title="e.reason || e.relay">{{ e.reason || e.relay || '' }}</td>
           </tr>
         </tbody>
@@ -117,6 +128,17 @@ export default {
       bounced: 'Rebotado', deferred: 'Diferido',
     })[s] || s
 
+    const spamClass = (e) => {
+      const a = (e.spam_action || '').toLowerCase()
+      if (a.includes('spam') || a.includes('rechaz')) return 'mm-spam--bad'
+      if (a.includes('sospech')) return 'mm-spam--warn'
+      if (a.includes('greylist') || a.includes('reintentar')) return 'mm-spam--grey'
+      return 'mm-spam--ok'
+    }
+    const symbolsTitle = (e) =>
+      (e.spam_symbols || []).map(s => `${s.name} +${s.weight}`).join('\n') || ''
+    const shortSym = (name) => name.replace(/^HFILTER_/, '').replace(/_/g, ' ').slice(0, 18)
+
     const reload = async () => {
       loading.value = true
       try {
@@ -138,6 +160,7 @@ export default {
       loading, data, search, typeFilter, date, todayStr,
       isToday, isYesterday, filteredEvents,
       typeLabel, statusLabel, reload, setDay,
+      spamClass, symbolsTitle, shortSym,
     }
   },
 }
@@ -191,6 +214,14 @@ export default {
 .mm-status--sent, .mm-status--received { color:#10b981; background:color-mix(in srgb,#10b981 12%,transparent); }
 .mm-status--rejected, .mm-status--bounced { color:#ef4444; background:color-mix(in srgb,#ef4444 12%,transparent); }
 .mm-status--deferred { color:#f59e0b; background:color-mix(in srgb,#f59e0b 12%,transparent); }
+.mm-spam { display:inline-flex; align-items:center; gap:.3rem; font-size:.74rem; font-weight:600; padding:.12rem .5rem; border-radius:999px; }
+.mm-spam .mm-score { font-weight:500; opacity:.8; font-variant-numeric:tabular-nums; }
+.mm-spam--ok   { color:#10b981; background:color-mix(in srgb,#10b981 12%,transparent); }
+.mm-spam--warn { color:#f59e0b; background:color-mix(in srgb,#f59e0b 14%,transparent); }
+.mm-spam--bad  { color:#ef4444; background:color-mix(in srgb,#ef4444 14%,transparent); }
+.mm-spam--grey { color:#6b7280; background:color-mix(in srgb,#6b7280 14%,transparent); }
+.mm-syms { display:flex; gap:.3rem; margin-top:.25rem; flex-wrap:wrap; }
+.mm-syms span { font-size:.64rem; color:var(--text-muted); background:var(--surface-inset); padding:.05rem .35rem; border-radius:4px; white-space:nowrap; }
 .mm-spin { display:inline-block; width:14px; height:14px; border:2px solid currentColor; border-right-color:transparent; border-radius:50%; animation:mm-spin .7s linear infinite; vertical-align:-2px; }
 @keyframes mm-spin { to { transform:rotate(360deg); } }
 </style>

@@ -2198,6 +2198,82 @@ def _mail_log_base() -> Optional[str]:
     return None
 
 
+# ── Veredicto de Rspamd (acción + score + símbolos), cruzado por qid ──────────
+_RSPAMD_LOGS = [
+    "/var/log/rspamd/rspamd.log",
+    "/var/log/rspamd.log",
+]
+
+# rspamd_task_write_log: ... qid: <ABCDEF>, ip: ..., from: <...>,
+#   (default: F (no action): [4.89/15.00] [SYM1(1.50){..},SYM2(1.00){..},...]),
+_RE_RSPAMD = re.compile(
+    r"qid:\s*<([A-F0-9]+)>.*?\((?:default|[^)]*?):\s*[A-Z]\s*\(([^)]+)\):\s*"
+    r"\[([\-\d.]+)/([\-\d.]+)\]\s*\[([^\]]*)\]"
+)
+
+
+def _rspamd_logs_for_date(date_str: str, max_bytes: int = 60_000_000) -> dict:
+    """Mapa qid → {action, score, threshold, symbols} para un día, leyendo el log
+    de Rspamd (y sus rotados). Solo se queda con el ÚLTIMO veredicto por qid (el
+    definitivo: un correo puede pasar por greylist y luego 'no action')."""
+    import glob
+    import gzip
+    base = next((p for p in _RSPAMD_LOGS if os.path.exists(p)), None)
+    if not base:
+        return {}
+    rotated = sorted(glob.glob(base + ".*"),
+                     key=lambda p: os.path.getmtime(p), reverse=True)
+    # Procesar del más antiguo al más reciente para que el último gane.
+    candidates = list(reversed([base] + rotated))
+    out: dict[str, dict] = {}
+    for path in candidates:
+        try:
+            opener = gzip.open if path.endswith(".gz") else open
+            with opener(path, "rt", encoding="utf-8", errors="replace") as f:
+                read = 0
+                for line in f:
+                    read += len(line)
+                    if read > max_bytes:
+                        break
+                    # El log de rspamd usa "YYYY-MM-DD HH:MM:SS" al inicio.
+                    if line[:10] != date_str:
+                        continue
+                    m = _RE_RSPAMD.search(line)
+                    if not m:
+                        continue
+                    qid, action, score, thr, syms = m.groups()
+                    out[qid] = {
+                        "action": action.strip(),
+                        "score": None if score == "nan" else _safe_float(score),
+                        "threshold": _safe_float(thr),
+                        "symbols": _top_symbols(syms),
+                    }
+        except Exception as e:
+            logger.warning(f"No se pudo leer {path}: {e}")
+    return out
+
+
+def _safe_float(s):
+    try:
+        return float(s)
+    except (ValueError, TypeError):
+        return None
+
+
+def _top_symbols(syms_str: str, n: int = 3) -> list:
+    """De la lista de símbolos 'SYM(peso){...},...' devuelve los n de mayor peso
+    POSITIVO (los que empujan a spam), como [{name, weight}]."""
+    out = []
+    for chunk in syms_str.split("},"):
+        m = re.match(r"\s*([A-Z0-9_]+)\(([\-\d.]+)\)", chunk)
+        if m:
+            w = _safe_float(m.group(2)) or 0.0
+            if w > 0:
+                out.append({"name": m.group(1), "weight": w})
+    out.sort(key=lambda x: x["weight"], reverse=True)
+    return out[:n]
+
+
 def _read_mail_log_for_date(date_str: str, max_bytes: int = 30_000_000) -> list[str]:
     """Lee las líneas del log de correo cuyo día coincide con date_str (YYYY-MM-DD).
 
@@ -2238,7 +2314,8 @@ def _read_mail_log_for_date(date_str: str, max_bytes: int = 30_000_000) -> list[
 
 
 def _parse_mail_log(raw_lines: list[str], domain_filter: Optional[str] = None,
-                    search: Optional[str] = None, max_events: int = 500) -> dict:
+                    search: Optional[str] = None, max_events: int = 500,
+                    rspamd_map: Optional[dict] = None) -> dict:
     """
     Parsea líneas de mail.log (formato ISO 8601 de systemd-journal / rsyslog moderno).
     - sent:     entregados hacia afuera (postfix/smtp)
@@ -2303,6 +2380,23 @@ def _parse_mail_log(raw_lines: list[str], domain_filter: Optional[str] = None,
                 "from": "", "to": "", "relay": "",
                 "reason": reason[:120], "qid": "",
             })
+
+    # Enriquecer cada evento con el veredicto de Rspamd (cruzado por qid):
+    # acción (no action/greylist/reject…), score [x/umbral] y símbolos top.
+    if rspamd_map:
+        ACTION_ES = {
+            "no action": "Limpio", "greylist": "Greylist",
+            "soft reject": "Reintentar", "add header": "Sospechoso",
+            "rewrite subject": "Sospechoso", "reject": "Spam (rechazado)",
+        }
+        for e in events:
+            v = rspamd_map.get(e.get("qid", ""))
+            if not v:
+                continue
+            e["spam_action"]    = ACTION_ES.get(v["action"], v["action"])
+            e["spam_score"]     = v["score"]
+            e["spam_threshold"] = v["threshold"]
+            e["spam_symbols"]   = v["symbols"]
 
     # Búsqueda libre por remitente/destinatario/motivo (sobre TODOS los eventos,
     # antes de recortar, para no perder coincidencias antiguas del día).
@@ -2377,7 +2471,9 @@ async def mail_monitor(
             "counts": {"sent": 0, "received": 0, "rejected": 0, "bounced": 0, "deferred": 0},
             "events": [], "total_events": 0,
         }
-    result = _parse_mail_log(raw, domain_filter=domain, search=search, max_events=500)
+    rspamd_map = _rspamd_logs_for_date(day)
+    result = _parse_mail_log(raw, domain_filter=domain, search=search,
+                             max_events=500, rspamd_map=rspamd_map)
     result["available"] = True
     result["date"] = day
     return result
