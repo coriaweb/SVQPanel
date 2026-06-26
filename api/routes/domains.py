@@ -332,7 +332,7 @@ async def list_domains(
             # User regular ve solo sus dominios
             query = query.filter(Domain.user_id == current_user.id)
 
-        domains = query.offset(skip).limit(limit).all()
+        domains = query.order_by(Domain.domain_name).offset(skip).limit(limit).all()
         return domains
     except HTTPException:
         raise

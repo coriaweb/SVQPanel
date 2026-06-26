@@ -51,6 +51,9 @@ class UserResponse(BaseModel):
     traffic_quota_mb_month: Optional[int] = 0
     # Stats (Fase 13.2 — pueden ser 0 si el cron aún no corrió)
     disk_used_mb:           Optional[int] = 0
+    disk_web_mb:            Optional[int] = 0
+    disk_mail_mb:           Optional[int] = 0
+    disk_db_mb:             Optional[int] = 0
     traffic_used_mb_month:  Optional[int] = 0
     stats_updated_at:       Optional[datetime] = None
     created_at: Optional[datetime] = None

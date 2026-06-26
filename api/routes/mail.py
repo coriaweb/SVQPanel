@@ -505,7 +505,7 @@ async def list_mail_domains(
     - Reseller: los de sus usuarios + los propios
     - Usuario: solo los suyos
     """
-    query = db.query(MailDomain)
+    query = db.query(MailDomain).order_by(MailDomain.domain_name)
 
     if current_user.role == "admin":
         domains = query.all()

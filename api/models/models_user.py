@@ -53,6 +53,10 @@ class User(Base):
     disk_used_mb           = Column(Integer, default=0)
     traffic_used_mb_month  = Column(Integer, default=0)
     stats_updated_at       = Column(DateTime, nullable=True)
+    # Desglose del disco usado (web / correo / bases de datos), en MB.
+    disk_web_mb            = Column(Integer, default=0)
+    disk_mail_mb           = Column(Integer, default=0)
+    disk_db_mb             = Column(Integer, default=0)
 
     # Timestamps
     created_at = Column(DateTime, default=datetime.utcnow)

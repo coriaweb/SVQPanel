@@ -57,7 +57,14 @@
                 <i class="bi bi-globe2"></i>
                 {{ user.domains_limit === 0 ? '∞' : user.domains_limit }}
               </td>
-              <td><UsageBar :used="user.disk_used_mb || 0" :quota="user.disk_quota_mb || 0" /></td>
+              <td>
+                <UsageBar :used="user.disk_used_mb || 0" :quota="user.disk_quota_mb || 0" />
+                <div v-if="(user.disk_used_mb || 0) > 0" class="us-breakdown" :title="diskBreakdownTitle(user)">
+                  <span><i class="bi bi-globe2"></i> {{ fmtMB(user.disk_web_mb) }}</span>
+                  <span><i class="bi bi-envelope"></i> {{ fmtMB(user.disk_mail_mb) }}</span>
+                  <span><i class="bi bi-database"></i> {{ fmtMB(user.disk_db_mb) }}</span>
+                </div>
+              </td>
               <td><UsageBar :used="user.traffic_used_mb_month || 0" :quota="user.traffic_quota_mb_month || 0" /></td>
               <td>
                 <span v-if="user.is_suspended" class="us-status us-status--suspended">
@@ -138,6 +145,13 @@ export default {
         default: return 'Usuario'
       }
     }
+
+    const fmtMB = (mb) => {
+      mb = mb || 0
+      return mb >= 1024 ? (mb / 1024).toFixed(1) + ' GB' : mb + ' MB'
+    }
+    const diskBreakdownTitle = (u) =>
+      `Web: ${fmtMB(u.disk_web_mb)} · Correo: ${fmtMB(u.disk_mail_mb)} · BD: ${fmtMB(u.disk_db_mb)}`
 
     const roleTagClass = (role) => {
       switch (role) {
@@ -228,6 +242,8 @@ export default {
       editingUser,
       roleLabel,
       roleTagClass,
+      fmtMB,
+      diskBreakdownTitle,
       goToAccount,
       openCreateForm,
       openEditForm,
@@ -271,6 +287,8 @@ export default {
 .us-tag--plan     { background: var(--brand-50); color: var(--color-primary); }
 
 /* Estado */
+.us-breakdown { display: flex; gap: .6rem; margin-top: 3px; font-size: 11px; color: var(--text-muted); font-variant-numeric: tabular-nums; }
+.us-breakdown i { opacity: .7; margin-right: 1px; }
 .us-status { display: inline-block; font-size: var(--fs-xs); font-weight: var(--fw-semibold); padding: 2px 9px; border-radius: var(--r-pill); }
 .us-status--on  { background: var(--success-bg); color: var(--success); }
 .us-status--off { background: var(--danger-bg); color: var(--danger); }

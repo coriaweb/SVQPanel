@@ -330,7 +330,7 @@ def list_databases(
         query = query.filter(ClientDatabase.user_id == current_user.id)
 
     total = query.count()
-    items = query.offset(skip).limit(limit).all()
+    items = query.order_by(ClientDatabase.db_name).offset(skip).limit(limit).all()
     return {"total": total, "items": items}
 
 

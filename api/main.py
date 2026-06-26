@@ -464,6 +464,10 @@ def _run_migrations():
         "ALTER TABLE users ADD COLUMN IF NOT EXISTS disk_used_mb INTEGER DEFAULT 0",
         "ALTER TABLE users ADD COLUMN IF NOT EXISTS traffic_used_mb_month INTEGER DEFAULT 0",
         "ALTER TABLE users ADD COLUMN IF NOT EXISTS stats_updated_at TIMESTAMP",
+        # Desglose del disco (web/correo/bd) para el resumen del listado.
+        "ALTER TABLE users ADD COLUMN IF NOT EXISTS disk_web_mb INTEGER DEFAULT 0",
+        "ALTER TABLE users ADD COLUMN IF NOT EXISTS disk_mail_mb INTEGER DEFAULT 0",
+        "ALTER TABLE users ADD COLUMN IF NOT EXISTS disk_db_mb INTEGER DEFAULT 0",
         # ─────────────────────────────────────────────────────────────────
         # Fase 14: FastCGI cache por dominio (nginx)
         # ─────────────────────────────────────────────────────────────────

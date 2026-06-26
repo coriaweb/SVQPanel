@@ -264,6 +264,37 @@ def cmd_refresh_user_stats() -> int:
 
     db = SessionLocal()
     try:
+        from api.models.models_client_db import ClientDatabase
+        from sqlalchemy import func
+        # Refrescar el tamaño real de cada BD desde information_schema (las BD
+        # viven en /var/lib/mysql, fuera del home, y el du no las ve).
+        try:
+            from api.routes.databases import _run_mariadb
+            out = _run_mariadb(
+                "SELECT table_schema, ROUND(SUM(data_length+index_length)/1048576,2) "
+                "FROM information_schema.tables WHERE table_schema NOT IN "
+                "('mysql','information_schema','performance_schema','sys') "
+                "GROUP BY table_schema;")
+            sizes = {}
+            for line in (out or "").strip().splitlines():
+                p = line.strip().split("\t")
+                if len(p) == 2:
+                    try:
+                        sizes[p[0]] = float(p[1])
+                    except ValueError:
+                        pass
+            for cdb in db.query(ClientDatabase).all():
+                if cdb.db_name in sizes:
+                    cdb.size_mb = int(sizes[cdb.db_name])
+            db.commit()
+        except Exception as e:
+            logger.warning(f"no se pudo refrescar tamaño de BD: {e}")
+
+        # Tamaño de BD por usuario (sumar size_mb de sus ClientDatabase).
+        db_sizes = dict(
+            db.query(ClientDatabase.user_id, func.coalesce(func.sum(ClientDatabase.size_mb), 0))
+              .group_by(ClientDatabase.user_id).all()
+        )
         users = db.query(User).filter(User.is_active == True).all()        # noqa: E712
         updated = 0
         for u in users:
@@ -271,17 +302,25 @@ def cmd_refresh_user_stats() -> int:
             if not home:
                 continue
             try:
-                disk_mb, traffic_mb = compute_user_stats(home)
+                from scripts.user_stats import (compute_user_disk_breakdown,
+                                                 compute_user_traffic_mb)
+                bd = compute_user_disk_breakdown(home)   # {web_mb, mail_mb, total_mb}
+                traffic_mb = compute_user_traffic_mb(home)
             except Exception as e:
                 logger.warning(f"stats {u.username}: {e}")
                 continue
+            db_mb = int(db_sizes.get(u.id, 0) or 0)
+            disk_mb = bd["web_mb"] + bd["mail_mb"] + db_mb       # web + correo + BD
+            u.disk_web_mb           = bd["web_mb"]
+            u.disk_mail_mb          = bd["mail_mb"]
+            u.disk_db_mb            = db_mb
             u.disk_used_mb          = disk_mb
             u.traffic_used_mb_month = traffic_mb
             u.stats_updated_at      = datetime.utcnow()
             _eval_quota_notifications(db, u, "disco",   disk_mb,    u.disk_quota_mb)
             _eval_quota_notifications(db, u, "tráfico", traffic_mb, u.traffic_quota_mb_month)
             updated += 1
-            logger.info(f"  {u.username:20s} disk={disk_mb}MB traffic={traffic_mb}MB")
+            logger.info(f"  {u.username:20s} disk={disk_mb}MB (db={db_mb}MB) traffic={traffic_mb}MB")
         db.commit()
         logger.info(f"Stats refrescadas para {updated}/{len(users)} usuarios")
         return 0

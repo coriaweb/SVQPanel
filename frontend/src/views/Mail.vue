@@ -1580,7 +1580,8 @@ export default {
     // ─────────────────────────────────────────────────────────────────
 
     const fmtMailSize = (mb) => {
-      if (mb == null || mb === 0) return '—'
+      if (mb == null) return '—'        // sin dato
+      if (mb === 0) return '0 MB'       // vacío real (no "—")
       return mb >= 1024 ? (mb / 1024).toFixed(1) + ' GB' : mb + ' MB'
     }
 

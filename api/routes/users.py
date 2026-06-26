@@ -134,7 +134,7 @@ async def list_users(
             # Reseller solo ve sus clientes
             query = query.filter(User.parent_id == current_user.id)
 
-        users = query.offset(skip).limit(limit).all()
+        users = query.order_by(User.username).offset(skip).limit(limit).all()
         return users
     except Exception as e:
         raise HTTPException(
