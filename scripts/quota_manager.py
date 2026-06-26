@@ -153,11 +153,39 @@ class QuotaManager(SystemManager):
                 try:
                     used_kb = int(parts[3])
                     hard_kb = int(parts[5])
+                    # Sumar el correo: vive en /home/{u}/mail con owner vmail, así
+                    # que la cuota de USUARIO no lo cuenta. Lo cuenta la PROJECT
+                    # quota (project id = uid del usuario). Sin esto el disco no
+                    # cuadra (faltaría todo el maildir).
+                    used_kb += self._project_used_kb(username)
                     return self._build_usage(used_kb, hard_kb)
                 except (IndexError, ValueError):
                     continue
 
         return {"active": True, "used_mb": 0, "limit_mb": 0, "percent": 0, "over_quota": False}
+
+    def _project_used_kb(self, username: str) -> int:
+        """KB usados por la PROJECT quota del usuario (su correo). El project id
+        es el uid del usuario. 0 si no hay project quota o no aplica."""
+        try:
+            import pwd
+            uid = pwd.getpwnam(username).pw_uid
+        except (KeyError, ImportError):
+            return 0
+        rc, out, _ = self.execute_command(
+            ["repquota", "-P", "-O", "csv", self.mount], check=False)
+        if rc != 0:
+            return 0
+        # CSV de project: "#<projid>,BlockStatus,FileStatus,BlockUsed,..."
+        target = f"#{uid}"
+        for line in out.splitlines():
+            parts = line.split(",")
+            if parts and parts[0] == target:
+                try:
+                    return int(parts[3])
+                except (IndexError, ValueError):
+                    return 0
+        return 0
 
     def _get_usage_classic(self, username: str) -> dict:
         """Parseo del formato clásico de repquota (sin CSV)."""

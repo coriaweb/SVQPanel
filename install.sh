@@ -460,39 +460,37 @@ echo -e "${GREEN}✓ Dependencias instaladas${NC}\n"
 #
 # Requiere montar el filesystem con la opción usrquota. Aplicamos la cuota sobre
 # /home si es su propia partición, o sobre / en caso contrario.
-echo -e "${YELLOW}Activando sistema de cuotas de disco...${NC}"
+echo -e "${YELLOW}Activando sistema de cuotas de disco (ext4 interno: user+group+project)...${NC}"
 
-# Determinar el punto de montaje de las cuotas
-if mountpoint -q /home; then
-    QUOTA_MOUNT="/home"
-else
-    QUOTA_MOUNT="/"
-fi
-echo "  Punto de montaje para cuotas: $QUOTA_MOUNT"
+# Cuotas ext4 en modo FEATURE INTERNO (journalled), con los TRES tipos:
+#   - user/group: límite de disco por cuenta (estilo cPanel).
+#   - PROJECT: para que el CORREO (que vive en /home/{u}/mail con owner vmail)
+#     cuente en el disco del usuario. Sin project quota, el correo no se sumaría.
+# El feature 'project' de ext4 solo se puede activar con el FS DESMONTADO, así que
+# lo hacemos vía un hook del initramfs en el primer arranque (igual para / o /home).
+QUOTA_MOUNT="/"
+mountpoint -q /home && QUOTA_MOUNT="/home"
+QUOTA_DEV="$(findmnt -no SOURCE "$QUOTA_MOUNT" 2>/dev/null)"
+echo "  Montaje: $QUOTA_MOUNT ($QUOTA_DEV)"
 
-# Añadir usrquota a las opciones de montaje en /etc/fstab si no está ya.
-# Hacemos backup de fstab antes de tocarlo.
 cp /etc/fstab /etc/fstab.svqpanel.bak
 
-# Localizar la línea del fstab cuyo punto de montaje es $QUOTA_MOUNT y añadir
-# usrquota,grpquota a sus opciones (si no las tiene). Se respeta el resto.
+# fstab: opción 'prjquota' (modo interno). El feature 'quota' del FS activa
+# user/group internas al montar; no se usan ficheros externos aquota.*.
 python3 - "$QUOTA_MOUNT" << 'FSTABEOF'
-import sys, re
+import sys
 mount = sys.argv[1]
 with open("/etc/fstab") as f:
     lines = f.readlines()
-out = []
-changed = False
+out, changed = [], False
 for line in lines:
     if line.strip().startswith("#") or not line.strip():
         out.append(line); continue
     parts = line.split()
-    if len(parts) >= 4 and parts[1] == mount:
-        opts = parts[3].split(",")
-        for q in ("usrquota", "grpquota"):
-            if q not in opts:
-                opts.append(q); changed = True
-        # quitar 'defaults' redundante si añadimos opciones explícitas no necesario
+    if len(parts) >= 4 and parts[1] == mount and "ext4" in parts[2]:
+        opts = [o for o in parts[3].split(",") if o not in ("usrquota", "grpquota")]
+        if "prjquota" not in opts:
+            opts.append("prjquota"); changed = True
         parts[3] = ",".join(opts)
         out.append("\t".join(parts) + "\n")
     else:
@@ -500,24 +498,47 @@ for line in lines:
 if changed:
     with open("/etc/fstab", "w") as f:
         f.writelines(out)
-    print("  fstab actualizado con usrquota,grpquota")
+    print("  fstab: prjquota (modo interno ext4)")
 else:
-    print("  fstab ya tenía las opciones de cuota")
+    print("  fstab ya en modo prjquota")
 FSTABEOF
 
-# Remontar para aplicar las nuevas opciones sin reiniciar
-if mount -o remount "$QUOTA_MOUNT" 2>/dev/null; then
-    echo "  Remontado $QUOTA_MOUNT con cuotas"
-else
-    echo -e "${YELLOW}  ⚠ No se pudo remontar $QUOTA_MOUNT en caliente.${NC}"
-    echo -e "${YELLOW}    Las cuotas se activarán tras el próximo reinicio.${NC}"
-fi
+# Hook del initramfs: activa los features quota internos (user/group/project) en
+# el primer arranque, con el FS aún desmontado (única forma de tocar 'project').
+cat > /etc/initramfs-tools/scripts/init-premount/svq-quota <<'HOOKEOF'
+#!/bin/sh
+PREREQ=""; prereqs() { echo "$PREREQ"; }
+case "$1" in prereqs) prereqs; exit 0;; esac
+. /scripts/functions
+ROOTDEV=""
+for x in $(cat /proc/cmdline); do case "$x" in root=*) ROOTDEV="${x#root=}";; esac; done
+case "$ROOTDEV" in PARTUUID=*|UUID=*) ROOTDEV="$(blkid -l -t "$ROOTDEV" -o device 2>/dev/null)";; esac
+[ -b "$ROOTDEV" ] || exit 0
+tune2fs -l "$ROOTDEV" 2>/dev/null | grep -q "User quota inode" && exit 0
+log_begin_msg "SVQPanel: activando cuotas ext4 internas (user/group/project)"
+e2fsck -f -y "$ROOTDEV" >/dev/null 2>&1
+tune2fs -O ^quota "$ROOTDEV" >/dev/null 2>&1
+tune2fs -Q usrquota,grpquota,prjquota "$ROOTDEV" >/dev/null 2>&1
+e2fsck -f -y "$ROOTDEV" >/dev/null 2>&1
+log_end_msg
+exit 0
+HOOKEOF
+chmod +x /etc/initramfs-tools/scripts/init-premount/svq-quota
 
-# Generar ficheros de cuota (aquota.user / aquota.group) y activar
-quotacheck -cugm "$QUOTA_MOUNT" 2>/dev/null || quotacheck -cug "$QUOTA_MOUNT" 2>/dev/null || true
-quotaon -v "$QUOTA_MOUNT" 2>/dev/null && \
-    echo -e "${GREEN}✓ Cuotas de disco activas en $QUOTA_MOUNT${NC}\n" || \
-    echo -e "${YELLOW}⚠ Cuotas instaladas; se activarán tras reiniciar (quotaon).${NC}\n"
+# Hook que mete tune2fs/e2fsck/blkid en el initramfs.
+cat > /etc/initramfs-tools/hooks/svq-quota-bins <<'HOOKEOF'
+#!/bin/sh
+PREREQ=""; prereqs() { echo "$PREREQ"; }
+case "$1" in prereqs) prereqs; exit 0;; esac
+. /usr/share/initramfs-tools/hook-functions
+copy_exec /usr/sbin/tune2fs /sbin
+copy_exec /usr/sbin/e2fsck /sbin
+copy_exec /usr/sbin/blkid /sbin
+HOOKEOF
+chmod +x /etc/initramfs-tools/hooks/svq-quota-bins
+
+update-initramfs -u >/dev/null 2>&1 || true
+echo -e "${GREEN}✓ Cuotas ext4 internas configuradas (se activan en el primer reinicio).${NC}\n"
 
 ###############################################################################
 # 4b. INSTALAR CERTBOT (vía snap — versión oficial siempre actualizada)

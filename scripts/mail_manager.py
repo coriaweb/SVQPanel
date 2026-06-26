@@ -290,6 +290,18 @@ class MailManager(SystemManager):
     # Dominios de correo
     # ─────────────────────────────────────────────────────────────────────
 
+    def _tag_mail_project(self, panel_username: str, path: str) -> None:
+        """Marca un dir de correo con el project id (=uid del usuario) y el flag
+        heredable +P, para que su contenido cuente en la project quota del usuario.
+        Best-effort: si el FS no tiene project quota, no pasa nada."""
+        try:
+            import pwd
+            uid = pwd.getpwnam(panel_username).pw_uid
+        except (KeyError, ImportError):
+            return
+        # chattr -p <uid> +P (heredable). Si no hay soporte, falla silencioso.
+        self.execute_command(["chattr", "-p", str(uid), "+P", path], check=False)
+
     def create_mail_domain(self, domain_name, panel_username):
         """
         Registra un dominio de correo:
@@ -302,6 +314,10 @@ class MailManager(SystemManager):
         self.execute_command(
             ["chown", f"vmail:vmail", domain_dir], check=False
         )
+        # Project quota: el correo es owner vmail, así que la cuota de USUARIO no
+        # lo contaría. Marcamos el dir con el project id = uid del usuario (flag
+        # heredable +P) para que cuente en su disco. Los ficheros nuevos heredan.
+        self._tag_mail_project(panel_username, domain_dir)
         logger.info(f"Directorio de correo creado: {domain_dir}")
 
         # El valor "OK" es el estándar para virtual_mailbox_domains hash

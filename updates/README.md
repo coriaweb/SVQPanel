@@ -89,3 +89,4 @@ exit 0
 | 0050 | Seguridad: cerrar recursión DNS (open resolver/DDoS)  | 2026-06-26 |
 | 0051 | Instalar daemon cron (no corría ningún cronjob)       | 2026-06-26 |
 | 0052 | Historial de ejecuciones de cron (wrapper + cola)     | 2026-06-26 |
+| 0053 | Project quota: el correo cuenta en el disco del user  | 2026-06-26 |
