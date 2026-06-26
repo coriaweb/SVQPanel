@@ -135,6 +135,27 @@ def _cert_covers(host: str, parent_domain: str) -> bool:
     return False
 
 
+def _mail_domain_used_mb(md: MailDomain) -> int:
+    """Tamaño total (MB) del correo de un dominio: du de /home/{user}/mail/{dom}.
+    Best-effort: 0 si no se puede medir."""
+    import os
+    import subprocess
+    try:
+        owner = md.user
+        if not owner:
+            return 0
+        path = f"/home/{owner.username}/mail/{md.domain_name}"
+        if not os.path.isdir(path):
+            return 0
+        r = subprocess.run(["/usr/bin/du", "-sb", "--apparent-size", path],
+                           capture_output=True, text=True, timeout=60)
+        if r.returncode != 0:
+            return 0
+        return int(r.stdout.split()[0]) // (1024 * 1024)
+    except Exception:
+        return 0
+
+
 def _mail_domain_to_dict(md: MailDomain, current_user) -> dict:
     dom = md.domain_name
     return {
@@ -152,6 +173,8 @@ def _mail_domain_to_dict(md: MailDomain, current_user) -> dict:
         "antivirus_enabled": bool(getattr(md, "antivirus_enabled", False)),
         "mailbox_count": len(md.mailboxes),
         "alias_count":   len(md.aliases),
+        # Tamaño total del correo de este dominio (suma de todos sus buzones).
+        "mail_used_mb":  _mail_domain_used_mb(md),
         # SSL de webmail.{dom} y mail.{dom}: cert propio O cubierto por el cert
         # del dominio padre como SAN (webmail suele ir en el cert del dominio).
         "webmail_ssl":   _cert_covers(f"webmail.{dom}", dom),

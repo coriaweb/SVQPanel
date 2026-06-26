@@ -72,6 +72,7 @@
                 <th>Dominio</th>
                 <th style="text-align:center">Buzones</th>
                 <th style="text-align:center">Alias</th>
+                <th style="text-align:center">Tamaño</th>
                 <th style="text-align:center">DKIM</th>
                 <th style="text-align:center">SSL correo</th>
                 <th>Catch-all</th>
@@ -92,6 +93,9 @@
                 </td>
                 <td style="text-align:center">
                   <span class="sv-badge sv-badge--teal">{{ md.alias_count }}</span>
+                </td>
+                <td style="text-align:center;font-variant-numeric:tabular-nums">
+                  {{ fmtMailSize(md.mail_used_mb) }}
                 </td>
                 <td style="text-align:center">
                   <i v-if="md.dkim_enabled" class="bi bi-shield-check" style="color:var(--success);font-size:1.1rem" title="DKIM activo"></i>
@@ -1575,6 +1579,11 @@ export default {
     // Dominio de correo
     // ─────────────────────────────────────────────────────────────────
 
+    const fmtMailSize = (mb) => {
+      if (mb == null || mb === 0) return '—'
+      return mb >= 1024 ? (mb / 1024).toFixed(1) + ' GB' : mb + ' MB'
+    }
+
     const openNewDomain = () => {
       newDomainForm.value = { domain_name: '', catch_all: '', max_mailboxes: 0, user_id: null }
       showNewDomain.value = true
@@ -2014,7 +2023,7 @@ export default {
     })
 
     return {
-      isAdminOrReseller, clientUsers,
+      isAdminOrReseller, clientUsers, fmtMailSize,
       mailEnabled, mailDomains, selectedDomain, activeTab, loading,
       mailboxes, aliases, dkimInfo,
       loadingMailboxes, loadingAliases, loadingDkim,

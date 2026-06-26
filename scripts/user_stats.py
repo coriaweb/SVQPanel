@@ -38,27 +38,40 @@ MONTH_ABBR = {
 # ─────────────────────────────────────────────────────────────────────────────
 # Disco
 # ─────────────────────────────────────────────────────────────────────────────
-def compute_user_disk_mb(home_dir: str) -> int:
-    """
-    Devuelve el tamaño en MB de /home/{user}/web. Si no existe, devuelve 0.
-    Usa `du -sb --apparent-size` para que coincida con lo que ve el usuario.
-    """
-    web_dir = os.path.join(home_dir, "web")
-    if not os.path.isdir(web_dir):
+def _du_mb(path: str) -> int:
+    """Tamaño en MB de un directorio (du -sb apparent-size). 0 si no existe/falla."""
+    if not os.path.isdir(path):
         return 0
     try:
         r = subprocess.run(
-            ["/usr/bin/du", "-sb", "--apparent-size", web_dir],
-            capture_output=True, text=True, timeout=120,
+            ["/usr/bin/du", "-sb", "--apparent-size", path],
+            capture_output=True, text=True, timeout=180,
         )
         if r.returncode != 0:
-            logger.warning(f"du falló en {web_dir}: {r.stderr.strip()}")
+            logger.warning(f"du falló en {path}: {r.stderr.strip()}")
             return 0
-        bytes_total = int(r.stdout.split()[0])
-        return bytes_total // (1024 * 1024)
+        return int(r.stdout.split()[0]) // (1024 * 1024)
     except (subprocess.TimeoutExpired, ValueError, IndexError, FileNotFoundError) as e:
-        logger.warning(f"du error en {web_dir}: {e}")
+        logger.warning(f"du error en {path}: {e}")
         return 0
+
+
+def compute_user_disk_mb(home_dir: str) -> int:
+    """
+    Disco TOTAL del usuario en MB: web + correo (+ private/logs si los hubiera).
+    El correo (/home/{user}/mail) es propiedad de vmail pero ocupa disco del
+    usuario, así que se suma (igual que en Hestia). Antes solo se contaba web/.
+    """
+    web  = _du_mb(os.path.join(home_dir, "web"))
+    mail = _du_mb(os.path.join(home_dir, "mail"))
+    return web + mail
+
+
+def compute_user_disk_breakdown(home_dir: str) -> dict:
+    """Desglose del disco del usuario: {web_mb, mail_mb, total_mb}."""
+    web  = _du_mb(os.path.join(home_dir, "web"))
+    mail = _du_mb(os.path.join(home_dir, "mail"))
+    return {"web_mb": web, "mail_mb": mail, "total_mb": web + mail}
 
 
 # ─────────────────────────────────────────────────────────────────────────────

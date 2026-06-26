@@ -118,6 +118,7 @@ class MailDomainListItem(BaseModel):
     antivirus_enabled: bool       = False
     mailbox_count: int           = 0
     alias_count:   int           = 0
+    mail_used_mb:  int           = 0
     webmail_ssl:   bool          = False
     mail_ssl:      bool          = False
     created_at:    Optional[datetime] = None
