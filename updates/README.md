@@ -91,3 +91,4 @@ exit 0
 | 0052 | Historial de ejecuciones de cron (wrapper + cola)     | 2026-06-26 |
 | 0053 | Project quota: el correo cuenta en el disco del user  | 2026-06-26 |
 | 0054 | Control de greylisting (global + por dominio)         | 2026-06-26 |
+| 0055 | fail2ban: arreglar jail dovecot (aggressive) + jail postfix relay | 2026-06-26 |

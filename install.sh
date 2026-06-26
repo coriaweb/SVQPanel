@@ -2444,7 +2444,10 @@ maxretry = 5
 [dovecot]
 enabled  = $MAIL_JAILS_ENABLED
 port     = pop3,pop3s,imap,imaps,submission,sieve
-filter   = dovecot
+# mode=aggressive: el filtro normal NO casa el formato real de Dovecot moderno
+#   'pop3-login: Disconnected: Connection reset by peer (auth failed, N attempts...)'
+# y dejaba la jail con 0 capturas pese a cientos de fallos. Aggressive sí lo coge.
+filter   = dovecot[mode=aggressive]
 maxretry = 5
 
 [postfix-sasl]
@@ -2456,6 +2459,18 @@ port     = smtp,465,submission,imap,imaps,pop3,pop3s
 filter   = svqpanel-postfix-sasl
 journalmatch = _SYSTEMD_UNIT=postfix@-.service
 maxretry = 5
+
+[postfix]
+# Bots que abusan del puerto 25 (entrada SMTP): intentos de relay no autorizado
+# ('Relay access denied'), destinatarios/dominios inexistentes, RBL, etc. El modo
+# 'aggressive' del filtro estándar de Debian incluye 'Relay access denied'.
+# NO afecta a clientes legítimos: estos envían autenticados por submission
+# (587/465), no por el puerto 25; un cliente autenticado nunca recibe ese error.
+enabled  = $MAIL_JAILS_ENABLED
+port     = smtp,465,submission
+filter   = postfix[mode=aggressive]
+journalmatch = _SYSTEMD_UNIT=postfix@-.service
+maxretry = 3
 
 [nginx-limit-req]
 enabled  = false
@@ -2554,7 +2569,7 @@ LRTEOF
 systemctl enable fail2ban >/dev/null 2>&1 || true
 systemctl restart fail2ban >/dev/null 2>&1 || systemctl start fail2ban
 
-echo -e "${GREEN}✓ fail2ban: jails activas (sshd, recidive, svqpanel-auth$( [[ "$INSTALL_MAIL" == true ]] && echo ', dovecot, postfix-sasl' ))${NC}"
+echo -e "${GREEN}✓ fail2ban: jails activas (sshd, recidive, svqpanel-auth$( [[ "$INSTALL_MAIL" == true ]] && echo ', dovecot, postfix-sasl, postfix' ))${NC}"
 if [[ -n "$INSTALLER_IP" ]]; then
     echo -e "  ${GREEN}✓ Anti-lockout: $INSTALLER_IP en whitelist nftables + ignoreip fail2ban${NC}"
 fi
