@@ -150,6 +150,7 @@
         <div class="mig-stat"><span class="mig-stat__n">{{ manifest.db.length }}</span><span class="mig-stat__k">Bases de datos</span></div>
         <div class="mig-stat"><span class="mig-stat__n">{{ mailAccounts }}</span><span class="mig-stat__k">Buzones</span></div>
         <div class="mig-stat"><span class="mig-stat__n">{{ manifest.dns.length }}</span><span class="mig-stat__k">Zonas DNS</span></div>
+        <div class="mig-stat"><span class="mig-stat__n">{{ (manifest.cron || []).length }}</span><span class="mig-stat__k">Tareas cron</span></div>
       </div>
 
       <div class="mig-lists">
@@ -306,10 +307,11 @@ export default {
     const targetUserId = ref(null)
     const newUser = ref({ username: '', email: '', password: '' })
     const clientUsers = ref([])
-    const scope = ref(['web', 'db', 'mail', 'dns'])
+    const scope = ref(['web', 'db', 'mail', 'dns', 'cron'])
     const scopeOptions = [
       { key: 'web', label: 'Webs' }, { key: 'db', label: 'Bases de datos' },
       { key: 'mail', label: 'Correo' }, { key: 'dns', label: 'DNS' },
+      { key: 'cron', label: 'Tareas cron' },
     ]
     const analyzing = ref(false)
     const importing = ref(false)

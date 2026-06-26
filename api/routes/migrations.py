@@ -363,7 +363,7 @@ async def migration_analyze(
     ssh_key: Optional[str] = Form(None),
     ssh_port: Optional[int] = Form(None),
     hestia_user: Optional[str] = Form(None),
-    scope: str = Form("web,db,mail,dns"),
+    scope: str = Form("web,db,mail,dns,cron"),
     source_panel: str = Form("hestia"),
     db: Session = Depends(get_db),
     current_user: User = Depends(require_admin),
@@ -469,6 +469,7 @@ async def migration_analyze(
                      "server_ipv4": server_ipv4,
                      "proposed_records": dns_proposals.get(z["domain"], [])}
                     for z in manifest["dns"]],
+            "cron": manifest.get("cron", []),
             "conflicts": conflicts,
             "importable": len(conflicts) == 0,
             "warnings": warnings,
@@ -546,7 +547,7 @@ async def migration_import(
     new_username: Optional[str] = Form(None),
     new_email: Optional[str] = Form(None),
     new_password: Optional[str] = Form(None),
-    scope: str = Form("web,db,mail,dns"),
+    scope: str = Form("web,db,mail,dns,cron"),
     dns_records: Optional[str] = Form(None),
     source_panel: str = Form("hestia"),
     # Token del backup ya descargado en el análisis: si viene y el tar sigue en

@@ -504,6 +504,32 @@ class HestiaBackup:
             })
         return out
 
+    def analyze_cron(self) -> List[Dict]:
+        """Lee los cronjobs del backup. Hestia los guarda en cron/cron.conf con
+        líneas tipo: JOB='1' MIN='*' HOUR='*' DAY='*' MONTH='*' WDAY='*'
+        CMD='...' SUSPENDED='no'. Tolerante con la ubicación (cron.conf bajo
+        cron/ o bajo {system}/)."""
+        candidates = [
+            os.path.join(self.root, "cron", "cron.conf"),
+            os.path.join(self.root, self.system or "hestia", "cron.conf"),
+            os.path.join(self.root, "cron.conf"),
+        ]
+        conf_path = next((c for c in candidates if os.path.isfile(c)), None)
+        if not conf_path:
+            return []
+        out = []
+        for j in parse_conf_multi(self._read(conf_path), "CMD"):
+            out.append({
+                "min":   j.get("MIN", "*"),
+                "hour":  j.get("HOUR", "*"),
+                "day":   j.get("DAY", "*"),
+                "month": j.get("MONTH", "*"),
+                "wday":  j.get("WDAY", "*"),
+                "cmd":   j.get("CMD", ""),
+                "suspended": (j.get("SUSPENDED", "no").lower() in ("yes", "true", "1")),
+            })
+        return out
+
     # ── localizar archivos de datos comprimidos ───────────────────────────────
     def _find_data_archive(self, kind: str, name: str, base: str) -> Optional[str]:
         """Busca {base}.tar.gz / .tar.zst en {kind}/{name}/.
@@ -556,6 +582,7 @@ class HestiaBackup:
             "db": self.analyze_db(),
             "mail": self.analyze_mail(),
             "dns": self.analyze_dns(),
+            "cron": self.analyze_cron(),
         }
 
 
@@ -1448,6 +1475,90 @@ def open_backup(source_panel: str, tar_path: str, config_only: bool = False):
     return HestiaBackup(tar_path, config_only=config_only)
 
 
+def _adapt_cron_command(cmd: str, new_user: str, installed_php: List[str],
+                        domain_php: Dict[str, str]) -> str:
+    """Adapta un comando de cron del Hestia origen a nuestro sistema:
+      - /home/USUARIO_VIEJO/ → /home/USUARIO_NUEVO/  (detecta el viejo del path)
+      - phpX.Y → la versión del dominio (si el dominio del path tiene otra) o, si
+        esa versión no está instalada, la más cercana instalada.
+    """
+    import re
+    # 1) Reescribir /home/<viejo>/ → /home/<nuevo>/
+    cmd = re.sub(r"/home/[A-Za-z0-9._-]+/", f"/home/{new_user}/", cmd)
+
+    # 2) Versión de PHP: si el comando referencia un dominio del que sabemos su
+    #    versión, usarla; si no, dejar la que trae salvo que no esté instalada.
+    m_dom = re.search(r"/home/[^/]+/web/([^/]+)/", cmd)
+    target_ver = None
+    if m_dom and m_dom.group(1) in domain_php:
+        target_ver = domain_php[m_dom.group(1)]
+
+    def _fix_php(match):
+        old = match.group(1)  # ej "8.1"
+        ver = target_ver or old
+        if installed_php and ver not in installed_php:
+            # versión no instalada → la instalada más alta (mejor que romper)
+            ver = installed_php[-1]
+        return f"php{ver}"
+
+    cmd = re.sub(r"php(\d+\.\d+)", _fix_php, cmd)
+    return cmd
+
+
+def import_cron(job: Dict, owner, db, report: "ImportReport"):
+    """Crea un CronJob en el panel a partir de un job del backup, adaptando la
+    ruta (/home/viejo → /home/owner) y la versión de PHP. Respeta el estado
+    suspendido del origen. Asocia el cron al dominio si la ruta lo identifica."""
+    from api.models.models_cron import CronJob
+    from api.models.models_domain import Domain
+
+    cmd = (job.get("cmd") or "").strip()
+    if not cmd:
+        return
+
+    installed = installed_php_versions()
+    # Mapa dominio→versión PHP de los dominios del propietario (para ajustar phpX.Y).
+    domain_php = {d.domain_name: d.php_version
+                  for d in db.query(Domain).filter(Domain.user_id == owner.id).all()}
+    new_cmd = _adapt_cron_command(cmd, owner.username, installed, domain_php)
+
+    # Asociar al dominio si la ruta lo identifica (/home/user/web/DOMINIO/...).
+    import re
+    domain_id = None
+    m = re.search(r"/web/([^/]+)/", new_cmd)
+    if m:
+        d = db.query(Domain).filter(Domain.domain_name == m.group(1),
+                                    Domain.user_id == owner.id).first()
+        domain_id = d.id if d else None
+
+    cj = CronJob(
+        user_id=owner.id, domain_id=domain_id,
+        minute=job.get("min", "*"), hour=job.get("hour", "*"),
+        day=job.get("day", "*"), month=job.get("month", "*"),
+        weekday=job.get("wday", "*"),
+        command=new_cmd,
+        comment="Importado de Hestia",
+        is_active=not job.get("suspended", False),
+    )
+    db.add(cj)
+    db.commit()
+    db.refresh(cj)
+
+    # Escribir al crontab del sistema solo si está activo (los suspendidos viven
+    # en la BD del panel pero no se ejecutan, igual que un cron suspendido normal).
+    if cj.is_active:
+        try:
+            from scripts.cron_manager import CronManager
+            CronManager().add_cron(owner.username, cj.id, cj.minute, cj.hour,
+                                   cj.day, cj.month, cj.weekday, cj.command,
+                                   comment=cj.comment or "")
+        except Exception as e:
+            logger.warning(f"cron importado {cj.id} no escrito al crontab: {e}")
+
+    report.ok("cron", new_cmd[:50],
+              "suspendido" if job.get("suspended") else "activo")
+
+
 def run_import(tar_path: str, target_user_id: int, scope: List[str], db,
                dns_records: Optional[Dict[str, List[Dict]]] = None,
                source_panel: str = "hestia") -> Dict:
@@ -1524,6 +1635,14 @@ def run_import(tar_path: str, target_user_id: int, scope: List[str], db,
                 except Exception as e:
                     db.rollback()
                     report.fail("dns", zoneinfo["domain"], e)
+
+        if "cron" in scope:
+            for job in manifest.get("cron", []):
+                try:
+                    import_cron(job, owner, db, report)
+                except Exception as e:
+                    db.rollback()
+                    report.fail("cron", (job.get("cmd") or "")[:40], e)
 
         # Aunque NO se importe el DNS del backup, todo dominio web migrado debe
         # tener una zona DNS con el template por defecto (igual que un dominio
