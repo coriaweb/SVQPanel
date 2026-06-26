@@ -1,7 +1,40 @@
 <template>
   <form @submit.prevent="handleSubmit">
 
-    <div class="mb-3">
+    <!-- Tipo: dominio o subdominio (solo en creación) -->
+    <div v-if="!isEditing" class="mb-3">
+      <label class="form-label">Tipo</label>
+      <div class="d-flex gap-3">
+        <div class="form-check">
+          <input id="type_domain" class="form-check-input" type="radio" :value="false" v-model="form.is_subdomain" />
+          <label for="type_domain" class="form-check-label"><i class="bi bi-globe2 me-1"></i>Dominio</label>
+        </div>
+        <div class="form-check">
+          <input id="type_sub" class="form-check-input" type="radio" :value="true" v-model="form.is_subdomain"
+                 :disabled="parentCandidates.length === 0" />
+          <label for="type_sub" class="form-check-label"><i class="bi bi-diagram-3 me-1"></i>Subdominio</label>
+        </div>
+      </div>
+      <small v-if="parentCandidates.length === 0" class="text-muted">
+        No hay dominios a los que colgar un subdominio (crea primero el dominio padre).
+      </small>
+    </div>
+
+    <!-- Subdominio: nombre + dominio padre -->
+    <div v-if="!isEditing && form.is_subdomain" class="mb-3">
+      <label class="form-label">Subdominio</label>
+      <div class="input-group">
+        <input v-model="form.sub_label" type="text" class="form-control" placeholder="gestion" />
+        <span class="input-group-text">.</span>
+        <select v-model="form.parent_name" class="form-select">
+          <option v-for="p in parentCandidates" :key="p" :value="p">{{ p }}</option>
+        </select>
+      </div>
+      <small class="text-muted">Se creará <code>{{ form.sub_label || 'nombre' }}.{{ form.parent_name }}</code> con su propia web; en DNS se añade dentro de la zona padre.</small>
+    </div>
+
+    <!-- Dominio normal: nombre completo -->
+    <div v-else-if="!isEditing" class="mb-3">
       <label class="form-label">Nombre de Dominio</label>
       <input
         v-model="form.domain_name"
@@ -9,9 +42,14 @@
         class="form-control"
         placeholder="ejemplo.com"
         required
-        :disabled="isEditing"
       />
-      <small class="text-muted">Ej: ejemplo.com o sub.ejemplo.com</small>
+      <small class="text-muted">Ej: ejemplo.com</small>
+    </div>
+
+    <!-- Edición: nombre fijo -->
+    <div v-else class="mb-3">
+      <label class="form-label">Nombre de Dominio</label>
+      <input v-model="form.domain_name" type="text" class="form-control" disabled />
     </div>
 
     <!-- Selector de usuario: solo para admin/reseller -->
@@ -440,6 +478,10 @@ export default {
       php_hardening_relaxed: props.domain?.php_hardening_relaxed ?? false,
       dns_enabled:  false,
       mail_enabled: false,
+      // Subdominio (solo creación)
+      is_subdomain: false,
+      sub_label:    '',
+      parent_name:  '',
       selected_template_id: props.domain?.applied_template_id ?? null,
       // Redirección y docroot (Fase 16)
       redirect_enabled: !!(props.domain?.redirect_to),
@@ -453,6 +495,24 @@ export default {
 
     const redirectError = ref('')
     const docrootError  = ref('')
+
+    // ── Subdominios: dominios padre candidatos (los que NO son subdominios) ──
+    const parentCandidates = ref([])
+    const loadParentCandidates = async () => {
+      try {
+        // Para admin/reseller, los candidatos del cliente elegido; si no, los propios.
+        const uid = isAdminOrReseller.value ? (form.value.user_id || null) : null
+        const data = await api.getDomains(uid, 0, 1000)
+        const list = Array.isArray(data) ? data : (data?.domains || [])
+        parentCandidates.value = list
+          .filter(d => !d.is_subdomain)
+          .map(d => d.domain_name)
+          .sort()
+        if (parentCandidates.value.length && !form.value.parent_name) {
+          form.value.parent_name = parentCandidates.value[0]
+        }
+      } catch { parentCandidates.value = [] }
+    }
 
     // ── Plantillas ─────────────────────────────────────────────────────────
 
@@ -630,13 +690,28 @@ export default {
           const userId = isAdminOrReseller.value
             ? form.value.user_id
             : store.currentUser?.id
+          // Subdominio: componer el FQDN y forzar el tipo + DNS (el registro va a
+          // la zona padre). Validar el nombre del subdominio.
+          let domainName = form.value.domain_name
+          let dnsEnabled = form.value.dns_enabled
+          if (form.value.is_subdomain) {
+            const label = (form.value.sub_label || '').trim().toLowerCase()
+            if (!label || !/^[a-z0-9]([a-z0-9-]*[a-z0-9])?$/.test(label)) {
+              store.showNotification('Nombre de subdominio no válido (a-z, 0-9, guiones).', 'danger')
+              loading.value = false
+              return
+            }
+            domainName = `${label}.${form.value.parent_name}`
+            dnsEnabled = true   // el subdominio necesita su A en la zona padre
+          }
           const created = await api.createDomain({
-            domain_name:  form.value.domain_name,
+            domain_name:  domainName,
             user_id:      userId,
             php_version:  form.value.php_version,
             is_active:    form.value.is_active,
-            dns_enabled:  form.value.dns_enabled,
+            dns_enabled:  dnsEnabled,
             mail_enabled: form.value.mail_enabled,
+            is_subdomain: form.value.is_subdomain || null,
             ipv4:         form.value.ipv4 || null,
             ipv6:         form.value.ipv6 || null,
           })
@@ -724,7 +799,8 @@ export default {
     }
 
     onMounted(async () => {
-      await Promise.all([loadUsers(), loadPHPVersions(), loadTemplates(), loadServerIps()])
+      await Promise.all([loadUsers(), loadPHPVersions(), loadTemplates(), loadServerIps(),
+                         isEditing.value ? Promise.resolve() : loadParentCandidates()])
       if (isEditing.value) loadSSL()
       // Si la versión guardada no está en la lista, seleccionar la primera disponible
       if (form.value.php_version && !availablePhpVersions.value.includes(form.value.php_version)) {
@@ -740,7 +816,7 @@ export default {
       templates, templateCategories, templatesByCategory,
       selectedTemplate, parsedPhpOverrides,
       serverIps, ipv6Enabled, ipv6Suggestions, ipv6Loading, _uid,
-      redirectError, docrootError,
+      redirectError, docrootError, parentCandidates,
       handleSubmit,
       // SSL
       ssl, sslLoading, sslMessage, sslError,

@@ -1373,6 +1373,60 @@ def cmd_setup_ipv6_persistence() -> int:
     return 0
 
 
+def cmd_convert_subdomains(domains=None, dry_run: bool = False) -> int:
+    """Convierte dominios que en realidad son subdominios (su zona padre está en
+    el panel) al nuevo tratamiento: registro A/AAAA en la zona padre + borra su
+    zona propia redundante + marca is_subdomain. Si no se pasan dominios, detecta
+    todos los candidatos. Idempotente."""
+    try:
+        from api.models.database import SessionLocal, load_all_models
+        from api.models.models_domain import Domain
+        from api.routes.dns import find_parent_zone, apply_subdomain_dns
+        from scripts.user_purge import purge_dns_zones
+        load_all_models()
+    except PermissionError:
+        logger.error("Requiere root")
+        return 1
+    except Exception as e:
+        logger.error(f"No se pudo cargar: {e}")
+        return 0
+    db = SessionLocal()
+    # Candidatos: dominios indicados, o todos los que tengan una zona padre en el
+    # panel y aún no estén marcados como subdominio.
+    if domains:
+        candidates = db.query(Domain).filter(Domain.domain_name.in_(domains)).all()
+    else:
+        candidates = db.query(Domain).filter(Domain.is_subdomain == False).all()  # noqa: E712
+
+    n = 0
+    for d in candidates:
+        parent = find_parent_zone(db, d.domain_name)
+        # find_parent_zone podría devolver la propia zona del dominio; descartar.
+        if not parent or parent.domain_name == d.domain_name:
+            continue
+        logger.info(f"{d.domain_name} → subdominio de {parent.domain_name}"
+                    + (" [dry-run]" if dry_run else ""))
+        if dry_run:
+            n += 1
+            continue
+        # 1) A/AAAA en la zona padre.
+        apply_subdomain_dns(db, d.domain_name, ipv4=d.ipv4, ipv6=d.ipv6)
+        # 2) Borrar la zona propia redundante (BD + cluster/BIND).
+        warnings = []
+        purge_dns_zones(db, {d.domain_name}, warnings)
+        for w in warnings:
+            logger.warning(f"  {w}")
+        # 3) Marcar.
+        d.is_subdomain = True
+        d.parent_domain = parent.domain_name
+        db.commit()
+        n += 1
+    db.close()
+    logger.info(f"convert_subdomains: {n} dominio(s) " +
+                ("detectados" if dry_run else "convertidos a subdominio"))
+    return 0
+
+
 def cmd_update_geoip(force: bool = False) -> int:
     """Descarga/actualiza la base GeoIP (DB-IP gratis) para los países en las
     estadísticas de dominio. Idempotente (no re-baja la del mes salvo --force)."""
@@ -1723,6 +1777,10 @@ def main():
     p_geo = sub.add_parser("update_geoip",
         help="Descarga/actualiza la base GeoIP (países en estadísticas)")
     p_geo.add_argument("--force", action="store_true", help="Re-descargar aunque ya esté la del mes")
+    p_sub = sub.add_parser("convert_subdomains",
+        help="Convierte dominios que son subdominios (zona padre en el panel) al nuevo tratamiento")
+    p_sub.add_argument("domains", nargs="*", help="Dominios concretos (vacío = autodetectar todos)")
+    p_sub.add_argument("--dry-run", action="store_true", help="Solo listar candidatos, sin cambiar nada")
     sub.add_parser("setup_ipv6_persistence",
         help="Migra IPv6 a systemd-networkd + ruta default persistente (arregla red rota al reiniciar)")
     sub.add_parser("fix_mail_folders",
@@ -1841,6 +1899,9 @@ def main():
         sys.exit(cmd_refresh_suspended_vhosts())
     if args.cmd == "update_geoip":
         sys.exit(cmd_update_geoip(force=getattr(args, "force", False)))
+    if args.cmd == "convert_subdomains":
+        sys.exit(cmd_convert_subdomains(domains=args.domains or None,
+                                        dry_run=getattr(args, "dry_run", False)))
     if args.cmd == "setup_ipv6_persistence":
         sys.exit(cmd_setup_ipv6_persistence())
     if args.cmd == "fix_mail_folders":

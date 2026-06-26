@@ -37,7 +37,7 @@
 
     <!-- ===== Vista de tarjetas ===== -->
     <div v-else-if="viewMode === 'cards'" class="cards-grid">
-      <article v-for="domain in domains" :key="domain.id" class="dcard" :class="`dcard--${domainTone(domain)}`">
+      <article v-for="domain in groupedDomains" :key="domain.id" class="dcard" :class="[`dcard--${domainTone(domain)}`, { 'dcard--sub': domain.is_subdomain }]">
         <div class="dcard__head">
           <div class="dcard__title">
             <i class="bi" :class="domain.is_subdomain ? 'bi-diagram-3' : 'bi-globe2'"></i>
@@ -115,8 +115,9 @@
             </tr>
           </thead>
           <tbody>
-            <tr v-for="domain in domains" :key="domain.id" :class="{ 't-row--suspended': domain.is_suspended }">
+            <tr v-for="domain in groupedDomains" :key="domain.id" :class="{ 't-row--suspended': domain.is_suspended, 't-row--sub': domain.is_subdomain }">
               <td>
+                <span v-if="domain.is_subdomain" class="sub-indent" :title="'Subdominio de ' + domain.parent_domain">└</span>
                 <router-link :to="`/domains/${domain.id}`" class="t-domain"><i class="bi" :class="domain.is_subdomain ? 'bi-diagram-3' : 'bi-globe2'"></i>{{ domain.domain_name }}</router-link>
                 <span v-if="domain.is_subdomain" class="sub-chip" :title="'Subdominio de ' + domain.parent_domain">sub</span>
               </td>
@@ -342,6 +343,23 @@ export default {
     const users        = ref([])
     const phpVersions  = ref([])
     const selectedUser = ref('')
+
+    // Agrupa cada subdominio justo debajo de su dominio padre. Los dominios sin
+    // padre (o cuyo padre no está en la lista) van como raíz, ordenados alfabético.
+    const groupedDomains = computed(() => {
+      const all = domains.value || []
+      const byName = new Map(all.map(d => [d.domain_name, d]))
+      const roots = all.filter(d => !d.is_subdomain || !byName.has(d.parent_domain))
+                       .sort((a, b) => a.domain_name.localeCompare(b.domain_name))
+      const subsOf = (name) => all.filter(d => d.is_subdomain && d.parent_domain === name)
+                                  .sort((a, b) => a.domain_name.localeCompare(b.domain_name))
+      const out = []
+      for (const r of roots) {
+        out.push(r)
+        for (const s of subsOf(r.domain_name)) out.push(s)
+      }
+      return out
+    })
     const loading      = ref(false)
     const viewMode     = ref(localStorage.getItem('domainsView') || 'cards')
     const openMenuId   = ref(null)
@@ -679,7 +697,7 @@ export default {
     })
 
     return {
-      domains, users, phpVersions, selectedUser, loading,
+      domains, groupedDomains, users, phpVersions, selectedUser, loading,
       viewMode, openMenuId, sslCount, domainTone, toggleMenu, run, changePHPPrompt,
       isAdminOrReseller,
       showDomainForm, showSSLManager, showIPv6Manager,
@@ -807,6 +825,9 @@ export default {
 .icon-act.is-ok { color: var(--success); }
 .icon-act.is-ok:hover { border-color: var(--success); }
 .t-row--suspended > td { background: color-mix(in srgb, var(--warning) 7%, transparent); }
+.sub-indent { color: var(--text-muted); margin-right: .35rem; font-family: var(--font-mono, monospace); opacity: .7; }
+.t-row--sub > td:first-child { padding-left: 1.4rem; }
+.dcard--sub { margin-left: 1.2rem; border-left: 2px solid color-mix(in srgb, var(--color-primary) 30%, transparent); }
 .sub-chip { display: inline-block; margin-left: .4rem; padding: .05rem .4rem; font-size: .68rem;
   font-weight: var(--fw-semibold); text-transform: uppercase; letter-spacing: .03em;
   border-radius: var(--r-sm, 6px); color: var(--color-primary);

@@ -439,12 +439,28 @@ async def regenerate_zone(
     domain_obj = db.query(Domain).filter(Domain.domain_name == zone.domain_name).first()
     ipv6 = domain_obj.ipv6 if domain_obj else None
 
+    # PRESERVAR los registros de los SUBDOMINIOS colgados de esta zona: regenerar
+    # aplica la plantilla, pero gestion/socios viven como registros A/AAAA aquí y
+    # no deben borrarse. Recuperamos sus 'name' antes de limpiar.
+    sub_labels = set()
+    for sub in db.query(Domain).filter(Domain.is_subdomain == True,  # noqa: E712
+                                       Domain.parent_domain == zone.domain_name).all():
+        sub_labels.add(subdomain_label(sub.domain_name, zone.domain_name))
+    preserved = []
+    if sub_labels:
+        for r in db.query(DnsRecord).filter(DnsRecord.zone_id == zone_id).all():
+            if r.name in sub_labels:
+                preserved.append({"record_type": r.record_type, "name": r.name,
+                                  "content": r.content, "ttl": r.ttl, "priority": r.priority})
+
     # Regenerar adopta los nameservers actuales del panel (SOA + registros NS)
     # y RESPETA la plantilla elegida en la zona (default/minimal/mail).
     zone.soa_ns = ns1
     db.query(DnsRecord).filter(DnsRecord.zone_id == zone_id).delete()
     for r in _build_template_records(zone.domain_name, ipv4, ipv6, ns1, ns2,
                                      template=zone.template):
+        db.add(DnsRecord(zone_id=zone.id, **r))
+    for r in preserved:  # re-añadir los registros de subdominios
         db.add(DnsRecord(zone_id=zone.id, **r))
 
     zone.serial = _bump_serial(zone.serial)
