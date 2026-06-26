@@ -236,6 +236,13 @@ async def startup():
         start_metrics_scheduler()
     except Exception as e:
         print(f"⚠ No se pudo arrancar el metrics scheduler: {e}")
+
+    # Ingestor de la cola de ejecuciones de cron (historial de crons).
+    try:
+        from scripts.cron_run_scheduler import start_cron_run_scheduler
+        start_cron_run_scheduler()
+    except Exception as e:
+        print(f"⚠ No se pudo arrancar el cron-run ingestor: {e}")
     print(f"✓ {PANEL_NAME} v{PANEL_VERSION} iniciado")
     print(f"✓ Base de datos sincronizada")
 
@@ -528,6 +535,18 @@ def _run_migrations():
         )""",
         "CREATE INDEX IF NOT EXISTS ix_cron_jobs_user_id ON cron_jobs(user_id)",
         "CREATE INDEX IF NOT EXISTS ix_cron_jobs_domain_id ON cron_jobs(domain_id)",
+        # Historial de ejecuciones de cron (estado/duración/salida)
+        """CREATE TABLE IF NOT EXISTS cron_runs (
+            id          SERIAL PRIMARY KEY,
+            cron_id     INTEGER NOT NULL REFERENCES cron_jobs(id) ON DELETE CASCADE,
+            started_at  TIMESTAMP NOT NULL DEFAULT NOW(),
+            finished_at TIMESTAMP,
+            duration_ms INTEGER,
+            exit_code   INTEGER,
+            output      TEXT,
+            trigger     VARCHAR(10) NOT NULL DEFAULT 'auto'
+        )""",
+        "CREATE INDEX IF NOT EXISTS ix_cron_runs_cron_id ON cron_runs(cron_id)",
         # ─────────────────────────────────────────────────────────────────
         # IPs del servidor (gestión de red)
         # ─────────────────────────────────────────────────────────────────

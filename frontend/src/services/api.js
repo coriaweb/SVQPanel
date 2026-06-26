@@ -977,6 +977,9 @@ class APIClient {
   runCron(cronId) {
     return this.post(`/api/crons/${cronId}/run`)
   }
+  cronRuns(cronId) {
+    return this.get(`/api/crons/${cronId}/runs`)
+  }
 
   // Backups
   getBackupJobs() {

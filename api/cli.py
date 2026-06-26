@@ -1373,6 +1373,18 @@ def cmd_setup_ipv6_persistence() -> int:
     return 0
 
 
+def cmd_cron_run(cron_id: int, command: str) -> int:
+    """Wrapper que invoca el daemon de cron (corre como el cliente): ejecuta el
+    comando, encola el resultado (el panel lo ingiere a BD) y devuelve el código
+    de salida real para que cron lo trate como siempre."""
+    from scripts.cron_runner import run_and_queue
+    res = run_and_queue(cron_id, command)
+    # Reemitir la salida (para que el MAILTO de cron siga funcionando si lo hay).
+    if res.get("output"):
+        sys.stdout.write(res["output"])
+    return int(res.get("exit_code") or 0)
+
+
 def cmd_convert_subdomains(domains=None, dry_run: bool = False) -> int:
     """Convierte dominios que en realidad son subdominios (su zona padre está en
     el panel) al nuevo tratamiento: registro A/AAAA en la zona padre + borra su
@@ -1778,6 +1790,11 @@ def main():
     p_geo = sub.add_parser("update_geoip",
         help="Descarga/actualiza la base GeoIP (países en estadísticas)")
     p_geo.add_argument("--force", action="store_true", help="Re-descargar aunque ya esté la del mes")
+    p_cr = sub.add_parser("cron_run",
+        help="Wrapper de ejecución de un cron (registra historial). Uso: cron_run <id> -- <cmd...>")
+    p_cr.add_argument("cron_id", type=int)
+    p_cr.add_argument("command", nargs=argparse.REMAINDER,
+                      help="El comando a ejecutar (tras --)")
     p_sub = sub.add_parser("convert_subdomains",
         help="Convierte dominios que son subdominios (zona padre en el panel) al nuevo tratamiento")
     p_sub.add_argument("domains", nargs="*", help="Dominios concretos (vacío = autodetectar todos)")
@@ -1900,6 +1917,10 @@ def main():
         sys.exit(cmd_refresh_suspended_vhosts())
     if args.cmd == "update_geoip":
         sys.exit(cmd_update_geoip(force=getattr(args, "force", False)))
+    if args.cmd == "cron_run":
+        # args.command incluye el '--' separador si vino; lo quitamos.
+        parts = [a for a in (args.command or []) if a != "--"]
+        sys.exit(cmd_cron_run(args.cron_id, " ".join(parts)))
     if args.cmd == "convert_subdomains":
         sys.exit(cmd_convert_subdomains(domains=args.domains or None,
                                         dry_run=getattr(args, "dry_run", False)))

@@ -37,7 +37,7 @@
               <th>Comando</th>
               <th>Comentario</th>
               <th>Estado</th>
-              <th>Creado</th>
+              <th>Última ejecución</th>
               <th class="cr-right">Acciones</th>
             </tr>
           </thead>
@@ -57,7 +57,16 @@
                   {{ cron.is_active ? 'Activo' : 'Inactivo' }}
                 </span>
               </td>
-              <td class="cr-muted">{{ formatDate(cron.created_at) }}</td>
+              <td>
+                <template v-if="lastRun[cron.id]">
+                  <span class="cr-status" :class="lastRun[cron.id].exit_code === 0 ? 'cr-status--on' : 'cr-status--err'">
+                    <i class="bi" :class="lastRun[cron.id].exit_code === 0 ? 'bi-check-circle' : 'bi-x-circle'"></i>
+                    {{ lastRun[cron.id].exit_code === 0 ? 'OK' : 'Falló (' + lastRun[cron.id].exit_code + ')' }}
+                  </span>
+                  <div class="cr-muted">{{ formatDate(lastRun[cron.id].started_at) }} · {{ fmtDur(lastRun[cron.id].duration_ms) }}</div>
+                </template>
+                <span v-else class="cr-muted">Sin ejecuciones aún</span>
+              </td>
               <td class="cr-right">
                 <div class="cr-actions">
                   <button class="cr-iconbtn" title="Ejecutar ahora" :disabled="runningId === cron.id" @click="runCron(cron)">
@@ -66,6 +75,9 @@
                   </button>
                   <button class="cr-iconbtn" :title="cron.is_active ? 'Desactivar' : 'Activar'" @click="toggleCron(cron)">
                     <i :class="cron.is_active ? 'bi bi-pause' : 'bi bi-play'"></i>
+                  </button>
+                  <button class="cr-iconbtn" title="Historial de ejecuciones" @click="openHistory(cron)">
+                    <i class="bi bi-clock-history"></i>
                   </button>
                   <button class="cr-iconbtn" title="Editar" @click="openEdit(cron)">
                     <i class="bi bi-pencil"></i>
@@ -196,6 +208,40 @@
         </div>
       </div>
     </div>
+
+    <!-- Modal: historial de ejecuciones -->
+    <div v-if="showHistory" class="cr-modal" @click.self="showHistory = false">
+      <div class="cr-modal__dialog cr-modal__dialog--wide">
+        <div class="cr-modal__head">
+          <h5 class="cr-modal__title"><i class="bi bi-clock-history"></i> Últimas ejecuciones</h5>
+          <button type="button" class="cr-modal__close" @click="showHistory = false"><i class="bi bi-x-lg"></i></button>
+        </div>
+        <div class="cr-modal__body">
+          <p class="cr-run-meta"><code class="cr-run-cmd">{{ historyCron?.command }}</code></p>
+          <div v-if="loadingHistory" class="cr-muted"><span class="cr-spin"></span> Cargando…</div>
+          <p v-else-if="!historyRuns.length" class="cr-run-empty">Aún no se ha ejecutado. Pulsa ⚡ "Ejecutar ahora" o espera a su horario.</p>
+          <div v-else class="cr-runs">
+            <details v-for="r in historyRuns" :key="r.id" class="cr-run">
+              <summary class="cr-run__sum">
+                <span class="cr-badge" :class="r.exit_code === 0 ? 'cr-badge--ok' : 'cr-badge--err'">
+                  {{ r.exit_code === 0 ? 'OK' : 'código ' + r.exit_code }}
+                </span>
+                <span class="cr-run__when">{{ formatDate(r.started_at) }}</span>
+                <span class="cr-muted">· {{ fmtDur(r.duration_ms) }}</span>
+                <span class="cr-run__trig" :title="r.trigger === 'manual' ? 'Ejecución manual' : 'Programada'">
+                  <i class="bi" :class="r.trigger === 'manual' ? 'bi-hand-index' : 'bi-clock'"></i>
+                </span>
+              </summary>
+              <pre v-if="r.output" class="cr-run-out">{{ r.output }}</pre>
+              <p v-else class="cr-run-empty">(sin salida)</p>
+            </details>
+          </div>
+        </div>
+        <div class="cr-modal__foot">
+          <BaseButton variant="ghost" size="sm" @click="showHistory = false">Cerrar</BaseButton>
+        </div>
+      </div>
+    </div>
   </div>
 </template>
 
@@ -249,6 +295,43 @@ export default {
     const runningId    = ref(null)
     const runResult    = ref(null)
     const showRunResult = ref(false)
+    // Historial de ejecuciones
+    const lastRun      = ref({})      // { cronId: ultimaRun }
+    const showHistory  = ref(false)
+    const historyCron  = ref(null)
+    const historyRuns  = ref([])
+    const loadingHistory = ref(false)
+
+    const fmtDur = (ms) => {
+      if (ms == null) return '—'
+      if (ms < 1000) return ms + ' ms'
+      const s = ms / 1000
+      return s < 60 ? s.toFixed(1) + ' s' : Math.floor(s / 60) + 'm ' + Math.round(s % 60) + 's'
+    }
+
+    const loadLastRuns = async () => {
+      // Carga la última ejecución de cada cron para la columna de estado.
+      const map = {}
+      await Promise.all((crons.value || []).map(async (c) => {
+        try {
+          const runs = await api.cronRuns(c.id)
+          if (runs && runs.length) map[c.id] = runs[0]
+        } catch { /* sin historial */ }
+      }))
+      lastRun.value = map
+    }
+
+    const openHistory = async (cron) => {
+      historyCron.value = cron
+      showHistory.value = true
+      loadingHistory.value = true
+      historyRuns.value = []
+      try {
+        historyRuns.value = await api.cronRuns(cron.id) || []
+      } catch (e) {
+        store.showNotification('Error al cargar historial: ' + (e.message || e), 'danger')
+      } finally { loadingHistory.value = false }
+    }
 
     // Usuarios (para asignar propietario y filtrar — solo admin/reseller)
     const users = ref([])
@@ -271,6 +354,7 @@ export default {
       loading.value = true
       try {
         crons.value = await api.getCrons(filterUserId.value || null)
+        loadLastRuns()  // en paralelo, no bloquea el render
       } catch (e) {
         store.showNotification('Error cargando crons: ' + e.message, 'danger')
       } finally {
@@ -347,6 +431,7 @@ export default {
         } else {
           store.showNotification(`La tarea terminó con código ${r.exit_code}`, 'warning')
         }
+        loadLastRuns()  // refrescar la columna de última ejecución
       } catch (e) {
         store.showNotification('Error al ejecutar: ' + (e.message || e), 'danger')
       } finally {
@@ -394,6 +479,8 @@ export default {
       applyPreset, submitForm,
       toggleCron, deleteCron, runCron,
       runningId, runResult, showRunResult,
+      lastRun, fmtDur, openHistory,
+      showHistory, historyCron, historyRuns, loadingHistory,
       describeCron, formatDate,
     }
   }
@@ -456,6 +543,17 @@ export default {
 .cr-run-out { background:#0b1020; color:#e6e9f0; padding:.8rem 1rem; border-radius:var(--r-md,10px);
   font-size:.8rem; max-height:340px; overflow:auto; white-space:pre-wrap; word-break:break-word; }
 .cr-run-empty { color:var(--text-muted); font-size:.85rem; }
+.cr-status--err { color:var(--danger,#dc2626); background:color-mix(in srgb,var(--danger,#dc2626) 12%,transparent); }
+.cr-modal__dialog--wide { max-width: 720px; width: 92%; }
+.cr-runs { display:flex; flex-direction:column; gap:.5rem; }
+.cr-run { border:1px solid var(--border); border-radius:var(--r-md,10px); overflow:hidden; }
+.cr-run__sum { display:flex; align-items:center; gap:.5rem; padding:.5rem .8rem; cursor:pointer;
+  list-style:none; user-select:none; }
+.cr-run__sum::-webkit-details-marker { display:none; }
+.cr-run__sum:hover { background:var(--surface-inset); }
+.cr-run__when { font-size:.85rem; }
+.cr-run__trig { margin-left:auto; color:var(--text-muted); }
+.cr-run .cr-run-out { margin:0 .8rem .8rem; }
 .cr-iconbtn--danger:hover { color: var(--danger); border-color: var(--danger); }
 
 /* Modal */

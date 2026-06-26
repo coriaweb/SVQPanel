@@ -258,35 +258,47 @@ async def run_cron_now(
     db: Session = Depends(get_db),
 ):
     """Ejecuta AHORA el comando del cron (como el usuario del sistema), sin esperar
-    a su horario. Devuelve el codigo de salida y la salida. Util para probar un
-    cron tras crearlo/migrarlo, igual que en Hestia."""
-    import os
-    import subprocess
+    a su horario. Registra el historial (trigger='manual') y devuelve el resultado.
+    Útil para probar un cron tras crearlo/migrarlo, igual que en Hestia."""
     cron = _get_cron_or_404(cron_id, db)
     _check_cron_access(current_user, cron)
 
     owner = db.query(User).filter(User.id == cron.user_id).first()
     sys_user = _get_username_for_user(owner)
 
-    env = {**os.environ, "PATH": "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"}
+    from scripts.cron_runner import record_manual_run
     try:
-        proc = subprocess.run(
-            ["runuser", "-u", sys_user, "--", "/bin/bash", "-lc", cron.command],
-            capture_output=True, text=True, timeout=120, env=env,
-        )
-    except subprocess.TimeoutExpired:
-        raise HTTPException(status_code=504,
-            detail="La tarea tardo mas de 120s y se cancelo.")
+        res = record_manual_run(db, cron.id, cron.command, sys_user, timeout=120)
     except FileNotFoundError:
         raise HTTPException(status_code=500, detail="No se pudo lanzar la tarea (runuser no disponible).")
 
-    cron.last_run = datetime.utcnow()
-    db.commit()
-
-    output = (proc.stdout or "") + (("\n" + proc.stderr) if proc.stderr else "")
     return {
-        "status": "success" if proc.returncode == 0 else "error",
-        "exit_code": proc.returncode,
-        "output": output.strip()[:8000],
+        "status": "success" if res["exit_code"] == 0 else "error",
+        "exit_code": res["exit_code"],
+        "duration_ms": res["duration_ms"],
+        "output": res["output"],
         "command": cron.command,
     }
+
+
+@router.get("/crons/{cron_id}/runs")
+async def cron_runs(
+    cron_id: int,
+    current_user: User = Depends(require_auth),
+    db: Session = Depends(get_db),
+):
+    """Historial de las últimas ejecuciones de un cron (estado/duración/salida)."""
+    from api.models.models_cron_run import CronRun
+    cron = _get_cron_or_404(cron_id, db)
+    _check_cron_access(current_user, cron)
+    runs = (db.query(CronRun)
+            .filter(CronRun.cron_id == cron_id)
+            .order_by(CronRun.started_at.desc()).all())
+    return [{
+        "id": r.id,
+        "started_at": r.started_at.isoformat() if r.started_at else None,
+        "duration_ms": r.duration_ms,
+        "exit_code": r.exit_code,
+        "trigger": r.trigger,
+        "output": r.output,
+    } for r in runs]

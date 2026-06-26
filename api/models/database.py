@@ -47,7 +47,7 @@ def load_all_models():
         models_user, models_domain, models_settings, models_dns,
         models_dns_node, models_mail, models_client_db, models_db_user,
         models_security, models_server_ip, models_backup, models_notification,
-        models_git, models_plan, models_cron, models_template,
+        models_git, models_plan, models_cron, models_cron_run, models_template,
         models_sftp_account, models_metrics, models_migration,
         models_api_token, models_migration_source,
     )

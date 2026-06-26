@@ -23,13 +23,47 @@ _BLOCK_START = "# SVQPanel-START-{cron_id}"
 _BLOCK_END   = "# SVQPanel-END-{cron_id}"
 
 
+# Wrapper que registra cada ejecución (estado/duración/salida). El daemon de cron
+# ejecuta esta línea; el wrapper corre el comando real y encola el historial.
+CRON_WRAPPER = "/usr/local/bin/svq-cron-run"
+CRON_QUEUE_DIR = "/var/lib/svqpanel/cron-runs"
+_WRAPPER_CONTENT = """#!/bin/bash
+# SVQPanel — wrapper de ejecución de cron. Registra estado/duración/salida.
+# Generado automáticamente. NO editar.
+# Uso: svq-cron-run <cron_id> -- <comando...>
+CRON_ID="$1"; shift
+[ "$1" = "--" ] && shift
+exec /opt/svqpanel/venv/bin/python -m api.cli cron_run "$CRON_ID" -- "$@"
+"""
+
+
+def install_cron_wrapper() -> dict:
+    """Instala el wrapper svq-cron-run y la cola en disco (1733: los clientes
+    pueden crear ficheros pero no listar/leer/borrar ajenos). Idempotente."""
+    import os
+    # Cola de resultados (1733 = sticky + write-only para 'otros').
+    os.makedirs(CRON_QUEUE_DIR, exist_ok=True)
+    os.chmod(CRON_QUEUE_DIR, 0o1733)
+    # Wrapper ejecutable por todos (solo lanza el CLI del panel).
+    with open(CRON_WRAPPER, "w") as f:
+        f.write(_WRAPPER_CONTENT)
+    os.chmod(CRON_WRAPPER, 0o755)
+    return {"success": True, "wrapper": CRON_WRAPPER, "queue": CRON_QUEUE_DIR}
+
+
 def _cron_line(minute, hour, day, month, weekday, command, cron_id, comment=""):
     parts = [
         _BLOCK_START.format(cron_id=cron_id),
     ]
     if comment:
         parts.append(f"# {comment}")
-    parts.append(f"{minute} {hour} {day} {month} {weekday} {command}")
+    # Envolver el comando con el wrapper de historial si está instalado. El
+    # comando real va literal tras '--' (el wrapper lo pasa a bash -lc).
+    if os.path.exists(CRON_WRAPPER):
+        wrapped = f"{CRON_WRAPPER} {cron_id} -- {command}"
+    else:
+        wrapped = command  # sin wrapper (compat): se ejecuta tal cual
+    parts.append(f"{minute} {hour} {day} {month} {weekday} {wrapped}")
     parts.append(_BLOCK_END.format(cron_id=cron_id))
     return "\n".join(parts)
 

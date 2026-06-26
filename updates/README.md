@@ -88,3 +88,4 @@ exit 0
 | 0049 | Fix cluster DNS: declarar zonas nuevas en el slave     | 2026-06-26 |
 | 0050 | Seguridad: cerrar recursión DNS (open resolver/DDoS)  | 2026-06-26 |
 | 0051 | Instalar daemon cron (no corría ningún cronjob)       | 2026-06-26 |
+| 0052 | Historial de ejecuciones de cron (wrapper + cola)     | 2026-06-26 |

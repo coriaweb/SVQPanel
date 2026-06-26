@@ -444,6 +444,11 @@ apt-get install -y -qq -o Dpkg::Options::="--force-confold" \
 # corre (ni crons de cliente ni tareas del panel). Habilitar + arrancar.
 systemctl enable --now cron 2>/dev/null || true
 
+# Wrapper de historial de cron (svq-cron-run) + cola en disco (1733): cada
+# ejecución de cron registra estado/duración/salida sin que el cliente toque BD.
+(cd /opt/svqpanel && /opt/svqpanel/venv/bin/python -c \
+  "from scripts.cron_manager import install_cron_wrapper; install_cron_wrapper()" 2>/dev/null) || true
+
 echo -e "${GREEN}✓ Dependencias instaladas${NC}\n"
 
 ###############################################################################
