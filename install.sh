@@ -713,6 +713,25 @@ mkdir -p /etc/bind/zones
 chown root:bind /etc/bind/zones
 chmod 775 /etc/bind/zones
 
+# Endurecer named: nameserver AUTORITATIVO, SIN recursión. Sin esto BIND recurre
+# por defecto → "open resolver" usable para amplificación DDoS contra terceros
+# (y acaba en listas negras). Responde sus zonas a todo Internet, pero no recurre.
+cat > /etc/bind/named.conf.options <<'NAMEDOPTS'
+options {
+	version "none";
+	directory "/var/cache/bind";
+	dnssec-validation auto;
+	listen-on-v6 { any; };
+
+	// Autoritativo puro: sin recursión (evita open resolver / amplificación).
+	recursion no;
+	allow-query { any; };
+	allow-recursion { none; };
+	allow-query-cache { none; };
+};
+NAMEDOPTS
+named-checkconf 2>/dev/null && rndc reload 2>/dev/null || systemctl restart named 2>/dev/null || true
+
 # Crear named.conf.zones vacío (para SVQPanel)
 if [[ ! -f /etc/bind/named.conf.zones ]]; then
     echo "# SVQPanel DNS zones — generado automáticamente" > /etc/bind/named.conf.zones

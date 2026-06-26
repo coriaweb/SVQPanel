@@ -207,6 +207,37 @@ class DNSCluster:
         except Exception as e:
             return -1, "", str(e)
 
+    # named.conf.options endurecido: autoritativo SIN recursión (no open resolver).
+    _NAMED_OPTIONS_HARDENED = (
+        "options {\n"
+        '\tversion "none";\n'
+        '\tdirectory "/var/cache/bind";\n'
+        "\tdnssec-validation auto;\n"
+        "\tlisten-on-v6 { any; };\n"
+        "\trecursion no;\n"
+        "\tallow-query { any; };\n"
+        "\tallow-recursion { none; };\n"
+        "\tallow-query-cache { none; };\n"
+        "};\n"
+    )
+
+    def harden_named(self, node: Dict) -> Tuple[bool, str]:
+        """Aplica named.conf.options sin recursión en un nodo (evita open
+        resolver / amplificación DDoS). Idempotente. Mantiene la zona pública."""
+        if not node or not node.get("ip"):
+            return False, "nodo sin IP"
+        sudo = "" if node.get("ssh_user", "root") == "root" else "sudo "
+        rc, _, err = self._upload(node, self._NAMED_OPTIONS_HARDENED,
+                                  "/etc/bind/named.conf.options")
+        if rc != 0:
+            return False, f"upload named.conf.options: {err}"
+        rc, out, err = self._run_remote(
+            node, f"{sudo}named-checkconf && ({sudo}rndc reload || {sudo}systemctl restart named)",
+            timeout=30)
+        if rc != 0:
+            return False, f"reload named: {err or out}"
+        return True, "ok"
+
     def _upload(self, node: Dict, content: str, remote_path: str,
                 timeout: int = 60) -> Tuple[int, str, str]:
         """Sube `content` a remote_path vía un fichero temporal local + scp."""
