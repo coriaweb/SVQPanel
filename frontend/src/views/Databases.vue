@@ -7,12 +7,18 @@
           {{ databases.length }} {{ databases.length === 1 ? 'base de datos' : 'bases de datos' }} · MariaDB
         </p>
       </div>
-      <button class="btn btn-primary" @click="openCreateForm" v-if="!isMariaDBDisabled">
-        <i class="bi bi-plus-circle"></i> Crear BD
-      </button>
-      <button class="btn btn-warning" disabled v-else>
-        <i class="bi bi-exclamation-triangle"></i> MariaDB no habilitado
-      </button>
+      <div class="d-flex gap-2 align-items-center">
+        <div class="db-search">
+          <i class="bi bi-search"></i>
+          <input v-model="search" type="search" class="form-control" placeholder="Buscar base de datos…" />
+        </div>
+        <button class="btn btn-primary" @click="openCreateForm" v-if="!isMariaDBDisabled">
+          <i class="bi bi-plus-circle"></i> Crear BD
+        </button>
+        <button class="btn btn-warning" disabled v-else>
+          <i class="bi bi-exclamation-triangle"></i> MariaDB no habilitado
+        </button>
+      </div>
     </div>
 
     <!-- Advertencia si MariaDB no está habilitado -->
@@ -57,7 +63,7 @@
               </tr>
             </thead>
             <tbody>
-              <tr v-for="db in databases" :key="db.id" :class="{ 'db-row--suspended': db.is_suspended }">
+              <tr v-for="db in filteredDatabases" :key="db.id" :class="{ 'db-row--suspended': db.is_suspended }">
                 <td>
                   <i class="bi bi-database text-primary me-1"></i>
                   <code class="fw-semibold">{{ db.db_name }}</code>
@@ -401,6 +407,14 @@ export default {
   setup() {
     const store = useMainStore()
     const databases = ref([])
+    const search = ref('')
+    const filteredDatabases = computed(() => {
+      const q = search.value.trim().toLowerCase()
+      if (!q) return databases.value
+      return (databases.value || []).filter(d =>
+        (d.db_name || '').toLowerCase().includes(q) ||
+        (d.db_user || '').toLowerCase().includes(q))
+    })
     const users = ref([])
     const loading = ref(false)
     const showFormModal = ref(false)
@@ -768,6 +782,8 @@ export default {
 
     return {
       databases,
+      search,
+      filteredDatabases,
       users,
       loading,
       suspendDb,
@@ -833,4 +849,7 @@ export default {
 .db-head h2 { margin: 0 0 2px; }
 /* BD suspendida: fila con tono ámbar tenue */
 .db-row--suspended > td { background: color-mix(in srgb, var(--warning) 7%, transparent); }
+.db-search { position: relative; display: flex; align-items: center; }
+.db-search i { position: absolute; left: .6rem; color: var(--text-muted); pointer-events: none; font-size: .85rem; z-index: 2; }
+.db-search .form-control { padding-left: 1.9rem; min-width: 220px; }
 </style>

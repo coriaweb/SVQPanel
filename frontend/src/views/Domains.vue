@@ -10,6 +10,10 @@
         </p>
       </div>
       <div class="page-head__actions">
+        <div class="dom-search">
+          <i class="bi bi-search"></i>
+          <input v-model="search" type="search" class="svq-input" placeholder="Buscar dominio…" />
+        </div>
         <select v-if="isAdminOrReseller" v-model="selectedUser" class="svq-select" @change="loadDomains">
           <option value="">Todos los usuarios</option>
           <option v-for="user in users" :key="user.id" :value="user.id">{{ user.username }}</option>
@@ -343,11 +347,14 @@ export default {
     const users        = ref([])
     const phpVersions  = ref([])
     const selectedUser = ref('')
+    const search       = ref('')
 
     // Agrupa cada subdominio justo debajo de su dominio padre. Los dominios sin
     // padre (o cuyo padre no está en la lista) van como raíz, ordenados alfabético.
     const groupedDomains = computed(() => {
-      const all = domains.value || []
+      let all = domains.value || []
+      const q = search.value.trim().toLowerCase()
+      if (q) all = all.filter(d => (d.domain_name || '').toLowerCase().includes(q))
       const byName = new Map(all.map(d => [d.domain_name, d]))
       const roots = all.filter(d => !d.is_subdomain || !byName.has(d.parent_domain))
                        .sort((a, b) => a.domain_name.localeCompare(b.domain_name))
@@ -697,7 +704,7 @@ export default {
     })
 
     return {
-      domains, groupedDomains, users, phpVersions, selectedUser, loading,
+      domains, groupedDomains, search, users, phpVersions, selectedUser, loading,
       viewMode, openMenuId, sslCount, domainTone, toggleMenu, run, changePHPPrompt,
       isAdminOrReseller,
       showDomainForm, showSSLManager, showIPv6Manager,
@@ -732,6 +739,9 @@ export default {
 .page-title { margin: 0; font-size: var(--fs-2xl); font-weight: var(--fw-bold); letter-spacing: -.02em; color: var(--text); }
 .page-sub { margin: var(--sp-1) 0 0; color: var(--text-secondary); }
 .page-head__actions { display: flex; align-items: center; gap: var(--sp-3); flex-wrap: wrap; }
+.dom-search { position: relative; display: flex; align-items: center; }
+.dom-search i { position: absolute; left: .6rem; color: var(--text-muted); pointer-events: none; font-size: .85rem; }
+.dom-search .svq-input { padding-left: 1.9rem; min-width: 200px; }
 
 .svq-select {
   height: 38px; padding: 0 var(--sp-3);

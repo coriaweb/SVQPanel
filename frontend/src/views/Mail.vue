@@ -25,6 +25,10 @@
         </p>
       </div>
       <div class="sv-head-actions">
+        <div v-if="!selectedDomain" class="mail-search">
+          <i class="bi bi-search"></i>
+          <input v-model="mailSearch" type="search" class="svq-input" placeholder="Buscar dominio…" />
+        </div>
         <button v-if="!selectedDomain" class="sv-btn sv-btn--ghost" @click="loadDomains" :disabled="loading">
           <span v-if="loading" class="spinner-border spinner-border-sm"></span>
           <i v-else class="bi bi-arrow-repeat"></i> Actualizar
@@ -81,7 +85,7 @@
               </tr>
             </thead>
             <tbody>
-              <tr v-for="md in mailDomains" :key="md.id" :class="{ 'sv-row--suspended': md.is_suspended }">
+              <tr v-for="md in filteredMailDomains" :key="md.id" :class="{ 'sv-row--suspended': md.is_suspended }">
                 <td>
                   <div style="font-weight:600">{{ md.domain_name }}</div>
                   <div v-if="md.max_mailboxes > 0" style="font-size:.8rem;color:var(--text-muted)">
@@ -1166,6 +1170,13 @@ export default {
     // ── Estado principal ──────────────────────────────────────────────
     const mailEnabled    = ref(null)   // null=cargando, true/false
     const mailDomains    = ref([])
+    const mailSearch     = ref('')
+    const filteredMailDomains = computed(() => {
+      const q = mailSearch.value.trim().toLowerCase()
+      if (!q) return mailDomains.value
+      return (mailDomains.value || []).filter(md =>
+        (md.domain_name || '').toLowerCase().includes(q))
+    })
     const selectedDomain = ref(null)
     const activeTab      = ref('mailboxes')
     const loading        = ref(false)
@@ -2025,7 +2036,7 @@ export default {
 
     return {
       isAdminOrReseller, clientUsers, fmtMailSize,
-      mailEnabled, mailDomains, selectedDomain, activeTab, loading,
+      mailEnabled, mailDomains, mailSearch, filteredMailDomains, selectedDomain, activeTab, loading,
       mailboxes, aliases, dkimInfo,
       loadingMailboxes, loadingAliases, loadingDkim,
       generatingDkim, dkimJustGenerated, copied,
@@ -2073,7 +2084,10 @@ export default {
 .sv-title { font-size:1.5rem; font-weight:700; margin:0 0 .25rem; display:flex; align-items:center; gap:.5rem; }
 .sv-title > .bi:first-child { color:var(--svq-orange); }
 .sv-subtitle { font-size:.875rem; color:var(--text-muted); margin:0; }
-.sv-head-actions { display:flex; gap:8px; flex-shrink:0; }
+.sv-head-actions { display:flex; gap:8px; flex-shrink:0; align-items:center; }
+.mail-search { position:relative; display:flex; align-items:center; }
+.mail-search i { position:absolute; left:.6rem; color:var(--text-muted); pointer-events:none; font-size:.85rem; }
+.mail-search .svq-input { padding-left:1.9rem; min-width:200px; }
 .sv-breadcrumb { display:flex; align-items:center; gap:8px; margin-bottom:.5rem; font-size:.875rem; }
 .sv-chevron { color:var(--text-muted); font-size:.75rem; }
 .sv-domain-name { font-weight:600; }
