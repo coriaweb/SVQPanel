@@ -478,6 +478,14 @@ class APIClient {
   getMailDomains() {
     return this.get('/api/mail/domains')
   }
+  mailMonitor({ date, domain, search } = {}) {
+    const p = new URLSearchParams()
+    if (date) p.set('date', date)
+    if (domain) p.set('domain', domain)
+    if (search) p.set('search', search)
+    const qs = p.toString()
+    return this.get('/api/mail/monitor' + (qs ? '?' + qs : ''))
+  }
 
   createMailDomain(data) {
     return this.post('/api/mail/domains', data)

@@ -2173,7 +2173,7 @@ _RE_REJECT = re.compile(
 
 
 def _read_mail_log(lines: int = 500) -> list[str]:
-    """Lee las últimas N líneas del log de correo."""
+    """Lee las últimas N líneas del log de correo (solo el actual)."""
     for path in _MAIL_LOGS:
         if os.path.exists(path):
             try:
@@ -2190,7 +2190,55 @@ def _read_mail_log(lines: int = 500) -> list[str]:
     return []
 
 
-def _parse_mail_log(raw_lines: list[str], domain_filter: Optional[str] = None) -> dict:
+def _mail_log_base() -> Optional[str]:
+    """Ruta del mail.log activo (el primero que exista)."""
+    for path in _MAIL_LOGS:
+        if os.path.exists(path):
+            return path
+    return None
+
+
+def _read_mail_log_for_date(date_str: str, max_bytes: int = 30_000_000) -> list[str]:
+    """Lee las líneas del log de correo cuyo día coincide con date_str (YYYY-MM-DD).
+
+    Recorre el mail.log activo y sus rotados (.1, .2, … y .gz) hasta cubrir la
+    fecha pedida. Eficiente: para en cuanto pasa de largo la fecha. Cap de bytes
+    por fichero para no agotar memoria con logs enormes.
+    """
+    import glob
+    import gzip
+    base = _mail_log_base()
+    if not base:
+        return []
+    # Candidatos: el activo + rotados, ordenados del más reciente al más antiguo.
+    rotated = sorted(glob.glob(base + ".*"),
+                     key=lambda p: os.path.getmtime(p), reverse=True)
+    candidates = [base] + rotated
+    out: list[str] = []
+    for path in candidates:
+        try:
+            opener = gzip.open if path.endswith(".gz") else open
+            with opener(path, "rt", encoding="utf-8", errors="replace") as f:
+                read = 0
+                matched_here = False
+                for line in f:
+                    read += len(line)
+                    if read > max_bytes:
+                        break
+                    if line[:10] == date_str:
+                        out.append(line.rstrip("\n"))
+                        matched_here = True
+            # Si este fichero NO tenía la fecha pero ya teníamos líneas, parar
+            # (los más antiguos no la tendrán). Si aún no hay nada, seguir buscando.
+            if out and not matched_here:
+                break
+        except Exception as e:
+            logger.warning(f"No se pudo leer {path}: {e}")
+    return out
+
+
+def _parse_mail_log(raw_lines: list[str], domain_filter: Optional[str] = None,
+                    search: Optional[str] = None, max_events: int = 500) -> dict:
     """
     Parsea líneas de mail.log (formato ISO 8601 de systemd-journal / rsyslog moderno).
     - sent:     entregados hacia afuera (postfix/smtp)
@@ -2256,9 +2304,17 @@ def _parse_mail_log(raw_lines: list[str], domain_filter: Optional[str] = None) -
                 "reason": reason[:120], "qid": "",
             })
 
-    # Los últimos 200 eventos, más recientes primero
-    events = list(reversed(events[-200:]))
-    return {"counts": counts, "events": events}
+    # Búsqueda libre por remitente/destinatario/motivo (sobre TODOS los eventos,
+    # antes de recortar, para no perder coincidencias antiguas del día).
+    if search:
+        q = search.strip().lower()
+        events = [e for e in events
+                  if q in (e.get("from", "") + e.get("to", "") + e.get("reason", "")).lower()]
+
+    total_events = len(events)
+    # Los últimos max_events, más recientes primero
+    events = list(reversed(events[-max_events:]))
+    return {"counts": counts, "events": events, "total_events": total_events}
 
 
 @router.get("/mail/logs")
@@ -2285,6 +2341,45 @@ async def get_mail_logs(
     result = _parse_mail_log(raw, domain_filter=domain)
     result["available"] = True
     result["log_lines_read"] = len(raw)
+    return result
+
+
+@router.get("/mail/monitor")
+async def mail_monitor(
+    date: Optional[str] = None,
+    domain: Optional[str] = None,
+    search: Optional[str] = None,
+    current_user=Depends(require_admin),
+):
+    """[Admin] Monitor global de correo: resumen + eventos de TODOS los dominios.
+
+    - date: 'YYYY-MM-DD' (día concreto, lee logs rotados); por defecto, hoy.
+    - domain: filtro opcional por dominio.
+    - search: texto libre (remitente / destinatario / motivo).
+    Estados por evento: enviado / recibido / rechazado / rebotado / diferido.
+    """
+    from datetime import date as _date
+    day = (date or _date.today().isoformat()).strip()
+    # Validación simple de fecha.
+    if not re.match(r"^\d{4}-\d{2}-\d{2}$", day):
+        raise HTTPException(status_code=400, detail="Fecha inválida (use YYYY-MM-DD).")
+
+    raw = _read_mail_log_for_date(day)
+    if not raw and day == _date.today().isoformat():
+        # Hoy puede no haber prefijo de fecha aún si el log es muy reciente; cae a
+        # leer el final del log activo.
+        raw = _read_mail_log(2000)
+
+    if not raw:
+        return {
+            "available": False, "date": day,
+            "message": "No hay registros de correo para esa fecha.",
+            "counts": {"sent": 0, "received": 0, "rejected": 0, "bounced": 0, "deferred": 0},
+            "events": [], "total_events": 0,
+        }
+    result = _parse_mail_log(raw, domain_filter=domain, search=search, max_events=500)
+    result["available"] = True
+    result["date"] = day
     return result
 
 

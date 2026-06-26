@@ -105,6 +105,12 @@ const routes = [
     meta: { requiresAuth: true, requiresAdmin: true }
   },
   {
+    path: '/mail-monitor',
+    name: 'MailMonitor',
+    component: () => import('../views/MailMonitor.vue'),
+    meta: { requiresAuth: true, requiresAdmin: true }
+  },
+  {
     path: '/mail-queue',
     name: 'MailQueue',
     component: MailQueue,
