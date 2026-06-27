@@ -45,12 +45,19 @@ BACKUP_DIR="/root/svqpanel-distupgrade-backup"
 
 ASSUME_YES=0
 FORCE_FROM=""
+UNTIL_PHASE=""        # si se fija, no ejecuta fases con N > UNTIL_PHASE (control fase a fase)
+_EXPECT=""
 for arg in "$@"; do
     case "$arg" in
         --yes|-y)     ASSUME_YES=1 ;;
-        --from)       FORCE_FROM="NEXT" ;;
-        [0-9]*)       [[ "$FORCE_FROM" == "NEXT" ]] && FORCE_FROM="$arg" ;;
+        --from)       _EXPECT="from" ;;
+        --until)      _EXPECT="until" ;;
+        [0-9]*)       case "$_EXPECT" in
+                          from)  FORCE_FROM="$arg" ;;
+                          until) UNTIL_PHASE="$arg" ;;
+                      esac; _EXPECT="" ;;
         --from=*)     FORCE_FROM="${arg#--from=}" ;;
+        --until=*)    UNTIL_PHASE="${arg#--until=}" ;;
     esac
 done
 
@@ -78,6 +85,10 @@ phase_is_done() { grep -qxF "$1" "$STATE_FILE" 2>/dev/null; }
 # ¿Debo correr la fase N? (no, si ya está hecha y no se fuerza desde antes/igual)
 should_run() {
     local n="$1"
+    # --until N: no pasar de la fase N (control fase a fase)
+    if [[ -n "$UNTIL_PHASE" && "$n" -gt "$UNTIL_PHASE" ]]; then
+        return 1
+    fi
     if [[ -n "$FORCE_FROM" ]]; then
         [[ "$n" -ge "$FORCE_FROM" ]] && return 0 || return 1
     fi
