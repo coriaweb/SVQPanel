@@ -29,9 +29,11 @@ logger = logging.getLogger(__name__)
 GROUPS_FILE  = "/etc/rspamd/local.d/groups.conf"   # overrides de peso de símbolos
 ACTIONS_FILE = "/etc/rspamd/local.d/actions.conf"  # umbrales de acción
 
-# Reglas de contenido del admin (globales, todo el servidor). Multimap propio,
-# separado del de blacklist por dominio del RspamdManager.
-RULES_CONF   = "/etc/rspamd/local.d/svqpanel_admin_rules.conf"
+# Reglas de contenido del admin (globales, todo el servidor). Rspamd SOLO lee
+# reglas de multimap desde local.d/multimap.conf (un .conf aparte se ignora), así
+# que NO escribimos fichero propio: persistimos las reglas como JSON y el
+# RspamdManager las inyecta en multimap.conf al regenerar (build_admin_rules_blocks).
+RULES_JSON   = "/etc/rspamd/svqpanel_admin_rules.json"   # solo persistencia
 RULES_MAPDIR = "/etc/rspamd/maps/svqpanel_admin"
 
 # Tipos de regla soportados → (selector multimap, descripción).
@@ -45,6 +47,11 @@ RULE_ACTIONS = {
     "reject":  "Rechazar",
     "spam":    "Marcar como spam (+peso)",
     "allow":   "Permitir (lista blanca)",
+}
+# Modo de coincidencia (para subject/word).
+RULE_MATCHES = {
+    "contains": "contiene",
+    "exact":    "es exactamente",
 }
 
 # Umbrales por defecto de Rspamd (para mostrar en la UI y como base).
@@ -249,6 +256,7 @@ def status() -> dict:
         "rules": get_rules(),
         "rule_types": RULE_TYPES,
         "rule_actions": RULE_ACTIONS,
+        "rule_matches": RULE_MATCHES,
     }
 
 
@@ -282,83 +290,116 @@ def _rule_symbol(idx: int, action: str) -> str:
 
 
 def get_rules() -> list[dict]:
-    """Lee las reglas guardadas (del JSON embebido en RULES_CONF, para no
-    depender solo de BD)."""
-    if not os.path.exists(RULES_CONF):
+    """Lee las reglas guardadas (JSON propio)."""
+    if not os.path.exists(RULES_JSON):
         return []
     try:
-        with open(RULES_CONF) as f:
-            first = f.readline()
-        m = re.search(r"#RULESJSON:(.*)$", first.strip())
-        if m:
-            return json.loads(m.group(1))
+        with open(RULES_JSON) as f:
+            return json.load(f)
     except Exception as e:
         logger.warning(f"rspamd_tuning.get_rules: {e}")
     return []
 
 
+def _regex_escape(pat: str) -> str:
+    """Escapa para un regex de Rspamd con delimitador '/'. re.escape NO escapa
+    la barra '/', que rompería el delimitador (bug: 'design/redesign')."""
+    return re.escape(pat).replace("/", r"\/")
+
+
 def _write_rule_map(idx: int, rule: dict) -> str:
-    """Escribe el mapa de una regla y devuelve su ruta."""
+    """Escribe el mapa de una regla y devuelve su ruta.
+
+    match: 'exact' = el campo es EXACTAMENTE el patrón (anclado ^...$);
+           'contains' (por defecto) = el patrón aparece como subcadena.
+    """
     os.makedirs(RULES_MAPDIR, exist_ok=True)
     path = os.path.join(RULES_MAPDIR, f"rule_{idx}.map")
     pat = rule["pattern"].strip()
+    match = rule.get("match", "contains")
     if rule["type"] == "from" and pat.startswith("@"):
-        # @dominio.com → regexp que casa todo el dominio.
-        line = f'/.*@{re.escape(pat[1:])}$/i'
+        # @dominio.com → casa cualquier dirección de ese dominio.
+        line = f'/.*@{_regex_escape(pat[1:])}$/i'
     elif rule["type"] in ("subject", "word"):
-        line = f'/{re.escape(pat)}/i'   # subcadena, sin distinguir mayúsculas
+        esc = _regex_escape(pat)
+        # 'exact' ancla inicio/fin; 'contains' busca la subcadena.
+        line = f'/^{esc}$/i' if match == "exact" else f'/{esc}/i'
     else:
+        # from con dirección exacta (no @dominio): comparación literal.
         line = pat
     _write_atomic(path, line + "\n")
     return path
 
 
-def _build_rules_conf(rules: list[dict]) -> str:
-    # Selector multimap por tipo de regla.
+def build_admin_rules_blocks() -> str:
+    """Devuelve los bloques de multimap de las reglas del admin (para que el
+    RspamdManager los inyecte en multimap.conf, que es el ÚNICO sitio que Rspamd
+    lee para reglas multimap). Escribe también los mapas. Sin reglas → "".
+    """
+    rules = get_rules()
     sel = {"from": 'type = "from";',
            "subject": 'type = "header";\n  header = "Subject";',
-           "word": 'type = "body";'}
-    blocks = [f"#RULESJSON:{json.dumps(rules)}",
-              "# SVQPanel — reglas antispam del admin. NO editar a mano."]
+           "word": 'type = "content";\n  filter = "body";'}
+    out = []
     for i, r in enumerate(rules):
         if r.get("type") not in RULE_TYPES or not r.get("pattern", "").strip():
             continue
         action = r.get("action", "spam")
         sym = _rule_symbol(i, action)
         mp = _write_rule_map(i, r)
-        regexp = "regexp = true;" if (r["type"] == "from" and r["pattern"].startswith("@")) \
-                 or r["type"] in ("subject", "word") else "regexp = true;"
+        literal_from = r["type"] == "from" and not r["pattern"].strip().startswith("@")
+        regexp = "" if literal_from else "  regexp = true;\n"
         if action == "reject":
-            extra = '  prefilter = true;\n  action = "reject";\n  message = "Bloqueado por regla del administrador";'
-            score = ""
+            extra = '  prefilter = true;\n  action = "reject";\n  message = "Bloqueado por regla del administrador";\n'
         elif action == "allow":
-            extra = '  prefilter = true;\n  action = "accept";'
-            score = ""
+            extra = '  prefilter = true;\n  action = "accept";\n'
         else:  # spam → suma peso
-            extra = ""
-            score = f'  score = {float(r.get("weight", 6.0)):.1f};'
-        blocks.append(f"""\
+            extra = f'  score = {float(r.get("weight", 6.0)):.1f};\n'
+        out.append(f"""\
+# ── regla admin: {r['type']} {r.get('match','contains')} «{r['pattern'][:40]}» → {action} ──
 {sym} {{
   {sel[r["type"]]}
-  {regexp}
-  map = "{mp}";
+{regexp}  map = "{mp}";
   symbol = "{sym}";
-{extra}{score}
-}}""")
-    return "\n".join(blocks) + "\n"
+{extra}}}""")
+    return ("\n".join(out) + "\n") if out else ""
 
 
 def apply_rules(rules: list[dict]) -> dict:
-    """Escribe las reglas de contenido y recarga Rspamd (con validación+rollback)."""
-    prev = _read(RULES_CONF)
-    if rules:
-        _write_atomic(RULES_CONF, _build_rules_conf(rules))
-    elif os.path.exists(RULES_CONF):
-        os.remove(RULES_CONF)
+    """Persiste las reglas (JSON) y regenera multimap.conf vía RspamdManager
+    (con validación+rollback). Las reglas viven en multimap.conf junto a las
+    blacklists por dominio; rspamd_manager las inyecta llamando a
+    build_admin_rules_blocks()."""
+    prev = _read(RULES_JSON)
+    # Validar entrada mínima.
+    clean = [r for r in (rules or []) if r.get("pattern", "").strip()
+             and r.get("type") in RULE_TYPES]
+    _write_atomic(RULES_JSON, json.dumps(clean))
+
+    try:
+        from scripts.rspamd_manager import RspamdManager
+        from api.models.database import SessionLocal, load_all_models
+        load_all_models()
+        from api.models.models_mail import MailDomain
+        db = SessionLocal()
+        RspamdManager().rebuild_from_db(db.query(MailDomain).all())
+        db.close()
+    except Exception as e:
+        _restore(RULES_JSON, prev)
+        return {"success": False, "error": f"No se pudo regenerar: {e}"}
 
     ok, err = _configtest()
     if not ok:
-        _restore(RULES_CONF, prev)
+        _restore(RULES_JSON, prev)
+        try:
+            from scripts.rspamd_manager import RspamdManager
+            from api.models.database import SessionLocal, load_all_models
+            load_all_models()
+            from api.models.models_mail import MailDomain
+            db = SessionLocal()
+            RspamdManager().rebuild_from_db(db.query(MailDomain).all())
+            db.close()
+        except Exception:
+            pass
         return {"success": False, "error": f"Config inválida, revertido: {err}"}
-    _reload()
     return {"success": True, "rules": get_rules()}

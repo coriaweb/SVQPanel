@@ -142,11 +142,17 @@
         <p class="as-hint-block">
           Bloquea o marca correos por su contenido. Ej.: remitente <code>@spammer.com</code>,
           asunto contiene <code>oferta</code>, o palabra en el cuerpo.
+          <br><strong>Ojo:</strong> «contiene» también bloquea variantes (RE:, Fwd:, texto
+          añadido) — útil para spam, pero con palabras cortas puede pillar correos buenos.
+          Usa «es exactamente» si quieres bloquear solo ese asunto literal.
         </p>
         <div class="as-rules">
           <div v-for="(r, i) in rules" :key="i" class="as-rule">
             <select class="as-input" v-model="r.type">
               <option v-for="(lbl, t) in tuning.rule_types" :key="t" :value="t">{{ lbl }}</option>
+            </select>
+            <select v-if="r.type !== 'from'" class="as-input as-input-sm" v-model="r.match">
+              <option v-for="(lbl, m) in tuning.rule_matches" :key="m" :value="m">{{ lbl }}</option>
             </select>
             <input class="as-input" v-model="r.pattern" placeholder="patrón (ej. @dominio.com, palabra)" />
             <select class="as-input" v-model="r.action">
@@ -159,7 +165,7 @@
           <div v-if="!rules.length" class="as-empty-sm">No hay reglas. Añade una abajo.</div>
         </div>
         <div class="as-row-end">
-          <button class="as-btn" @click="rules.push({type:'from',pattern:'',action:'reject',weight:6})">
+          <button class="as-btn" @click="rules.push({type:'subject',match:'contains',pattern:'',action:'reject',weight:6})">
             <i class="bi bi-plus-lg"></i> Añadir regla
           </button>
           <button class="as-btn as-btn-primary" :disabled="savingR" @click="saveRules">
@@ -181,7 +187,7 @@ const loading = ref(true)
 const data = ref({ available: false })
 
 // Ajustes del admin
-const tuning = ref({ available: false, symbols: [], rules: [], default_actions: {}, rule_types: {}, rule_actions: {} })
+const tuning = ref({ available: false, symbols: [], rules: [], default_actions: {}, rule_types: {}, rule_actions: {}, rule_matches: {} })
 const thresholds = ref({ greylist: 4, 'add header': 6, reject: 15 })
 const weightEdits = ref({})
 const rules = ref([])
@@ -210,7 +216,7 @@ async function load() {
       tuning.value = t
       if (t.actions) thresholds.value = { ...thresholds.value, ...t.actions }
       weightEdits.value = { ...(t.weight_overrides || {}) }
-      rules.value = (t.rules || []).map(r => ({ weight: 6, ...r }))
+      rules.value = (t.rules || []).map(r => ({ weight: 6, match: 'contains', ...r }))
     } catch { /* tuning no disponible: dejar solo stats */ }
   } catch (e) {
     store.showNotification('Error al cargar el antispam: ' + (e.message || e), 'danger')
@@ -317,6 +323,7 @@ onMounted(load)
 .as-input { width: 100%; padding: .4rem .6rem; border: 1px solid var(--border); border-radius: var(--r-sm); background: var(--surface-1); color: var(--text); font-size: .85rem; margin-top: .3rem; }
 .as-input-wide { max-width: 420px; margin-bottom: .8rem; }
 .as-input-xs { width: 80px; margin-top: 0; }
+.as-input-sm { width: 140px; margin-top: 0; flex: none; }
 .as-row-end { display: flex; justify-content: flex-end; gap: .6rem; margin-top: .8rem; }
 
 .as-symtable { border: 1px solid var(--border); border-radius: var(--r-md); overflow: hidden; }

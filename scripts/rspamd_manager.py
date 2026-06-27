@@ -261,6 +261,18 @@ class RspamdManager:
 }}
 """)
 
+        # Reglas de contenido del admin (globales). Rspamd solo lee reglas de
+        # multimap desde multimap.conf, por eso se inyectan aquí (no en un .conf
+        # aparte, que se ignoraría).
+        try:
+            from scripts import rspamd_tuning
+            admin_blocks = rspamd_tuning.build_admin_rules_blocks()
+            if admin_blocks.strip():
+                out.append("# ── Reglas globales del administrador ──\n")
+                out.append(admin_blocks)
+        except Exception as e:
+            logger.warning(f"No se pudieron inyectar reglas del admin: {e}")
+
         return "\n".join(out)
 
     def _write_multimap_conf(self, content):
