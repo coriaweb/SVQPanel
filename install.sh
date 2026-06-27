@@ -1066,6 +1066,45 @@ RSPAMDGREYEOF
     # Limpiar el nombre antiguo erróneo si existe de instalaciones previas.
     rm -f /etc/rspamd/local.d/greylisting.conf 2>/dev/null || true
 
+    # ── Resolver DNS propio para Rspamd (unbound) ─────────────────────────
+    # CLAVE para el antispam: Rspamd necesita resolver DNS (SPF, DKIM, DMARC,
+    # listas negras RBL). NO puede usar el 'named' del cluster DNS porque ese es
+    # autoritativo y tiene 'recursion no' (rechaza dominios externos → REFUSED →
+    # SPF/DKIM/DMARC/RBL caídos). Montamos unbound como resolver recursivo
+    # cacheante SOLO en localhost:5353 (NO es open resolver: no escucha en la IP
+    # pública). Rspamd apunta ahí.
+    DEBIAN_FRONTEND=noninteractive apt-get install -y -qq unbound 2>/dev/null || true
+    systemctl disable unbound-resolvconf 2>/dev/null || true
+    systemctl stop unbound-resolvconf 2>/dev/null || true
+    cat > /etc/unbound/unbound.conf.d/svqpanel.conf << 'UNBOUNDEOF'
+# SVQPanel — resolver recursivo cacheante SOLO localhost para Rspamd (antispam).
+# Puerto 5353 para no chocar con named (DNS autoritativo del cluster en :53).
+# NO es open resolver: solo escucha e atiende a 127.0.0.1/::1.
+server:
+    port: 5353
+    interface: 127.0.0.1@5353
+    interface: ::1@5353
+    access-control: 127.0.0.0/8 allow
+    access-control: ::1 allow
+    do-ip6: yes
+    prefetch: yes
+    cache-min-ttl: 60
+    cache-max-ttl: 86400
+    hide-identity: yes
+    hide-version: yes
+UNBOUNDEOF
+    systemctl enable unbound 2>/dev/null || true
+    systemctl restart unbound 2>/dev/null || true
+    # Apuntar Rspamd a unbound (en vez del 127.0.0.1:53 de named).
+    cat > /etc/rspamd/local.d/options.inc << 'RSPAMDDNSEOF'
+dns {
+  nameserver = ["127.0.0.1:5353"];
+  timeout = 1s;
+  sockets = 16;
+  retransmits = 5;
+}
+RSPAMDDNSEOF
+
     # ── Rate-limit de envío saliente (anti-abuso) ─────────────────────────
     # Límite de correos/hora por buzón y por dominio del remitente AUTENTICADO.
     # El panel rellena los mapas desde la BD (scripts/rspamd_manager.py →
