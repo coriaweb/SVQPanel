@@ -78,6 +78,16 @@ EOF
     echo "  quota 2.4 regenerada."
 fi
 
+# 3b) Cuotas por buzón: en 2.4 el campo userdb cambió de userdb_quota_rule a
+#     userdb_quota_storage_size (con el viejo, doveadm quota get muestra "-" =
+#     sin límite efectivo). Migrar las líneas existentes de /etc/dovecot/users.
+if [[ -f /etc/dovecot/users ]] && grep -q 'userdb_quota_rule=' /etc/dovecot/users; then
+    cp -a /etc/dovecot/users "/etc/dovecot/users.bak-0062-$(date +%s)"
+    # userdb_quota_rule=*:storage=NNNNM  →  userdb_quota_storage_size=NNNNM
+    sed -i -E 's/userdb_quota_rule=\*:storage=([0-9]+M)/userdb_quota_storage_size=\1/g' /etc/dovecot/users
+    echo "  cuotas de usuario migradas a userdb_quota_storage_size."
+fi
+
 # 4) SNI por dominio (mail_tls_manager) en 2.4: regenerar desde la BD si hay
 #    dominios con TLS. Si el manager no expone un punto simple, se regenera al
 #    próximo cambio de TLS; aquí solo migramos la sintaxis del fichero existente.

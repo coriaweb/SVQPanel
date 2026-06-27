@@ -18,6 +18,11 @@ import shutil
 import logging
 from .base import SystemManager
 
+try:
+    from scripts.dovecot_version import is_dovecot_24_plus
+except ImportError:  # ejecución directa fuera del paquete
+    from dovecot_version import is_dovecot_24_plus
+
 logger = logging.getLogger(__name__)
 
 
@@ -185,7 +190,13 @@ class MailManager(SystemManager):
         home = self.maildir_path(panel_username, domain_name, mailbox_username)
         extra = ""
         if quota_mb and quota_mb > 0:
-            extra = f"userdb_quota_rule=*:storage={quota_mb}M"
+            # Dovecot 2.4 (Debian 13) usa el campo userdb_quota_storage_size; el
+            # userdb_quota_rule de 2.3 ya no aplica el límite (doveadm quota get
+            # muestra "-"). En 2.3 (Debian 12) se mantiene quota_rule.
+            if is_dovecot_24_plus():
+                extra = f"userdb_quota_storage_size={quota_mb}M"
+            else:
+                extra = f"userdb_quota_rule=*:storage={quota_mb}M"
         return (f"{email}:{password_hash}:{self.VMAIL_UID}:{self.VMAIL_GID}"
                 f"::{home}::{extra}")
 
