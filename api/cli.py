@@ -1254,6 +1254,26 @@ def cmd_migrate_mail_out_ip(dry_run: bool = False) -> int:
         db.close()
 
 
+def cmd_sync_srs_excludes() -> int:
+    """Sincroniza SRS_EXCLUDE_DOMAINS de postsrsd con los dominios LOCALES.
+
+    Así SRS solo reescribe los reenvíos (origen externo) y deja intacto el correo
+    propio de nuestros dominios (formularios PHP, buzón→buzón). Idempotente.
+    """
+    from scripts.mail_manager import MailManager
+    mm = MailManager()
+    try:
+        res = mm.sync_srs_excludes()
+        if res.get("success"):
+            logger.info(f"sync_srs_excludes: {len(res.get('domains', []))} dominios locales excluidos del SRS")
+        else:
+            logger.info(f"sync_srs_excludes: {res.get('reason', 'no aplicado')}")
+        return 0
+    except Exception as e:
+        logger.exception(f"sync_srs_excludes falló: {e}")
+        return 0
+
+
 def cmd_backfill_caa(dry_run: bool = False) -> int:
     """Añade registros CAA (issue+issuewild Let's Encrypt) a las zonas DNS
     existentes que no los tengan. Idempotente: no duplica si ya hay CAA.
@@ -1835,6 +1855,9 @@ def main():
         help="Reaplica la IP de salida SMTP por dominio (formato nuevo svqout_* + ipv6/pref)")
     p_moi.add_argument("--dry-run", action="store_true", help="Solo muestra qué haría")
 
+    sub.add_parser("sync_srs_excludes",
+        help="Sincroniza SRS_EXCLUDE_DOMAINS (dominios locales) para que SRS solo reescriba reenvíos")
+
     p_caa = sub.add_parser("backfill_caa",
         help="Añade CAA (issue+issuewild Let's Encrypt) a las zonas DNS que no lo tengan")
     p_caa.add_argument("--dry-run", action="store_true", help="Solo muestra qué haría")
@@ -2000,6 +2023,8 @@ def main():
         sys.exit(cmd_backfill_caa(dry_run=args.dry_run))
     if args.cmd == "migrate_mail_out_ip":
         sys.exit(cmd_migrate_mail_out_ip(dry_run=args.dry_run))
+    if args.cmd == "sync_srs_excludes":
+        sys.exit(cmd_sync_srs_excludes())
 
 
 if __name__ == "__main__":

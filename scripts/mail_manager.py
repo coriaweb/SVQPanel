@@ -334,6 +334,10 @@ class MailManager(SystemManager):
         # El valor "OK" es el estándar para virtual_mailbox_domains hash
         self._map_set("virtual_domains", domain_name, "OK")
         self._reload_postfix()
+        # SRS no debe reescribir el correo PROPIO de este dominio (formularios PHP,
+        # buzón→buzón…): solo los reenvíos (envelope de origen externo). Mantener
+        # la lista de exclusión sincronizada con los dominios locales.
+        self.sync_srs_excludes()
 
         return {"success": True, "domain": domain_name, "path": domain_dir}
 
@@ -359,7 +363,72 @@ class MailManager(SystemManager):
             shutil.rmtree(domain_dir)
             logger.info(f"Directorio de correo eliminado: {domain_dir}")
 
+        # Actualizar la exclusión SRS (este dominio ya no es local).
+        self.sync_srs_excludes()
+
         return {"success": True}
+
+    # ─────────────────────────────────────────────────────────────────────
+    # SRS — exclusión de dominios locales
+    # ─────────────────────────────────────────────────────────────────────
+
+    def sync_srs_excludes(self):
+        """Mantiene SRS_EXCLUDE_DOMAINS de postsrsd con los dominios LOCALES.
+
+        SRS solo debe reescribir el envelope-sender de los REENVÍOS (correo de
+        origen externo que reexpedimos). El correo propio de nuestros dominios
+        (formularios PHP, notificaciones, buzón→buzón) NO debe reescribirse, o
+        rompería su SPF/DKIM y dejaría un remitente SRS sin sentido.
+
+        Dominios locales = mydomain + myhostname + todos los virtual_mailbox_domains.
+        Idempotente; no-op si postsrsd no está instalado.
+        """
+        default_file = "/etc/default/postsrsd"
+        if not os.path.exists(default_file):
+            return {"success": False, "reason": "postsrsd no instalado"}
+
+        # Recopilar dominios locales (sin duplicados, orden estable).
+        locals_ = []
+        for key in ("mydomain", "myhostname"):
+            code, out, _ = self.execute_command(["postconf", "-h", key], check=False)
+            d = (out or "").strip().rstrip(".").lower()
+            if d and d not in locals_:
+                locals_.append(d)
+        # Dominios de correo del panel (claves del mapa virtual_domains).
+        vmap = self._map_path("virtual_domains")
+        try:
+            with open(vmap, "r", encoding="utf-8") as f:
+                for line in f:
+                    line = line.strip()
+                    if not line or line.startswith("#"):
+                        continue
+                    dom = line.split()[0].rstrip(".").lower()
+                    if dom and dom not in locals_:
+                        locals_.append(dom)
+        except FileNotFoundError:
+            pass
+
+        exclude_value = ",".join(locals_)
+
+        # Reescribir la línea SRS_EXCLUDE_DOMAINS en /etc/default/postsrsd.
+        with open(default_file, "r", encoding="utf-8") as f:
+            lines = f.readlines()
+        new_lines, found = [], False
+        for line in lines:
+            if re.match(r"^\s*#?\s*SRS_EXCLUDE_DOMAINS=", line):
+                new_lines.append(f"SRS_EXCLUDE_DOMAINS={exclude_value}\n")
+                found = True
+            else:
+                new_lines.append(line)
+        if not found:
+            new_lines.append(f"SRS_EXCLUDE_DOMAINS={exclude_value}\n")
+        with open(default_file, "w", encoding="utf-8") as f:
+            f.writelines(new_lines)
+
+        # Reiniciar postsrsd para aplicar (recarga la config al arrancar).
+        self.execute_command(["systemctl", "restart", "postsrsd"], check=False)
+        logger.info(f"SRS_EXCLUDE_DOMAINS actualizado: {len(locals_)} dominios locales")
+        return {"success": True, "domains": locals_}
 
     # ─────────────────────────────────────────────────────────────────────
     # Buzones

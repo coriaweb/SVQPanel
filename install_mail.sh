@@ -165,7 +165,12 @@ if command -v postsrsd >/dev/null 2>&1 || dpkg -l postsrsd 2>/dev/null | grep -q
     postconf -e "sender_canonical_classes = envelope_sender"
     postconf -e "recipient_canonical_maps = tcp:127.0.0.1:10002"
     postconf -e "recipient_canonical_classes = envelope_recipient,header_recipient"
-    echo -e "${GREEN}✓ SRS activo (reenvíos reescritos a @${SRS_DOM})${NC}"
+    # SRS no debe reescribir el correo PROPIO de nuestros dominios (formularios
+    # PHP, buzón→buzón): solo los reenvíos. Excluir los dominios locales.
+    if [ -x /opt/svqpanel/venv/bin/python ]; then
+        (cd /opt/svqpanel && /opt/svqpanel/venv/bin/python -m api.cli sync_srs_excludes) 2>/dev/null || true
+    fi
+    echo -e "${GREEN}✓ SRS activo (reenvíos reescritos a @${SRS_DOM}; dominios locales excluidos)${NC}"
 else
     echo -e "${YELLOW}⚠ postsrsd no disponible; reenvíos sin SRS (riesgo de blacklist)${NC}"
 fi
