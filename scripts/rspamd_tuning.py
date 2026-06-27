@@ -75,6 +75,13 @@ def scan_message(raw: str) -> dict:
     afectan a ESE correo (de las 614 del catálogo, solo las que aplican)."""
     if not raw or not raw.strip():
         return {"success": False, "error": "Pega el correo (cabeceras y, si quieres, el cuerpo)."}
+
+    # Si el correo YA trae el veredicto real de la entrega (cabecera
+    # X-Spamd-Result que añadió el servidor al recibirlo), lo extraemos: es MÁS
+    # FIEL que reanalizar en frío, porque el reanálisis no tiene la conexión SMTP
+    # original (IP, HELO, SPF/DKIM en vivo) y da símbolos/score distintos.
+    original = _parse_xspamd_result(raw)
+
     # Asegurar un cuerpo mínimo: si solo pegan cabeceras, añadir línea en blanco.
     if "\n\n" not in raw and "\r\n\r\n" not in raw:
         raw = raw.rstrip("\n") + "\n\n(sin cuerpo)\n"
@@ -126,7 +133,43 @@ def scan_message(raw: str) -> dict:
         "symbols": syms,
         "symbols_fired": len(syms),
         "symbols_scoring": sum(1 for s in syms if s["score"] != 0),
+        # Veredicto REAL de la entrega (si el correo lo traía). Más fiable que el
+        # reanálisis para correos ya recibidos.
+        "original": original,
     }
+
+
+def _parse_xspamd_result(raw: str) -> "dict | None":
+    """Extrae el veredicto que el servidor puso al RECIBIR el correo, de la
+    cabecera X-Spamd-Result. Devuelve {score, threshold, symbols:[{name,score}]}
+    o None si el correo no la trae."""
+    # La cabecera puede ocupar varias líneas (continuación con sangría).
+    m = re.search(r"^X-Spamd-Result:(.*?)(?=^\S|\Z)", raw, re.MULTILINE | re.DOTALL)
+    if not m:
+        return None
+    blob = " ".join(line.strip() for line in m.group(1).splitlines())
+    sm = re.search(r"\[([\-\d.]+)\s*/\s*([\-\d.]+)\]", blob)
+    score = _safe_int_or_float(sm.group(1)) if sm else None
+    thr = _safe_int_or_float(sm.group(2)) if sm else None
+    syms = []
+    try:
+        from api.routes.mail import _SYMBOL_ES
+    except Exception:
+        _SYMBOL_ES = {}
+    # SYMBOL(peso)[opciones], ...
+    for mm in re.finditer(r"([A-Z0-9_]+)\(([\-\d.]+)\)", blob):
+        name, w = mm.group(1), _safe_int_or_float(mm.group(2))
+        syms.append({"name": name, "score": w or 0.0,
+                     "description_es": _SYMBOL_ES.get(name, "")})
+    syms.sort(key=lambda s: s["score"], reverse=True)
+    return {"score": score, "threshold": thr, "symbols": syms}
+
+
+def _safe_int_or_float(s):
+    try:
+        return float(s)
+    except (ValueError, TypeError):
+        return None
 
 
 def _humanize_symbol_es(name: str) -> str:

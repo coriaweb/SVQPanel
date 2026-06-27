@@ -127,22 +127,44 @@
             <i class="bi bi-search"></i> Analizar
           </button>
         </div>
-        <div v-if="testResult" class="as-testres" :class="'as-testres--' + (testResult.action || 'no action').replace(' ','-')">
+        <div v-if="testResult" class="as-testwrap">
           <template v-if="testResult.success">
-            <div class="as-testverdict">
-              <span class="as-testscore">{{ testResult.score }} / {{ testResult.thresholds?.reject ?? 15 }}</span>
-              <span class="as-testaction">{{ testResult.action_es }}</span>
-              <span class="as-testmeta">{{ testResult.symbols_scoring }} reglas con peso de {{ testResult.symbols_fired }} disparadas</span>
+            <!-- Veredicto REAL (de la cabecera X-Spamd-Result), si el correo lo trae -->
+            <div v-if="testResult.original" class="as-testres as-testres--real">
+              <div class="as-testverdict">
+                <span class="as-testbadge">✓ Veredicto real</span>
+                <span class="as-testscore">{{ testResult.original.score }} / {{ testResult.original.threshold }}</span>
+                <span class="as-testmeta">el que aplicó el servidor al recibir este correo</span>
+              </div>
+              <table class="as-testtable">
+                <tr v-for="s in testResult.original.symbols" :key="s.name" :class="{ 'as-zero': s.score===0 }">
+                  <td class="as-tw" :class="s.score>0 ? 'as-pos' : (s.score<0 ? 'as-neg' : '')">{{ s.score>0 ? '+' : '' }}{{ s.score }}</td>
+                  <td><code>{{ s.name }}</code></td>
+                  <td class="as-td-desc">{{ s.description_es || '' }}</td>
+                </tr>
+              </table>
             </div>
-            <table class="as-testtable">
-              <tr v-for="s in testResult.symbols" :key="s.name" :class="{ 'as-zero': s.score===0 }">
-                <td class="as-tw" :class="s.score>0 ? 'as-pos' : (s.score<0 ? 'as-neg' : '')">
-                  {{ s.score>0 ? '+' : '' }}{{ s.score }}
-                </td>
-                <td><code>{{ s.name }}</code></td>
-                <td class="as-td-desc">{{ s.description_es || s.description }}<span v-if="s.options && s.options.length" class="as-opts"> [{{ s.options.join(', ') }}]</span></td>
-              </tr>
-            </table>
+
+            <!-- Reanálisis en frío -->
+            <div class="as-testres" :class="'as-testres--' + (testResult.action || 'no action').replace(' ','-')">
+              <div class="as-testverdict">
+                <span v-if="testResult.original" class="as-testbadge as-testbadge--mute">Reanálisis ahora</span>
+                <span class="as-testscore">{{ testResult.score }} / {{ testResult.thresholds?.reject ?? 15 }}</span>
+                <span class="as-testaction">{{ testResult.action_es }}</span>
+                <span class="as-testmeta">{{ testResult.symbols_scoring }} reglas con peso de {{ testResult.symbols_fired }} disparadas</span>
+              </div>
+              <p v-if="testResult.original" class="as-testnote">
+                <i class="bi bi-info-circle"></i> El reanálisis se hace «en frío», sin la conexión
+                original (IP, HELO, SPF/DKIM en vivo), por eso puede diferir del veredicto real de arriba.
+              </p>
+              <table class="as-testtable">
+                <tr v-for="s in testResult.symbols" :key="s.name" :class="{ 'as-zero': s.score===0 }">
+                  <td class="as-tw" :class="s.score>0 ? 'as-pos' : (s.score<0 ? 'as-neg' : '')">{{ s.score>0 ? '+' : '' }}{{ s.score }}</td>
+                  <td><code>{{ s.name }}</code></td>
+                  <td class="as-td-desc">{{ s.description_es || s.description }}<span v-if="s.options && s.options.length" class="as-opts"> [{{ s.options.join(', ') }}]</span></td>
+                </tr>
+              </table>
+            </div>
           </template>
           <div v-else class="as-empty-sm">{{ testResult.error }}</div>
         </div>
@@ -470,6 +492,11 @@ onMounted(load)
 .as-tw.as-neg { color: var(--success); }
 .as-td-desc { color: var(--text-muted); }
 .as-opts { color: var(--text-muted); font-style: italic; }
+.as-testwrap { display: flex; flex-direction: column; gap: 1rem; margin-top: .9rem; }
+.as-testres--real { border-color: color-mix(in srgb, var(--ac) 40%, var(--border)); }
+.as-testbadge { font-size: .72rem; font-weight: 700; color: var(--ac); background: color-mix(in srgb, var(--ac) 14%, transparent); border-radius: 999px; padding: .1rem .5rem; }
+.as-testbadge--mute { color: var(--text-muted); background: color-mix(in srgb, var(--text-muted) 14%, transparent); }
+.as-testnote { font-size: .78rem; color: var(--text-muted); padding: .5rem 1rem; margin: 0; border-bottom: 1px solid var(--border); }
 
 .as-rules { display: flex; flex-direction: column; gap: .5rem; }
 .as-rule { display: flex; gap: .5rem; align-items: center; }
