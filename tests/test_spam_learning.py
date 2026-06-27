@@ -10,8 +10,9 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from scripts import spam_learning as sl
 
 
-def test_imapsieve_apunta_a_junk():
-    c = sl._IMAP_SIEVE_CONF
+def test_imapsieve_23_apunta_a_junk():
+    # Dovecot 2.3 (Debian 12): bloque plugin {} con imapsieve_mailboxN_*.
+    c = sl._IMAP_SIEVE_CONF_23
     assert "imapsieve_mailbox1_name = Junk" in c
     # learn-spam al entrar en Junk, learn-ham al salir
     assert "learn-spam.sieve" in c
@@ -19,12 +20,40 @@ def test_imapsieve_apunta_a_junk():
     assert "imap_sieve" in c
 
 
-def test_imapsieve_captura_tambien_el_flag():
+def test_imapsieve_23_captura_tambien_el_flag():
     # Además de mover a Junk (Roundcube/arrastrar), debe capturar el cambio de
     # FLAG (botón "Basura" de Thunderbird = flag Junk sin mover).
-    c = sl._IMAP_SIEVE_CONF
+    c = sl._IMAP_SIEVE_CONF_23
     assert "imapsieve_mailbox3_causes = FLAG" in c
     assert "learn-flag.sieve" in c
+
+
+def test_imapsieve_24_apunta_a_junk():
+    # Dovecot 2.4 (Debian 13): mailbox Junk {} / imapsieve_from Junk {} con
+    # bloques sieve_script (sin plugin {} ni imapsieve_mailboxN_*).
+    c = sl._IMAP_SIEVE_CONF_24
+    assert "mailbox Junk {" in c
+    assert "imapsieve_from Junk {" in c
+    assert "learn-spam.sieve" in c
+    assert "learn-ham.sieve" in c
+    assert "imap_sieve = yes" in c
+    # NO debe arrastrar la sintaxis 2.3
+    assert "imapsieve_mailbox1_name" not in c
+    assert "plugin {" not in c
+
+
+def test_imapsieve_24_captura_tambien_el_flag():
+    c = sl._IMAP_SIEVE_CONF_24
+    assert "cause = flag" in c
+    assert "learn-flag.sieve" in c
+
+
+def test_imap_sieve_conf_elige_segun_version(monkeypatch):
+    # _imap_sieve_conf() devuelve la variante correcta según is_dovecot_24_plus.
+    monkeypatch.setattr(sl, "is_dovecot_24_plus", lambda: True)
+    assert "mailbox Junk {" in sl._imap_sieve_conf()
+    monkeypatch.setattr(sl, "is_dovecot_24_plus", lambda: False)
+    assert "imapsieve_mailbox1_name = Junk" in sl._imap_sieve_conf()
 
 
 def test_sieve_flag_distingue_spam_y_ham():
