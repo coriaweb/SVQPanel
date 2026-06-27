@@ -88,6 +88,18 @@ if [[ -f /etc/dovecot/users ]] && grep -q 'userdb_quota_rule=' /etc/dovecot/user
     echo "  cuotas de usuario migradas a userdb_quota_storage_size."
 fi
 
+# 3c) LMTP: el paquete de Dovecot 2.4 mete en 20-lmtp.conf un auth_username_format
+#      con 'username' que recorta el dominio → la entrega rebota con "User doesn't
+#      exist" (passwd-file indexa por email completo). CRÍTICO: rompe TODO el
+#      correo entrante. Forzamos %{user} en un dropin 99- que carga después.
+cat > /etc/dovecot/conf.d/99-svqpanel-lmtp.conf <<'EOF'
+# SVQPanel: el LMTP debe buscar el buzón por email COMPLETO (no recortar dominio).
+protocol lmtp {
+  auth_username_format = %{user}
+}
+EOF
+echo "  LMTP auth_username_format forzado a %{user} (fix entrada de correo)."
+
 # 4) SNI por dominio (mail_tls_manager) en 2.4: regenerar desde la BD si hay
 #    dominios con TLS. Si el manager no expone un punto simple, se regenera al
 #    próximo cambio de TLS; aquí solo migramos la sintaxis del fichero existente.

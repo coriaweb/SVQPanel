@@ -312,6 +312,17 @@ plugin {
 DOVEQUOTAEOF
 fi
 
+# LMTP: el passwd-file indexa por email COMPLETO (user@dominio). El paquete de
+# Dovecot 2.4 mete en 20-lmtp.conf 'auth_username_format = %{user | username |
+# lower}', que recorta el dominio y rompe la entrega ('User doesn't exist' en
+# RCPT TO). Forzamos %{user} (email completo) en un dropin 99- que carga después.
+cat > /etc/dovecot/conf.d/99-svqpanel-lmtp.conf << 'DOVELMTPEOF'
+# SVQPanel: el LMTP debe buscar el buzón por email COMPLETO (no recortar dominio).
+protocol lmtp {
+  auth_username_format = %{user}
+}
+DOVELMTPEOF
+
 # Carpetas especiales (Enviados/Borradores/Spam/Papelera) con auto-creación y
 # auto-suscripción. Por defecto Dovecot las trae con `auto = no`: existen como
 # definición pero NO se crean ni se suscriben en buzones nuevos, así que clientes
