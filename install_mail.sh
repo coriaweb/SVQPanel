@@ -180,10 +180,11 @@ apt-get install -y -qq dovecot-core dovecot-imapd dovecot-pop3d dovecot-lmtpd
 # Dovecot 2.4 (Debian 13/trixie) cambió la sintaxis de config respecto a 2.3
 # (Debian 12/bookworm). Detectamos la major para emitir la sintaxis correcta.
 DOVECOT_MAJOR=$(dovecot --version 2>/dev/null | grep -oE '^[0-9]+\.[0-9]+' | head -1)
-if printf '%s\n2.4\n' "$DOVECOT_MAJOR" | sort -V -C; then
-    DOVECOT_24=false   # versión < 2.4
-else
+# >= 2.4 si al ordenar (2.4, version) queda 2.4 primero (2.4 <= version).
+if printf '2.4\n%s\n' "$DOVECOT_MAJOR" | sort -V -C; then
     DOVECOT_24=true    # versión >= 2.4
+else
+    DOVECOT_24=false   # versión < 2.4
 fi
 echo -e "  Dovecot ${DOVECOT_MAJOR:-?} (sintaxis $([ "$DOVECOT_24" = true ] && echo 2.4 || echo 2.3))"
 

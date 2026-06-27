@@ -24,8 +24,9 @@ if ! command -v dovecot >/dev/null 2>&1; then
 fi
 
 DOVECOT_MAJOR=$(dovecot --version 2>/dev/null | grep -oE '^[0-9]+\.[0-9]+' | head -1)
+# >= 2.4 si al ordenar (2.4, version) queda 2.4 primero (2.4 <= version).
 # < 2.4 → no aplica (el servidor sigue en sintaxis 2.3, ya soportada)
-if printf '%s\n2.4\n' "$DOVECOT_MAJOR" | sort -V -C; then
+if ! printf '2.4\n%s\n' "$DOVECOT_MAJOR" | sort -V -C; then
     echo "  Dovecot $DOVECOT_MAJOR (< 2.4): config 2.3, nada que regenerar."
     exit 0
 fi
