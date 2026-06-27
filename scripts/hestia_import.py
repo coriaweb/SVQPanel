@@ -475,7 +475,10 @@ class HestiaBackup:
                             "account": a.get("ACCOUNT", ""),
                             "md5": a.get("MD5", ""),      # hash (reutilizable)
                             "quota": a.get("QUOTA", "0"),
+                            # Reenvío: FWD = destinos (coma-separados),
+                            # FWD_ONLY='yes' = redirección pura (sin copia local).
                             "fwd": a.get("FWD", "") or None,
+                            "fwd_only": (a.get("FWD_ONLY", "") or "").strip().lower() == "yes",
                         })
             out.append({
                 "domain": domain,
@@ -1162,14 +1165,35 @@ def import_mail(backup: "HestiaBackup", mailinfo: Dict, owner, db, report: Impor
                 stored_hash = mgr.hash_password(tmp_pw)
                 report.password("mail", email, tmp_pw)
 
-            db.add(Mailbox(
+            # Reenvío (FWD): Hestia lo guarda como un campo del propio buzón.
+            #   FWD          → destinos separados por coma
+            #   FWD_ONLY=yes → redirección pura (no se guarda copia local)
+            fwd_raw = acc.get("fwd") or ""
+            fwd_to = [d.strip() for d in fwd_raw.split(",") if d.strip()]
+            keep_copy = not acc.get("fwd_only", False)
+
+            mbox = Mailbox(
                 mail_domain_id=mail_domain.id,
                 username=user,
                 password_hash=stored_hash,
                 quota_mb=quota,
                 is_active=True,
-            ))
+                forward_to=", ".join(fwd_to) if fwd_to else None,
+                forward_keep_copy=keep_copy if fwd_to else True,
+            )
+            db.add(mbox)
             db.commit()
+
+            # Aplicar el reenvío a nivel de Postfix (virtual_alias).
+            if fwd_to:
+                try:
+                    mgr.set_forward(domain, user, fwd_to, keep_copy=keep_copy)
+                    detalle = "solo reenvío" if not keep_copy else "reenvío + copia"
+                    report.ok("mail-forward", email,
+                              f"{detalle} → {', '.join(fwd_to)}")
+                except Exception as e:
+                    report.fail("mail-forward", email, e)
+
             n_ok += 1
         except Exception as e:
             report.fail("mail-account", email, e)
