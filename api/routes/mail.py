@@ -1944,13 +1944,26 @@ async def get_spam_settings(
     except Exception:
         pass
 
+    # Umbral efectivo: si el dominio no lo personalizó (None), mostrar el GLOBAL
+    # del admin (es el que de verdad se aplica).
+    g = _global_spam_thresholds()
     return SpamSettingsResponse(
-        spam_tag_threshold=md.spam_tag_threshold or 6.0,
-        spam_reject_threshold=md.spam_reject_threshold or 15.0,
+        spam_tag_threshold=md.spam_tag_threshold if md.spam_tag_threshold is not None else g["tag"],
+        spam_reject_threshold=md.spam_reject_threshold if md.spam_reject_threshold is not None else g["reject"],
         whitelist_senders=md.whitelist_senders or "",
         blacklist_senders=md.blacklist_senders or "",
         stats=stats,
     )
+
+
+def _global_spam_thresholds() -> dict:
+    """Umbrales globales del admin (actions.conf) o defaults. {tag, reject}."""
+    try:
+        from scripts import rspamd_tuning
+        a = rspamd_tuning.get_actions()
+        return {"tag": a.get("add header", 6.0), "reject": a.get("reject", 15.0)}
+    except Exception:
+        return {"tag": 6.0, "reject": 15.0}
 
 
 @router.put("/mail/domains/{domain_id}/spam", response_model=SpamSettingsResponse)
@@ -1967,8 +1980,16 @@ async def update_spam_settings(
         raise HTTPException(status_code=404, detail="Dominio no encontrado")
     _require_edit(md, current_user)
 
-    if payload.spam_tag_threshold    is not None: md.spam_tag_threshold    = payload.spam_tag_threshold
-    if payload.spam_reject_threshold is not None: md.spam_reject_threshold = payload.spam_reject_threshold
+    # Umbrales: si el cliente deja el MISMO valor que el global del admin, lo
+    # guardamos como NULL (= "heredar global"), no como personalización. Así el
+    # ajuste global del admin sigue aplicando salvo que el cliente ponga otro valor.
+    g = _global_spam_thresholds()
+    if payload.spam_tag_threshold is not None:
+        md.spam_tag_threshold = (None if abs(payload.spam_tag_threshold - g["tag"]) < 0.01
+                                 else payload.spam_tag_threshold)
+    if payload.spam_reject_threshold is not None:
+        md.spam_reject_threshold = (None if abs(payload.spam_reject_threshold - g["reject"]) < 0.01
+                                    else payload.spam_reject_threshold)
     if payload.whitelist_senders     is not None: md.whitelist_senders     = payload.whitelist_senders.strip()
     if payload.blacklist_senders     is not None: md.blacklist_senders     = payload.blacklist_senders.strip()
     db.commit()
@@ -1977,8 +1998,8 @@ async def update_spam_settings(
     _rebuild_rspamd(db)
 
     return SpamSettingsResponse(
-        spam_tag_threshold=md.spam_tag_threshold,
-        spam_reject_threshold=md.spam_reject_threshold,
+        spam_tag_threshold=md.spam_tag_threshold if md.spam_tag_threshold is not None else g["tag"],
+        spam_reject_threshold=md.spam_reject_threshold if md.spam_reject_threshold is not None else g["reject"],
         whitelist_senders=md.whitelist_senders or "",
         blacklist_senders=md.blacklist_senders or "",
     )

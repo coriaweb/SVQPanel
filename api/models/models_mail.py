@@ -70,8 +70,10 @@ class MailDomain(Base):
     mail_tls_enabled = Column(Boolean, default=False)
 
     # ── Antispam (Rspamd por dominio) ─────────────────────────────────────
-    spam_tag_threshold    = Column(Float, default=6.0)   # score → añadir cabecera spam
-    spam_reject_threshold = Column(Float, default=15.0)  # score → rechazar
+    # NULL = sin personalizar → hereda el umbral GLOBAL del admin. Un valor = el
+    # cliente lo personalizó para este dominio (pisa al global solo entonces).
+    spam_tag_threshold    = Column(Float, nullable=True)  # score → añadir cabecera spam
+    spam_reject_threshold = Column(Float, nullable=True)  # score → rechazar
     whitelist_senders     = Column(Text, default="")     # emails/dominios permitidos (uno por línea)
     blacklist_senders     = Column(Text, default="")     # emails/dominios bloqueados (uno por línea)
 

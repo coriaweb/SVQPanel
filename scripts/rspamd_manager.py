@@ -77,30 +77,67 @@ class RspamdManager:
 
     # ─── settings.conf (umbrales + whitelist) ─────────────────────────────
 
+    def _global_actions(self):
+        """Lee los umbrales GLOBALES del admin (actions.conf) o devuelve los
+        defaults de Rspamd. Sirven de BASE: un dominio solo escribe su propio
+        bloque de umbrales si DIFIERE de estos (así el ajuste global del admin
+        aplica salvo donde el cliente personalice)."""
+        base = {"add header": 6.0, "reject": 15.0, "greylist": 4.0}
+        path = "/etc/rspamd/local.d/actions.conf"
+        if os.path.exists(path):
+            try:
+                with open(path) as f:
+                    txt = f.read()
+                for key in base:
+                    m = re.search(rf'"{re.escape(key)}"\s*=\s*([\-\d.]+)', txt)
+                    if m:
+                        base[key] = float(m.group(1))
+            except Exception as e:
+                logger.warning(f"_global_actions: {e}")
+        return base
+
     def _build_settings_conf(self, domain_configs):
         """
         Genera settings.conf con umbrales personalizados y whitelist.
         NOTA: local.d/settings.conf se inyecta dentro de settings{} automáticamente.
+
+        Importante: el bloque de umbrales por dominio SOLO se escribe si difiere
+        del global del admin (o si greylist/spam_to_junk están desactivados, que
+        necesitan el override). Si coincide con el global, NO se escribe → el
+        dominio hereda el actions.conf del admin (evita que el por-dominio pise
+        el ajuste global cuando el cliente no ha personalizado nada).
         """
         out = ["# SVQPanel — Generado automáticamente. NO editar manualmente.\n"]
+        g = self._global_actions()
 
         for cfg in domain_configs:
             domain = cfg["domain"]
             safe   = self._safe_name(domain)
-            tag    = float(cfg.get("tag_threshold", 6.0))
-            reject = float(cfg.get("reject_threshold", 15.0))
+            # None = sin personalizar → usar el global del admin (no diferirá →
+            # no se escribe bloque, hereda actions.conf).
+            tag    = float(cfg["tag_threshold"]) if cfg.get("tag_threshold") is not None else g["add header"]
+            reject = float(cfg["reject_threshold"]) if cfg.get("reject_threshold") is not None else g["reject"]
             # greylist_enabled=False → umbral inalcanzable (999): ese dominio NO
             # hace greylisting (entrega inmediata). Los demás umbrales (marcar/
             # rechazar spam) NO cambian: el filtrado anti-spam sigue igual.
-            greylist = 4.0 if cfg.get("greylist_enabled", True) else 999.0
+            greylist_off = not cfg.get("greylist_enabled", True)
+            greylist = g["greylist"] if not greylist_off else 999.0
             # spam_to_junk desactivado → subir "add header" a 999: ese dominio NO
             # marca correos como spam (no añade X-Spam: Yes), así el Sieve global
             # no los mueve a Junk. El rechazo de spam claro (reject) se mantiene.
-            if not cfg.get("spam_to_junk_enabled", True):
+            junk_off = not cfg.get("spam_to_junk_enabled", True)
+            if junk_off:
                 tag = 999.0
 
-            # ── Umbrales de spam ──────────────────────────────────────────
-            out.append(f"""\
+            # ¿El dominio difiere del global del admin? Solo entonces escribimos
+            # su bloque (si no, hereda el global y respeta el ajuste del admin).
+            differs = (
+                abs(tag - g["add header"]) > 0.01 or
+                abs(reject - g["reject"]) > 0.01 or
+                greylist_off or junk_off
+            )
+            if differs:
+                out.append(f"""\
 # ── {domain} ──
 {safe}_thresholds {{
   rcpt_domain = ["{domain}"];
@@ -255,9 +292,10 @@ class RspamdManager:
                 os.remove(map_path)
 
             configs.append({
+                # None = sin personalizar → hereda el umbral global del admin.
+                "tag_threshold":     md.spam_tag_threshold,
+                "reject_threshold":  md.spam_reject_threshold,
                 "domain":            md.domain_name,
-                "tag_threshold":     md.spam_tag_threshold    or 6.0,
-                "reject_threshold":  md.spam_reject_threshold or 15.0,
                 "greylist_enabled":  bool(getattr(md, "greylist_enabled", True)),
                 "spam_to_junk_enabled": bool(getattr(md, "spam_to_junk_enabled", True)),
                 "whitelist_entries": wl_entries,

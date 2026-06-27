@@ -779,6 +779,13 @@ def _run_migrations():
         "ALTER TABLE mail_domains ADD COLUMN IF NOT EXISTS spam_to_junk_enabled BOOLEAN NOT NULL DEFAULT TRUE",
         # Ajustes antispam del admin (pesos de símbolos + umbrales + reglas)
         "ALTER TABLE settings ADD COLUMN IF NOT EXISTS rspamd_overrides TEXT",
+        # Umbrales por dominio: NULL = hereda el global del admin. Los que tienen
+        # exactamente el default viejo (6/15) nunca se personalizaron → a NULL,
+        # para que el ajuste global del admin aplique salvo personalización real.
+        "ALTER TABLE mail_domains ALTER COLUMN spam_tag_threshold DROP DEFAULT",
+        "ALTER TABLE mail_domains ALTER COLUMN spam_reject_threshold DROP DEFAULT",
+        "UPDATE mail_domains SET spam_tag_threshold = NULL WHERE spam_tag_threshold = 6.0",
+        "UPDATE mail_domains SET spam_reject_threshold = NULL WHERE spam_reject_threshold = 15.0",
         # ─────────────────────────────────────────────────────────────────
         # Fase 21b: Despliegue Git por dominio (clone + webhook + releases)
         # ─────────────────────────────────────────────────────────────────
