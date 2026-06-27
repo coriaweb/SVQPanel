@@ -53,16 +53,18 @@ def get_server_mail_domain():
     return fqdn.lower()
 
 
-def _dig_txt(name):
-    """Devuelve la lista de valores TXT publicados para `name` (DNS público).
+# Resolvers públicos fiables. NO usamos el resolver del sistema: en estos
+# servidores suele ser el `named` autoritativo del cluster (recursion no →
+# REFUSED para dominios externos) o trae un `search` que altera nombres no-FQDN.
+_PUBLIC_RESOLVERS = ["1.1.1.1", "8.8.8.8", "9.9.9.9"]
 
-    Usa el resolver del sistema. Limpia comillas y junta cadenas partidas.
-    """
-    out = _run(["dig", "+short", "TXT", name])
+
+def _parse_txt(out):
+    """Parsea la salida de `dig +short TXT`: une las cadenas partidas por valor."""
     values = []
     for line in out.splitlines():
         line = line.strip()
-        if not line:
+        if not line or line.startswith(";"):
             continue
         # dig devuelve los TXT entre comillas; cadenas largas vienen partidas:
         #   "v=DKIM1; k=rsa; " "p=MIIB..."
@@ -72,9 +74,27 @@ def _dig_txt(name):
     return values
 
 
+def _dig_txt(name):
+    """Valores TXT publicos de `name`, consultando resolvers públicos.
+
+    Usa FQDN absoluto (punto final) para neutralizar el `search` de resolv.conf,
+    y prueba varios resolvers: devuelve el primero que dé respuesta no vacía.
+    """
+    fqdn = name if name.endswith(".") else name + "."
+    for resolver in _PUBLIC_RESOLVERS:
+        out = _run(["dig", "+short", "TXT", fqdn, f"@{resolver}"])
+        vals = _parse_txt(out)
+        if vals:
+            return vals
+    return []
+
+
 def _dig_ptr(ip):
-    out = _run(["dig", "+short", "-x", ip])
-    return out.splitlines()[0].strip().rstrip(".") if out else ""
+    for resolver in _PUBLIC_RESOLVERS:
+        out = _run(["dig", "+short", "-x", ip, f"@{resolver}"])
+        if out:
+            return out.splitlines()[0].strip().rstrip(".")
+    return ""
 
 
 def _check(name_present, ok, expected, found, severity="error", help_text=""):
@@ -99,8 +119,11 @@ def diagnose(server_ipv4=None, server_ipv6=None):
     # IP del servidor: la pasada (de Settings) o, en su defecto, autodetectada.
     ipv4 = (server_ipv4 or "").strip()
     if not ipv4:
-        ipv4 = _run(["dig", "+short", "A", domain]) .splitlines()
-        ipv4 = ipv4[0].strip() if ipv4 else ""
+        for resolver in _PUBLIC_RESOLVERS:
+            out = _run(["dig", "+short", "A", domain + ".", f"@{resolver}"]).splitlines()
+            if out:
+                ipv4 = out[0].strip()
+                break
 
     records = []
 
