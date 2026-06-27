@@ -305,13 +305,15 @@ if should_run 3; then
             break
         fi
 
-        # Extraer las URLs de los repos que fallaron y mapearlas a su .list para
-        # revertir SOLO ese fichero (de sources.list.d, nunca Debian base deb822).
+        # Extraer las URLs SOLO de las líneas de ERROR (no de las 'Hit:' exitosas)
+        # y mapearlas a su .list para revertir SOLO ese fichero (de sources.list.d,
+        # nunca Debian base deb822). Apt emite el fallo en líneas 'Err:' / 'Ign:' /
+        # 'does not have a Release file', que es de donde sacamos la URL culpable.
         REVERTED=0
         while IFS= read -r badurl; do
             [[ -z "$badurl" ]] && continue
             base="${badurl%%/dists/*}"          # recortar a la base del repo
-            base="${base% trixie*}"; base="${base%% *}"
+            base="${base%% *}"                  # quedarnos solo con la URL
             for lf in /etc/apt/sources.list.d/*.list; do
                 [[ -e "$lf" ]] || continue
                 if grep -qF "$base" "$lf" && grep -q '\btrixie\b' "$lf"; then
@@ -320,7 +322,7 @@ if should_run 3; then
                     REVERTED=1
                 fi
             done
-        done < <(grep -oE 'https?://[^ ]+' "$APT_LOG" | sort -u)
+        done < <(grep -iE "$APT_ERR_RE" "$APT_LOG" | grep -oE 'https?://[^ ]+' | sort -u)
 
         if [[ "$REVERTED" -eq 0 ]]; then
             err "apt update falla y no hay repo de terceros que revertir. Revisa $APT_LOG"
