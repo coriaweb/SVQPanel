@@ -104,6 +104,97 @@
         </div>
       </div>
 
+      <!-- Salud de correo del SERVIDOR (deliverability de reenvíos) — solo admin -->
+      <div v-if="isAdminOrReseller && !selectedDomain" class="sv-card" style="margin-bottom:1rem">
+        <div style="display:flex;align-items:center;justify-content:space-between;gap:1rem;padding:.9rem 1.1rem;flex-wrap:wrap;cursor:pointer"
+             @click="deliv.open = !deliv.open">
+          <div>
+            <div style="font-weight:600">
+              <i class="bi bi-send-check" :style="{color: delivStatusColor}"></i>
+              Salud de correo del servidor
+              <span v-if="deliv.data" class="sv-badge" :class="deliv.data.all_ok ? 'sv-badge--on' : 'sv-badge--off'" style="margin-left:.4rem">
+                {{ deliv.data.all_ok ? 'Correcto' : 'Faltan registros' }}
+              </span>
+            </div>
+            <div style="font-size:.82rem;color:var(--text-muted);margin-top:.2rem">
+              Autenticación (SPF/DKIM/DMARC/PTR) del dominio del servidor
+              <strong v-if="deliv.data">{{ deliv.data.domain }}</strong>.
+              Necesaria para que los <strong>reenvíos</strong> de alias lleguen a Gmail/Outlook sin rebotar.
+            </div>
+          </div>
+          <div style="display:flex;align-items:center;gap:.6rem">
+            <button class="sv-btn sv-btn--ghost" @click.stop="loadDeliverability" :disabled="deliv.loading">
+              <span v-if="deliv.loading" class="spinner-border spinner-border-sm"></span>
+              <i v-else class="bi bi-arrow-repeat"></i> Verificar
+            </button>
+            <i class="bi" :class="deliv.open ? 'bi-chevron-up' : 'bi-chevron-down'"></i>
+          </div>
+        </div>
+
+        <div v-if="deliv.open" style="border-top:1px solid var(--border);padding:1rem 1.1rem">
+          <div v-if="deliv.loading && !deliv.data" class="sv-loading"><div class="spinner-border spinner-border-sm"></div></div>
+          <div v-else-if="deliv.error" class="alert alert-danger" style="font-size:.85rem">{{ deliv.error }}</div>
+          <template v-else-if="deliv.data">
+            <div v-if="deliv.data.dns_external" class="sv-info-box" style="margin-bottom:.9rem">
+              <i class="bi bi-info-circle"></i>
+              El DNS de <strong>{{ deliv.data.domain }}</strong> es <strong>externo</strong> a este panel:
+              copia los registros que falten (❌) en el panel DNS de tu proveedor.
+            </div>
+            <div v-else class="sv-info-box" style="margin-bottom:.9rem">
+              <i class="bi bi-info-circle"></i>
+              El DNS de <strong>{{ deliv.data.domain }}</strong> lo gestiona este panel: los registros se publican solos.
+            </div>
+
+            <button v-if="!deliv.data.dkim_key_present" class="sv-btn sv-btn--primary" style="margin-bottom:.9rem"
+                    @click="generateServerDkim" :disabled="deliv.genDkim">
+              <span v-if="deliv.genDkim" class="spinner-border spinner-border-sm"></span>
+              <i v-else class="bi bi-key"></i> Generar clave DKIM del servidor
+            </button>
+
+            <div class="sv-table-wrap">
+              <table class="sv-table">
+                <thead>
+                  <tr>
+                    <th style="width:1%"></th>
+                    <th>Registro</th>
+                    <th>Valor a publicar (TXT)</th>
+                    <th style="text-align:right">Acción</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr v-for="(r, i) in deliv.data.records" :key="i">
+                    <td style="text-align:center">
+                      <i v-if="r.ok" class="bi bi-check-circle-fill" style="color:var(--success)" :title="'Correcto'"></i>
+                      <i v-else-if="r.severity==='warn'" class="bi bi-exclamation-triangle-fill" style="color:var(--warning)" title="Recomendado"></i>
+                      <i v-else class="bi bi-x-circle-fill" style="color:var(--danger,#e5484d)" title="Falta"></i>
+                    </td>
+                    <td>
+                      <div style="font-weight:600;font-family:var(--font-mono,monospace);font-size:.82rem">{{ r.name }}</div>
+                      <div style="font-size:.76rem;color:var(--text-muted)">{{ r.help }}</div>
+                      <div v-if="r.found && !r.ok" style="font-size:.74rem;color:var(--warning);margin-top:.2rem">
+                        Publicado ahora: <code>{{ r.found }}</code>
+                      </div>
+                    </td>
+                    <td>
+                      <code v-if="r.expected" style="font-size:.74rem;word-break:break-all;display:block;max-width:46ch">{{ r.expected }}</code>
+                      <span v-else style="font-size:.78rem;color:var(--text-muted)">—</span>
+                    </td>
+                    <td style="text-align:right;white-space:nowrap">
+                      <button v-if="r.expected" class="sv-btn sv-btn--ghost sv-btn--sm" @click="copyText(r.expected)" title="Copiar valor">
+                        <i class="bi bi-clipboard"></i>
+                      </button>
+                    </td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          </template>
+          <div v-else style="font-size:.85rem;color:var(--text-muted)">
+            Pulsa «Verificar» para comprobar el estado.
+          </div>
+        </div>
+      </div>
+
       <div class="sv-card">
         <div class="sv-card-head">
           <span class="sv-card-title"><i class="bi bi-envelope-check"></i> Dominios de correo</span>
@@ -1247,7 +1338,7 @@
 </template>
 
 <script>
-import { ref, computed, onMounted } from 'vue'
+import { ref, reactive, computed, onMounted } from 'vue'
 import { useMainStore } from '../stores/useMainStore'
 import api from '../services/api'
 import PasswordField from '../components/PasswordField.vue'
@@ -1421,6 +1512,35 @@ export default {
       } catch (e) {
         store.showNotification('Error: ' + (e.message || e), 'danger')
       } finally { globalSpamJunkSaving.value = false }
+    }
+
+    // ── Salud de correo del servidor (deliverability de reenvíos) ──
+    const deliv = reactive({ open: false, loading: false, error: '', data: null, genDkim: false })
+
+    const delivStatusColor = computed(() => {
+      if (!deliv.data) return 'var(--text-muted)'
+      return deliv.data.all_ok ? 'var(--success)' : 'var(--warning)'
+    })
+
+    const loadDeliverability = async () => {
+      deliv.loading = true; deliv.error = ''
+      try {
+        deliv.data = await api.getServerDeliverability()
+        deliv.open = true
+      } catch (e) {
+        deliv.error = e.message || String(e)
+      } finally { deliv.loading = false }
+    }
+
+    const generateServerDkim = async () => {
+      deliv.genDkim = true
+      try {
+        await api.generateServerDkim()
+        store.showNotification('Clave DKIM del servidor generada. Publica el TXT en tu DNS.', 'success')
+        await loadDeliverability()
+      } catch (e) {
+        store.showNotification('Error generando DKIM: ' + (e.message || e), 'danger')
+      } finally { deliv.genDkim = false }
     }
 
     const loadMailboxes = async (domainId) => {
@@ -2229,6 +2349,7 @@ export default {
       spamJunk, spamJunkSaving, toggleSpamJunk,
       globalGreylist, globalGreylistSaving, toggleGlobalGreylist,
       globalSpamJunk, globalSpamJunkSaving, toggleGlobalSpamJunk,
+      deliv, delivStatusColor, loadDeliverability, generateServerDkim,
       generateDkim, rotateDkim, copyText,
       createMailbox, toggleMailbox, openChangePassword, changePassword,
       openWebmail,

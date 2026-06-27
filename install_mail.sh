@@ -170,6 +170,37 @@ else
     echo -e "${YELLOW}⚠ postsrsd no disponible; reenvíos sin SRS (riesgo de blacklist)${NC}"
 fi
 
+# ── IP de salida fija para el correo DEL SERVIDOR ──────────────────────────────
+# El correo del servidor (reenvíos SRS, notificaciones del sistema) debe salir
+# SIEMPRE por la IP fija del servidor (con PTR + SPF), no por una IPv6 SLAAC/de
+# dominio aleatoria. El envío por dominio NO se ve afectado: cada uno usa su
+# propio transporte svqout_* con su smtp_bind_address. Las IPs las detectamos del
+# enrutado por defecto (la principal de la máquina).
+MAIL_OUT_V4="$(ip -4 route get 1.1.1.1 2>/dev/null | grep -oE 'src [0-9.]+' | awk '{print $2}')"
+MAIL_OUT_V6="$(ip -6 route get 2001:4860:4860::8888 2>/dev/null | grep -oE 'src [0-9a-f:]+' | awk '{print $2}')"
+[ -n "$MAIL_OUT_V4" ] && postconf -e "smtp_bind_address = $MAIL_OUT_V4"
+[ -n "$MAIL_OUT_V6" ] && postconf -e "smtp_bind_address6 = $MAIL_OUT_V6"
+echo -e "${GREEN}✓ Salida de correo del servidor fijada (v4:${MAIL_OUT_V4:-none} v6:${MAIL_OUT_V6:-none})${NC}"
+
+# ── DKIM del dominio del servidor ──────────────────────────────────────────────
+# El dominio del servidor (mydomain) necesita su propia clave DKIM para autenticar
+# los reenvíos SRS. La generamos vía el código del panel (idempotente). El TXT a
+# publicar lo muestra la vista "Salud de correo del servidor" del panel.
+SRV_DOM="$(postconf -h mydomain 2>/dev/null)"
+if [ -n "$SRV_DOM" ] && [ -x /opt/svqpanel/venv/bin/python ]; then
+    /opt/svqpanel/venv/bin/python - "$SRV_DOM" <<'PYEOF' 2>/dev/null || true
+import sys
+from scripts.dkim_manager import DkimManager
+dk = DkimManager()
+if dk.dkim_available():
+    dom = sys.argv[1]
+    if not dk.key_exists(dom, "mail"):
+        dk.generate_key(dom, "mail")
+        print(f"DKIM del servidor generado para {dom}")
+PYEOF
+    echo -e "${GREEN}✓ DKIM del servidor (${SRV_DOM}) listo — publica el TXT desde el panel${NC}"
+fi
+
 # Puerto 587 (submission / STARTTLS) — solo añadir si no está ya
 if ! grep -q "^submission" /etc/postfix/master.cf; then
     cat >> /etc/postfix/master.cf << 'MASTEREOF'

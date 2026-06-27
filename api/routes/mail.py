@@ -2876,3 +2876,74 @@ async def unsuspend_mail_domain_endpoint(
     from scripts.suspend_manager import suspend_mail_domain
     res = suspend_mail_domain(md, panel_username, suspend=False, db=db)
     return {"status": "ok", **res}
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Salud de correo del SERVIDOR (deliverability de svqhost.red & reenvíos SRS)
+# ─────────────────────────────────────────────────────────────────────────────
+# El servidor reescribe (SRS) los reenvíos a "...@<dominio del servidor>". Para
+# que Gmail/Outlook los acepten, ESE dominio necesita SPF/DKIM/DMARC/PTR. Como su
+# DNS suele ser externo, el panel no puede publicarlos solo: aquí los mostramos
+# (con el valor exacto a copiar) y verificamos en vivo cuáles ya están.
+
+@router.get("/mail/server-deliverability")
+async def get_server_deliverability(current_user=Depends(require_admin),
+                                    db: Session = Depends(get_db)):
+    """[Admin] Diagnóstico de autenticación del correo del propio servidor.
+
+    Devuelve, para el dominio del servidor, el estado de SPF/DKIM/DMARC/PTR con
+    el valor exacto a publicar en el DNS y si ya está OK. Si el DNS es externo,
+    el admin debe copiar los registros que falten en su proveedor.
+    """
+    _require_mail_enabled()
+    from api.models.models_settings import Settings
+    s = db.query(Settings).filter(Settings.id == 1).first()
+    ipv4 = (s.server_ipv4 if s else None)
+    ipv6 = (getattr(s, "panel_ipv6", None) if s else None)
+    try:
+        from scripts.mail_deliverability import diagnose
+        return diagnose(server_ipv4=ipv4, server_ipv6=ipv6)
+    except Exception as e:
+        logger.error(f"Error en diagnóstico de deliverability: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/mail/server-deliverability/generate-dkim")
+async def generate_server_dkim(current_user=Depends(require_admin),
+                               db: Session = Depends(get_db)):
+    """[Admin] Genera (si no existe) la clave DKIM del dominio del servidor.
+
+    Si el DNS del dominio del servidor lo gestiona el panel, intenta publicar el
+    TXT automáticamente; si es externo, devuelve el registro para copiar a mano.
+    """
+    _require_mail_enabled()
+    from scripts.mail_deliverability import get_server_mail_domain, SERVER_DKIM_SELECTOR
+    domain = get_server_mail_domain()
+    try:
+        from scripts.dkim_manager import DkimManager
+        dk = DkimManager()
+        if not dk.dkim_available():
+            raise HTTPException(status_code=503, detail="Rspamd/DKIM no disponible")
+        info = dk.get_key_info(domain, SERVER_DKIM_SELECTOR) \
+               or dk.generate_key(domain, SERVER_DKIM_SELECTOR)
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"No se pudo generar DKIM: {e}")
+
+    # Si la zona la sirve el panel, publicar el TXT como ya se hace por dominio.
+    published = False
+    try:
+        if _dns_add_dkim_record(domain, SERVER_DKIM_SELECTOR,
+                                info["dns_record_value"], db):
+            published = True
+    except Exception as e:
+        logger.info(f"DKIM del servidor no auto-publicado (DNS externo?): {e}")
+
+    return {
+        "status": "ok",
+        "domain": domain,
+        "dns_record_name": info["dns_record_name"],
+        "dns_record_value": info["dns_record_value"],
+        "auto_published": published,
+    }

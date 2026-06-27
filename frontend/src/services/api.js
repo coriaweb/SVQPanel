@@ -502,6 +502,12 @@ class APIClient {
   setGlobalSpamToJunk(enabled) {
     return this.put(`/api/mail/spam-to-junk?enabled=${enabled ? 'true' : 'false'}`, {})
   }
+  getServerDeliverability() {
+    return this.get('/api/mail/server-deliverability')
+  }
+  generateServerDkim() {
+    return this.post('/api/mail/server-deliverability/generate-dkim', {})
+  }
   mailMonitor({ date, domain, search } = {}) {
     const p = new URLSearchParams()
     if (date) p.set('date', date)
