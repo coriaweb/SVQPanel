@@ -280,35 +280,61 @@ if should_run 3; then
     done
 
     # 3f. Rspamd — stable puede no tener trixie todavía: dejar en bookworm
-    #     (mismo criterio que install.sh). Solo avisamos.
+    #     (mismo criterio que install.sh).
     if [[ -f /etc/apt/sources.list.d/rspamd.list ]]; then
         if grep -q 'trixie' /etc/apt/sources.list.d/rspamd.list; then
-            warn "Rspamd apunta a trixie; si 'apt update' falla, vuelve a bookworm en ese .list"
+            warn "Rspamd apunta a trixie; se revertirá a bookworm si no tiene Release."
         else
             ok "Rspamd se mantiene en bookworm (compatible)."
         fi
     fi
 
-    # apt update guardando la salida para diagnosticar qué repo falla si algo va mal.
-    # El exit code de apt-get update es 0 aunque algún repo dé error de descarga,
-    # así que comprobamos el log además del código de salida.
+    # Validación con auto-reversión genérica.
+    # Algunos repos de TERCEROS (Rspamd, MariaDB...) aún no publican paquetes para
+    # trixie. Sus paquetes de bookworm funcionan en trixie igualmente. Por eso, si
+    # 'apt update' marca un repo de sources.list.d/*.list (NO Debian base) sin
+    # Release file para trixie, lo revertimos a bookworm y reintentamos. Iteramos
+    # hasta que apt update quede limpio o no haya más repos de terceros que revertir.
     APT_LOG=/tmp/svq-aptupdate.log
-    apt-get update >"$APT_LOG" 2>&1
-    if ! grep -qiE '^E:|err:|failed to fetch|no se pudo|could not' "$APT_LOG"; then
-        ok "Repos de trixie validados (apt update OK)."
-    else
-        # ¿Es Rspamd el que rompe? Si sí, lo bajamos a bookworm y reintentamos.
-        if grep -qi 'rspamd' "$APT_LOG"; then
-            warn "Rspamd trixie no disponible → revirtiendo Rspamd a bookworm."
-            sed -i 's/\btrixie\b/bookworm/g' /etc/apt/sources.list.d/rspamd.list 2>/dev/null || true
-            apt-get update >"$APT_LOG" 2>&1
-            grep -qiE '^E:|err:|failed to fetch' "$APT_LOG" \
-                && { err "apt update sigue fallando. Revisa $APT_LOG"; die "Repo roto."; }
-            ok "apt update OK tras revertir Rspamd."
-        else
-            err "apt update falló. Revisa $APT_LOG y los .list."
-            die "No continúo: hay un repo roto."
+    APT_ERR_RE='^E:|^Err:|does not have a Release file|failed to fetch|no se pudo|could not'
+
+    for _try in 1 2 3 4 5; do
+        apt-get update >"$APT_LOG" 2>&1 || true
+        if ! grep -qiE "$APT_ERR_RE" "$APT_LOG"; then
+            ok "Repos de trixie validados (apt update OK)."
+            break
         fi
+
+        # Extraer las URLs de los repos que fallaron y mapearlas a su .list para
+        # revertir SOLO ese fichero (de sources.list.d, nunca Debian base deb822).
+        REVERTED=0
+        while IFS= read -r badurl; do
+            [[ -z "$badurl" ]] && continue
+            base="${badurl%%/dists/*}"          # recortar a la base del repo
+            base="${base% trixie*}"; base="${base%% *}"
+            for lf in /etc/apt/sources.list.d/*.list; do
+                [[ -e "$lf" ]] || continue
+                if grep -qF "$base" "$lf" && grep -q '\btrixie\b' "$lf"; then
+                    warn "$(basename "$lf"): trixie no disponible → revierto a bookworm."
+                    sed -i 's/\btrixie\b/bookworm/g' "$lf"
+                    REVERTED=1
+                fi
+            done
+        done < <(grep -oE 'https?://[^ ]+' "$APT_LOG" | sort -u)
+
+        if [[ "$REVERTED" -eq 0 ]]; then
+            err "apt update falla y no hay repo de terceros que revertir. Revisa $APT_LOG"
+            grep -iE "$APT_ERR_RE" "$APT_LOG" | head -10
+            die "No continúo: hay un repo roto que no sé arreglar."
+        fi
+    done
+
+    # Comprobación final defensiva
+    apt-get update >"$APT_LOG" 2>&1 || true
+    if grep -qiE "$APT_ERR_RE" "$APT_LOG"; then
+        err "apt update sigue con errores tras las reversiones. Revisa $APT_LOG"
+        grep -iE "$APT_ERR_RE" "$APT_LOG" | head -10
+        die "No continúo."
     fi
     phase_done "phase-3"
     ok "Fase 3 completada."
