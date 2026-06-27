@@ -115,26 +115,41 @@
         <!-- Pesos de símbolos -->
         <h6 class="as-section">Peso de reglas (símbolos de Rspamd)</h6>
         <p class="as-hint-block">
-          Sube el castigo de las señales que veas en tu spam (p. ej. <code>PHISHING</code>,
-          <code>HFILTER_FROMHOST_NORES_A_OR_MX</code>). Busca el símbolo y ajusta su peso.
-          Vacío = peso por defecto.
+          Sube el castigo de las señales que veas en tu spam. Pasa el ratón por la
+          descripción para ver su significado. Los <strong>modificados</strong> salen
+          resaltados; el botón ↺ restaura el valor por defecto. Vacío = por defecto.
         </p>
-        <input type="search" class="as-input as-input-wide" placeholder="Buscar símbolo… (ej. PHISHING, HELO, DKIM)"
-               v-model="symSearch" />
+        <div class="as-symbar">
+          <input type="search" class="as-input as-input-wide" placeholder="Buscar símbolo o descripción… (ej. PHISHING, HELO, DKIM)"
+                 v-model="symSearch" />
+          <label class="as-symfilter">
+            <input type="checkbox" v-model="onlyEdited" /> Solo modificados ({{ Object.keys(tuning.weight_overrides || {}).length }})
+          </label>
+        </div>
         <div class="as-symtable">
-          <div v-for="s in filteredSymbols" :key="s.name" class="as-symrow">
+          <div v-for="s in pagedSymbols" :key="s.name" class="as-symrow" :class="{ 'as-symrow--edited': isEdited(s.name) }">
             <div class="as-symname">
               <code>{{ s.name }}</code>
-              <span class="as-symfreq" v-if="s.frequency">freq {{ (s.frequency*100).toFixed(1) }}%</span>
+              <span v-if="isEdited(s.name)" class="as-symtag">modificado</span>
+              <span class="as-symdesc" :title="s.description || s.name">
+                {{ s.description_es || s.description || '—' }}
+              </span>
             </div>
             <div class="as-symw">
-              <span class="as-symdef">def {{ s.weight }}</span>
+              <span class="as-symdef" :title="'Peso por defecto: ' + s.weight">def {{ s.weight }}</span>
               <input type="number" step="0.5" class="as-input as-input-xs"
                      :placeholder="String(s.weight)" v-model.number="weightEdits[s.name]" />
               <button class="as-btn as-btn-xs" :disabled="savingW" @click="saveWeight(s.name)">Aplicar</button>
+              <button v-if="isEdited(s.name)" class="as-btn as-btn-xs as-btn-danger" :disabled="savingW"
+                      :title="'Restaurar peso por defecto (' + s.weight + ')'" @click="resetWeight(s.name)">↺</button>
             </div>
           </div>
-          <div v-if="!filteredSymbols.length" class="as-empty-sm">Escribe para buscar entre {{ tuning.symbols.length }} símbolos.</div>
+          <div v-if="!filteredSymbols.length" class="as-empty-sm">Sin resultados.</div>
+        </div>
+        <div class="as-pager" v-if="filteredSymbols.length > pageSize">
+          <button class="as-btn as-btn-xs" :disabled="symPage===0" @click="symPage--">‹ Anterior</button>
+          <span class="as-pager-info">{{ symPage*pageSize+1 }}–{{ Math.min((symPage+1)*pageSize, filteredSymbols.length) }} de {{ filteredSymbols.length }}</span>
+          <button class="as-btn as-btn-xs" :disabled="(symPage+1)*pageSize>=filteredSymbols.length" @click="symPage++">Siguiente ›</button>
         </div>
 
         <!-- Reglas de contenido -->
@@ -178,7 +193,7 @@
 </template>
 
 <script setup>
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, watch, onMounted } from 'vue'
 import { useMainStore } from '../stores/useMainStore'
 import api from '../services/api'
 
@@ -192,6 +207,9 @@ const thresholds = ref({ greylist: 4, 'add header': 6, reject: 15 })
 const weightEdits = ref({})
 const rules = ref([])
 const symSearch = ref('')
+const onlyEdited = ref(false)
+const symPage = ref(0)
+const pageSize = 25
 const savingT = ref(false)
 const savingW = ref(false)
 const savingR = ref(false)
@@ -201,11 +219,45 @@ function actionLabel(k) { return ACTION_LABELS[k] || k }
 
 function pct(v, max) { return max > 0 ? Math.min(100, Math.round(100 * v / max)) : 0 }
 
+function isEdited(name) {
+  return Object.prototype.hasOwnProperty.call(tuning.value.weight_overrides || {}, name)
+}
+
 const filteredSymbols = computed(() => {
-  const q = symSearch.value.trim().toUpperCase()
-  if (!q) return []
-  return tuning.value.symbols.filter(s => s.name.includes(q)).slice(0, 40)
+  const q = symSearch.value.trim().toLowerCase()
+  let list = tuning.value.symbols || []
+  if (onlyEdited.value) list = list.filter(s => isEdited(s.name))
+  if (q) {
+    list = list.filter(s =>
+      s.name.toLowerCase().includes(q) ||
+      (s.description_es || '').toLowerCase().includes(q) ||
+      (s.description || '').toLowerCase().includes(q))
+  }
+  return list
 })
+
+const pagedSymbols = computed(() =>
+  filteredSymbols.value.slice(symPage.value * pageSize, (symPage.value + 1) * pageSize)
+)
+
+// Volver a la primera página al cambiar el filtro/búsqueda.
+watch([symSearch, onlyEdited], () => { symPage.value = 0 })
+
+async function resetWeight(name) {
+  delete weightEdits.value[name]
+  savingW.value = true
+  try {
+    const weights = {}
+    for (const [k, v] of Object.entries(weightEdits.value)) {
+      if (v !== '' && v !== null && v !== undefined && !Number.isNaN(Number(v))) weights[k] = Number(v)
+    }
+    await api.put('/api/antispam/tuning', { weights })
+    store.showNotification(`Peso de ${name} restaurado al valor por defecto`, 'success')
+    await load()
+  } catch (e) {
+    store.showNotification('Error: ' + (e.message || e), 'danger')
+  } finally { savingW.value = false }
+}
 
 async function load() {
   loading.value = true
@@ -246,6 +298,7 @@ async function saveWeight(name) {
     }
     await api.put('/api/antispam/tuning', { weights })
     store.showNotification(`Peso de ${name} aplicado`, 'success')
+    await load()  // refrescar para marcar el símbolo como modificado
   } catch (e) {
     store.showNotification('Error: ' + (e.message || e), 'danger')
   } finally { savingW.value = false }
@@ -326,14 +379,22 @@ onMounted(load)
 .as-input-sm { width: 140px; margin-top: 0; flex: none; }
 .as-row-end { display: flex; justify-content: flex-end; gap: .6rem; margin-top: .8rem; }
 
+.as-symbar { display: flex; align-items: center; gap: 1rem; margin-bottom: .8rem; flex-wrap: wrap; }
+.as-symbar .as-input-wide { margin-bottom: 0; }
+.as-symfilter { font-size: .82rem; color: var(--text-muted); display: flex; align-items: center; gap: .35rem; white-space: nowrap; }
 .as-symtable { border: 1px solid var(--border); border-radius: var(--r-md); overflow: hidden; }
 .as-symrow { display: flex; justify-content: space-between; align-items: center; gap: 1rem; padding: .5rem .8rem; border-bottom: 1px solid var(--border); }
 .as-symrow:last-child { border-bottom: 0; }
+.as-symrow--edited { background: color-mix(in srgb, var(--ac) 8%, transparent); border-left: 3px solid var(--ac); }
+.as-symname { min-width: 0; flex: 1; }
 .as-symname code { font-size: .8rem; }
-.as-symfreq { font-size: .72rem; color: var(--text-muted); margin-left: .5rem; }
-.as-symw { display: flex; align-items: center; gap: .5rem; }
-.as-symdef { font-size: .74rem; color: var(--text-muted); }
+.as-symtag { font-size: .68rem; font-weight: 600; color: var(--ac); background: color-mix(in srgb, var(--ac) 14%, transparent); border-radius: 999px; padding: .05rem .45rem; margin-left: .45rem; }
+.as-symdesc { display: block; font-size: .76rem; color: var(--text-muted); margin-top: .15rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.as-symw { display: flex; align-items: center; gap: .5rem; flex: none; }
+.as-symdef { font-size: .74rem; color: var(--text-muted); cursor: help; }
 .as-empty-sm { padding: 1rem; text-align: center; color: var(--text-muted); font-size: .85rem; }
+.as-pager { display: flex; align-items: center; justify-content: center; gap: 1rem; margin-top: .8rem; font-size: .82rem; }
+.as-pager-info { color: var(--text-muted); }
 
 .as-rules { display: flex; flex-direction: column; gap: .5rem; }
 .as-rule { display: flex; gap: .5rem; align-items: center; }

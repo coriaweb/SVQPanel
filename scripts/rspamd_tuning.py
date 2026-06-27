@@ -68,9 +68,45 @@ ACTION_BOUNDS = {
 }
 
 
+def _humanize_symbol_es(name: str) -> str:
+    """Traducción al español del símbolo si la tenemos (reutiliza el diccionario
+    _SYMBOL_ES del monitor de correo). '' si no está mapeado."""
+    try:
+        from api.routes.mail import _SYMBOL_ES
+        return _SYMBOL_ES.get(name, "")
+    except Exception:
+        return ""
+
+
+def _symbol_descriptions() -> dict:
+    """Mapa nombre → {description, group} leído de `rspamadm configdump -j`.
+    Rspamd documenta ahí cada símbolo (grupos → symbols → {weight, description})."""
+    desc: dict[str, dict] = {}
+    try:
+        res = subprocess.run(["rspamadm", "configdump", "-j"],
+                             capture_output=True, text=True, timeout=30)
+        data = json.loads(res.stdout)
+        for grp in data.get("group", []):
+            for gname, gdata in grp.items():
+                if not isinstance(gdata, dict):
+                    continue
+                for sname, sdata in (gdata.get("symbols", {}) or {}).items():
+                    if isinstance(sdata, dict):
+                        desc[sname] = {
+                            "description": sdata.get("description", "") or "",
+                            "group": gname,
+                        }
+    except Exception as e:
+        logger.warning(f"rspamd_tuning._symbol_descriptions: {e}")
+    return desc
+
+
 def list_symbols() -> list[dict]:
-    """Lista los símbolos de Rspamd con su peso ACTUAL y frecuencia, vía
-    `rspamc counters`. Devuelve [{name, weight, frequency, hits}]. Best-effort."""
+    """Lista los símbolos de Rspamd con su peso ACTUAL, frecuencia y DESCRIPCIÓN.
+    Funde `rspamc counters` (cobertura + peso efectivo + frecuencia) con
+    `rspamadm configdump` (descripción oficial + grupo). [{name, weight,
+    frequency, hits, description, group, description_es}]."""
+    descs = _symbol_descriptions()
     out: list[dict] = []
     try:
         res = subprocess.run(["rspamc", "counters"], capture_output=True,
@@ -88,11 +124,15 @@ def list_symbols() -> list[dict]:
             except ValueError:
                 continue
             freq_m = re.search(r"\(([\d.]+)\)", cols[4])
+            meta = descs.get(name, {})
             out.append({
                 "name": name,
                 "weight": weight,
                 "frequency": float(freq_m.group(1)) if freq_m else 0.0,
                 "hits": _safe_int(cols[5]),
+                "description": meta.get("description", ""),
+                "group": meta.get("group", ""),
+                "description_es": _humanize_symbol_es(name),
             })
     except Exception as e:
         logger.warning(f"rspamd_tuning.list_symbols: {e}")
