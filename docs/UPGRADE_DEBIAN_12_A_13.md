@@ -97,9 +97,15 @@ cosas que el script ahora maneja solo:
    regenera los pools. En el upgrade real los dominios usaban 7.4/8.2/8.4/8.5,
    todas presentes — sin huérfanos.
 
-> ⚠️ **PENDIENTE**: readaptar a Dovecot 2.4 los generadores de config del panel
-> (`mail_manager`, `mail_tls_manager`, `dovecot_spam_sieve`, quota) para que
-> nuevos dominios nazcan con sintaxis 2.4, y reactivar quota + spam-learning.
+> ✅ **RESUELTO** (v0.143.x): los generadores de config del panel detectan la
+> versión de Dovecot (`scripts/dovecot_version.py`) y emiten la sintaxis 2.3 o
+> 2.4 según corresponda — `install_mail.sh` (passdb/userdb, auth_allow_cleartext,
+> mail_driver/mail_path, quota driver=count), `spam_learning.py` (IMAPSieve con
+> `mailbox{}`/`imapsieve_from{}`/`sieve_script{}`), `dovecot_spam_sieve.py`
+> (spam→Junk con `sieve_script type=before`) y `mail_tls_manager.py` (SNI con
+> `ssl_server_cert_file/key_file`). El `updates/0062-dovecot-24-config.sh`
+> regenera la config a 2.4 en servidores ya actualizados (no-op en Dovecot 2.3).
+> Quota de correo y aprendizaje de spam quedan **reactivados**.
 
 ## Si algo va mal
 
