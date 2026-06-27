@@ -182,18 +182,14 @@ if should_run 1; then
 
     # Configs críticas del sistema y del panel
     log "  → Empaquetando configuraciones..."
-    tar czf "$DEST/configs.tar.gz" \
-        /etc/svqpanel \
-        /etc/nginx \
-        /etc/apache2 2>/dev/null \
-        /etc/php \
-        /etc/postfix \
-        /etc/dovecot \
-        /etc/bind \
-        /etc/nftables.conf \
-        /etc/fail2ban \
-        /etc/apt/sources.list /etc/apt/sources.list.d \
-        2>/dev/null || true
+    # Empaquetar solo las rutas que existan (evita avisos de tar por rutas ausentes).
+    CFG_PATHS=()
+    for p in /etc/svqpanel /etc/nginx /etc/apache2 /etc/php /etc/postfix \
+             /etc/dovecot /etc/bind /etc/nftables.conf /etc/fail2ban \
+             /etc/apt/sources.list /etc/apt/sources.list.d /etc/apt/mirrors; do
+        [[ -e "$p" ]] && CFG_PATHS+=("$p")
+    done
+    tar czf "$DEST/configs.tar.gz" "${CFG_PATHS[@]}" 2>/dev/null || true
     ok "Configs → $DEST/configs.tar.gz"
 
     # Lista de paquetes instalados (por si hay que reconstruir algo)
@@ -228,18 +224,34 @@ fi
 if should_run 3; then
     log "${BLUE}── FASE 3: Reapuntando repos a trixie ──${NC}"
 
-    # 3a. Debian base — soporta tanto sources.list clásico como deb822 (.sources)
+    # 3a. Debian base — soporta sources.list clásico Y formato deb822 (.sources).
+    #     IMPORTANTE: 'bookworm-backports' NO debe convertirse en 'trixie-backports'
+    #     (no existe al liberarse trixie y rompería apt update). Se ELIMINA antes.
     log "  → Debian base (bookworm → trixie)..."
+
+    # Backup de los ficheros de repos por si hay que revisarlos
+    BK="$BACKUP_DIR/apt-sources-$(date +%Y%m%d_%H%M%S)"
+    mkdir -p "$BK"
+    cp -a /etc/apt/sources.list "$BK/" 2>/dev/null || true
+    cp -a /etc/apt/sources.list.d "$BK/" 2>/dev/null || true
+
+    # sources.list clásico (formato de una línea)
     if [[ -f /etc/apt/sources.list ]]; then
+        # Quitar líneas de backports (deb/deb-src ... bookworm-backports ...)
+        sed -i -E '/\bbookworm-backports\b/d' /etc/apt/sources.list
         sed -i -E 's/\bbookworm\b/trixie/g' /etc/apt/sources.list
     fi
-    # bookworm-security → trixie-security (en trixie el componente cambia de nombre
-    # pero 'trixie-security' sigue siendo válido como apunte)
+
+    # deb822 (.sources): en 'Suites:' puede haber varios codenames en una línea
+    # (p.ej. "bookworm bookworm-updates bookworm-backports"). Quitamos el token
+    # *-backports de esa línea y luego reapuntamos bookworm → trixie.
     for f in /etc/apt/sources.list.d/*.sources; do
         [[ -e "$f" ]] || continue
+        # Eliminar SOLO el token bookworm-backports de las líneas Suites:
+        sed -i -E '/^Suites:/ s/\bbookworm-backports\b//g; /^Suites:/ s/  +/ /g; /^Suites:/ s/ +$//' "$f"
         sed -i -E 's/\bbookworm\b/trixie/g' "$f"
     done
-    ok "Debian base reapuntado."
+    ok "Debian base reapuntado (backports retirado)."
 
     # 3b. PGDG (PostgreSQL)
     if [[ -f /etc/apt/sources.list.d/pgdg.list ]]; then
@@ -277,8 +289,27 @@ if should_run 3; then
         fi
     fi
 
-    apt-get update -qq || die "apt update con repos trixie falló. Revisa los .list."
-    ok "Repos de trixie validados (apt update OK)."
+    # apt update guardando la salida para diagnosticar qué repo falla si algo va mal.
+    # El exit code de apt-get update es 0 aunque algún repo dé error de descarga,
+    # así que comprobamos el log además del código de salida.
+    APT_LOG=/tmp/svq-aptupdate.log
+    apt-get update >"$APT_LOG" 2>&1
+    if ! grep -qiE '^E:|err:|failed to fetch|no se pudo|could not' "$APT_LOG"; then
+        ok "Repos de trixie validados (apt update OK)."
+    else
+        # ¿Es Rspamd el que rompe? Si sí, lo bajamos a bookworm y reintentamos.
+        if grep -qi 'rspamd' "$APT_LOG"; then
+            warn "Rspamd trixie no disponible → revirtiendo Rspamd a bookworm."
+            sed -i 's/\btrixie\b/bookworm/g' /etc/apt/sources.list.d/rspamd.list 2>/dev/null || true
+            apt-get update >"$APT_LOG" 2>&1
+            grep -qiE '^E:|err:|failed to fetch' "$APT_LOG" \
+                && { err "apt update sigue fallando. Revisa $APT_LOG"; die "Repo roto."; }
+            ok "apt update OK tras revertir Rspamd."
+        else
+            err "apt update falló. Revisa $APT_LOG y los .list."
+            die "No continúo: hay un repo roto."
+        fi
+    fi
     phase_done "phase-3"
     ok "Fase 3 completada."
 fi
