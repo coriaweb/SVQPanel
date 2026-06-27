@@ -177,6 +177,16 @@ echo -e "${GREEN}✓ Postfix configurado (SMTP 25 + submission 587 + smtps 465)$
 echo -e "${YELLOW}→ Instalando Dovecot...${NC}"
 apt-get install -y -qq dovecot-core dovecot-imapd dovecot-pop3d dovecot-lmtpd
 
+# Dovecot 2.4 (Debian 13/trixie) cambió la sintaxis de config respecto a 2.3
+# (Debian 12/bookworm). Detectamos la major para emitir la sintaxis correcta.
+DOVECOT_MAJOR=$(dovecot --version 2>/dev/null | grep -oE '^[0-9]+\.[0-9]+' | head -1)
+if printf '%s\n2.4\n' "$DOVECOT_MAJOR" | sort -V -C; then
+    DOVECOT_24=false   # versión < 2.4
+else
+    DOVECOT_24=true    # versión >= 2.4
+fi
+echo -e "  Dovecot ${DOVECOT_MAJOR:-?} (sintaxis $([ "$DOVECOT_24" = true ] && echo 2.4 || echo 2.3))"
+
 # Usuario vmail (uid/gid 5000) — propietario de todos los Maildir
 groupadd -g 5000 vmail 2>/dev/null || true
 useradd -u 5000 -g vmail -d /var/mail -s /usr/sbin/nologin vmail 2>/dev/null || true
@@ -189,7 +199,19 @@ chown root:dovecot /etc/dovecot/users
 # Auth: passwd-file con ruta de buzón explícita por usuario
 # OJO: en userdb el username_format va DENTRO de args (no como setting suelto,
 # que Dovecot rechaza con "Unknown setting: userdb { username_format").
-cat > /etc/dovecot/conf.d/auth-passwdfile.conf.ext << 'DOVEAUTHEOF'
+if [ "$DOVECOT_24" = true ]; then
+  # Dovecot 2.4: passdb/userdb requieren nombre de sección y claves propias.
+  cat > /etc/dovecot/conf.d/auth-passwdfile.conf.ext << 'DOVEAUTHEOF'
+passdb passwd-file {
+  passwd_file_path = /etc/dovecot/users
+  default_password_scheme = SHA512-CRYPT
+}
+userdb passwd-file {
+  passwd_file_path = /etc/dovecot/users
+}
+DOVEAUTHEOF
+else
+  cat > /etc/dovecot/conf.d/auth-passwdfile.conf.ext << 'DOVEAUTHEOF'
 passdb {
   driver = passwd-file
   args = scheme=SHA512-CRYPT username_format=%u /etc/dovecot/users
@@ -199,6 +221,7 @@ userdb {
   args = username_format=%u /etc/dovecot/users
 }
 DOVEAUTHEOF
+fi
 
 # Desactivar auth del sistema, activar passwd-file
 sed -i 's/^!include auth-system.conf.ext/#!include auth-system.conf.ext/' \
@@ -215,8 +238,16 @@ elif ! grep -q '^!include auth-passwdfile.conf.ext' /etc/dovecot/conf.d/10-auth.
 fi
 
 # Permitir auth plaintext (los clientes deben usar STARTTLS/TLS en producción)
-sed -i 's/^#\?disable_plaintext_auth = yes/disable_plaintext_auth = no/' \
-    /etc/dovecot/conf.d/10-auth.conf
+if [ "$DOVECOT_24" = true ]; then
+    # Dovecot 2.4: disable_plaintext_auth → auth_allow_cleartext (lógica invertida)
+    sed -i 's/^#\?disable_plaintext_auth = .*/auth_allow_cleartext = yes/' \
+        /etc/dovecot/conf.d/10-auth.conf
+    grep -q '^auth_allow_cleartext' /etc/dovecot/conf.d/10-auth.conf || \
+        echo "auth_allow_cleartext = yes" >> /etc/dovecot/conf.d/10-auth.conf
+else
+    sed -i 's/^#\?disable_plaintext_auth = yes/disable_plaintext_auth = no/' \
+        /etc/dovecot/conf.d/10-auth.conf
+fi
 
 # Mecanismos compatibles con todos los clientes
 grep -q "^auth_mechanisms" /etc/dovecot/conf.d/10-auth.conf || \
@@ -224,8 +255,18 @@ grep -q "^auth_mechanisms" /etc/dovecot/conf.d/10-auth.conf || \
         /etc/dovecot/conf.d/10-auth.conf
 
 # Maildir: el home del passwd-file es la raíz del buzón
-grep -q "^mail_location = maildir" /etc/dovecot/conf.d/10-mail.conf || \
-    echo "mail_location = maildir:~/" >> /etc/dovecot/conf.d/10-mail.conf
+if [ "$DOVECOT_24" = true ]; then
+    # Dovecot 2.4: mail_location → mail_driver + mail_path
+    if ! grep -q "^mail_driver = maildir" /etc/dovecot/conf.d/10-mail.conf; then
+        # Comentar cualquier mail_location heredado del default (mbox) y fijar maildir
+        sed -i 's/^mail_location = .*/# (migrado a mail_driver\/mail_path)/' \
+            /etc/dovecot/conf.d/10-mail.conf
+        printf 'mail_driver = maildir\nmail_path = ~/\n' >> /etc/dovecot/conf.d/10-mail.conf
+    fi
+else
+    grep -q "^mail_location = maildir" /etc/dovecot/conf.d/10-mail.conf || \
+        echo "mail_location = maildir:~/" >> /etc/dovecot/conf.d/10-mail.conf
+fi
 
 # Socket SASL para que Postfix autentique via Dovecot
 cat > /etc/dovecot/conf.d/99-svqpanel-postfix.conf << 'DOVESASLEOF'
@@ -243,13 +284,32 @@ DOVESASLEOF
 # consultarlas (doveadm quota get). El backend escribe quota_rule en
 # /etc/dovecot/users; aquí activamos el plugin que lo hace efectivo y expone el
 # uso real para mostrarlo en el panel.
-cat > /etc/dovecot/conf.d/90-svqpanel-quota.conf << 'DOVEQUOTAEOF'
+if [ "$DOVECOT_24" = true ]; then
+  # Dovecot 2.4: mail_plugins en bloque + bloque quota con driver count.
+  cat > /etc/dovecot/conf.d/90-svqpanel-quota.conf << 'DOVEQUOTAEOF'
+# SVQPanel: cuotas por buzón (Dovecot 2.4)
+mail_plugins {
+  quota = yes
+}
+protocol imap {
+  mail_plugins {
+    imap_quota = yes
+  }
+}
+quota "User quota" {
+  driver = count
+}
+quota_exceeded_message = Buzon lleno: el usuario %{user} ha superado su cuota de almacenamiento.
+DOVEQUOTAEOF
+else
+  cat > /etc/dovecot/conf.d/90-svqpanel-quota.conf << 'DOVEQUOTAEOF'
 # SVQPanel: cuotas por buzón (backend maildir, por usuario vía userdb quota_rule)
 mail_plugins = $mail_plugins quota
 plugin {
   quota = maildir:User quota
 }
 DOVEQUOTAEOF
+fi
 
 # Carpetas especiales (Enviados/Borradores/Spam/Papelera) con auto-creación y
 # auto-suscripción. Por defecto Dovecot las trae con `auto = no`: existen como
@@ -281,12 +341,16 @@ namespace inbox {
 DOVEMBOXEOF
 
 # Asegurar que el servicio imap también carga el plugin quota.
-if ! grep -q 'mail_plugins.*quota' /etc/dovecot/conf.d/20-imap.conf 2>/dev/null; then
-  cat >> /etc/dovecot/conf.d/20-imap.conf << 'DOVEIMAPQUOTAEOF'
+# (En Dovecot 2.4 esto ya se declara en 90-svqpanel-quota.conf con el bloque
+#  protocol imap { mail_plugins { imap_quota } }, así que solo aplica a 2.3.)
+if [ "$DOVECOT_24" != true ]; then
+  if ! grep -q 'mail_plugins.*quota' /etc/dovecot/conf.d/20-imap.conf 2>/dev/null; then
+    cat >> /etc/dovecot/conf.d/20-imap.conf << 'DOVEIMAPQUOTAEOF'
 protocol imap {
   mail_plugins = $mail_plugins quota imap_quota
 }
 DOVEIMAPQUOTAEOF
+  fi
 fi
 
 systemctl enable dovecot

@@ -16,6 +16,11 @@ import logging
 
 from .base import SystemManager
 
+try:
+    from scripts.dovecot_version import is_dovecot_24_plus
+except ImportError:  # ejecución directa fuera del paquete
+    from dovecot_version import is_dovecot_24_plus
+
 logger = logging.getLogger(__name__)
 
 DOVECOT_CONF_D = "/etc/dovecot/conf.d"
@@ -43,7 +48,8 @@ use = ["x-spam-status", "x-spam-score", "x-spam-level", "x-spamd-result",
 authenticated_headers = ["authentication-results"];
 """
 
-_IMAP_SIEVE_CONF = """# SVQPanel — Aprendizaje de spam (IMAPSieve → rspamc). NO editar manualmente.
+# ── Dovecot 2.3 (Debian 12 / bookworm): bloque plugin {} + imapsieve_mailboxN_* ──
+_IMAP_SIEVE_CONF_23 = """# SVQPanel — Aprendizaje de spam (IMAPSieve → rspamc). NO editar manualmente.
 # Cubre los DOS hábitos de los clientes:
 #   a) Mover el correo a la carpeta Junk (Roundcube "marcar spam", arrastrar en
 #      Thunderbird) → COPY/APPEND a Junk → learn_spam. Sacar de Junk → learn_ham.
@@ -77,6 +83,61 @@ plugin {
   sieve_global_extensions = +vnd.dovecot.pipe +vnd.dovecot.environment +vnd.dovecot.imapsieve
 }
 """.replace("%(sieve_dir)s", SIEVE_DIR).replace("%(pipe_bin_dir)s", PIPE_BIN_DIR)
+
+# ── Dovecot 2.4 (Debian 13 / trixie): sin plugin {}, mail_plugins en bloque y
+#    los eventos de Junk con mailbox{} / imapsieve_from{} + sieve_script{} ──
+_IMAP_SIEVE_CONF_24 = """# SVQPanel — Aprendizaje de spam (IMAPSieve → rspamc) en Dovecot 2.4. NO editar.
+# Cubre los hábitos de los clientes:
+#   a) Mover correo a Junk → learn-spam ; sacarlo de Junk → learn-ham
+#   b) Marcar el FLAG Junk sin mover → learn-flag decide spam/ham
+protocol imap {
+  mail_plugins {
+    imap_sieve = yes
+  }
+}
+
+sieve_plugins {
+  sieve_imapsieve = yes
+  sieve_extprograms = yes
+}
+
+sieve_global_extensions {
+  vnd.dovecot.pipe = yes
+  vnd.dovecot.environment = yes
+  vnd.dovecot.imapsieve = yes
+}
+sieve_pipe_bin_dir = %(pipe_bin_dir)s
+
+# a) Correo COPIADO/MOVIDO a Junk → aprender SPAM
+mailbox Junk {
+  sieve_script learn-spam {
+    type = before
+    cause = copy append
+    path = %(sieve_dir)s/learn-spam.sieve
+  }
+}
+
+# b) Correo SACADO de Junk a otra carpeta → aprender HAM
+imapsieve_from Junk {
+  sieve_script learn-ham {
+    type = before
+    cause = copy
+    path = %(sieve_dir)s/learn-ham.sieve
+  }
+}
+
+# c) Cambio de FLAG en cualquier carpeta (Thunderbird "Basura")
+sieve_script learn-flag {
+  type = before
+  cause = flag
+  path = %(sieve_dir)s/learn-flag.sieve
+}
+""".replace("%(sieve_dir)s", SIEVE_DIR).replace("%(pipe_bin_dir)s", PIPE_BIN_DIR)
+
+
+def _imap_sieve_conf() -> str:
+    """Devuelve la config IMAPSieve adecuada a la versión de Dovecot instalada."""
+    return _IMAP_SIEVE_CONF_24 if is_dovecot_24_plus() else _IMAP_SIEVE_CONF_23
 
 _SIEVE_LEARN_SPAM = """require ["vnd.dovecot.pipe", "copy", "imapsieve", "environment", "variables"];
 if environment :matches "imap.user" "*" { set "username" "${1}"; }
@@ -174,8 +235,8 @@ class SpamLearningManager(SystemManager):
         for s in (SIEVE_LEARN_SPAM, SIEVE_LEARN_HAM, SIEVE_LEARN_FLAG):
             self.execute_command(["sievec", s], check=False)
 
-        # 3) Config de Dovecot (IMAPSieve).
-        self._write(IMAP_SIEVE_CONF, _IMAP_SIEVE_CONF)
+        # 3) Config de Dovecot (IMAPSieve) — sintaxis según versión de Dovecot.
+        self._write(IMAP_SIEVE_CONF, _imap_sieve_conf())
 
         # 4) Asegurar que el plugin sieve global está activo (LMTP/LDA).
         self._ensure_sieve_global_plugin()

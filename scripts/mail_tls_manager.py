@@ -26,6 +26,11 @@ from typing import List, Tuple
 from .base import SystemManager
 from .utils import SSL_PROTOCOLS, SSL_CIPHERS, SSL_SIGN_ALGS
 
+try:
+    from scripts.dovecot_version import is_dovecot_24_plus
+except ImportError:  # ejecución directa fuera del paquete
+    from dovecot_version import is_dovecot_24_plus
+
 logger = logging.getLogger(__name__)
 
 DOVECOT_SNI_CONF  = "/etc/dovecot/conf.d/99-svqpanel-sni.conf"
@@ -89,15 +94,26 @@ class MailTLSManager(SystemManager):
         hostname TLS (SNI) que pide el cliente.
         """
         out = ["# SVQPanel — TLS por dominio (SNI). Generado automáticamente. NO editar.\n"]
+        # Dovecot 2.4 renombró ssl_cert/ssl_key → ssl_server_cert_file/key_file
+        # y ya no usan el prefijo '<' (toman directamente la ruta del fichero).
+        v24 = is_dovecot_24_plus()
         for d in domains:
             full, key = cert_paths(d)
             host = mail_host(d)
-            out.append(
-                f'local_name {host} {{\n'
-                f'  ssl_cert = <{full}\n'
-                f'  ssl_key = <{key}\n'
-                f'}}\n'
-            )
+            if v24:
+                out.append(
+                    f'local_name {host} {{\n'
+                    f'  ssl_server_cert_file = {full}\n'
+                    f'  ssl_server_key_file = {key}\n'
+                    f'}}\n'
+                )
+            else:
+                out.append(
+                    f'local_name {host} {{\n'
+                    f'  ssl_cert = <{full}\n'
+                    f'  ssl_key = <{key}\n'
+                    f'}}\n'
+                )
         return "\n".join(out)
 
     def _postfix_sni_lines(self, domains: List[str]) -> List[str]:

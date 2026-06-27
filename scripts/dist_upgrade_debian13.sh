@@ -154,6 +154,30 @@ EOF
     fi
 }
 
+# ¿Falta el bloque de quota 2.4 en el dropin de SVQPanel?
+is_dovecot_24_quota_missing() {
+    ! grep -q 'driver = count' /etc/dovecot/conf.d/90-svqpanel-quota.conf 2>/dev/null
+}
+
+# Escribe el dropin de quota de correo en sintaxis Dovecot 2.4.
+write_dovecot_24_quota() {
+    cat > /etc/dovecot/conf.d/90-svqpanel-quota.conf <<'EOF'
+# SVQPanel: cuotas por buzon (Dovecot 2.4)
+mail_plugins {
+  quota = yes
+}
+protocol imap {
+  mail_plugins {
+    imap_quota = yes
+  }
+}
+quota "User quota" {
+  driver = count
+}
+quota_exceeded_message = Buzon lleno: el usuario %{user} ha superado su cuota de almacenamiento.
+EOF
+}
+
 ###############################################################################
 # Guardias
 ###############################################################################
@@ -483,6 +507,35 @@ if should_run 6; then
         "$VENV_DIR/bin/python" -m api.cli migrate_php_pools --force \
             && ok "Pools PHP-FPM regenerados." \
             || warn "migrate_php_pools devolvió error. Revisa manualmente."
+    fi
+
+    # Regenerar los dropins de correo de Dovecot en sintaxis 2.4 (los managers
+    # del panel detectan la versión y emiten la sintaxis correcta). Esto sustituye
+    # a los .disabled-trixie que neutralizó la fase 4 y reactiva quota + spam.
+    if [[ -x "$VENV_DIR/bin/python" ]] && command -v dovecot >/dev/null 2>&1; then
+        log "  → Regenerando config de correo (quota + aprendizaje de spam) en 2.4..."
+        rm -f /etc/dovecot/conf.d/*.disabled-trixie 2>/dev/null || true
+        "$VENV_DIR/bin/python" - <<'PYEOF' 2>&1 | while read -r l; do log "      $l"; done || true
+import sys
+sys.path.insert(0, "/opt/svqpanel")
+try:
+    from scripts.spam_learning import SpamLearningManager
+    print("spam_learning:", SpamLearningManager().install(reload=False).get("success"))
+except Exception as e:
+    print("spam_learning ERROR:", e)
+try:
+    from scripts.dovecot_spam_sieve import apply as spam_to_junk_apply
+    print("spam_to_junk:", spam_to_junk_apply(True).get("success"))
+except Exception as e:
+    print("spam_to_junk ERROR:", e)
+PYEOF
+        # quota: en 2.4 la genera install_mail.sh; aquí la escribimos directa por
+        # si no se re-ejecuta el install. Idempotente.
+        if is_dovecot_24_quota_missing; then
+            write_dovecot_24_quota
+            ok "Quota de correo (2.4) regenerada."
+        fi
+        ok "Config de correo regenerada en 2.4."
     fi
 
     # Reiniciar la pila de servicios en orden.

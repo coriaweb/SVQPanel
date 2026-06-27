@@ -25,6 +25,11 @@ import re
 import subprocess
 import logging
 
+try:
+    from scripts.dovecot_version import is_dovecot_24_plus
+except ImportError:  # ejecución directa fuera del paquete
+    from dovecot_version import is_dovecot_24_plus
+
 logger = logging.getLogger(__name__)
 
 # Dovecot ejecuta en orden los scripts de este directorio (sieve_before).
@@ -80,23 +85,46 @@ def _ensure_dropin() -> bool:
     debe estar en mail_plugins de los protocolos que entregan (lmtp y lda). Por
     defecto Dovecot NO lo incluye ahí (solo imap_sieve en imap, para aprendizaje),
     así que sieve_before nunca corría en la entrega. Lo añadimos aquí."""
-    content = (
-        "# SVQPanel — Sieve global 'before' para mover spam a Junk. NO editar.\n"
-        "# El plugin 'sieve' en lmtp/lda es lo que ejecuta los Sieve EN LA ENTREGA\n"
-        "# (sin esto, sieve_before y el sieve del usuario no se aplican al recibir).\n"
-        "protocol lmtp {\n"
-        "  mail_plugins = $mail_plugins sieve\n"
-        "}\n"
-        "protocol lda {\n"
-        "  mail_plugins = $mail_plugins sieve\n"
-        "}\n"
-        "plugin {\n"
-        # IMPORTANTE: apuntar al FICHERO .sieve, no al directorio. Con
-        # 'file:<directorio>' Dovecot NO carga el script en LMTP (sí en LDA),
-        # y el spam se queda en INBOX. Con el fichero concreto funciona en ambos.
-        f"  sieve_before = {SPAM_SIEVE}\n"
-        "}\n"
-    )
+    if is_dovecot_24_plus():
+        # Dovecot 2.4 (Debian 13): mail_plugins es un bloque y el script global
+        # 'before' se declara con sieve_script { type = before; path = ... }.
+        content = (
+            "# SVQPanel — Sieve global 'before' para mover spam a Junk (Dovecot 2.4).\n"
+            "# NO editar. El plugin 'sieve' en lmtp/lda ejecuta los Sieve EN LA ENTREGA.\n"
+            "protocol lmtp {\n"
+            "  mail_plugins {\n"
+            "    sieve = yes\n"
+            "  }\n"
+            "}\n"
+            "protocol lda {\n"
+            "  mail_plugins {\n"
+            "    sieve = yes\n"
+            "  }\n"
+            "}\n"
+            "sieve_script spam-to-junk {\n"
+            "  type = before\n"
+            f"  path = {SPAM_SIEVE}\n"
+            "}\n"
+        )
+    else:
+        # Dovecot 2.3 (Debian 12): bloque plugin {} y mail_plugins aditivo.
+        content = (
+            "# SVQPanel — Sieve global 'before' para mover spam a Junk. NO editar.\n"
+            "# El plugin 'sieve' en lmtp/lda es lo que ejecuta los Sieve EN LA ENTREGA\n"
+            "# (sin esto, sieve_before y el sieve del usuario no se aplican al recibir).\n"
+            "protocol lmtp {\n"
+            "  mail_plugins = $mail_plugins sieve\n"
+            "}\n"
+            "protocol lda {\n"
+            "  mail_plugins = $mail_plugins sieve\n"
+            "}\n"
+            "plugin {\n"
+            # IMPORTANTE: apuntar al FICHERO .sieve, no al directorio. Con
+            # 'file:<directorio>' Dovecot NO carga el script en LMTP (sí en LDA),
+            # y el spam se queda en INBOX. Con el fichero concreto funciona en ambos.
+            f"  sieve_before = {SPAM_SIEVE}\n"
+            "}\n"
+        )
     cur = ""
     if os.path.exists(SIEVE_CONF_DROPIN):
         with open(SIEVE_CONF_DROPIN) as f:
