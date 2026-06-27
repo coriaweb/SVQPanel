@@ -38,6 +38,13 @@ fi
 
 echo -e "${GREEN}✓ Debian $OS_VERSION detectado${NC}\n"
 
+# Recomendación: para instalaciones nuevas se prefiere Debian 13 (trixie).
+# Debian 12 sigue soportado, pero conviene actualizarlo con
+# scripts/dist_upgrade_debian13.sh (ver docs/UPGRADE_DEBIAN_12_A_13.md).
+if [[ "$OS_VERSION" == "12" ]]; then
+    echo -e "${YELLOW}⚠ Recomendado: Debian 13 para instalaciones nuevas. Debian 12 está soportado pero se aconseja actualizar.${NC}\n"
+fi
+
 ###############################################################################
 # 0. MODO DESATENDIDO (opcional) — instalación tipo Hestia por variables de entorno
 ###############################################################################
