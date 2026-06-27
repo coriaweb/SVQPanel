@@ -68,6 +68,67 @@ ACTION_BOUNDS = {
 }
 
 
+def scan_message(raw: str) -> dict:
+    """Pasa un correo crudo (cabeceras + cuerpo, o solo cabeceras) por Rspamd y
+    devuelve el veredicto: score, acción, umbrales y los símbolos que DISPARARON
+    con su peso y descripción. Es el 'probador': muestra exactamente qué reglas
+    afectan a ESE correo (de las 614 del catálogo, solo las que aplican)."""
+    if not raw or not raw.strip():
+        return {"success": False, "error": "Pega el correo (cabeceras y, si quieres, el cuerpo)."}
+    # Asegurar un cuerpo mínimo: si solo pegan cabeceras, añadir línea en blanco.
+    if "\n\n" not in raw and "\r\n\r\n" not in raw:
+        raw = raw.rstrip("\n") + "\n\n(sin cuerpo)\n"
+    try:
+        res = subprocess.run(["rspamc", "--json"], input=raw.encode(),
+                             capture_output=True, timeout=30)
+        data = json.loads(res.stdout.decode("utf-8", errors="replace"))
+    except Exception as e:
+        return {"success": False, "error": f"No se pudo analizar: {e}"}
+
+    es_map = {}
+    try:
+        from api.routes.mail import _SYMBOL_ES
+        es_map = _SYMBOL_ES
+    except Exception:
+        pass
+
+    syms = []
+    for name, sd in (data.get("symbols") or {}).items():
+        if not isinstance(sd, dict):
+            continue
+        score = sd.get("score", 0.0) or 0.0
+        syms.append({
+            "name": name,
+            "score": score,
+            "description": sd.get("description", "") or "",
+            "description_es": es_map.get(name, ""),
+            "options": sd.get("options", []) or [],
+        })
+    # Primero los que más penalizan (mayor score positivo).
+    syms.sort(key=lambda s: s["score"], reverse=True)
+
+    action = data.get("action", "no action")
+    ACTION_ES = {
+        "no action": "Limpio (entra a bandeja)",
+        "greylist": "Greylist (reintenta)",
+        "add header": "Marcado como spam (→ Junk)",
+        "rewrite subject": "Asunto reescrito",
+        "soft reject": "Rechazo temporal",
+        "reject": "Rechazado",
+    }
+    return {
+        "success": True,
+        "score": round(float(data.get("score", 0.0)), 2),
+        "required_score": data.get("required_score"),
+        "action": action,
+        "action_es": ACTION_ES.get(action, action),
+        "thresholds": data.get("thresholds", {}),
+        "symbols": syms,
+        "symbols_fired": len(syms),
+        "symbols_scoring": sum(1 for s in syms if s["score"] != 0),
+    }
+
+
 def _humanize_symbol_es(name: str) -> str:
     """Traducción al español del símbolo si la tenemos (reutiliza el diccionario
     _SYMBOL_ES del monitor de correo). '' si no está mapeado."""

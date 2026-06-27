@@ -112,6 +112,41 @@
           </button>
         </div>
 
+        <!-- Probador de correos -->
+        <h6 class="as-section">Probador de correos</h6>
+        <p class="as-hint-block">
+          Pega un correo (cabeceras y, si quieres, el cuerpo) para ver qué reglas
+          dispara, su peso y el veredicto. Ideal para entender por qué un spam se
+          coló o un correo bueno se marcó. En Roundcube: «Más → Ver fuente» / en
+          Outlook/Gmail: «Mostrar original / código fuente».
+        </p>
+        <textarea v-model="testRaw" class="as-textarea" rows="6"
+                  placeholder="From: ...&#10;Subject: ...&#10;To: ...&#10;&#10;(cuerpo opcional)"></textarea>
+        <div class="as-row-end">
+          <button class="as-btn as-btn-primary" :disabled="testing || !testRaw.trim()" @click="runTest">
+            <i class="bi bi-search"></i> Analizar
+          </button>
+        </div>
+        <div v-if="testResult" class="as-testres" :class="'as-testres--' + (testResult.action || 'no action').replace(' ','-')">
+          <template v-if="testResult.success">
+            <div class="as-testverdict">
+              <span class="as-testscore">{{ testResult.score }} / {{ testResult.thresholds?.reject ?? 15 }}</span>
+              <span class="as-testaction">{{ testResult.action_es }}</span>
+              <span class="as-testmeta">{{ testResult.symbols_scoring }} reglas con peso de {{ testResult.symbols_fired }} disparadas</span>
+            </div>
+            <table class="as-testtable">
+              <tr v-for="s in testResult.symbols" :key="s.name" :class="{ 'as-zero': s.score===0 }">
+                <td class="as-tw" :class="s.score>0 ? 'as-pos' : (s.score<0 ? 'as-neg' : '')">
+                  {{ s.score>0 ? '+' : '' }}{{ s.score }}
+                </td>
+                <td><code>{{ s.name }}</code></td>
+                <td class="as-td-desc">{{ s.description_es || s.description }}<span v-if="s.options && s.options.length" class="as-opts"> [{{ s.options.join(', ') }}]</span></td>
+              </tr>
+            </table>
+          </template>
+          <div v-else class="as-empty-sm">{{ testResult.error }}</div>
+        </div>
+
         <!-- Pesos de símbolos -->
         <h6 class="as-section">Peso de reglas (símbolos de Rspamd)</h6>
         <p class="as-hint-block">
@@ -125,12 +160,16 @@
           <label class="as-symfilter">
             <input type="checkbox" v-model="onlyEdited" /> Solo modificados ({{ Object.keys(tuning.weight_overrides || {}).length }})
           </label>
+          <label class="as-symfilter">
+            <input type="checkbox" v-model="hideZero" /> Ocultar sin efecto
+          </label>
         </div>
         <div class="as-symtable">
           <div v-for="s in pagedSymbols" :key="s.name" class="as-symrow" :class="{ 'as-symrow--edited': isEdited(s.name) }">
             <div class="as-symname">
               <code>{{ s.name }}</code>
               <span v-if="isEdited(s.name)" class="as-symtag">modificado</span>
+              <span v-if="s.weight===0" class="as-symtag as-symtag--mute" title="Peso 0: no afecta al score (informativo o desactivado)">sin efecto</span>
               <span class="as-symdesc" :title="s.description || s.name">
                 {{ s.description_es || s.description || '—' }}
               </span>
@@ -208,8 +247,12 @@ const weightEdits = ref({})
 const rules = ref([])
 const symSearch = ref('')
 const onlyEdited = ref(false)
+const hideZero = ref(false)
 const symPage = ref(0)
 const pageSize = 25
+const testRaw = ref('')
+const testResult = ref(null)
+const testing = ref(false)
 const savingT = ref(false)
 const savingW = ref(false)
 const savingR = ref(false)
@@ -227,6 +270,7 @@ const filteredSymbols = computed(() => {
   const q = symSearch.value.trim().toLowerCase()
   let list = tuning.value.symbols || []
   if (onlyEdited.value) list = list.filter(s => isEdited(s.name))
+  if (hideZero.value) list = list.filter(s => s.weight !== 0 || isEdited(s.name))
   if (q) {
     list = list.filter(s =>
       s.name.toLowerCase().includes(q) ||
@@ -241,7 +285,17 @@ const pagedSymbols = computed(() =>
 )
 
 // Volver a la primera página al cambiar el filtro/búsqueda.
-watch([symSearch, onlyEdited], () => { symPage.value = 0 })
+watch([symSearch, onlyEdited, hideZero], () => { symPage.value = 0 })
+
+async function runTest() {
+  testing.value = true
+  testResult.value = null
+  try {
+    testResult.value = await api.post('/api/antispam/test', { message: testRaw.value })
+  } catch (e) {
+    testResult.value = { success: false, error: e.message || String(e) }
+  } finally { testing.value = false }
+}
 
 async function resetWeight(name) {
   delete weightEdits.value[name]
@@ -395,6 +449,27 @@ onMounted(load)
 .as-empty-sm { padding: 1rem; text-align: center; color: var(--text-muted); font-size: .85rem; }
 .as-pager { display: flex; align-items: center; justify-content: center; gap: 1rem; margin-top: .8rem; font-size: .82rem; }
 .as-pager-info { color: var(--text-muted); }
+.as-symtag--mute { color: var(--text-muted); background: color-mix(in srgb, var(--text-muted) 14%, transparent); }
+
+/* Probador */
+.as-textarea { width: 100%; padding: .6rem .7rem; border: 1px solid var(--border); border-radius: var(--r-sm); background: var(--surface-1); color: var(--text); font-family: var(--font-mono, monospace); font-size: .8rem; resize: vertical; }
+.as-testres { margin-top: .9rem; border: 1px solid var(--border); border-radius: var(--r-md); overflow: hidden; }
+.as-testverdict { display: flex; align-items: center; gap: 1rem; padding: .8rem 1rem; flex-wrap: wrap; background: var(--surface-inset); border-bottom: 1px solid var(--border); }
+.as-testscore { font-size: 1.3rem; font-weight: 700; }
+.as-testaction { font-weight: 600; }
+.as-testmeta { color: var(--text-muted); font-size: .8rem; margin-left: auto; }
+.as-testres--reject .as-testaction { color: var(--danger); }
+.as-testres--add-header .as-testaction { color: var(--warning); }
+.as-testres--no-action .as-testaction { color: var(--success); }
+.as-testtable { width: 100%; border-collapse: collapse; font-size: .82rem; }
+.as-testtable td { padding: .35rem .7rem; border-bottom: 1px solid var(--border); vertical-align: top; }
+.as-testtable tr:last-child td { border-bottom: 0; }
+.as-testtable tr.as-zero { opacity: .5; }
+.as-tw { font-weight: 700; white-space: nowrap; text-align: right; width: 56px; font-family: var(--font-mono, monospace); }
+.as-tw.as-pos { color: var(--danger); }
+.as-tw.as-neg { color: var(--success); }
+.as-td-desc { color: var(--text-muted); }
+.as-opts { color: var(--text-muted); font-style: italic; }
 
 .as-rules { display: flex; flex-direction: column; gap: .5rem; }
 .as-rule { display: flex; gap: .5rem; align-items: center; }

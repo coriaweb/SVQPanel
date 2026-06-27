@@ -88,3 +88,13 @@ async def set_antispam_rules(payload: dict,
         raise HTTPException(status_code=400, detail=res.get("error", "Error al aplicar"))
     _persist_overrides(db, rules=rules)
     return {"status": "success", **res}
+
+
+@router.post("/antispam/test")
+async def antispam_test(payload: dict, current_user: User = Depends(require_admin)):
+    """[Admin] Probador: analiza un correo pegado (cabeceras + cuerpo) y muestra
+    qué símbolos dispara, su peso, el score y la acción. Útil para entender por
+    qué un spam concreto se cuela o un correo bueno se marca."""
+    raw = payload.get("message", "")
+    from scripts import rspamd_tuning
+    return rspamd_tuning.scan_message(raw)
