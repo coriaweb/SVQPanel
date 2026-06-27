@@ -99,3 +99,4 @@ exit 0
 | 0060 | Reglas antispam del admin a multimap.conf (un .conf aparte se ignoraba) + fix escape '/' y modo exacto/contiene | 2026-06-27 |
 | 0061 | Resolver DNS propio (unbound localhost:5353) para Rspamd: reactiva SPF/DKIM/DMARC/RBL (el named del cluster los rechazaba) | 2026-06-27 |
 | 0062 | Regenera config de correo de Dovecot en sintaxis 2.4 (quota + spam-learn + spam-junk + SNI) tras upgrade a Debian 13; no-op en Dovecot 2.3 | 2026-06-27 |
+| 0063 | SRS (postsrsd): reescribe el envelope-from de los reenvíos a @mydomain para no romper SPF y dejar de acabar en listas negras al reenviar a Gmail/Outlook | 2026-06-27 |

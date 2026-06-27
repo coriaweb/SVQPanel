@@ -141,6 +141,35 @@ hostname -f > /etc/mailname
 postconf -e "myhostname = $(hostname -f)"
 postconf -e "myorigin = /etc/mailname"
 
+# ── SRS (Sender Rewriting Scheme) ──────────────────────────────────────────────
+# Cuando un alias/reenvío reenvía correo a Gmail/Outlook/etc., el envelope-from
+# original (de OTRO dominio) hace que el destino compruebe SPF contra NUESTRA IP
+# → SPF fail → reenviamos la mala reputación ajena y acabamos en listas negras.
+# postsrsd reescribe el envelope-from al reenviar a "...@<nuestro dominio>" (que
+# SÍ tiene nuestra IP en su SPF) y descodifica los rebotes de vuelta al original.
+# Estándar de la industria (cPanel/Plesk/Hestia lo hacen igual).
+echo -e "${YELLOW}→ Instalando SRS (postsrsd) para reenvíos seguros...${NC}"
+DEBIAN_FRONTEND=noninteractive apt-get install -y -qq postsrsd 2>/dev/null || true
+if command -v postsrsd >/dev/null 2>&1 || dpkg -l postsrsd 2>/dev/null | grep -q '^ii'; then
+    # Dominio de reescritura: el dominio del servidor (su SPF incluye esta IP).
+    SRS_DOM="$(postconf -h mydomain 2>/dev/null || hostname -d)"
+    # postsrsd 1.x (Debian 12/13) usa /etc/default/postsrsd (formato shell).
+    if [ -f /etc/default/postsrsd ]; then
+        sed -i "s/^#*SRS_DOMAIN=.*/SRS_DOMAIN=${SRS_DOM}/" /etc/default/postsrsd
+        grep -q '^SRS_DOMAIN=' /etc/default/postsrsd || echo "SRS_DOMAIN=${SRS_DOM}" >> /etc/default/postsrsd
+    fi
+    systemctl enable postsrsd 2>/dev/null || true
+    systemctl restart postsrsd 2>/dev/null || true
+    # Enchufar a Postfix (forward=10001, reverse=10002; loopback).
+    postconf -e "sender_canonical_maps = tcp:127.0.0.1:10001"
+    postconf -e "sender_canonical_classes = envelope_sender"
+    postconf -e "recipient_canonical_maps = tcp:127.0.0.1:10002"
+    postconf -e "recipient_canonical_classes = envelope_recipient,header_recipient"
+    echo -e "${GREEN}✓ SRS activo (reenvíos reescritos a @${SRS_DOM})${NC}"
+else
+    echo -e "${YELLOW}⚠ postsrsd no disponible; reenvíos sin SRS (riesgo de blacklist)${NC}"
+fi
+
 # Puerto 587 (submission / STARTTLS) — solo añadir si no está ya
 if ! grep -q "^submission" /etc/postfix/master.cf; then
     cat >> /etc/postfix/master.cf << 'MASTEREOF'
