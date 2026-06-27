@@ -96,6 +96,65 @@ should_run() {
 }
 
 ###############################################################################
+# Migración de la config de Dovecot 2.3 (bookworm) → 2.4 (trixie)
+# ─────────────────────────────────────────────────────────────────────────────
+# Dovecot 2.4 renombró/eliminó muchos ajustes. Estos son los que usa la config
+# que genera SVQPanel y que rompen el arranque. Idempotente.
+###############################################################################
+migrate_dovecot_24_config() {
+    log "  → Migrando config de Dovecot a sintaxis 2.4..."
+    local D=/etc/dovecot/conf.d
+
+    # 1) disable_plaintext_auth = no  →  auth_allow_cleartext = yes
+    [[ -f "$D/10-auth.conf" ]] && \
+        sed -i 's/^[[:space:]]*disable_plaintext_auth[[:space:]]*=[[:space:]]*no/auth_allow_cleartext = yes/' "$D/10-auth.conf"
+
+    # 2) passdb/userdb passwd-file: nueva sintaxis con nombre de sección
+    if [[ -f "$D/auth-passwdfile.conf.ext" ]] && grep -q '^passdb {' "$D/auth-passwdfile.conf.ext"; then
+        cat > "$D/auth-passwdfile.conf.ext" <<'EOF'
+# Dovecot 2.4 — passwd-file passdb/userdb (SVQPanel)
+passdb passwd-file {
+  passwd_file_path = /etc/dovecot/users
+  default_password_scheme = SHA512-CRYPT
+}
+userdb passwd-file {
+  passwd_file_path = /etc/dovecot/users
+}
+EOF
+    fi
+
+    # 3) mail_location = maildir:~/  →  mail_driver = maildir + mail_path = ~/
+    if [[ -f "$D/10-mail.conf" ]]; then
+        sed -i 's|^[[:space:]]*mail_location[[:space:]]*=[[:space:]]*maildir:~/[[:space:]]*$|mail_driver = maildir\nmail_path = ~/|' "$D/10-mail.conf"
+        # Cualquier otra mail_location (p.ej. el default mbox de Debian) → comentar
+        sed -i 's|^[[:space:]]*mail_location[[:space:]]*=.*|# (migrado a mail_driver/mail_path)|' "$D/10-mail.conf"
+    fi
+
+    # 4) SNI por dominio: ssl_cert/ssl_key  →  ssl_server_cert_file/ssl_server_key_file
+    if [[ -f "$D/99-svqpanel-sni.conf" ]]; then
+        sed -i 's|ssl_cert[[:space:]]*=[[:space:]]*<|ssl_server_cert_file = |g; s|ssl_key[[:space:]]*=[[:space:]]*<|ssl_server_key_file = |g' "$D/99-svqpanel-sni.conf"
+    fi
+
+    # 5) Dropins con bloques plugin{} / mail_plugins (quota, spam-learn, spam-junk):
+    #    en 2.4 cambia el sistema entero. Se NEUTRALIZAN aquí (correo básico
+    #    funciona) y se readaptan después con los managers del panel ya 2.4.
+    for f in 90-svqpanel-quota 90-svqpanel-spam-learn 91-svqpanel-spam-junk; do
+        [[ -f "$D/$f.conf" ]] && mv "$D/$f.conf" "$D/$f.conf.disabled-trixie"
+    done
+    # Quitar 'quota imap_quota' del filtro protocol imap (plugin quota off temporal)
+    [[ -f "$D/20-imap.conf" ]] && \
+        sed -i 's/^\([[:space:]]*\)mail_plugins[[:space:]]*=.*quota.*/\1# mail_plugins quota (deshabilitado temporal trixie)/' "$D/20-imap.conf"
+
+    # Validar
+    if doveconf -n >/dev/null 2>/tmp/svq-doveconf.err; then
+        ok "Config Dovecot migrada a 2.4 (validada)."
+    else
+        warn "doveconf aún reporta avisos tras migrar (revisa /tmp/svq-doveconf.err):"
+        head -3 /tmp/svq-doveconf.err 2>/dev/null | while read -r l; do log "      $l"; done
+    fi
+}
+
+###############################################################################
 # Guardias
 ###############################################################################
 [[ $EUID -ne 0 ]] && die "Este script debe ejecutarse como root."
@@ -352,10 +411,32 @@ if should_run 4; then
         || die "Cancelado en la fase 4. Reanuda con: --from 4"
 
     export DEBIAN_FRONTEND=noninteractive
+
+    # Dovecot 2.4 (trixie) cambió la sintaxis de configuración respecto a 2.3
+    # (bookworm) y su post-install ABORTA el full-upgrade si la config vieja no
+    # arranca. Migramos la config ANTES de que apt configure dovecot-core.
+    if command -v dovecot >/dev/null 2>&1 && [[ -d /etc/dovecot ]]; then
+        migrate_dovecot_24_config
+    fi
+
     # --force-confold: ante un .conf modificado por el panel, conservar el nuestro.
-    # 'minimal' primero reduce el riesgo de conflictos; luego el full.
     apt-get -y -o Dpkg::Options::="--force-confold" -o Dpkg::Options::="--force-confdef" \
         full-upgrade || die "full-upgrade a trixie falló. Revisa $LOG_FILE y usa la consola de rescate."
+
+    # Tras el salto YA estamos en trixie: Rspamd SÍ tiene repo trixie (en la fase 3
+    # lo dejamos en bookworm por precaución, pero sus paquetes bookworm chocan con
+    # las libs de trixie). Reapuntamos a trixie y reinstalamos si hiciera falta.
+    if [[ -f /etc/apt/sources.list.d/rspamd.list ]] && grep -q bookworm /etc/apt/sources.list.d/rspamd.list; then
+        sed -i 's/\bbookworm\b/trixie/g' /etc/apt/sources.list.d/rspamd.list
+        apt-get update -qq || true
+        ok "Rspamd reapuntado a trixie."
+    fi
+    if ! dpkg -l rspamd 2>/dev/null | grep -q '^ii'; then
+        warn "Rspamd no instalado tras el salto → reinstalando desde trixie."
+        apt-get install -y -qq rspamd 2>&1 | tail -3 || warn "No se pudo reinstalar Rspamd; revisa manualmente."
+        systemctl enable --now rspamd 2>/dev/null || true
+    fi
+
     apt-get -y autoremove -qq || true
 
     NEW_OS=$(grep -oP '(?<=^VERSION_ID=")[^"]+' /etc/os-release || echo "?")

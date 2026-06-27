@@ -68,6 +68,39 @@ solo reapunta el `.list` a `trixie-pgdg` para futuras actualizaciones de
 paquetes. Si en el futuro PGDG saltara de major, se migraría con
 `pg_upgradecluster` (ver el patrón en `updates/0002-postgresql-pgdg-18.sh`).
 
+## Incidencias reales encontradas (upgrade del 2026-06-27)
+
+El primer upgrade real (servidor de producción con 10 dominios) destapó tres
+cosas que el script ahora maneja solo:
+
+1. **Dovecot 2.4 (cambio mayor de sintaxis).** trixie trae Dovecot 2.4, que
+   renombró/eliminó ajustes de 2.3. Su post-install **aborta el full-upgrade** si
+   la config vieja no arranca. El script ahora migra la config **antes** de que
+   apt configure dovecot-core (`migrate_dovecot_24_config`):
+   - `disable_plaintext_auth = no` → `auth_allow_cleartext = yes`
+   - `passdb {}/userdb {}` → `passdb passwd-file {}` / `userdb passwd-file {}`
+     con `passwd_file_path` y `default_password_scheme`
+   - `mail_location = maildir:~/` → `mail_driver = maildir` + `mail_path = ~/`
+   - SNI por dominio: `ssl_cert = <` / `ssl_key = <` →
+     `ssl_server_cert_file` / `ssl_server_key_file`
+   - Los dropins con bloques `plugin {}` (quota, spam-learn, spam-junk) se
+     **neutralizan** (`.disabled-trixie`): el correo básico (IMAP/POP3/SMTP/SNI)
+     funciona; quota y auto-aprendizaje de spam se readaptan aparte a 2.4.
+
+2. **Rspamd.** En la fase 3 se deja en bookworm por precaución, pero sus paquetes
+   bookworm **chocan** con las libs de trixie (`libicu72`, `libbinutils`) y el
+   full-upgrade lo **elimina**. Tras el salto, el script reapunta Rspamd a
+   **trixie** (sí tiene repo trixie) y lo reinstala si falta.
+
+3. **PHP.** Sury en trixie ya no trae 8.3 y añade 8.5. Verifica que ningún
+   dominio quede en una versión ausente: `migrate_php_pools --force` (fase 6)
+   regenera los pools. En el upgrade real los dominios usaban 7.4/8.2/8.4/8.5,
+   todas presentes — sin huérfanos.
+
+> ⚠️ **PENDIENTE**: readaptar a Dovecot 2.4 los generadores de config del panel
+> (`mail_manager`, `mail_tls_manager`, `dovecot_spam_sieve`, quota) para que
+> nuevos dominios nazcan con sintaxis 2.4, y reactivar quota + spam-learning.
+
 ## Si algo va mal
 
 - Revisa el log: `/var/log/svqpanel-distupgrade.log`.
