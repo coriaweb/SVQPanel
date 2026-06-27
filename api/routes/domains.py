@@ -305,7 +305,7 @@ async def create_domain(
 async def list_domains(
     user_id: int = Query(None),
     skip: int = 0,
-    limit: int = 10,
+    limit: int = 1000,
     current_user: User = Depends(require_auth),
     db: Session = Depends(get_db)
 ):

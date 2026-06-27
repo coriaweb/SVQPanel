@@ -356,14 +356,23 @@ export default {
       const q = search.value.trim().toLowerCase()
       if (q) all = all.filter(d => (d.domain_name || '').toLowerCase().includes(q))
       const byName = new Map(all.map(d => [d.domain_name, d]))
+      // Raíz = no es subdominio, O su padre no está en la lista (huérfano).
       const roots = all.filter(d => !d.is_subdomain || !byName.has(d.parent_domain))
-                       .sort((a, b) => a.domain_name.localeCompare(b.domain_name))
+                       // Ordenar por la "clave de grupo": el padre si es un sub
+                       // huérfano, su propio nombre si es raíz. Así un subdominio
+                       // cuyo padre no esté presente no se dispersa por su nombre.
+                       .sort((a, b) => {
+                         const ka = a.is_subdomain ? a.parent_domain : a.domain_name
+                         const kb = b.is_subdomain ? b.parent_domain : b.domain_name
+                         return (ka || '').localeCompare(kb || '') ||
+                                a.domain_name.localeCompare(b.domain_name)
+                       })
       const subsOf = (name) => all.filter(d => d.is_subdomain && d.parent_domain === name)
                                   .sort((a, b) => a.domain_name.localeCompare(b.domain_name))
       const out = []
       for (const r of roots) {
         out.push(r)
-        for (const s of subsOf(r.domain_name)) out.push(s)
+        if (!r.is_subdomain) for (const s of subsOf(r.domain_name)) out.push(s)
       }
       return out
     })

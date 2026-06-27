@@ -123,7 +123,7 @@ class APIClient {
   }
 
   // Domains
-  getDomains(userId = null, skip = 0, limit = 10) {
+  getDomains(userId = null, skip = 0, limit = 1000) {
     let endpoint = `/api/domains?skip=${skip}&limit=${limit}`
     if (userId) {
       endpoint += `&user_id=${userId}`
