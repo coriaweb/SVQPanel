@@ -777,6 +777,8 @@ def _run_migrations():
         # Mover spam (X-Spam: Yes) a la carpeta Junk (global + por dominio)
         "ALTER TABLE settings ADD COLUMN IF NOT EXISTS spam_to_junk_enabled BOOLEAN NOT NULL DEFAULT TRUE",
         "ALTER TABLE mail_domains ADD COLUMN IF NOT EXISTS spam_to_junk_enabled BOOLEAN NOT NULL DEFAULT TRUE",
+        # Ajustes antispam del admin (pesos de símbolos + umbrales + reglas)
+        "ALTER TABLE settings ADD COLUMN IF NOT EXISTS rspamd_overrides TEXT",
         # ─────────────────────────────────────────────────────────────────
         # Fase 21b: Despliegue Git por dominio (clone + webhook + releases)
         # ─────────────────────────────────────────────────────────────────

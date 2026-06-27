@@ -123,13 +123,16 @@ _RSPAMD_CLASSIFIER = """# SVQPanel — clasificador Bayes (aprendizaje de spam).
 backend = "redis";
 # GLOBAL del servidor: NO definimos users{} ni per_user → un único Bayes que
 # todos los clientes entrenan (más datos = aprende más rápido).
-# Autolearn: Rspamd aprende solo de los correos claramente spam (score >= 12) y
-# claramente legítimos (score <= -2), aunque el cliente no marque nada.
-autolearn = [-2, 12];
+# Autolearn: Rspamd aprende solo, aunque el cliente no marque nada:
+#   ham   = correos con score <= 0.5 (la inmensa mayoría del correo legítimo).
+#   spam  = correos con score >= 10  (spam claro).
+# El umbral de ham se subió de -2 a 0.5 porque casi ningún correo legítimo baja
+# de -2 → el Bayes nunca aprendía ham y quedaba ciego (mucho spam, ~0 ham). Con
+# 0.5 el ham crece solo conforme entra correo normal y el filtro se equilibra.
+autolearn = [0.5, 10];
 # min_learns: nº mínimo de mensajes aprendidos (de cada clase) antes de que el
-# Bayes empiece a puntuar. 30 es un equilibrio: útil pronto sin disparar falsos
-# positivos con pocos datos.
-min_learns = 30;
+# Bayes empiece a puntuar. 20 para que sea útil pronto (con servidor en rodaje).
+min_learns = 20;
 """
 
 

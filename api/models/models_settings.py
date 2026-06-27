@@ -118,6 +118,10 @@ class Settings(Base):
     # dominio puede excluirse con MailDomain.spam_to_junk_enabled=False).
     spam_to_junk_enabled = Column(Boolean, default=True, nullable=False)
 
+    # Ajustes antispam del admin (Rspamd): JSON con {weights, actions, rules}.
+    # Lo gestiona scripts/rspamd_tuning.py; persiste para regenerar en install/update.
+    rspamd_overrides = Column(Text, nullable=True)
+
     # Timestamps
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 

@@ -89,12 +89,90 @@
         Para que el filtro mejore: los clientes deben <strong>mover el spam a la carpeta «Junk»</strong>
         (no borrarlo) y <strong>sacar de «Junk»</strong> lo que sea legítimo. Cada movimiento entrena a Rspamd.
       </p>
+
+      <!-- ===== AJUSTES DEL ADMIN ===== -->
+      <template v-if="tuning.available">
+        <!-- Umbrales -->
+        <h6 class="as-section">Umbrales de decisión (sensibilidad)</h6>
+        <p class="as-hint-block">
+          Cuanto más bajo el umbral, más agresivo. Un correo se <b>marca como spam</b> (va a Junk)
+          al superar «Marcar», y se <b>rechaza</b> al superar «Rechazar». Bajar «Rechazar» si se
+          cuela mucho spam claro; subirlo si hay falsos positivos.
+        </p>
+        <div class="as-grid as-grid-3">
+          <div v-for="k in ['greylist','add header','reject']" :key="k" class="as-metric as-metric-sm">
+            <div class="as-metric-lbl">{{ actionLabel(k) }}</div>
+            <input type="number" step="0.5" class="as-input" v-model.number="thresholds[k]" />
+            <div class="as-metric-hint">por defecto: {{ tuning.default_actions[k] }}</div>
+          </div>
+        </div>
+        <div class="as-row-end">
+          <button class="as-btn as-btn-primary" :disabled="savingT" @click="saveThresholds">
+            <i class="bi bi-check-lg"></i> Guardar umbrales
+          </button>
+        </div>
+
+        <!-- Pesos de símbolos -->
+        <h6 class="as-section">Peso de reglas (símbolos de Rspamd)</h6>
+        <p class="as-hint-block">
+          Sube el castigo de las señales que veas en tu spam (p. ej. <code>PHISHING</code>,
+          <code>HFILTER_FROMHOST_NORES_A_OR_MX</code>). Busca el símbolo y ajusta su peso.
+          Vacío = peso por defecto.
+        </p>
+        <input type="search" class="as-input as-input-wide" placeholder="Buscar símbolo… (ej. PHISHING, HELO, DKIM)"
+               v-model="symSearch" />
+        <div class="as-symtable">
+          <div v-for="s in filteredSymbols" :key="s.name" class="as-symrow">
+            <div class="as-symname">
+              <code>{{ s.name }}</code>
+              <span class="as-symfreq" v-if="s.frequency">freq {{ (s.frequency*100).toFixed(1) }}%</span>
+            </div>
+            <div class="as-symw">
+              <span class="as-symdef">def {{ s.weight }}</span>
+              <input type="number" step="0.5" class="as-input as-input-xs"
+                     :placeholder="String(s.weight)" v-model.number="weightEdits[s.name]" />
+              <button class="as-btn as-btn-xs" :disabled="savingW" @click="saveWeight(s.name)">Aplicar</button>
+            </div>
+          </div>
+          <div v-if="!filteredSymbols.length" class="as-empty-sm">Escribe para buscar entre {{ tuning.symbols.length }} símbolos.</div>
+        </div>
+
+        <!-- Reglas de contenido -->
+        <h6 class="as-section">Reglas propias (por remitente, asunto o palabra)</h6>
+        <p class="as-hint-block">
+          Bloquea o marca correos por su contenido. Ej.: remitente <code>@spammer.com</code>,
+          asunto contiene <code>oferta</code>, o palabra en el cuerpo.
+        </p>
+        <div class="as-rules">
+          <div v-for="(r, i) in rules" :key="i" class="as-rule">
+            <select class="as-input" v-model="r.type">
+              <option v-for="(lbl, t) in tuning.rule_types" :key="t" :value="t">{{ lbl }}</option>
+            </select>
+            <input class="as-input" v-model="r.pattern" placeholder="patrón (ej. @dominio.com, palabra)" />
+            <select class="as-input" v-model="r.action">
+              <option v-for="(lbl, a) in tuning.rule_actions" :key="a" :value="a">{{ lbl }}</option>
+            </select>
+            <input v-if="r.action==='spam'" type="number" step="0.5" class="as-input as-input-xs"
+                   v-model.number="r.weight" placeholder="peso" />
+            <button class="as-btn as-btn-xs as-btn-danger" @click="rules.splice(i,1)"><i class="bi bi-trash"></i></button>
+          </div>
+          <div v-if="!rules.length" class="as-empty-sm">No hay reglas. Añade una abajo.</div>
+        </div>
+        <div class="as-row-end">
+          <button class="as-btn" @click="rules.push({type:'from',pattern:'',action:'reject',weight:6})">
+            <i class="bi bi-plus-lg"></i> Añadir regla
+          </button>
+          <button class="as-btn as-btn-primary" :disabled="savingR" @click="saveRules">
+            <i class="bi bi-check-lg"></i> Guardar reglas
+          </button>
+        </div>
+      </template>
     </div>
   </div>
 </template>
 
 <script setup>
-import { ref, onMounted } from 'vue'
+import { ref, computed, onMounted } from 'vue'
 import { useMainStore } from '../stores/useMainStore'
 import api from '../services/api'
 
@@ -102,18 +180,80 @@ const store = useMainStore()
 const loading = ref(true)
 const data = ref({ available: false })
 
+// Ajustes del admin
+const tuning = ref({ available: false, symbols: [], rules: [], default_actions: {}, rule_types: {}, rule_actions: {} })
+const thresholds = ref({ greylist: 4, 'add header': 6, reject: 15 })
+const weightEdits = ref({})
+const rules = ref([])
+const symSearch = ref('')
+const savingT = ref(false)
+const savingW = ref(false)
+const savingR = ref(false)
+
+const ACTION_LABELS = { greylist: 'Greylist (lista gris)', 'add header': 'Marcar como spam', reject: 'Rechazar' }
+function actionLabel(k) { return ACTION_LABELS[k] || k }
+
 function pct(v, max) { return max > 0 ? Math.min(100, Math.round(100 * v / max)) : 0 }
+
+const filteredSymbols = computed(() => {
+  const q = symSearch.value.trim().toUpperCase()
+  if (!q) return []
+  return tuning.value.symbols.filter(s => s.name.includes(q)).slice(0, 40)
+})
 
 async function load() {
   loading.value = true
   try {
     data.value = await api.get('/api/antispam/stats')
+    try {
+      const t = await api.get('/api/antispam/tuning')
+      tuning.value = t
+      if (t.actions) thresholds.value = { ...thresholds.value, ...t.actions }
+      weightEdits.value = { ...(t.weight_overrides || {}) }
+      rules.value = (t.rules || []).map(r => ({ weight: 6, ...r }))
+    } catch { /* tuning no disponible: dejar solo stats */ }
   } catch (e) {
     store.showNotification('Error al cargar el antispam: ' + (e.message || e), 'danger')
     data.value = { available: false }
   } finally {
     loading.value = false
   }
+}
+
+async function saveThresholds() {
+  savingT.value = true
+  try {
+    await api.put('/api/antispam/tuning', { actions: thresholds.value })
+    store.showNotification('Umbrales guardados', 'success')
+  } catch (e) {
+    store.showNotification('Error: ' + (e.message || e), 'danger')
+  } finally { savingT.value = false }
+}
+
+async function saveWeight(name) {
+  savingW.value = true
+  try {
+    // Reunir todos los overrides actuales (los editados con valor numérico).
+    const weights = {}
+    for (const [k, v] of Object.entries(weightEdits.value)) {
+      if (v !== '' && v !== null && v !== undefined && !Number.isNaN(Number(v))) weights[k] = Number(v)
+    }
+    await api.put('/api/antispam/tuning', { weights })
+    store.showNotification(`Peso de ${name} aplicado`, 'success')
+  } catch (e) {
+    store.showNotification('Error: ' + (e.message || e), 'danger')
+  } finally { savingW.value = false }
+}
+
+async function saveRules() {
+  savingR.value = true
+  try {
+    const clean = rules.value.filter(r => r.pattern && r.pattern.trim())
+    await api.put('/api/antispam/rules', { rules: clean })
+    store.showNotification('Reglas guardadas', 'success')
+  } catch (e) {
+    store.showNotification('Error: ' + (e.message || e), 'danger')
+  } finally { savingR.value = false }
 }
 
 onMounted(load)
@@ -167,4 +307,28 @@ onMounted(load)
 
 .as-btn { display: inline-flex; align-items: center; gap: .35rem; padding: .4rem .8rem; font-size: .82rem; border-radius: var(--r-sm); border: 1px solid var(--border); background: var(--surface-2); color: var(--text); cursor: pointer; }
 .as-btn:disabled { opacity: .55; cursor: not-allowed; }
+.as-btn-primary { background: var(--ac); border-color: var(--ac); color: #fff; }
+.as-btn-danger { color: var(--danger); }
+.as-btn-xs { padding: .25rem .55rem; font-size: .76rem; }
+
+.as-hint-block { font-size: .85rem; color: var(--text-muted); margin: 0 0 .75rem; }
+.as-grid-3 { grid-template-columns: repeat(3, 1fr); }
+@media (max-width: 640px) { .as-grid-3 { grid-template-columns: 1fr; } }
+.as-input { width: 100%; padding: .4rem .6rem; border: 1px solid var(--border); border-radius: var(--r-sm); background: var(--surface-1); color: var(--text); font-size: .85rem; margin-top: .3rem; }
+.as-input-wide { max-width: 420px; margin-bottom: .8rem; }
+.as-input-xs { width: 80px; margin-top: 0; }
+.as-row-end { display: flex; justify-content: flex-end; gap: .6rem; margin-top: .8rem; }
+
+.as-symtable { border: 1px solid var(--border); border-radius: var(--r-md); overflow: hidden; }
+.as-symrow { display: flex; justify-content: space-between; align-items: center; gap: 1rem; padding: .5rem .8rem; border-bottom: 1px solid var(--border); }
+.as-symrow:last-child { border-bottom: 0; }
+.as-symname code { font-size: .8rem; }
+.as-symfreq { font-size: .72rem; color: var(--text-muted); margin-left: .5rem; }
+.as-symw { display: flex; align-items: center; gap: .5rem; }
+.as-symdef { font-size: .74rem; color: var(--text-muted); }
+.as-empty-sm { padding: 1rem; text-align: center; color: var(--text-muted); font-size: .85rem; }
+
+.as-rules { display: flex; flex-direction: column; gap: .5rem; }
+.as-rule { display: flex; gap: .5rem; align-items: center; }
+.as-rule .as-input { margin-top: 0; }
 </style>

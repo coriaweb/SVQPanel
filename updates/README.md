@@ -94,3 +94,4 @@ exit 0
 | 0055 | fail2ban: arreglar jail dovecot (aggressive) + jail postfix relay | 2026-06-26 |
 | 0056 | Mover el spam marcado (X-Spam: Yes) a la carpeta Junk (Sieve global) | 2026-06-26 |
 | 0057 | Unificar carpeta de spam en 'Junk' (Roundcube + migrar Spam→Junk + reentrenar) | 2026-06-26 |
+| 0058 | Antispam: Bayes autoequilibrado (autolearn ham 0.5) + overrides admin (pesos/umbrales/reglas) | 2026-06-27 |
