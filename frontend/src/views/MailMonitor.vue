@@ -57,7 +57,8 @@
       <div v-else-if="!filteredEvents.length" class="mm-empty">
         <i class="bi bi-search"></i> No hay eventos que coincidan.
       </div>
-      <table v-else class="mm-table">
+      <div v-else class="mm-table-wrap">
+      <table class="mm-table">
         <thead>
           <tr>
             <th style="width:130px">Hora</th>
@@ -90,6 +91,7 @@
           </tr>
         </tbody>
       </table>
+      </div>
     </div>
   </div>
 </template>
@@ -199,7 +201,10 @@ export default {
 
 .mm-card { background:var(--surface); border:1px solid var(--border); border-radius:var(--r-lg,12px); overflow:hidden; }
 .mm-empty { padding:3rem 1rem; text-align:center; color:var(--text-muted); }
-.mm-table { width:100%; border-collapse:collapse; font-size:.86rem; }
+/* Scroll horizontal en móvil: la tabla es ancha (6 columnas), así se pueden
+   ver las de la derecha (Antispam/Detalle) deslizando. */
+.mm-table-wrap { overflow-x:auto; -webkit-overflow-scrolling:touch; }
+.mm-table { width:100%; border-collapse:collapse; font-size:.86rem; min-width:760px; }
 .mm-table th { text-align:left; padding:.6rem .9rem; font-size:.72rem; text-transform:uppercase; letter-spacing:.04em; color:var(--text-muted); border-bottom:1px solid var(--border); background:var(--surface-inset); }
 .mm-table td { padding:.5rem .9rem; border-bottom:1px solid var(--border); vertical-align:middle; }
 .mm-table tbody tr:hover { background:var(--surface-inset); }
