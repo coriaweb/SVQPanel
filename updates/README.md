@@ -101,3 +101,4 @@ exit 0
 | 0062 | Regenera config de correo de Dovecot en sintaxis 2.4 (quota + spam-learn + spam-junk + SNI) tras upgrade a Debian 13; no-op en Dovecot 2.3 | 2026-06-27 |
 | 0063 | Reenvíos seguros: SRS (postsrsd) reescribe el envelope-from a @mydomain + fija la IP de salida del servidor (smtp_bind_address/6) + genera DKIM del dominio del servidor. Evita rebotes/blacklist al reenviar a Gmail/Outlook | 2026-06-27 |
 | 0064 | SRS solo reescribe reenvíos: excluye los dominios locales (SRS_EXCLUDE_DOMAINS) para no tocar el correo propio (formularios PHP, buzón→buzón). Se mantiene sincronizado al crear/borrar dominios | 2026-06-27 |
+| 0065 | fail2ban: jail para bots "lentos" de relay (Relay access denied, ventana 6h) que esquivan la jail postfix normal | 2026-06-29 |

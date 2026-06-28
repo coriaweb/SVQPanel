@@ -2522,6 +2522,19 @@ filter   = postfix[mode=aggressive]
 journalmatch = _SYSTEMD_UNIT=postfix@-.service
 maxretry = 3
 
+[svqpanel-postfix-relay]
+# Bots "lentos" de relay: intentan mandar a dominios que NO alojamos (Relay
+# access denied) con pocos intentos/hora, esquivando la jail [postfix] (5 en
+# 10min). Ventana LARGA (6h) para cazarlos. Seguro: un cliente legítimo nunca
+# recibe "Relay access denied" repetido (envía autenticado por submission).
+enabled  = $MAIL_JAILS_ENABLED
+port     = smtp,465,submission
+filter   = svqpanel-postfix-relay
+journalmatch = _SYSTEMD_UNIT=postfix@-.service
+maxretry = 5
+findtime = 6h
+bantime  = 24h
+
 [nginx-limit-req]
 enabled  = false
 port     = http,https
@@ -2567,6 +2580,16 @@ failregex = warning: [^[]*\[<HOST>\]: SASL (?:(?i)LOGIN|PLAIN|CRAM-MD5|DIGEST-MD
 ignoreregex =
 journalmatch = _SYSTEMD_UNIT=postfix@-.service
 F2BPSASLEOF
+
+# Filtro propio para bots de relay (dominio no alojado → "Relay access denied").
+# El prefijo postfix/smtpd[pid] es opcional porque en el journal (-o cat) no
+# aparece. El jail [svqpanel-postfix-relay] lo usa con ventana larga.
+cat > /etc/fail2ban/filter.d/svqpanel-postfix-relay.conf << 'F2BRELAYEOF'
+[Definition]
+failregex = ^(\S+/?\S*smtpd\[\d+\]: )?NOQUEUE: reject: RCPT from \S+\[<HOST>\]: 454 4\.7\.1 .*Relay access denied
+ignoreregex =
+journalmatch = _SYSTEMD_UNIT=postfix@-.service
+F2BRELAYEOF
 
 # Asegurar que existe el log que vigila [svqpanel-auth]; si no fail2ban
 # da error de "logpath not found" al iniciar el jail
@@ -2619,7 +2642,7 @@ LRTEOF
 systemctl enable fail2ban >/dev/null 2>&1 || true
 systemctl restart fail2ban >/dev/null 2>&1 || systemctl start fail2ban
 
-echo -e "${GREEN}✓ fail2ban: jails activas (sshd, recidive, svqpanel-auth$( [[ "$INSTALL_MAIL" == true ]] && echo ', dovecot, postfix-sasl, postfix' ))${NC}"
+echo -e "${GREEN}✓ fail2ban: jails activas (sshd, recidive, svqpanel-auth$( [[ "$INSTALL_MAIL" == true ]] && echo ', dovecot, postfix-sasl, postfix, postfix-relay' ))${NC}"
 if [[ -n "$INSTALLER_IP" ]]; then
     echo -e "  ${GREEN}✓ Anti-lockout: $INSTALLER_IP en whitelist nftables + ignoreip fail2ban${NC}"
 fi
