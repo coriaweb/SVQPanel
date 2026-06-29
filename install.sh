@@ -3385,6 +3385,13 @@ echo -e "${YELLOW}Aplicando protección anti zip-bomb del antispam...${NC}"
     echo -e "${YELLOW}⚠ setup_archive_protection tuvo incidencias (revisar logs)${NC}"
 echo ""
 
+# Penalización de correo en cirílico (spam de formularios web ES y spam ruso).
+echo -e "${YELLOW}Aplicando penalización de correo en cirílico...${NC}"
+/opt/svqpanel/venv/bin/python -m api.cli setup_cyrillic_protection && \
+    echo -e "${GREEN}✓ Penalización de cirílico aplicada${NC}" || \
+    echo -e "${YELLOW}⚠ setup_cyrillic_protection tuvo incidencias (revisar logs)${NC}"
+echo ""
+
 # Persistencia de IPv6 vía systemd-networkd + ruta default IPv6 persistente.
 # (Las IPv6 de dominios NO se gestionan con netplan: redefinir eth0 en netplan
 # rompe la red al reiniciar. Ver scripts/ipv6_manager.py y ipv6_route_service.py)

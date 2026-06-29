@@ -1636,6 +1636,23 @@ def cmd_setup_archive_protection() -> int:
     return 0
 
 
+def cmd_setup_cyrillic_protection() -> int:
+    """Marca como spam (→ Junk) el correo con cuerpo en cirílico (spam de
+    formularios web y spam ruso a negocios españoles). Idempotente.
+    """
+    try:
+        from scripts.rspamd_manager import RspamdManager
+        RspamdManager().setup_cyrillic_protection()
+    except PermissionError:
+        logger.error("Requiere root")
+        return 1
+    except Exception as e:
+        logger.error(f"No se pudo aplicar protección cirílico: {e}")
+        return 0
+    logger.info("setup_cyrillic_protection: penalización de cuerpo cirílico aplicada")
+    return 0
+
+
 def cmd_harden_services() -> int:
     """Endurece servicios: banner SMTP genérico + VRFY off (Postfix) y
     version "none" (BIND). Idempotente.
@@ -1890,6 +1907,8 @@ def main():
         help="Endurece Postfix (banner+VRFY) y BIND (version none)")
     sub.add_parser("setup_archive_protection",
         help="Protección anti zip-bomb de Rspamd (sube peso de símbolos de archivo)")
+    sub.add_parser("setup_cyrillic_protection",
+        help="Marca como spam el correo con cuerpo en cirílico (spam de formularios/ruso)")
     sub.add_parser("regenerate_all_vhosts",
         help="Regenera el vhost de todos los dominios desde la BD")
     sub.add_parser("refresh_suspended_vhosts",
@@ -2026,6 +2045,9 @@ def main():
         sys.exit(cmd_harden_services())
     if args.cmd == "setup_archive_protection":
         sys.exit(cmd_setup_archive_protection())
+
+    if args.cmd == "setup_cyrillic_protection":
+        sys.exit(cmd_setup_cyrillic_protection())
     if args.cmd == "regenerate_all_vhosts":
         sys.exit(cmd_regenerate_all_vhosts())
     if args.cmd == "refresh_suspended_vhosts":

@@ -57,6 +57,11 @@ class RspamdManager:
     # en lua.local.d (rspamd lo carga solo), igual que el antivirus.
     ARCHIVE_LUA = "/etc/rspamd/lua.local.d/svqpanel_archive.lua"
 
+    # Penaliza correo con cuerpo en alfabeto cirílico (spam de formularios web y
+    # spam directo en ruso/ucraniano a negocios españoles, que nunca reciben
+    # correo legítimo así). Va a Junk (peso 6), no rechazo (recuperable).
+    CYRILLIC_LUA = "/etc/rspamd/lua.local.d/svqpanel_cyrillic.lua"
+
     # ─── Helpers ──────────────────────────────────────────────────────────
 
     def _safe_name(self, domain):
@@ -750,6 +755,20 @@ rspamd_config:register_symbol({{
             self._reload_rspamd()
         return {"success": True}
 
+    def setup_cyrillic_protection(self, reload: bool = True) -> dict:
+        """Marca como spam (→ Junk) el correo cuyo cuerpo está en cirílico. Pensado
+        para el spam de formularios de contacto de webs españolas (y spam directo
+        ruso). Peso 6 = va a Junk, no rechazo: si llegara algo legítimo en ruso,
+        queda recuperable. Idempotente."""
+        os.makedirs(os.path.dirname(self.CYRILLIC_LUA), exist_ok=True)
+        tmp = self.CYRILLIC_LUA + ".tmp"
+        with open(tmp, "w") as f:
+            f.write(_CYRILLIC_LUA_CONTENT)
+        os.replace(tmp, self.CYRILLIC_LUA)
+        if reload:
+            self._reload_rspamd()
+        return {"success": True}
+
 
 # Lua que reajusta el score de los símbolos de archivo. set_metric_symbol
 # sobreescribe el peso por defecto sin tocar la lógica del módulo `archives`.
@@ -775,4 +794,41 @@ if rspamd_config.set_metric_symbol then
     group = 'svqpanel',
   })
 end
+"""
+
+
+# Lua que marca correo con cuerpo en cirílico (spam de formularios web ES y spam
+# ruso directo). Cuenta caracteres del bloque cirílico básico U+0400–U+04FF, que
+# en UTF-8 son byte prefijo 0xD0/0xD1 (\\208/\\209) + byte de continuación.
+_CYRILLIC_LUA_CONTENT = r"""-- SVQPanel — penaliza correo con cuerpo en alfabeto CIRÍLICO. NO editar a mano.
+-- Spam de formularios de contacto (y spam directo) en ruso/ucraniano a negocios
+-- españoles, que nunca reciben correo legítimo así. Peso 6 → va a Junk (no
+-- rechazo: si llega algo legítimo en ruso, queda recuperable).
+local N = 'SVQPANEL_CYRILLIC_BODY'
+local MIN_CYR = 15   -- nº mínimo de caracteres cirílicos para marcar
+
+rspamd_config:register_symbol({
+  name = N,
+  score = 6.0,
+  description = 'Cuerpo con texto en alfabeto cirílico (spam típico en webs ES)',
+  group = 'svqpanel',
+  callback = function(task)
+    local parts = task:get_text_parts()
+    if not parts then return false end
+    for _, part in ipairs(parts) do
+      local content = part:get_content()
+      if content then
+        local s = tostring(content)
+        local count = 0
+        for _ in s:gmatch('[\208\209][\128-\191]') do
+          count = count + 1
+          if count >= MIN_CYR then
+            return true, 1.0, count .. ' chars'
+          end
+        end
+      end
+    end
+    return false
+  end,
+})
 """
