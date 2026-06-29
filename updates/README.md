@@ -102,5 +102,6 @@ exit 0
 | 0063 | Reenvíos seguros: SRS (postsrsd) reescribe el envelope-from a @mydomain + fija la IP de salida del servidor (smtp_bind_address/6) + genera DKIM del dominio del servidor. Evita rebotes/blacklist al reenviar a Gmail/Outlook | 2026-06-27 |
 | 0064 | SRS solo reescribe reenvíos: excluye los dominios locales (SRS_EXCLUDE_DOMAINS) para no tocar el correo propio (formularios PHP, buzón→buzón). Se mantiene sincronizado al crear/borrar dominios | 2026-06-27 |
 | 0065 | fail2ban: jail para bots "lentos" de relay (Relay access denied, ventana 6h) que esquivan la jail postfix normal | 2026-06-29 |
+| 0068 | Fix journalmatch Postfix en fail2ban (D13 usa postfix.service, no postfix@-.service): las jails de correo estaban ciegas | 2026-06-29 |
 | 0066 | Importación de backups en subproceso aislado + tar en streaming (no OOM); marca como fallidas las migraciones zombie en 'running' de la versión anterior | 2026-06-29 |
 | 0067 | Temporales de migración a /var/lib/svqpanel/migration-tmp (disco real, no /tmp/tmpfs que se llenaba con backups grandes) + limpia huérfanos de varios GB de migraciones muertas por OOM | 2026-06-29 |

@@ -2445,6 +2445,17 @@ if [[ "$INSTALL_MAIL" == true ]]; then
     MAIL_JAILS_ENABLED="true"
 fi
 
+# Unidad systemd de Postfix para el journalmatch de fail2ban. CAMBIA según la
+# versión de Debian: en Debian 12 es 'postfix@-.service', en Debian 13
+# 'postfix.service'. Si el journalmatch apunta a la unit equivocada, las jails
+# de correo quedan CIEGAS (Total failed: 0 pese a haber ataques). Detectar la
+# activa evita ese bug.
+if systemctl list-units --type=service --all 2>/dev/null | grep -q "postfix@-.service"; then
+    PF_UNIT="postfix@-.service"
+else
+    PF_UNIT="postfix.service"
+fi
+
 # Action custom: banea en los sets f2b_v4/f2b_v6 de la tabla 'inet svqpanel',
 # que tienen reglas drop para IPv4 E IPv6 (la nftables-multiport por defecto
 # solo crea set/regla IPv4 → los atacantes por IPv6 no se bloqueaban).
@@ -2504,10 +2515,10 @@ maxretry = 5
 enabled  = $MAIL_JAILS_ENABLED
 port     = smtp,465,submission,imap,imaps,pop3,pop3s
 # Filtro propio (svqpanel-postfix-sasl): banea todos los fallos de login SMTP,
-# incluido 'Invalid authentication mechanism'. journalmatch al unit real de
-# postfix (postfix@-.service, no postfix.service).
+# incluido 'Invalid authentication mechanism'. journalmatch a la unit real de
+# Postfix (varía D12/D13 → detectada en \$PF_UNIT).
 filter   = svqpanel-postfix-sasl
-journalmatch = _SYSTEMD_UNIT=postfix@-.service
+journalmatch = _SYSTEMD_UNIT=$PF_UNIT
 maxretry = 5
 
 [postfix]
@@ -2519,7 +2530,7 @@ maxretry = 5
 enabled  = $MAIL_JAILS_ENABLED
 port     = smtp,465,submission
 filter   = postfix[mode=aggressive]
-journalmatch = _SYSTEMD_UNIT=postfix@-.service
+journalmatch = _SYSTEMD_UNIT=$PF_UNIT
 maxretry = 3
 
 [svqpanel-postfix-relay]
@@ -2530,7 +2541,7 @@ maxretry = 3
 enabled  = $MAIL_JAILS_ENABLED
 port     = smtp,465,submission
 filter   = svqpanel-postfix-relay
-journalmatch = _SYSTEMD_UNIT=postfix@-.service
+journalmatch = _SYSTEMD_UNIT=$PF_UNIT
 maxretry = 5
 findtime = 6h
 bantime  = 24h
@@ -2578,7 +2589,6 @@ cat > /etc/fail2ban/filter.d/svqpanel-postfix-sasl.conf << 'F2BPSASLEOF'
 [Definition]
 failregex = warning: [^[]*\[<HOST>\]: SASL (?:(?i)LOGIN|PLAIN|CRAM-MD5|DIGEST-MD5) authentication failed
 ignoreregex =
-journalmatch = _SYSTEMD_UNIT=postfix@-.service
 F2BPSASLEOF
 
 # Filtro propio para bots de relay (dominio no alojado → "Relay access denied").
@@ -2588,7 +2598,6 @@ cat > /etc/fail2ban/filter.d/svqpanel-postfix-relay.conf << 'F2BRELAYEOF'
 [Definition]
 failregex = ^(\S+/?\S*smtpd\[\d+\]: )?NOQUEUE: reject: RCPT from \S+\[<HOST>\]: 454 4\.7\.1 .*Relay access denied
 ignoreregex =
-journalmatch = _SYSTEMD_UNIT=postfix@-.service
 F2BRELAYEOF
 
 # Asegurar que existe el log que vigila [svqpanel-auth]; si no fail2ban
