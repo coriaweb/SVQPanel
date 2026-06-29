@@ -35,6 +35,20 @@ from typing import Dict, List, Optional
 
 logger = logging.getLogger(__name__)
 
+# Dir en disco real para extraer el backup (NO /tmp: suele ser un tmpfs pequeño
+# que un backup de varios GB llena → "No space left on device", además de comer
+# RAM). Misma ubicación que usa la capa de rutas (MIGRATION_TMP_DIR). Si no se
+# puede crear, devolvemos None y tempfile usa su default.
+_MIGRATION_TMP_DIR = "/var/lib/svqpanel/migration-tmp"
+
+
+def _tmp_dir():
+    try:
+        os.makedirs(_MIGRATION_TMP_DIR, mode=0o700, exist_ok=True)
+        return _MIGRATION_TMP_DIR
+    except OSError:
+        return None
+
 
 class HestiaImportError(RuntimeError):
     """Error legible del importador (el endpoint lo traduce a 4xx)."""
@@ -335,7 +349,7 @@ class HestiaBackup:
         if not os.path.isfile(tar_path):
             raise HestiaImportError(f"No existe el archivo de backup: {tar_path}")
         self.tar_path = tar_path
-        self.tmpdir = tempfile.mkdtemp(prefix="svq_hestia_")
+        self.tmpdir = tempfile.mkdtemp(prefix="svq_hestia_", dir=_tmp_dir())
         self.system: Optional[str] = None   # "hestia" | "vesta"
         self._extracted = False
         # En modo análisis no se extraen los datos pesados; guardamos los nombres
@@ -928,7 +942,7 @@ def _restore_web_files(data_tar: str, web_root: str, public_html: str) -> None:
     no pisar el vhost ni el pool, copiamos el CONTENIDO de public_html del backup
     dentro del public_html ya creado por create_domain().
     """
-    tmp = tempfile.mkdtemp(prefix="svq_webdata_")
+    tmp = tempfile.mkdtemp(prefix="svq_webdata_", dir=_tmp_dir())
     try:
         extract_data_archive(data_tar, tmp)
         # Buscar el public_html dentro del extraído (puede estar a distinta
@@ -1259,7 +1273,7 @@ def _restore_maildirs(acc_tar: str, panel_username: str, domain: str) -> None:
     """Extrae accounts.tar y copia los maildirs al mail dir del dominio."""
     import subprocess
     dest = f"/home/{panel_username}/mail/{domain}"
-    tmp = tempfile.mkdtemp(prefix="svq_maildata_")
+    tmp = tempfile.mkdtemp(prefix="svq_maildata_", dir=_tmp_dir())
     try:
         extract_data_archive(acc_tar, tmp)
         # El tar suele contener {cuenta}/{cur,new,tmp}. Copiamos su contenido.

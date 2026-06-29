@@ -254,6 +254,18 @@ async def startup():
     except Exception as e:
         print(f"⚠ No se pudieron recuperar migraciones zombie: {e}")
 
+    # Temporales de migración huérfanos: un OOM/SIGKILL del restore se salta la
+    # limpieza del context manager y deja directorios de varios GB colgados (en
+    # /tmp, que suele ser un tmpfs pequeño → se llenaba). Barremos los que tengan
+    # >1 h (no pisar uno que pudiera estar en curso justo al arrancar).
+    try:
+        from api.routes.migrations import purge_migration_tmp
+        n = purge_migration_tmp(max_age=3600)
+        if n:
+            print(f"⚠ {n} temporal(es) de migración huérfano(s) eliminado(s)")
+    except Exception as e:
+        print(f"⚠ No se pudieron limpiar temporales de migración: {e}")
+
     print(f"✓ {PANEL_NAME} v{PANEL_VERSION} iniciado")
     print(f"✓ Base de datos sincronizada")
 

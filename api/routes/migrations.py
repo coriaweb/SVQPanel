@@ -40,10 +40,57 @@ import uuid
 MIGRATION_CACHE_DIR = "/var/lib/svqpanel/migrations"
 MIGRATION_CACHE_TTL = 6 * 3600  # 6 h: si no se importa, se considera huérfano
 
+# Directorio para los temporales de migración (descarga del .tar, extracción del
+# backup, datos de web/correo). DEBE estar en disco real, NO en /tmp: en muchos
+# servidores /tmp es un tmpfs pequeño (p.ej. 2.9 GB en RAM) y un backup de varios
+# GB lo llena ("No space left on device") además de competir con la memoria. /var
+# vive en el disco raíz (decenas de GB libres). Todos los mkstemp/mkdtemp de la
+# migración usan este dir vía migration_tmp_dir().
+MIGRATION_TMP_DIR = "/var/lib/svqpanel/migration-tmp"
+
 
 def _cache_dir() -> str:
     os.makedirs(MIGRATION_CACHE_DIR, mode=0o700, exist_ok=True)
     return MIGRATION_CACHE_DIR
+
+
+def migration_tmp_dir() -> str:
+    """Dir en disco real para los temporales de migración (no /tmp). Lo usan los
+    mkstemp/mkdtemp del import. Si por lo que sea no se puede crear, cae a None
+    (tempfile usará su default) para no romper la migración."""
+    try:
+        os.makedirs(MIGRATION_TMP_DIR, mode=0o700, exist_ok=True)
+        return MIGRATION_TMP_DIR
+    except OSError:
+        return None
+
+
+def purge_migration_tmp(max_age: int = 0) -> int:
+    """Borra restos de temporales de migración (svq_hestia_*, svq_webdata_*,
+    svq_maildata_*, svq_hestia_up_*.tar) más viejos que max_age segundos.
+
+    Un OOM/SIGKILL del restore se salta el __exit__ del context manager que los
+    limpia, así que quedan huérfanos (vimos 2.1 GB colgados tras una migración
+    fallida). Se llama al arrancar (max_age>0 para no pisar uno en curso) y se
+    puede invocar a mano. Barre TANTO el dir nuevo como /tmp (legado)."""
+    import glob
+    prefixes = ("svq_hestia_", "svq_webdata_", "svq_maildata_", "svq_hestia_up_")
+    now = time.time()
+    removed = 0
+    for base in (MIGRATION_TMP_DIR, tempfile.gettempdir()):
+        for pref in prefixes:
+            for p in glob.glob(os.path.join(base, pref + "*")):
+                try:
+                    if max_age and now - os.path.getmtime(p) < max_age:
+                        continue
+                    if os.path.isdir(p):
+                        shutil.rmtree(p, ignore_errors=True)
+                    else:
+                        os.remove(p)
+                    removed += 1
+                except OSError:
+                    pass
+    return removed
 
 
 def _purge_stale_cache() -> None:
@@ -189,7 +236,8 @@ def _download_url(url: str) -> str:
     import urllib.request
     if not url.lower().startswith(("http://", "https://")):
         raise HTTPException(status_code=400, detail="La URL debe ser http(s).")
-    fd, tmp = tempfile.mkstemp(prefix="svq_hestia_up_", suffix=".tar")
+    fd, tmp = tempfile.mkstemp(prefix="svq_hestia_up_", suffix=".tar",
+                               dir=migration_tmp_dir())
     os.close(fd)
     max_bytes = MAX_BACKUP_MB * 1024 * 1024
     try:
@@ -277,7 +325,8 @@ def _fetch_via_ssh(cfg: dict) -> str:
     def _sub(lst, env):
         return [keyfile if x == "__KEYFILE__" else x for x in lst], env
 
-    fd, tmp = tempfile.mkstemp(prefix="svq_hestia_up_", suffix=".tar")
+    fd, tmp = tempfile.mkstemp(prefix="svq_hestia_up_", suffix=".tar",
+                               dir=migration_tmp_dir())
     os.close(fd)
     try:
         # 1) Generar el backup en el remoto.

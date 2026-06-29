@@ -2601,6 +2601,11 @@ touch /opt/svqpanel/logs/auth.log
 mkdir -p /var/lib/svqpanel/migrations
 chmod 700 /var/lib/svqpanel/migrations
 
+# Temporales de migración (descarga/extracción del backup): en disco real, NO en
+# /tmp (que suele ser un tmpfs pequeño y lo llenaría un backup de varios GB).
+mkdir -p /var/lib/svqpanel/migration-tmp
+chmod 700 /var/lib/svqpanel/migration-tmp
+
 # Locale español para que los informes de GoAccess salgan en español (la
 # traducción goaccess.mo viene con el paquete; falta generar el locale).
 if ! locale -a 2>/dev/null | grep -qiE "^es_ES\.(utf8|UTF-8)$"; then
