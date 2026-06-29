@@ -2450,7 +2450,9 @@ fi
 # 'postfix.service'. Si el journalmatch apunta a la unit equivocada, las jails
 # de correo quedan CIEGAS (Total failed: 0 pese a haber ataques). Detectar la
 # activa evita ese bug.
-if systemctl list-units --type=service --all 2>/dev/null | grep -q "postfix@-.service"; then
+# OJO: ambas units pueden EXISTIR; hay que mirar cuál está ACTIVA (la otra está
+# dead). En D12 la activa es postfix@-.service; en D13, postfix.service.
+if systemctl is-active --quiet postfix@-.service 2>/dev/null; then
     PF_UNIT="postfix@-.service"
 else
     PF_UNIT="postfix.service"

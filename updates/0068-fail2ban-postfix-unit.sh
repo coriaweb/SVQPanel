@@ -21,13 +21,15 @@ if [ ! -f "$JAIL" ] || ! command -v fail2ban-client >/dev/null 2>&1; then
     exit 0
 fi
 
-# Detectar la unit real de Postfix.
-if systemctl list-units --type=service --all 2>/dev/null | grep -q "postfix@-.service"; then
+# Detectar la unit ACTIVA de Postfix. OJO: ambas units pueden EXISTIR a la vez
+# (una inactiva); hay que mirar cuál está activa. En D12 es postfix@-.service,
+# en D13 postfix.service.
+if systemctl is-active --quiet postfix@-.service 2>/dev/null; then
     PF_UNIT="postfix@-.service"
 else
     PF_UNIT="postfix.service"
 fi
-echo "  unit de Postfix detectada: $PF_UNIT"
+echo "  unit de Postfix activa: $PF_UNIT"
 
 # Corregir el journalmatch en jail.local a la unit correcta (cualquiera de las
 # dos variantes anteriores → la actual). Idempotente.
