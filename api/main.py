@@ -243,8 +243,43 @@ async def startup():
         start_cron_run_scheduler()
     except Exception as e:
         print(f"⚠ No se pudo arrancar el cron-run ingestor: {e}")
+
+    # Migraciones zombie: un job en 'running' tras arrancar significa que el
+    # proceso que lo ejecutaba murió a media importación (p.ej. OOM → systemd
+    # reinició svqpanel). El background task vive DENTRO de este proceso, así que
+    # no puede haber un 'running' legítimo recién arrancados → lo marcamos failed
+    # para que la UI deje de mostrar "Importando…" eternamente.
+    try:
+        _recover_zombie_migrations()
+    except Exception as e:
+        print(f"⚠ No se pudieron recuperar migraciones zombie: {e}")
+
     print(f"✓ {PANEL_NAME} v{PANEL_VERSION} iniciado")
     print(f"✓ Base de datos sincronizada")
+
+
+def _recover_zombie_migrations():
+    """Marca como 'failed' los MigrationJob que quedaron en 'running' de un
+    proceso anterior (muerto a mitad de la importación). Se ejecuta al arrancar:
+    al no haber ningún task vivo todavía, cualquier 'running' es un zombie."""
+    from api.models.database import SessionLocal
+    from api.models.models_migration import MigrationJob
+    from datetime import datetime
+    db = SessionLocal()
+    try:
+        zombies = db.query(MigrationJob).filter(MigrationJob.status == "running").all()
+        if not zombies:
+            return
+        for job in zombies:
+            job.status = "failed"
+            job.error = ("La importación se interrumpió: el panel se reinició "
+                         "mientras corría (posible falta de memoria). Vuelve a "
+                         "intentar la migración.")
+            job.finished_at = datetime.utcnow()
+        db.commit()
+        print(f"⚠ {len(zombies)} migración(es) zombie marcada(s) como fallida(s)")
+    finally:
+        db.close()
 
 
 def _run_migrations():
@@ -321,6 +356,10 @@ def _run_migrations():
         "ALTER TABLE mail_domains ADD COLUMN IF NOT EXISTS spam_reject_threshold FLOAT DEFAULT 15.0",
         "ALTER TABLE mail_domains ADD COLUMN IF NOT EXISTS whitelist_senders TEXT DEFAULT ''",
         "ALTER TABLE mail_domains ADD COLUMN IF NOT EXISTS blacklist_senders TEXT DEFAULT ''",
+        # Importación: datos del job que lee el subproceso aislado (run_migration_job)
+        "ALTER TABLE migration_jobs ADD COLUMN IF NOT EXISTS tar_path TEXT",
+        "ALTER TABLE migration_jobs ADD COLUMN IF NOT EXISTS cleanup_tar INTEGER DEFAULT 0",
+        "ALTER TABLE migration_jobs ADD COLUMN IF NOT EXISTS dns_records_json TEXT",
         # Suspensión administrativa (cascada de usuario + granular)
         "ALTER TABLE users ADD COLUMN IF NOT EXISTS is_suspended BOOLEAN DEFAULT FALSE",
         "ALTER TABLE mail_domains ADD COLUMN IF NOT EXISTS is_suspended BOOLEAN DEFAULT FALSE",

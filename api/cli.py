@@ -1036,6 +1036,22 @@ def cmd_purge_user(username: str, yes: bool = False) -> int:
         db.close()
 
 
+def cmd_run_migration_job(job_id: int) -> int:
+    """Ejecuta la importación de un MigrationJob en este proceso (aislado del
+    panel). Lo lanza el panel como subproceso para que un pico de RAM / OOM
+    durante el restore mate solo a este hijo, no a uvicorn. Toda la lógica vive
+    en run_migration_job_inproc, que lee los datos del job en la BD."""
+    from api.routes.migrations import run_migration_job_inproc
+    try:
+        run_migration_job_inproc(job_id)
+        return 0
+    except Exception as e:
+        # El estado del job ya quedó marcado 'failed' dentro de la función; aquí
+        # solo reflejamos el fallo en el código de salida (lo lee el padre).
+        logger.error("run_migration_job %s falló: %s", job_id, e)
+        return 1
+
+
 def cmd_clean_orphan_vhosts(yes: bool = False) -> int:
     """Detecta y elimina vhosts huérfanos de nginx/Apache (root/logs inexistentes).
 
@@ -1945,7 +1961,13 @@ def main():
     p_ip.add_argument("--rollback", action="store_true", help="Revierte el último cambio (red + BD + zonas)")
     p_ip.add_argument("--autorevert-check", action="store_true", help="(interno) lo ejecuta el timer de auto-reversión")
 
+    p_mig = sub.add_parser("run_migration_job",
+        help="(interno) ejecuta la importación de un MigrationJob en este proceso aislado")
+    p_mig.add_argument("job_id", type=int, help="ID del MigrationJob a ejecutar")
+
     args = parser.parse_args()
+    if args.cmd == "run_migration_job":
+        sys.exit(cmd_run_migration_job(args.job_id))
     if args.cmd == "refresh_ip_lists":
         sys.exit(cmd_refresh_ip_lists(force=args.force))
     if args.cmd == "refresh_user_stats":

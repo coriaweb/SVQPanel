@@ -483,18 +483,28 @@ async def migration_analyze(
 # ─────────────────────────────────────────────────────────────────────────────
 # Importación (background) — solo si el preflight de conflictos pasa
 # ─────────────────────────────────────────────────────────────────────────────
-def _run_import_job(job_id: int, tar_path: str, cleanup_tar: bool,
-                    dns_records: dict = None):
-    """Ejecuta la importación en segundo plano y actualiza el MigrationJob."""
+def run_migration_job_inproc(job_id: int):
+    """Ejecuta la importación leyendo todos sus datos del MigrationJob.
+
+    Es el cuerpo real del import. Lo invoca el subproceso aislado
+    (`python -m api.cli run_migration_job <id>`), NO el proceso del panel: así
+    un pico de RAM / OOM durante el restore mata solo a este hijo y el panel
+    (uvicorn) sigue vivo. El .tar, el flag de limpieza y los registros DNS se
+    leen del propio job (los persistió migration_import)."""
     import json
     from scripts.hestia_import import run_import
     from api.models.models_migration import MigrationJob
 
     db = SessionLocal()
+    tar_path = None
+    cleanup_tar = False
     try:
         job = db.query(MigrationJob).filter(MigrationJob.id == job_id).first()
         if not job:
             return
+        tar_path = job.tar_path
+        cleanup_tar = bool(job.cleanup_tar)
+        dns_records = json.loads(job.dns_records_json) if job.dns_records_json else None
         job.status = "running"
         job.started_at = datetime.utcnow()
         db.commit()
@@ -519,13 +529,69 @@ def _run_import_job(job_id: int, tar_path: str, cleanup_tar: bool,
                 db.commit()
         except Exception:
             pass
+        raise
     finally:
         db.close()
-        if cleanup_tar and os.path.exists(tar_path):
+        if cleanup_tar and tar_path and os.path.exists(tar_path):
             try:
                 os.remove(tar_path)
             except OSError:
                 pass
+
+
+def _spawn_import_subprocess(job_id: int):
+    """Lanza la importación en un subproceso AISLADO y vigila su salida.
+
+    Corre como background task del panel, pero es ligero: solo arranca el hijo
+    (`python -m api.cli run_migration_job <id>`) y espera. Si el hijo muere sin
+    dejar el job en estado terminal (p.ej. OOM-killer → SIGKILL), marcamos el
+    job como failed aquí, para que la UI no se quede en "Importando…"."""
+    import subprocess, sys, shutil
+    from api.models.models_migration import MigrationJob
+
+    python = sys.executable
+    root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    base = [python, "-m", "api.cli", "run_migration_job", str(job_id)]
+
+    # Aislar el restore en su PROPIO cgroup con systemd-run --scope: el servicio
+    # svqpanel tiene MemoryMax en el unit, y un subproceso normal heredaría ese
+    # cgroup → un pico del restore podría disparar el OOM-killer contra uvicorn.
+    # Con un scope propio (límite generoso, sin tope de swap) un OOM mata solo al
+    # restore. Fallback a subprocess directo si systemd-run no está (dev/local).
+    is_root = hasattr(os, "geteuid") and os.geteuid() == 0
+    if shutil.which("systemd-run") and is_root:
+        cmd = ["systemd-run", "--scope", "--quiet",
+               "-p", "MemoryMax=2G", "-p", "MemorySwapMax=1G"] + base
+    else:
+        cmd = base
+    try:
+        proc = subprocess.run(
+            cmd, cwd=root, capture_output=True, text=True, timeout=7200)
+        rc = proc.returncode
+        stderr = (proc.stderr or "")[-2000:]
+    except subprocess.TimeoutExpired:
+        rc, stderr = -1, "La importación superó el tiempo máximo (2h) y se abortó."
+    except Exception as e:
+        rc, stderr = -1, f"No se pudo lanzar el subproceso de importación: {e}"
+
+    # Si el subproceso terminó OK, él mismo dejó el job en success/failed. Solo
+    # intervenimos si murió de forma anómala dejando el job colgado en running.
+    if rc == 0:
+        return
+    db = SessionLocal()
+    try:
+        job = db.query(MigrationJob).filter(MigrationJob.id == job_id).first()
+        if job and job.status in ("pending", "running"):
+            job.status = "failed"
+            msg = ("La importación se interrumpió (el proceso terminó de forma "
+                   "anómala, posible falta de memoria).")
+            if stderr.strip():
+                msg += f" Detalle: {stderr.strip()[-300:]}"
+            job.error = msg
+            job.finished_at = datetime.utcnow()
+            db.commit()
+    finally:
+        db.close()
 
 
 @router.post("/migrations/import")
@@ -627,13 +693,18 @@ async def migration_import(
             "conflicts": conflicts,
         })
 
-    # Crear el job y lanzar en background.
+    # Crear el job persistiendo lo que el subproceso aislado necesita (tar_path,
+    # cleanup_tar, dns_records): el import corre fuera del proceso del panel para
+    # que un pico de RAM / OOM mate solo al hijo, no a uvicorn.
     job = MigrationJob(
         source_type="upload" if cleanup_tar else "path",
         source_kind=manifest.get("system") or "hestia",
         target_user_id=target_user_id,
         status="pending",
         scope=scope,
+        tar_path=tar_path,
+        cleanup_tar=1 if cleanup_tar else 0,
+        dns_records_json=json.dumps(dns_records_parsed) if dns_records_parsed else None,
         manifest_json=json.dumps({"system": manifest["system"],
                                   "web": len(manifest["web"]),
                                   "db": len(manifest["db"]),
@@ -644,8 +715,7 @@ async def migration_import(
     db.commit()
     db.refresh(job)
 
-    background_tasks.add_task(_run_import_job, job.id, tar_path, cleanup_tar,
-                              dns_records_parsed)
+    background_tasks.add_task(_spawn_import_subprocess, job.id)
     return {"status": "success", "data": {"job_id": job.id, "status": "pending"}}
 
 

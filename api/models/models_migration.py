@@ -30,6 +30,13 @@ class MigrationJob(Base):
     report_json = Column(Text, nullable=True)     # informe final (JSON)
     error = Column(Text, nullable=True)
 
+    # Datos que necesita el subproceso de importación (corre aislado para que un
+    # pico de RAM / OOM mate solo al hijo, no al panel). Se persisten aquí en vez
+    # de pasarlos por argv: el CLI run_migration_job solo recibe el id y lee esto.
+    tar_path = Column(Text, nullable=True)         # ruta del .tar a importar
+    cleanup_tar = Column(Integer, nullable=False, default=0)  # 1 = borrarlo al acabar
+    dns_records_json = Column(Text, nullable=True) # registros DNS propuestos (JSON)
+
     created_at = Column(DateTime, default=datetime.utcnow)
     started_at = Column(DateTime, nullable=True)
     finished_at = Column(DateTime, nullable=True)

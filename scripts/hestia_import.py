@@ -26,6 +26,7 @@ ningún miembro escape del directorio destino (path traversal).
 
 import os
 import re
+import inspect
 import shutil
 import tarfile
 import tempfile
@@ -265,10 +266,24 @@ def safe_extract_tar(tar_path: str, dest: str, config_only: bool = False) -> lis
         raise HestiaImportError(
             "El archivo no es un .tar válido de HestiaCP. Sube el backup que "
             "genera Hestia (v-backup-user), sin comprimir en .zip ni renombrar.")
+    # Streaming miembro a miembro (tar.next()) en vez de getmembers()+extractall:
+    # un backup de Hestia con un WordPress entero tiene decenas de miles de
+    # ficheros, y materializar TODOS los TarInfo a la vez (getmembers, members=,
+    # [m.name for m in members]) disparaba el uso de RAM a >1 GB y provocaba que
+    # systemd matara el panel por OOM a media importación. Iterando con next() y
+    # extrayendo de uno en uno, cada TarInfo se libera tras procesarlo; solo
+    # acumulamos los NOMBRES (strings ligeros), que el llamador necesita para el
+    # manifiesto.
+    names: List[str] = []
+    # Detección de Python ≥ 3.12 (soporta el filtro 'data') una sola vez, fuera
+    # del bucle: no queremos cazar el TypeError por miembro.
+    supports_filter = "filter" in inspect.signature(tarfile.TarFile.extract).parameters
     with tar:
-        members = tar.getmembers()
-        safe_members = []
-        for m in members:
+        while True:
+            m = tar.next()
+            if m is None:
+                break
+            names.append(m.name)
             member_path = os.path.join(dest, m.name)
             # Una ruta de fichero que escapa del destino SÍ es un ataque → abortar.
             if not _is_within(dest, member_path):
@@ -287,12 +302,11 @@ def safe_extract_tar(tar_path: str, dest: str, config_only: bool = False) -> lis
                 if not _is_within(dest, link_target):
                     logger.info(f"Omitido enlace que apunta fuera del backup: {m.name!r}")
                     continue
-            safe_members.append(m)
-        try:
-            tar.extractall(dest, members=safe_members, filter="data")  # Python ≥ 3.12
-        except TypeError:
-            tar.extractall(dest, members=safe_members)                 # validado arriba
-        return [m.name for m in members]
+            if supports_filter:
+                tar.extract(m, dest, filter="data")  # Python ≥ 3.12
+            else:
+                tar.extract(m, dest)                 # validado arriba
+        return names
 
 
 # ─────────────────────────────────────────────────────────────────────────────
