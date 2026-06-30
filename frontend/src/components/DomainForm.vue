@@ -52,6 +52,14 @@
       <input v-model="form.domain_name" type="text" class="form-control" disabled />
     </div>
 
+    <!-- Aviso: dominio solo correo/DNS (al editar) -->
+    <div v-if="isEditing && isMailDnsOnly" class="alert alert-info py-2 px-3 mb-3 small">
+      <i class="bi bi-envelope me-1"></i>
+      <strong>Solo correo / DNS.</strong> Este dominio no aloja la web aquí (su registro A
+      apunta a otro servidor), así que no hay opciones de PHP, SSL, caché ni plantilla.
+      El correo y la zona DNS se gestionan en sus propias secciones.
+    </div>
+
     <!-- Selector de usuario: solo para admin/reseller -->
     <div v-if="isAdminOrReseller && !isEditing" class="mb-3">
       <label class="form-label">Usuario (cliente propietario)</label>
@@ -151,8 +159,8 @@
       </div>
     </div>
 
-    <!-- Redirección y docroot (solo al editar) -->
-    <template v-if="isEditing">
+    <!-- Redirección y docroot (solo al editar dominios con web) -->
+    <template v-if="isEditing && isWebDomain">
       <hr class="my-3" />
       <p class="fw-semibold mb-2 text-muted small text-uppercase">
         <i class="bi bi-arrow-right-circle me-1"></i> Redirección y raíz de documentos
@@ -197,7 +205,8 @@
       </div>
     </template>
 
-    <!-- Plantilla web (creación Y edición) -->
+    <!-- Plantilla web (creación Y edición) — no aplica a solo correo/DNS -->
+    <template v-if="isWebDomain">
     <hr class="my-3" />
     <p class="fw-semibold mb-2 text-muted small text-uppercase">
       <i class="bi bi-layout-text-window-reverse me-1"></i> Plantilla web
@@ -250,9 +259,10 @@
         La plantilla se aplicará al hacer clic en "Actualizar Dominio"
       </div>
     </div>
+    </template>
 
-    <!-- Rendimiento (solo al editar: requiere un dominio ya existente) -->
-    <template v-if="isEditing">
+    <!-- Rendimiento (solo al editar dominios con web) -->
+    <template v-if="isEditing && isWebDomain">
       <hr class="my-3" />
       <p class="fw-semibold mb-2 text-muted small text-uppercase">Rendimiento</p>
 
@@ -340,8 +350,8 @@
       </div>
     </template>
 
-    <!-- ── Sección SSL (solo en edición) ─────────────────────────────────── -->
-    <template v-if="isEditing">
+    <!-- ── Sección SSL (solo en edición de dominios con web) ─────────────── -->
+    <template v-if="isEditing && isWebDomain">
       <hr class="my-3" />
       <p class="fw-semibold mb-2 text-muted small text-uppercase">
         <i class="bi bi-shield-lock me-1"></i> SSL / HTTPS
@@ -473,6 +483,13 @@ export default {
     const isAdminOrReseller = computed(() =>
       ['admin', 'reseller'].includes(store.currentUser?.role)
     )
+
+    // Dominio solo correo/DNS (no aloja web). En edición se lee del dominio; en
+    // creación, del checkbox del formulario. Las secciones web no aplican.
+    const isMailDnsOnly = computed(() =>
+      isEditing.value ? !!props.domain?.mail_dns_only : !!form.value.mail_dns_only
+    )
+    const isWebDomain = computed(() => !isMailDnsOnly.value)
 
     // Versiones disponibles: usa las del padre si las pasa, si no carga propias
     const availablePhpVersions = computed(() =>
@@ -831,7 +848,7 @@ export default {
 
     return {
       form, loading, isEditing, users,
-      isAdminOrReseller, availablePhpVersions,
+      isAdminOrReseller, isWebDomain, isMailDnsOnly, availablePhpVersions,
       templates, templateCategories, templatesByCategory,
       selectedTemplate, parsedPhpOverrides,
       serverIps, ipv6Enabled, ipv6Suggestions, ipv6Loading, _uid,
