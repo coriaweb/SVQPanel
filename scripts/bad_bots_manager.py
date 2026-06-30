@@ -142,8 +142,18 @@ def _read_blocked_patterns() -> set:
     patterns = set()
     for line in NGINX_CONF.read_text().splitlines():
         line = line.strip()
-        # Líneas del tipo: ~*pattern    1;
-        if line.startswith("~*") and line.endswith("1;"):
+        if not line.endswith("1;"):
+            continue
+        # Dos formatos posibles:
+        #   "~*pattern con espacios" 1;   (nuevo, entrecomillado)
+        #   ~*pattern                1;   (viejo, sin comillas, un solo token)
+        if line.startswith('"~*'):
+            end = line.find('"', 3)   # cierre de comillas tras ~*
+            if end == -1:
+                continue
+            pattern = line[3:end].replace('\\"', '"').replace('\\\\', '\\').lower()
+            patterns.add(pattern)
+        elif line.startswith("~*"):
             pattern = line[2:].split()[0].rstrip(";").lower()
             patterns.add(pattern)
     return patterns
@@ -158,9 +168,12 @@ def _write_nginx_conf(patterns: list):
         "    default 0;",
     ]
     for p in patterns:
-        # Escapar caracteres especiales nginx en el patrón
-        safe = p.replace('"', '\\"')
-        lines.append(f'    ~*{safe} 1;')
+        # Entrecomillar SIEMPRE el patrón: en un bloque map de nginx los espacios
+        # separan parámetros, así que un UA como "Silvy X Ran" sin comillas da
+        # "invalid number of the map parameters" y tumba el nginx -t. Con comillas
+        # el patrón es un único token aunque lleve espacios.
+        safe = p.replace('\\', '\\\\').replace('"', '\\"')
+        lines.append(f'    "~*{safe}" 1;')
     lines.append("}")
     lines.append("")
     NGINX_CONF.write_text("\n".join(lines))

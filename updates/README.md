@@ -110,3 +110,4 @@ exit 0
 | 0071 | Subir límite de subida del gestor de archivos (100→2048 MB) y de extracción (500→5120 MB); demasiado bajo para un WordPress. Solo toca filas en el default viejo | 2026-06-30 |
 | 0072 | Geo-bloqueo también cubre IPv6 (ipdeny v4+v6); refresca las listas geo_* existentes para que bloquear un país filtre además sus rangos IPv6 | 2026-06-30 |
 | 0073 | Bloquear bots de robo de credenciales cloud (Silvy X Ran) + escáneres (LeakIX/Censys/Expanse) en el catálogo de bad-bots; respeta la selección del admin | 2026-06-30 |
+| 0074 | Fix bad-bots.conf: entrecomillar patrones con espacios ("Silvy X Ran") que rompían el map de nginx (nginx -t fallaba → no recargaba); regenera y recarga | 2026-06-30 |
