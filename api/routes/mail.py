@@ -2577,6 +2577,33 @@ def _is_temporary_reject(reason: str) -> bool:
     return (m.group(1) or m.group(2)) == "4"
 
 
+# SRS reescribe el envelope-from al reenviar: SRS0=hash=tt=dominio.orig=local@svqhost
+# Descifrar muestra el remitente REAL en vez de la cadena SRS ilegible.
+_RE_SRS = re.compile(r"^SRS[01][=+][^=]+[=+][^=]+[=+]([^=]+)[=+]([^@]+)@", re.IGNORECASE)
+
+
+def _unsrs(addr: str) -> str:
+    """Si la dirección es SRS (SRS0=..=dominio=local@svqhost) devuelve el original
+    'local@dominio'; si no, la deja igual."""
+    if not addr:
+        return addr
+    m = _RE_SRS.match(addr)
+    return f"{m.group(2)}@{m.group(1)}" if m else addr
+
+
+def _humanize_sender(sender: str) -> str:
+    """Remitente legible para el monitor:
+    - '' (envelope vacío) → '(sistema/bounce)': avisos de entrega, rebotes,
+      notificaciones automáticas. No tienen remitente de sobre a propósito.
+    - SRS0=..=dominio=local@svqhost → 'local@dominio' (remitente original del
+      reenvío, descifrado).
+    - resto → tal cual.
+    """
+    if not sender:
+        return "(sistema/bounce)"
+    return _unsrs(sender)
+
+
 def _parse_mail_log(raw_lines: list[str], domain_filter: Optional[str] = None,
                     search: Optional[str] = None, max_events: int = 500,
                     rspamd_map: Optional[dict] = None) -> dict:
@@ -2612,7 +2639,7 @@ def _parse_mail_log(raw_lines: list[str], domain_filter: Optional[str] = None,
                 counts["received"] += 1
                 events.append({
                     "ts": ts[:16].replace("T", " "), "type": "received", "status": "received",
-                    "from": sender, "to": to_addr, "relay": "",
+                    "from": _humanize_sender(sender), "to": to_addr, "relay": "",
                     "reason": "", "qid": qid,
                 })
             continue
@@ -2628,7 +2655,8 @@ def _parse_mail_log(raw_lines: list[str], domain_filter: Optional[str] = None,
             counts[kind] += 1
             events.append({
                 "ts": ts[:16].replace("T", " "), "type": "sent", "status": st,
-                "from": sender, "to": to_addr, "relay": relay.split("[")[0].strip(),
+                "from": _humanize_sender(sender), "to": to_addr,
+                "relay": relay.split("[")[0].strip(),
                 "reason": "", "qid": qid,
             })
             continue
@@ -2649,7 +2677,7 @@ def _parse_mail_log(raw_lines: list[str], domain_filter: Optional[str] = None,
                 "ts": ts[:16].replace("T", " "),
                 "type": "greylisted" if temp else "rejected",
                 "status": "greylisted" if temp else "rejected",
-                "from": sender, "to": to_addr, "relay": "",
+                "from": _humanize_sender(sender), "to": _unsrs(to_addr), "relay": "",
                 "reason": reason[:120], "qid": qid,
             })
             continue
@@ -2669,7 +2697,7 @@ def _parse_mail_log(raw_lines: list[str], domain_filter: Optional[str] = None,
                 "ts": ts[:16].replace("T", " "),
                 "type": "greylisted" if temp else "rejected",
                 "status": "greylisted" if temp else "rejected",
-                "from": sender, "to": to_addr, "relay": "",
+                "from": _humanize_sender(sender), "to": _unsrs(to_addr), "relay": "",
                 "reason": reason[:120], "qid": "",
             })
 
