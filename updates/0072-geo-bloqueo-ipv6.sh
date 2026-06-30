@@ -28,7 +28,11 @@ VENV_PY=/opt/svqpanel/venv/bin/python
 import sys
 sys.path.insert(0, "/opt/svqpanel")
 try:
-    from api.models.database import SessionLocal
+    from api.models.database import SessionLocal, load_all_models
+    # Cargar TODOS los modelos antes de tocar la BD: IpList tiene una FK a
+    # 'users' y SQLAlchemy peta con NoReferencedTableError si User no se ha
+    # importado todavía (las relationships se resuelven por nombre).
+    load_all_models()
     from api.models.models_security import IpList
     from api.utils import ip_list_fetcher
     from api.utils import nftables_helper as nft
