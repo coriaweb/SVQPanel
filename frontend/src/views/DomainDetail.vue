@@ -1041,12 +1041,13 @@ location @maintenance {
       // Solo tiene sentido si el dominio tiene WordPress; el endpoint igualmente
       // devuelve under_attack=false si no hay tráfico de ataque.
       try {
+        // api.get() devuelve el JSON directamente (no envuelto en {data}).
         const r = await api.getDomainWpProtection(domainId.value)
-        const a = r.data.attack || null
+        const a = r.attack || null
         // No avisar de lo que ya está mitigado en este dominio.
         if (a && a.under_attack) {
-          const stillXmlrpc = a.xmlrpc_hits >= a.threshold && !r.data.xmlrpc_blocked
-          const stillLogin  = a.wplogin_hits >= a.threshold && (r.data.wp_login_ratelimit || 0) === 0
+          const stillXmlrpc = a.xmlrpc_hits >= a.threshold && !r.xmlrpc_blocked
+          const stillLogin  = a.wplogin_hits >= a.threshold && (r.wp_login_ratelimit || 0) === 0
           a.under_attack = stillXmlrpc || stillLogin
           if (!stillXmlrpc) a.xmlrpc_hits = 0
           if (!stillLogin) a.wplogin_hits = 0

@@ -333,10 +333,11 @@ export default {
       if (did.value == null) return
       loadingSec.value = true
       try {
+        // api.get() devuelve el JSON directamente (no envuelto en {data}).
         const r = await api.getDomainWpProtection(did.value)
-        prot.value = { xmlrpc_blocked: r.data.xmlrpc_blocked, wp_login_ratelimit: r.data.wp_login_ratelimit }
-        rlInput.value = r.data.wp_login_ratelimit || 0
-        attack.value = r.data.attack || null
+        prot.value = { xmlrpc_blocked: r.xmlrpc_blocked, wp_login_ratelimit: r.wp_login_ratelimit }
+        rlInput.value = r.wp_login_ratelimit || 0
+        attack.value = r.attack || null
       } catch (e) { /* silencioso: el pane simplemente no muestra estado */ }
       finally { loadingSec.value = false }
     }
@@ -345,8 +346,8 @@ export default {
       busy.value = busyId
       try {
         const r = await api.setDomainWpProtection(did.value, body)
-        prot.value = { xmlrpc_blocked: r.data.xmlrpc_blocked, wp_login_ratelimit: r.data.wp_login_ratelimit }
-        rlInput.value = r.data.wp_login_ratelimit || 0
+        prot.value = { xmlrpc_blocked: r.xmlrpc_blocked, wp_login_ratelimit: r.wp_login_ratelimit }
+        rlInput.value = r.wp_login_ratelimit || 0
         // tras aplicar, el aviso de ataque deja de tener sentido para lo mitigado
         await loadSecurity()
         store.showNotification('Protección actualizada', 'success')
