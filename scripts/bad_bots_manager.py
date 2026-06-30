@@ -159,6 +159,22 @@ def _read_blocked_patterns() -> set:
     return patterns
 
 
+def ensure_nginx_conf_exists() -> bool:
+    """
+    Garantiza que /etc/nginx/conf.d/bad-bots.conf exista con, al menos, el map
+    base (`default 0`). Los vhosts consultan `$bad_bot`, así que SIN este fichero
+    nginx no arranca ("unknown variable $bad_bot"). Idempotente: si ya existe,
+    no lo toca. Devuelve True si lo creó.
+
+    Lo usan install.sh y los updates antes de regenerar vhosts que referencian
+    $bad_bot, para no romper servidores que nunca abrieron la pestaña de bots.
+    """
+    if NGINX_CONF.exists():
+        return False
+    _write_nginx_conf([])   # map vacío: solo `default 0`
+    return True
+
+
 def _write_nginx_conf(patterns: list):
     """Escribe el archivo nginx con los patrones dados."""
     lines = [

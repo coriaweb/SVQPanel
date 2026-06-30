@@ -640,6 +640,19 @@ FCGIEOF
 server_tokens off;
 NGINXHARDEOF
 
+    # Bad bots: map base. Los vhosts consultan $bad_bot (if ($bad_bot) return 444),
+    # así que este map DEBE existir o nginx no arranca. El panel lo reescribe con
+    # los patrones elegidos en Seguridad → Bloqueo de bots; aquí solo el default.
+    if [[ ! -f /etc/nginx/conf.d/bad-bots.conf ]]; then
+        cat > /etc/nginx/conf.d/bad-bots.conf << 'NGINXBADBOTSEOF'
+# Generado por SVQPanel — Bad Bots Blocker
+# No editar manualmente
+map $http_user_agent $bad_bot {
+    default 0;
+}
+NGINXBADBOTSEOF
+    fi
+
     # stub_status: endpoint interno (solo 127.0.0.1) para el monitor del panel.
     # Expone conexiones activas, accepted/handled/requests, reading/writing/waiting.
     cat > /etc/nginx/conf.d/svqpanel-status.conf << 'NGINXSTATUSEOF'

@@ -398,17 +398,20 @@ def generate_nginx_config(
     cache_block = ""  # built below after _sh is defined
     readonly_block = _readonly_mode_block(allowed_mutation_ips) if readonly_mode_enabled else ""
 
-    # Bloque de bloqueo de user-agents por dominio
-    bots_block = ""
+    # Bloque de bloqueo de user-agents.
+    #   1) Catálogo GLOBAL (Seguridad → Bloqueo de bots): /etc/nginx/conf.d/
+    #      bad-bots.conf define `map $http_user_agent $bad_bot`. Aquí lo
+    #      consultamos para que ese catálogo aplique a TODOS los dominios. El
+    #      map siempre trae `default 0`, así que es inocuo si no hay bots.
+    #   2) Patrones POR DOMINIO (blocked_user_agents): específicos de este sitio.
+    bot_lines = ["    if ($bad_bot) { return 444; }"]
     if blocked_user_agents:
-        lines = []
         for pattern in blocked_user_agents:
             pattern = pattern.strip()
             if pattern:
                 safe = pattern.replace('"', '\\"').replace("'", "\\'")
-                lines.append(f'    if ($http_user_agent ~* "{safe}") {{ return 444; }}')
-        if lines:
-            bots_block = "\n" + "\n".join(lines) + "\n"
+                bot_lines.append(f'    if ($http_user_agent ~* "{safe}") {{ return 444; }}')
+    bots_block = "\n" + "\n".join(bot_lines) + "\n"
 
     # server_name incluye IPv6 cuando está asignada (para acceso por IP directa).
     # Un SUBDOMINIO (gestion.zococoria.es) NO lleva www. (nadie usa
