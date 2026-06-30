@@ -112,3 +112,4 @@ exit 0
 | 0073 | Bloquear bots de robo de credenciales cloud (Silvy X Ran) + escáneres (LeakIX/Censys/Expanse) en el catálogo de bad-bots; respeta la selección del admin | 2026-06-30 |
 | 0074 | Fix bad-bots.conf: entrecomillar patrones con espacios ("Silvy X Ran") que rompían el map de nginx (nginx -t fallaba → no recargaba); regenera y recarga | 2026-06-30 |
 | 0075 | El catálogo global de bots ahora SÍ aplica a los vhosts nginx (antes el map $bad_bot no lo leía nadie): if ($bad_bot) return 444 en cada server + crea bad-bots.conf base + regenera vhosts | 2026-06-30 |
+| 0076 | Fix: cmd_regenerate_all_vhosts generaba vhost web a dominios solo-correo/DNS (mail_dns_only) → public_html inexistente → configtest Apache fallaba y tumbaba la regeneración de TODOS. Limpia los vhosts ya creados | 2026-06-30 |

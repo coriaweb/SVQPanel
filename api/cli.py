@@ -1606,8 +1606,15 @@ def cmd_regenerate_all_vhosts() -> int:
         return 0
     db = SessionLocal()
     mgr = DomainManager()
-    ok = fail = 0
+    ok = fail = skip = 0
     for d in db.query(Domain).all():
+        # Los dominios solo-correo/DNS no tienen web → no hay vhost que regenerar.
+        # Generarles uno apunta a un public_html inexistente y, como Apache valida
+        # TODA la config de golpe, un único vhost así hace fallar el configtest y
+        # tumba la regeneración del resto de dominios.
+        if getattr(d, "mail_dns_only", False):
+            skip += 1
+            continue
         try:
             mgr.regenerate_vhost(
                 d.user.username, d.domain_name, d.php_version,
@@ -1621,7 +1628,7 @@ def cmd_regenerate_all_vhosts() -> int:
             logger.warning(f"No se pudo regenerar {d.domain_name}: {e}")
             fail += 1
     db.close()
-    logger.info(f"regenerate_all_vhosts: {ok} regenerados, {fail} con error")
+    logger.info(f"regenerate_all_vhosts: {ok} regenerados, {fail} con error, {skip} solo-correo/DNS omitidos")
     return 0
 
 
