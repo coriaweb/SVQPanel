@@ -200,13 +200,20 @@
         <!-- Apps web (WP Toolkit / app detectada / instalador): solo si hay web
              aquí. Un dominio solo correo/DNS no aloja la web. -->
         <template v-if="!domain.mail_dns_only">
-        <!-- WordPress detectado → panel de gestión (WP Toolkit) -->
-        <WpManager
+        <!-- WordPress detectado → tarjeta-resumen ligera (la gestión completa va
+             en la pestaña "WordPress", que solo carga wp-cli al abrirla). -->
+        <BaseCard
           v-if="detectedApp.app === 'wordpress'"
-          :domain-id="domainId"
-          :domain-name="domain.domain_name"
-          class="dd-span2"
-        />
+          title="WordPress" icon="wordpress" class="dd-span2">
+          <div class="app-detected">
+            <i class="bi bi-wordpress app-detected__icon"></i>
+            <div>
+              <p class="app-detected__title">WordPress detectado</p>
+              <p class="dd-muted">Gestiona el sitio (plugins, temas, mantenimiento, acceso…) desde la pestaña WordPress.</p>
+            </div>
+          </div>
+          <BaseButton variant="subtle" size="sm" icon="wordpress" @click="tab = 'wp'">Abrir WP Toolkit</BaseButton>
+        </BaseCard>
 
         <!-- App no gestionable ya instalada (Laravel/Nextcloud/PrestaShop/otro) -->
         <BaseCard
@@ -286,6 +293,15 @@
           </div>
         </BaseCard>
       </div>
+
+      <!-- ===== WordPress (WP Toolkit) ===== -->
+      <!-- v-if (no v-show): se monta SOLO al abrir la pestaña, así wp-cli (lento,
+           ~2s/llamada) no corre al entrar al dominio. -->
+      <WpManager
+        v-if="tab === 'wp' && detectedApp.app === 'wordpress'"
+        :domain-id="domainId"
+        :domain-name="domain.domain_name"
+      />
 
       <!-- ===== SSL ===== -->
       <BaseCard v-show="tab === 'ssl'" title="Certificado SSL" icon="shield-lock">
@@ -833,11 +849,17 @@ export default {
     // Un dominio solo-correo/DNS no tiene web: solo mostramos el Resumen (las
     // pestañas SSL/PHP/cache/bots/stats/git/logs no aplican). El correo y el DNS
     // se gestionan en sus propias vistas (Correo / DNS).
-    const tabList = computed(() =>
-      domain.value?.mail_dns_only
-        ? _allTabs.filter(t => t.key === 'overview')
-        : _allTabs
-    )
+    const tabList = computed(() => {
+      if (domain.value?.mail_dns_only) return _allTabs.filter(t => t.key === 'overview')
+      const tabs = [..._allTabs]
+      // Pestaña WordPress (WP Toolkit) SOLO si hay WP instalado. Va en pestaña
+      // propia y no en el resumen: su info la da wp-cli (lento, ~2s/llamada), así
+      // que solo se carga al abrir la pestaña, no al entrar al dominio.
+      if (detectedApp.value?.app === 'wordpress') {
+        tabs.splice(1, 0, { key: 'wp', label: 'WordPress', icon: 'wordpress' })
+      }
+      return tabs
+    })
 
     const formatMB = (mb) => {
       if (!mb) return '0 MB'
