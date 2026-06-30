@@ -32,6 +32,10 @@ def _domains_for_audit(db: Session) -> List[dict]:
     )
     out = []
     for dom, username in rows:
+        # Los dominios solo correo/DNS no tienen web ni pool PHP-FPM: no procede
+        # auditarlos (saldrían como "desprotegidos" sin serlo).
+        if getattr(dom, "mail_dns_only", False):
+            continue
         out.append({
             "domain": dom.domain_name,
             "owner": username,
