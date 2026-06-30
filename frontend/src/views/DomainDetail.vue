@@ -26,6 +26,24 @@
       </div>
     </header>
 
+    <!-- ===== Aviso de ataque WordPress (visible arriba, en cualquier pestaña) ===== -->
+    <div v-if="wpAttack && wpAttack.under_attack" class="dd-attack">
+      <div class="dd-attack__icon"><i class="bi bi-exclamation-octagon-fill"></i></div>
+      <div class="dd-attack__body">
+        <strong>Este sitio WordPress está bajo un ataque de fuerza bruta.</strong>
+        <p>
+          En la última hora:
+          <template v-if="wpAttack.xmlrpc_hits >= wpAttack.threshold"><b>{{ wpAttack.xmlrpc_hits.toLocaleString() }}</b> intentos a <code>xmlrpc.php</code></template>
+          <template v-if="wpAttack.xmlrpc_hits >= wpAttack.threshold && wpAttack.wplogin_hits >= wpAttack.threshold"> y </template>
+          <template v-if="wpAttack.wplogin_hits >= wpAttack.threshold"><b>{{ wpAttack.wplogin_hits.toLocaleString() }}</b> intentos de login (<code>wp-login.php</code>)</template>.
+          Activa la protección para cortarlo sin afectar a tu acceso.
+        </p>
+      </div>
+      <BaseButton variant="primary" size="sm" icon="shield-fill-check" :loading="wpAttackBusy" @click="protectFromBanner">
+        Activar protección
+      </BaseButton>
+    </div>
+
     <div v-if="loading" class="svq-skeleton" style="height:300px;border-radius:var(--r-lg)"></div>
 
     <template v-else-if="domain">
@@ -1016,11 +1034,43 @@ location @maintenance {
       } finally { authSaving.value = false }
     }
 
+    // ── Aviso de ataque WordPress (banner superior) ──────────────────────────
+    const wpAttack = ref(null)      // {under_attack, xmlrpc_hits, wplogin_hits, threshold}
+    const wpAttackBusy = ref(false)
+    const loadWpAttack = async () => {
+      // Solo tiene sentido si el dominio tiene WordPress; el endpoint igualmente
+      // devuelve under_attack=false si no hay tráfico de ataque.
+      try {
+        const r = await api.getDomainWpProtection(domainId.value)
+        const a = r.data.attack || null
+        // No avisar de lo que ya está mitigado en este dominio.
+        if (a && a.under_attack) {
+          const stillXmlrpc = a.xmlrpc_hits >= a.threshold && !r.data.xmlrpc_blocked
+          const stillLogin  = a.wplogin_hits >= a.threshold && (r.data.wp_login_ratelimit || 0) === 0
+          a.under_attack = stillXmlrpc || stillLogin
+          if (!stillXmlrpc) a.xmlrpc_hits = 0
+          if (!stillLogin) a.wplogin_hits = 0
+        }
+        wpAttack.value = a
+      } catch (e) { wpAttack.value = null }
+    }
+    const protectFromBanner = async () => {
+      wpAttackBusy.value = true
+      try {
+        await api.setDomainWpProtection(domainId.value, { xmlrpc_blocked: true, wp_login_ratelimit: 3 })
+        store.showNotification('Protección activada: el ataque queda mitigado', 'success')
+        wpAttack.value = null
+      } catch (e) {
+        store.showNotification('Error: ' + (e.message || 'no se pudo activar'), 'danger')
+      } finally { wpAttackBusy.value = false }
+    }
+
     const loadDomain = async () => {
       loading.value = true
       try {
         domain.value = await api.getDomain(domainId.value)
         _syncAdv()
+        loadWpAttack()  // en segundo plano, no bloquea la vista
       } catch (e) {
         store.showNotification('Error al cargar el dominio', 'danger')
         domain.value = null
@@ -1555,6 +1605,7 @@ location @maintenance {
     return {
       domain, loading, tab, tabList, phpVersions, deprecatedPhp, reloadDomain,
       sslActive,
+      wpAttack, wpAttackBusy, protectFromBanner,
       formatMB, formatDate,
       disk, diskLoading, loadDisk,
       cacheSaving, toggleCache, purgeCache,
@@ -1585,6 +1636,17 @@ location @maintenance {
 .domain-detail { max-width: var(--content-max); margin: 0 auto; display: flex; flex-direction: column; gap: var(--sp-5); }
 
 .dd-head { display: flex; align-items: flex-start; justify-content: space-between; gap: var(--sp-4); flex-wrap: wrap; }
+/* Banner de aviso de ataque WordPress (cabecera, visible en cualquier pestaña) */
+.dd-attack { display:flex; align-items:center; gap:var(--sp-3); margin: var(--sp-4) 0;
+  padding: var(--sp-3) var(--sp-4);
+  border:1px solid color-mix(in srgb, var(--danger) 50%, var(--border));
+  background: color-mix(in srgb, var(--danger) 10%, transparent);
+  border-radius: var(--radius-md, 10px); }
+.dd-attack__icon { color: var(--danger); font-size:1.5rem; line-height:1; }
+.dd-attack__body { flex:1; }
+.dd-attack__body strong { color: var(--danger); }
+.dd-attack__body p { margin:.25rem 0 0; font-size:.88rem; color: var(--text); }
+.dd-attack__body code { background: var(--surface-inset); padding:.05rem .3rem; border-radius:4px; font-size:.82rem; }
 .dd-head__left { display: flex; align-items: center; gap: var(--sp-3); }
 .dd-back { width: 38px; height: 38px; display: grid; place-items: center; border: 1px solid var(--border); border-radius: var(--r-md); color: var(--text-secondary); text-decoration: none; transition: all var(--t-fast); flex-shrink: 0; }
 .dd-back:hover { background: var(--surface-inset); color: var(--text); }
