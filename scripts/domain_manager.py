@@ -3,6 +3,7 @@
 import os
 import logging
 from .base import SystemManager
+from .php_manager import ALL_VERSIONS  # fuente única de versiones PHP soportadas
 from .utils import (
     validate_domain,
     validate_username,
@@ -60,8 +61,7 @@ class DomainManager(SystemManager):
         if not validate_domain(domain_name):
             raise ValueError(f"Invalid domain: {domain_name}")
 
-        valid_php = ["7.4", "8.0", "8.1", "8.2", "8.3", "8.4", "8.5"]
-        if php_version not in valid_php:
+        if php_version not in ALL_VERSIONS:
             raise ValueError(f"Invalid PHP version: {php_version}")
 
         # Auto-detectar webserver si no se especifica
@@ -698,8 +698,7 @@ class DomainManager(SystemManager):
         if not validate_domain(domain_name):
             raise ValueError(f"Invalid domain: {domain_name}")
 
-        valid_php = ["7.4", "8.0", "8.1", "8.2", "8.3", "8.4", "8.5"]
-        if php_version not in valid_php:
+        if php_version not in ALL_VERSIONS:
             raise ValueError(f"Invalid PHP version: {php_version}")
 
         nginx_config = get_nginx_config_path(domain_name)

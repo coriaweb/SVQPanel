@@ -42,7 +42,13 @@ PHP_INI_DIRECTIVES: Dict[str, dict] = {
 
 POOL_DIR_TMPL = "/etc/php/{ver}/fpm/pool.d/svqpanel-{domain}.conf"
 PHP_INI_TMPL  = "/etc/php/{ver}/fpm/php.ini"
-PHP_VERSIONS  = ["7.4", "8.0", "8.1", "8.2", "8.3", "8.4", "8.5"]
+# Fuente única de verdad de las versiones PHP soportadas (evita listas duplicadas
+# que se desincronizan: p.ej. al añadir 7.3, has_pool no la encontraba aquí y la
+# auditoría daba un falso "sin pool"). Fallback por si el import fallara.
+try:
+    from scripts.php_manager import ALL_VERSIONS as PHP_VERSIONS
+except Exception:
+    PHP_VERSIONS = ["7.3", "7.4", "8.0", "8.1", "8.2", "8.3", "8.4", "8.5"]
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Tuning de recursos del pool PHP-FPM por dominio (Fase 21).

@@ -85,7 +85,8 @@ def php_fpm_pools() -> list:
     Cuenta procesos 'php-fpm: pool' por versión via pgrep sobre el master.
     """
     pools = []
-    for ver in ("7.4", "8.0", "8.1", "8.2", "8.3", "8.4", "8.5"):
+    from scripts.php_manager import ALL_VERSIONS
+    for ver in ALL_VERSIONS:
         svc = f"php{ver}-fpm"
         rc, so, _ = _run(["systemctl", "is-active", svc], timeout=4)
         if so.strip() not in ("active", "activating"):
