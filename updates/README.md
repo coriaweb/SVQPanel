@@ -114,3 +114,4 @@ exit 0
 | 0075 | El catálogo global de bots ahora SÍ aplica a los vhosts nginx (antes el map $bad_bot no lo leía nadie): if ($bad_bot) return 444 en cada server + crea bad-bots.conf base + regenera vhosts | 2026-06-30 |
 | 0076 | Fix: cmd_regenerate_all_vhosts generaba vhost web a dominios solo-correo/DNS (mail_dns_only) → public_html inexistente → configtest Apache fallaba y tumbaba la regeneración de TODOS. Limpia los vhosts ya creados | 2026-06-30 |
 | 0077 | Cachear peso en disco de los dominios en BD (la lista hacía du en vivo por cada uno → lenta); refresco 2/día en background + botón por dominio. Primer cálculo | 2026-06-30 |
+| 0078 | Quitar jail fail2ban relay redundante: el relay denied es spam distribuido (fail2ban no puede); ya lo cubre CrowdSec (postfix-relay-denied) | 2026-07-01 |

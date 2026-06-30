@@ -2548,18 +2548,11 @@ filter   = postfix[mode=aggressive]
 journalmatch = _SYSTEMD_UNIT=$PF_UNIT
 maxretry = 3
 
-[svqpanel-postfix-relay]
-# Bots "lentos" de relay: intentan mandar a dominios que NO alojamos (Relay
-# access denied) con pocos intentos/hora, esquivando la jail [postfix] (5 en
-# 10min). Ventana LARGA (6h) para cazarlos. Seguro: un cliente legítimo nunca
-# recibe "Relay access denied" repetido (envía autenticado por submission).
-enabled  = $MAIL_JAILS_ENABLED
-port     = smtp,465,submission
-filter   = svqpanel-postfix-relay
-journalmatch = _SYSTEMD_UNIT=$PF_UNIT
-maxretry = 5
-findtime = 6h
-bantime  = 24h
+# NOTA: NO hay jail propia para "Relay access denied". El relay a dominios no
+# alojados es spam DISTRIBUIDO (muchas IPs, 1-2 intentos c/u) → fail2ban no puede
+# (banea por IP que repite). De eso se encarga CrowdSec (escenario
+# crowdsecurity/postfix-relay-denied), que banea por reputación y comparte
+# inteligencia. Además, el servidor ya rechaza todo el relay (cero riesgo).
 
 [nginx-limit-req]
 enabled  = false
@@ -2606,14 +2599,7 @@ failregex = warning: [^[]*\[<HOST>\]: SASL (?:(?i)LOGIN|PLAIN|CRAM-MD5|DIGEST-MD
 ignoreregex =
 F2BPSASLEOF
 
-# Filtro propio para bots de relay (dominio no alojado → "Relay access denied").
-# El prefijo postfix/smtpd[pid] es opcional porque en el journal (-o cat) no
-# aparece. El jail [svqpanel-postfix-relay] lo usa con ventana larga.
-cat > /etc/fail2ban/filter.d/svqpanel-postfix-relay.conf << 'F2BRELAYEOF'
-[Definition]
-failregex = ^(\S+/?\S*smtpd\[\d+\]: )?NOQUEUE: reject: RCPT from \S+\[<HOST>\]: 454 4\.7\.1 .*Relay access denied
-ignoreregex =
-F2BRELAYEOF
+# (El relay denied lo gestiona CrowdSec, no fail2ban — ver nota en jail.local.)
 
 # Asegurar que existe el log que vigila [svqpanel-auth]; si no fail2ban
 # da error de "logpath not found" al iniciar el jail
@@ -2671,7 +2657,7 @@ LRTEOF
 systemctl enable fail2ban >/dev/null 2>&1 || true
 systemctl restart fail2ban >/dev/null 2>&1 || systemctl start fail2ban
 
-echo -e "${GREEN}✓ fail2ban: jails activas (sshd, recidive, svqpanel-auth$( [[ "$INSTALL_MAIL" == true ]] && echo ', dovecot, postfix-sasl, postfix, postfix-relay' ))${NC}"
+echo -e "${GREEN}✓ fail2ban: jails activas (sshd, recidive, svqpanel-auth$( [[ "$INSTALL_MAIL" == true ]] && echo ', dovecot, postfix-sasl, postfix' ))${NC}"
 if [[ -n "$INSTALLER_IP" ]]; then
     echo -e "  ${GREEN}✓ Anti-lockout: $INSTALLER_IP en whitelist nftables + ignoreip fail2ban${NC}"
 fi
