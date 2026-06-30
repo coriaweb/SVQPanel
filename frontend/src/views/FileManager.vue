@@ -157,9 +157,9 @@
                       <i class="bi bi-download"></i>
                     </button>
                     <button
-                      v-if="entry.type === 'file' && isZip(entry)"
+                      v-if="entry.type === 'file' && isArchive(entry)"
                       class="btn btn-outline-warning"
-                      title="Extraer ZIP aquí"
+                      title="Extraer aquí"
                       :disabled="extracting === entry.path"
                       @click="extractZip(entry)"
                     >
@@ -480,10 +480,10 @@ export default {
       extracting.value = entry.path
       try {
         const result = await api.extractDomainZip(selectedDomainId.value, entry.path)
-        store.showNotification(`ZIP extraído correctamente (${result.files_extracted} elementos)`, 'success')
+        store.showNotification(`Archivo extraído correctamente (${result.files_extracted} elementos)`, 'success')
         await loadFiles()
       } catch (error) {
-        store.showNotification(`Error extrayendo ZIP: ${error.message}`, 'danger')
+        store.showNotification(`Error extrayendo: ${error.message}`, 'danger')
       } finally {
         extracting.value = null
       }
@@ -607,7 +607,12 @@ export default {
 
     const formatDate = (date) => date ? new Date(date).toLocaleString() : '-'
     const isEditable = (entry) => editableExtensions.includes(entry.name.split('.').pop()?.toLowerCase())
-    const isZip = (entry) => entry.name.toLowerCase().endsWith('.zip')
+    const isArchive = (entry) => {
+      const n = entry.name.toLowerCase()
+      return n.endsWith('.zip') || n.endsWith('.tar') || n.endsWith('.tar.gz') ||
+             n.endsWith('.tgz') || n.endsWith('.tar.bz2') || n.endsWith('.tbz2') ||
+             n.endsWith('.tar.xz') || n.endsWith('.txz')
+    }
 
     const fileIcon = (entry) => {
       const ext = entry.name.split('.').pop()?.toLowerCase()
@@ -637,7 +642,7 @@ export default {
       showChmod, savingChmod, chmodEntry, chmodBits, chmodOctal, openChmod, applyChmod,
       selected, bulkDeleting, allSelected, someSelected,
       toggleSelect, toggleAll, clearSelection, deleteSelected,
-      formatSize, formatDate, isEditable, isZip, fileIcon,
+      formatSize, formatDate, isEditable, isArchive, fileIcon,
     }
   },
 }

@@ -107,3 +107,4 @@ exit 0
 | 0066 | Importación de backups en subproceso aislado + tar en streaming (no OOM); marca como fallidas las migraciones zombie en 'running' de la versión anterior | 2026-06-29 |
 | 0067 | Temporales de migración a /var/lib/svqpanel/migration-tmp (disco real, no /tmp/tmpfs que se llenaba con backups grandes) + limpia huérfanos de varios GB de migraciones muertas por OOM | 2026-06-29 |
 | 0070 | Fix HTTP/3: quitar `reuseport` del listen quic (rompía nginx con "duplicate listen options for 0.0.0.0:443" al 2º dominio con HTTP/3 → bloqueaba reloads y migraciones); regenera todos los vhosts | 2026-06-30 |
+| 0071 | Subir límite de subida del gestor de archivos (100→2048 MB) y de extracción (500→5120 MB); demasiado bajo para un WordPress. Solo toca filas en el default viejo | 2026-06-30 |

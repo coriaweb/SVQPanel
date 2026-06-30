@@ -35,9 +35,9 @@ class Settings(Base):
     panel_backup_retention = Column(Integer, default=15)
 
     # File Manager - Límites de subida
-    max_upload_mb = Column(Integer, default=100)              # MB máximo por archivo
-    max_text_file_mb = Column(Integer, default=2)             # MB máximo para editar en el panel
-    max_extract_mb = Column(Integer, default=500)             # MB máximo para extraer ZIPs
+    max_upload_mb = Column(Integer, default=2048)            # MB máximo por archivo
+    max_text_file_mb = Column(Integer, default=2)            # MB máximo para editar en el panel
+    max_extract_mb = Column(Integer, default=5120)           # MB máximo para extraer ZIPs
 
     # SSL del propio panel
     panel_hostname = Column(String(255), nullable=True)       # Hostname del panel (ej: panel.midominio.com)

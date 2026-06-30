@@ -7,6 +7,7 @@ Todas las operaciones quedan encerradas en el public_html del dominio elegido.
 import mimetypes
 import os
 import shutil
+import tarfile
 import zipfile
 from datetime import datetime, timezone
 from pathlib import Path
@@ -32,7 +33,7 @@ def get_upload_limits(db: Session) -> tuple[int, int, int]:
     """Obtiene los límites de upload desde Settings. Retorna (max_upload_mb, max_text_mb, max_extract_mb)"""
     settings = db.query(Settings).filter(Settings.id == 1).first()
     if not settings:
-        return 100, 2, 500
+        return 2048, 2, 5120
     return settings.max_upload_mb, settings.max_text_file_mb, settings.max_extract_mb
 
 
@@ -380,9 +381,13 @@ def extract_zip(
     zip_path = _safe_join(root, payload.path)
 
     if not os.path.isfile(zip_path):
-        raise HTTPException(status_code=404, detail="Archivo ZIP no encontrado")
-    if not zip_path.lower().endswith(".zip"):
-        raise HTTPException(status_code=400, detail="El archivo no es un ZIP")
+        raise HTTPException(status_code=404, detail="Archivo no encontrado")
+    low = zip_path.lower()
+    is_zip = low.endswith(".zip")
+    is_tar = low.endswith((".tar", ".tar.gz", ".tgz", ".tar.bz2", ".tbz2", ".tar.xz", ".txz"))
+    if not (is_zip or is_tar):
+        raise HTTPException(status_code=400,
+            detail="Formato no soportado. Usa .zip o .tar(.gz/.bz2/.xz)")
 
     # Carpeta destino
     if payload.dest:
@@ -394,31 +399,55 @@ def extract_zip(
     _, _, max_extract_mb = get_upload_limits(db)
     max_extract_bytes = max_extract_mb * 1024 * 1024
 
+    def _escapes(member_name: str) -> bool:
+        """True si el miembro escaparía la carpeta del dominio (path traversal)."""
+        member_real = os.path.realpath(os.path.join(dest_dir, member_name))
+        return os.path.commonpath([root, member_real]) != root
+
     try:
-        with zipfile.ZipFile(zip_path, "r") as zf:
-            members = zf.infolist()
-
-            # — Seguridad: path traversal + ZIP bomb —
-            total_bytes = 0
-            for member in members:
-                member_real = os.path.realpath(os.path.join(dest_dir, member.filename))
-                if os.path.commonpath([root, member_real]) != root:
-                    raise HTTPException(
-                        status_code=400,
-                        detail=f"El ZIP contiene una ruta que escapa el dominio: {member.filename}",
-                    )
-                total_bytes += member.file_size
-                if total_bytes > max_extract_bytes:
-                    raise HTTPException(
-                        status_code=413,
-                        detail=f"El contenido descomprimido supera el límite de {max_extract_mb} MB",
-                    )
-
-            extracted_count = len(members)
-            zf.extractall(dest_dir)
+        if is_zip:
+            with zipfile.ZipFile(zip_path, "r") as zf:
+                members = zf.infolist()
+                total_bytes = 0
+                for member in members:
+                    if _escapes(member.filename):
+                        raise HTTPException(status_code=400,
+                            detail=f"El archivo contiene una ruta que escapa el dominio: {member.filename}")
+                    total_bytes += member.file_size
+                    if total_bytes > max_extract_bytes:
+                        raise HTTPException(status_code=413,
+                            detail=f"El contenido descomprimido supera el límite de {max_extract_mb} MB")
+                extracted_count = len(members)
+                zf.extractall(dest_dir)
+        else:
+            # tar(.gz/.bz2/.xz): mismas protecciones (path traversal + bomba).
+            with tarfile.open(zip_path, "r:*") as tf:
+                members = tf.getmembers()
+                total_bytes = 0
+                for member in members:
+                    if _escapes(member.name):
+                        raise HTTPException(status_code=400,
+                            detail=f"El archivo contiene una ruta que escapa el dominio: {member.name}")
+                    # No extraer enlaces que apunten fuera del dominio.
+                    if (member.issym() or member.islnk()):
+                        link_real = os.path.realpath(os.path.join(dest_dir, os.path.dirname(member.name), member.linkname))
+                        if os.path.commonpath([root, link_real]) != root:
+                            raise HTTPException(status_code=400,
+                                detail=f"El archivo contiene un enlace inseguro: {member.name}")
+                    total_bytes += member.size
+                    if total_bytes > max_extract_bytes:
+                        raise HTTPException(status_code=413,
+                            detail=f"El contenido descomprimido supera el límite de {max_extract_mb} MB")
+                extracted_count = len(members)
+                try:
+                    tf.extractall(dest_dir, filter="data")  # Python ≥ 3.12
+                except TypeError:
+                    tf.extractall(dest_dir)                 # validado arriba
 
     except zipfile.BadZipFile:
         raise HTTPException(status_code=400, detail="Archivo ZIP dañado o inválido")
+    except tarfile.TarError:
+        raise HTTPException(status_code=400, detail="Archivo TAR dañado o inválido")
 
     # Cambiar propiedad de los ficheros recién extraídos al dueño del dominio
     username = domain.user.username if domain.user else None

@@ -1250,9 +1250,9 @@ export default {
       ipv6_gateway: '',
       network_interface: 'eth0',
       php_default_version: '8.2',
-      max_upload_mb: 100,
+      max_upload_mb: 2048,
       max_text_file_mb: 2,
-      max_extract_mb: 500,
+      max_extract_mb: 5120,
       pwd_min_length: 12,
       pwd_require_upper: true,
       pwd_require_lower: true,
@@ -1361,9 +1361,9 @@ export default {
         form.ipv6_gateway = data.ipv6_gateway || ''
         form.network_interface = data.network_interface || 'eth0'
         form.php_default_version = data.php_default_version || '8.2'
-        form.max_upload_mb = data.max_upload_mb || 100
+        form.max_upload_mb = data.max_upload_mb || 2048
         form.max_text_file_mb = data.max_text_file_mb || 2
-        form.max_extract_mb = data.max_extract_mb || 500
+        form.max_extract_mb = data.max_extract_mb || 5120
         // Política de contraseñas
         form.pwd_min_length = data.pwd_min_length ?? 12
         form.pwd_require_upper = data.pwd_require_upper ?? true
