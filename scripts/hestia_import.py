@@ -1010,10 +1010,16 @@ def import_db(backup: "HestiaBackup", dbinfo: Dict, owner, db, report: ImportRep
     safe_user = _ident(dbuser)
     new_password = None
 
-    # 1) Crear la BD
+    # 1) Crear la BD. Idempotente: si ya existe (de un intento de migración
+    #    anterior que quedó a medias), la recreamos — el dump del backup es la
+    #    fuente de verdad, así que partir de una BD limpia es lo correcto. Sin
+    #    esto, reintentar la migración fallaba con "database exists" (ERROR 1007).
+    _run_mariadb(f"DROP DATABASE IF EXISTS `{safe_name}`;")
     _run_mariadb(f"CREATE DATABASE `{safe_name}` CHARACTER SET {charset};")
 
-    # 2) Crear el usuario reutilizando el hash, con fallback a pass nueva
+    # 2) Crear el usuario reutilizando el hash, con fallback a pass nueva.
+    #    También idempotente: si el usuario ya existía, lo recreamos.
+    _run_mariadb(f"DROP USER IF EXISTS '{safe_user}'@'localhost';")
     created_user = _create_db_user_with_hash(_run_mariadb, safe_user, md5)
     if not created_user:
         new_password = _generate_password()
@@ -1036,20 +1042,33 @@ def import_db(backup: "HestiaBackup", dbinfo: Dict, owner, db, report: ImportRep
 
     # 5) Registrar en el panel (ClientDatabase). Sin la pass en claro del hash
     #    reusado, guardamos un placeholder de hash y dejamos enc=None.
+    #    Idempotente: si ya había una fila (intento anterior), la actualizamos en
+    #    vez de insertar (db_name es UNIQUE → un add duplicado petaría).
     pw_for_panel = new_password or ""
     suffix = name.split("_", 1)[-1] if "_" in name else name
     usuffix = dbuser.split("_", 1)[-1] if "_" in dbuser else dbuser
-    client_db = ClientDatabase(
-        user_id=owner.id,
-        db_name=name,
-        db_name_suffix=suffix[:48],
-        db_user=dbuser,
-        db_user_suffix=usuffix[:48],
-        db_password_hash=_hash_password(pw_for_panel) if pw_for_panel else _hash_password("!imported!"),
-        db_password_enc=_encrypt_password(pw_for_panel) if pw_for_panel else None,
-        db_charset=charset,
-    )
-    db.add(client_db)
+    pw_hash = _hash_password(pw_for_panel) if pw_for_panel else _hash_password("!imported!")
+    pw_enc = _encrypt_password(pw_for_panel) if pw_for_panel else None
+    client_db = db.query(ClientDatabase).filter(ClientDatabase.db_name == name).first()
+    if client_db:
+        client_db.user_id = owner.id
+        client_db.db_user = dbuser
+        client_db.db_user_suffix = usuffix[:48]
+        client_db.db_password_hash = pw_hash
+        client_db.db_password_enc = pw_enc
+        client_db.db_charset = charset
+    else:
+        client_db = ClientDatabase(
+            user_id=owner.id,
+            db_name=name,
+            db_name_suffix=suffix[:48],
+            db_user=dbuser,
+            db_user_suffix=usuffix[:48],
+            db_password_hash=pw_hash,
+            db_password_enc=pw_enc,
+            db_charset=charset,
+        )
+        db.add(client_db)
     db.commit()
 
     detail = "con dump" if dump else "sin dump"
