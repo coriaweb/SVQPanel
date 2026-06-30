@@ -45,7 +45,8 @@
         <div class="dcard__head">
           <div class="dcard__title">
             <i class="bi" :class="domain.mail_dns_only ? 'bi-envelope' : (domain.is_subdomain ? 'bi-diagram-3' : 'bi-globe2')"></i>
-            <a :href="'http://' + domain.domain_name" target="_blank" class="dcard__name" @click.stop>{{ domain.domain_name }}</a>
+            <a v-if="!domain.mail_dns_only" :href="'http://' + domain.domain_name" target="_blank" class="dcard__name" @click.stop>{{ domain.domain_name }}</a>
+            <span v-else class="dcard__name">{{ domain.domain_name }}</span>
             <span v-if="domain.is_subdomain" class="sub-chip" :title="'Subdominio de ' + domain.parent_domain">sub</span>
             <span v-if="domain.mail_dns_only" class="sub-chip" title="Solo correo/DNS — la web está en otro servidor">correo/DNS</span>
           </div>
@@ -56,7 +57,18 @@
 
         <p v-if="isAdminOrReseller" class="dcard__owner"><i class="bi bi-person"></i> {{ getUserName(domain.user_id) }}</p>
 
-        <div class="dcard__stats">
+        <!-- Solo correo/DNS: sin web → no mostramos SSL/PHP/Cache/Tamaño -->
+        <div v-if="domain.mail_dns_only" class="dcard__stats">
+          <div class="dstat">
+            <span class="dstat__k">Tipo</span>
+            <span class="dstat__v"><i class="bi bi-envelope me-1"></i>Solo correo / DNS</span>
+          </div>
+          <div class="dstat">
+            <span class="dstat__k">Web</span>
+            <span class="dstat__v text-muted">En otro servidor</span>
+          </div>
+        </div>
+        <div v-else class="dcard__stats">
           <div class="dstat">
             <span class="dstat__k">SSL</span>
             <StatusBadge :status="domain.ssl_enabled ? 'valid' : 'none'"
@@ -82,17 +94,20 @@
 
         <div class="dcard__actions">
           <BaseButton variant="subtle" size="sm" icon="box-arrow-in-right" tag="router-link" v-bind="{ to: `/domains/${domain.id}` }">Abrir</BaseButton>
-          <BaseButton variant="ghost" size="sm" icon="lock" @click="openSSLManager(domain)">SSL</BaseButton>
+          <BaseButton v-if="!domain.mail_dns_only" variant="ghost" size="sm" icon="lock" @click="openSSLManager(domain)">SSL</BaseButton>
           <div class="dcard__more">
             <button class="more-btn" @click="toggleMenu(domain.id)" title="Más acciones"><i class="bi bi-three-dots"></i></button>
             <div class="more-menu" v-if="openMenuId === domain.id" v-click-away="() => openMenuId = null">
-              <button @click="run(openPhpManager, domain)"><i class="bi bi-filetype-php"></i> Configuración PHP</button>
-              <button @click="run(openCacheManager, domain)"><i class="bi bi-lightning"></i> FastCGI cache</button>
-              <button @click="run(openLogsViewer, domain)"><i class="bi bi-binoculars"></i> Ver registros</button>
+              <!-- Opciones web: solo para dominios con hosting aquí -->
+              <template v-if="!domain.mail_dns_only">
+                <button @click="run(openPhpManager, domain)"><i class="bi bi-filetype-php"></i> Configuración PHP</button>
+                <button @click="run(openCacheManager, domain)"><i class="bi bi-lightning"></i> FastCGI cache</button>
+                <button @click="run(openLogsViewer, domain)"><i class="bi bi-binoculars"></i> Ver registros</button>
+              </template>
               <button @click="run(openIPv6Manager, domain)"><i class="bi bi-diagram-3"></i> IPv6</button>
-              <button @click="run(changePHPPrompt, domain)"><i class="bi bi-arrow-repeat"></i> Cambiar PHP</button>
+              <button v-if="!domain.mail_dns_only" @click="run(changePHPPrompt, domain)"><i class="bi bi-arrow-repeat"></i> Cambiar PHP</button>
               <button @click="run(openEditForm, domain)"><i class="bi bi-pencil"></i> Editar</button>
-              <button @click="run(downloadSite, domain)" :disabled="downloadingId === domain.id"><i class="bi bi-download"></i> Descargar sitio</button>
+              <button v-if="!domain.mail_dns_only" @click="run(downloadSite, domain)" :disabled="downloadingId === domain.id"><i class="bi bi-download"></i> Descargar sitio</button>
               <button v-if="!domain.is_suspended" @click="run(suspendDomain, domain)"><i class="bi bi-pause-circle"></i> Suspender</button>
               <button v-else @click="run(unsuspendDomain, domain)"><i class="bi bi-play-circle"></i> Reactivar</button>
               <div class="more-sep"></div>
@@ -128,10 +143,10 @@
                 <span v-if="domain.mail_dns_only" class="sub-chip" title="Solo correo/DNS — la web está en otro servidor">correo/DNS</span>
               </td>
               <td v-if="isAdminOrReseller" class="t-muted">{{ getUserName(domain.user_id) }}</td>
-              <td class="mono">{{ domain.php_version || '—' }}</td>
-              <td><StatusBadge :status="domain.ssl_enabled ? 'valid' : 'none'" :label="domain.ssl_enabled ? 'SSL' : 'No'" :dot="false" /></td>
-              <td><StatusBadge :status="domain.fastcgi_cache_enabled ? 'active' : 'none'" :label="domain.fastcgi_cache_enabled ? 'On' : 'Off'" :dot="false" /></td>
-              <td class="mono t-muted">{{ diskInfo[domain.id] ? formatMB(diskInfo[domain.id].public_html_mb) : '—' }}</td>
+              <td class="mono">{{ domain.mail_dns_only ? '—' : (domain.php_version || '—') }}</td>
+              <td><span v-if="domain.mail_dns_only" class="t-muted">—</span><StatusBadge v-else :status="domain.ssl_enabled ? 'valid' : 'none'" :label="domain.ssl_enabled ? 'SSL' : 'No'" :dot="false" /></td>
+              <td><span v-if="domain.mail_dns_only" class="t-muted">—</span><StatusBadge v-else :status="domain.fastcgi_cache_enabled ? 'active' : 'none'" :label="domain.fastcgi_cache_enabled ? 'On' : 'Off'" :dot="false" /></td>
+              <td class="mono t-muted">{{ domain.mail_dns_only ? '—' : (diskInfo[domain.id] ? formatMB(diskInfo[domain.id].public_html_mb) : '—') }}</td>
               <td>
                 <StatusBadge :status="domain.is_suspended ? 'warning' : (domain.is_active ? 'active' : 'error')"
                   :label="domain.is_suspended ? 'Suspendido' : (domain.is_active ? 'Activo' : 'Inactivo')" />
@@ -139,8 +154,8 @@
               <td class="ta-end">
                 <div class="t-actions">
                   <router-link class="icon-act" :to="`/domains/${domain.id}`" title="Ver detalle"><i class="bi bi-box-arrow-in-right"></i></router-link>
-                  <button class="icon-act" @click="openSSLManager(domain)" title="SSL"><i class="bi bi-lock"></i></button>
-                  <button class="icon-act" @click="openFileManager(domain)" title="Archivos"><i class="bi bi-folder2-open"></i></button>
+                  <button v-if="!domain.mail_dns_only" class="icon-act" @click="openSSLManager(domain)" title="SSL"><i class="bi bi-lock"></i></button>
+                  <button v-if="!domain.mail_dns_only" class="icon-act" @click="openFileManager(domain)" title="Archivos"><i class="bi bi-folder2-open"></i></button>
                   <button class="icon-act" @click="openEditForm(domain)" title="Editar"><i class="bi bi-pencil"></i></button>
                   <button v-if="!domain.is_suspended" class="icon-act is-warn" @click="suspendDomain(domain)" title="Suspender"><i class="bi bi-pause-circle"></i></button>
                   <button v-else class="icon-act is-ok" @click="unsuspendDomain(domain)" title="Reactivar"><i class="bi bi-play-circle"></i></button>

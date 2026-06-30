@@ -395,6 +395,14 @@ async def update_domain(
                 detail="Dominio no encontrado"
             )
 
+        # Un dominio solo-correo/DNS no tiene web → no se le cambia PHP/vhost.
+        if getattr(db_domain, "mail_dns_only", False) and domain_update.php_version is not None \
+                and domain_update.php_version != db_domain.php_version:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Este dominio es solo correo/DNS (sin web): no tiene PHP que cambiar.",
+            )
+
         if domain_update.php_version is not None and domain_update.php_version != db_domain.php_version:
             # Change PHP version in system
             domain_manager.change_php_version(db_domain.domain_name, domain_update.php_version)

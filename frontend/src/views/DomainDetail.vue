@@ -14,11 +14,12 @@
               :status="domain.is_suspended ? 'warning' : (domain.is_active ? 'active' : 'error')"
               :label="domain.is_suspended ? 'Suspendido' : (domain.is_active ? 'Activo' : 'Inactivo')" />
             <span class="dd-sub__sep">·</span>
-            <span class="mono">PHP {{ domain.php_version || '—' }}</span>
+            <span v-if="domain.mail_dns_only"><i class="bi bi-envelope me-1"></i>Solo correo / DNS</span>
+            <span v-else class="mono">PHP {{ domain.php_version || '—' }}</span>
           </p>
         </div>
       </div>
-      <div class="dd-head__actions" v-if="domain">
+      <div class="dd-head__actions" v-if="domain && !domain.mail_dns_only">
         <BaseButton variant="secondary" size="sm" icon="box-arrow-up-right" tag="a"
           v-bind="{ href: 'http://' + domain.domain_name, target: '_blank' }">Visitar</BaseButton>
         <BaseButton variant="secondary" size="sm" icon="folder2-open" @click="goFiles">Archivos</BaseButton>
@@ -34,26 +35,38 @@
       <div v-show="tab === 'overview'" class="dd-grid">
         <BaseCard title="Información" icon="info-circle">
           <div class="kv">
-            <div class="kv__row"><span class="kv__k">Document root</span><span class="kv__v mono">{{ domain.public_html || '—' }}</span></div>
+            <div v-if="!domain.mail_dns_only" class="kv__row"><span class="kv__k">Document root</span><span class="kv__v mono">{{ domain.public_html || '—' }}</span></div>
             <div class="kv__row"><span class="kv__k">IPv4</span><span class="kv__v mono">{{ domain.ipv4 || '—' }}</span></div>
             <div class="kv__row"><span class="kv__k">IPv6</span><span class="kv__v mono">{{ domain.ipv6 || 'sin asignar' }}</span></div>
             <div class="kv__row"><span class="kv__k">Creado</span><span class="kv__v">{{ formatDate(domain.created_at) }}</span></div>
           </div>
         </BaseCard>
 
-        <BaseCard title="SSL" icon="shield-lock">
+        <!-- Dominio solo correo/DNS: sin web. Resto de cards (SSL/PHP/cache…) ocultas. -->
+        <BaseCard v-if="domain.mail_dns_only" title="Solo correo / DNS" icon="envelope">
+          <p class="dd-muted">
+            Este dominio no aloja la web aquí: su registro <strong>A</strong> apunta a otro servidor.
+            En este panel solo se gestionan el <strong>correo</strong> y la <strong>zona DNS</strong>.
+          </p>
+          <div class="dd-actions-row">
+            <BaseButton variant="subtle" size="sm" icon="envelope" tag="router-link" v-bind="{ to: '/mail' }">Ir a Correo</BaseButton>
+            <BaseButton variant="subtle" size="sm" icon="diagram-3" tag="router-link" v-bind="{ to: '/dns' }">Ir a DNS</BaseButton>
+          </div>
+        </BaseCard>
+
+        <BaseCard v-if="!domain.mail_dns_only" title="SSL" icon="shield-lock">
           <template #actions><StatusBadge :status="sslActive ? 'valid' : 'none'" :label="sslActive ? 'Activo' : 'Sin SSL'" /></template>
           <p class="dd-muted">{{ sslActive ? 'Certificado activo para este dominio.' : 'Este dominio no tiene certificado SSL.' }}</p>
           <BaseButton variant="subtle" size="sm" icon="shield-check" @click="tab = 'ssl'">Gestionar SSL</BaseButton>
         </BaseCard>
 
-        <BaseCard title="PHP" icon="filetype-php">
+        <BaseCard v-if="!domain.mail_dns_only" title="PHP" icon="filetype-php">
           <template #actions><span class="mono dd-php">{{ domain.php_version || '—' }}</span></template>
           <p class="dd-muted">Versión y ajustes php.ini de este dominio.</p>
           <BaseButton variant="subtle" size="sm" icon="sliders" @click="tab = 'php'">Configurar PHP</BaseButton>
         </BaseCard>
 
-        <BaseCard title="FastCGI cache" icon="lightning-charge">
+        <BaseCard v-if="!domain.mail_dns_only" title="FastCGI cache" icon="lightning-charge">
           <template #actions>
             <StatusBadge :status="domain.fastcgi_cache_enabled ? 'active' : 'none'" :label="domain.fastcgi_cache_enabled ? 'Activa' : 'Off'" />
           </template>
@@ -69,7 +82,7 @@
         </BaseCard>
 
         <!-- Modo solo-lectura HTTP -->
-        <BaseCard title="Modo solo-lectura" icon="slash-circle">
+        <BaseCard v-if="!domain.mail_dns_only" title="Modo solo-lectura" icon="slash-circle">
           <template #actions>
             <StatusBadge
               :status="domain.readonly_mode_enabled ? 'warning' : 'none'"
@@ -117,7 +130,7 @@
         </BaseCard>
 
         <!-- HTTP/3 (QUIC) -->
-        <BaseCard title="HTTP/3 (QUIC)" icon="lightning-charge">
+        <BaseCard v-if="!domain.mail_dns_only" title="HTTP/3 (QUIC)" icon="lightning-charge">
           <template #actions>
             <StatusBadge
               :status="domain.http3_enabled ? 'active' : 'none'"
@@ -147,7 +160,7 @@
         </BaseCard>
 
         <!-- Headers HTTP de seguridad -->
-        <BaseCard title="Headers de seguridad" icon="shield-check">
+        <BaseCard v-if="!domain.mail_dns_only" title="Headers de seguridad" icon="shield-check">
           <template #actions>
             <StatusBadge
               :status="domain.security_headers_enabled ? 'active' : 'none'"
@@ -172,7 +185,7 @@
           </div>
         </BaseCard>
 
-        <BaseCard title="Recursos" icon="hdd" class="dd-span2">
+        <BaseCard v-if="!domain.mail_dns_only" title="Recursos" icon="hdd" class="dd-span2">
           <template #actions>
             <BaseButton variant="ghost" size="sm" icon="arrow-repeat" @click="loadDisk" :loading="diskLoading">Recalcular</BaseButton>
           </template>
@@ -261,8 +274,8 @@
 
         <BaseCard title="Acciones rápidas" icon="lightning-charge">
           <div class="quick-col">
-            <BaseButton variant="ghost" size="sm" icon="diagram-3" block @click="tab = 'ipv6'">Gestionar IPv6</BaseButton>
-            <BaseButton variant="ghost" size="sm" icon="download" block :loading="downloading" @click="downloadSite">Descargar sitio</BaseButton>
+            <BaseButton v-if="!domain.mail_dns_only" variant="ghost" size="sm" icon="diagram-3" block @click="tab = 'ipv6'">Gestionar IPv6</BaseButton>
+            <BaseButton v-if="!domain.mail_dns_only" variant="ghost" size="sm" icon="download" block :loading="downloading" @click="downloadSite">Descargar sitio</BaseButton>
             <BaseButton v-if="!domain.is_suspended" variant="ghost" size="sm" icon="pause-circle" block @click="suspend">Suspender</BaseButton>
             <BaseButton v-else variant="ghost" size="sm" icon="play-circle" block @click="unsuspend">Reactivar</BaseButton>
             <BaseButton variant="danger" size="sm" icon="trash" block @click="remove">Eliminar dominio</BaseButton>
@@ -797,7 +810,7 @@ export default {
     const tab = ref('overview')
     const phpVersions = ref([])
 
-    const tabList = [
+    const _allTabs = [
       { key: 'overview', label: 'Resumen', icon: 'grid-1x2' },
       { key: 'ssl',      label: 'SSL',     icon: 'shield-lock' },
       { key: 'php',      label: 'PHP',     icon: 'filetype-php' },
@@ -808,6 +821,14 @@ export default {
       { key: 'advanced', label: 'Avanzado',icon: 'sliders' },
       { key: 'logs',     label: 'Logs',    icon: 'journal-text' },
     ]
+    // Un dominio solo-correo/DNS no tiene web: solo mostramos el Resumen (las
+    // pestañas SSL/PHP/cache/bots/stats/git/logs no aplican). El correo y el DNS
+    // se gestionan en sus propias vistas (Correo / DNS).
+    const tabList = computed(() =>
+      domain.value?.mail_dns_only
+        ? _allTabs.filter(t => t.key === 'overview')
+        : _allTabs
+    )
 
     const formatMB = (mb) => {
       if (!mb) return '0 MB'
