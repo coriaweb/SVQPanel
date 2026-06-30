@@ -155,6 +155,15 @@ def _create_target_user(db: Session, username: str, email: str,
         raise HTTPException(status_code=409,
             detail=f"Ya existe un usuario «{username}». Elige otro nombre o usa el cliente existente.")
 
+    # Email único EN EL PANEL (la columna users.email es UNIQUE). Lo validamos
+    # ANTES de crear el usuario del SO: si no, el insert peta con un 500 críptico
+    # (UniqueViolation) y deja el usuario del sistema huérfano.
+    existing_email = db.query(User).filter(User.email == email).first()
+    if existing_email:
+        raise HTTPException(status_code=409,
+            detail=(f"El email «{email}» ya lo usa el cliente «{existing_email.username}». "
+                    "Indica un email distinto para este cliente."))
+
     # Contraseña: la indicada (validada) o una generada que cumple la política.
     if password:
         errs = validate_password(password, load_policy(db))
