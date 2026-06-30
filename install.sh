@@ -2595,6 +2595,18 @@ findtime  = 120
 bantime   = 86400
 F2BEOF
 
+# fail2ban.local: subir dbpurgeage para que el escalado (bantime.increment) tenga
+# memoria suficiente. fail2ban guarda el historial de reincidencias en su SQLite
+# y lo purga cada 'dbpurgeage' (default 1 día). Si la purga es < bantime.maxtime
+# (4 semanas), las IPs se "olvidan" antes de poder escalar y el incremento nunca
+# llega a semanas. 5w > 4w deja margen. (.local sobreescribe a fail2ban.conf y
+# sobrevive a upgrades del paquete.)
+cat > /etc/fail2ban/fail2ban.local << 'F2BLOCALEOF'
+# /etc/fail2ban/fail2ban.local — gestionado por SVQPanel
+[Definition]
+dbpurgeage = 5w
+F2BLOCALEOF
+
 # Filtro custom para fallos de login del panel
 cat > /etc/fail2ban/filter.d/svqpanel-auth.conf << 'F2BFILTEREOF'
 # fail2ban filter for SVQPanel login failures

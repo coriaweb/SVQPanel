@@ -116,3 +116,4 @@ exit 0
 | 0077 | Cachear peso en disco de los dominios en BD (la lista hacía du en vivo por cada uno → lenta); refresco 2/día en background + botón por dominio. Primer cálculo | 2026-06-30 |
 | 0078 | Quitar jail fail2ban relay redundante: el relay denied es spam distribuido (fail2ban no puede); ya lo cubre CrowdSec (postfix-relay-denied) | 2026-07-01 |
 | 0079 | SSH + fail2ban estricto: bantime.increment global (baneo escalado x2 hasta 4 semanas para reincidentes) + jail sshd maxretry 3/findtime 30m/bantime 12h + sshd MaxAuthTries 3/LoginGraceTime 20 | 2026-07-01 |
+| 0080 | fail2ban dbpurgeage = 5w (fail2ban.local): el historial de reincidencias se purgaba cada 1d y el escalado de 0079 nunca llegaba a semanas; ahora persiste > maxtime | 2026-07-01 |
