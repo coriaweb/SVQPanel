@@ -36,11 +36,25 @@ export const useMainStore = defineStore('main', () => {
 
   const closeMobileMenu = () => { mobileMenuOpen.value = false }
 
-  const showNotification = (message, type = 'success', duration = 3000) => {
+  let notifTimer = null
+  // Duración del toast. Los errores duran mucho más (hay que poder leerlos y
+  // copiarlos: pueden traer instrucciones largas). duration = 0 → no se cierra
+  // solo (sticky); el usuario lo cierra con la ×. Si no se pasa duration, se
+  // elige según el tipo: éxito/info corto, error largo.
+  const showNotification = (message, type = 'success', duration = null) => {
+    if (notifTimer) { clearTimeout(notifTimer); notifTimer = null }
+    // 'danger' y 'error' son ambos errores en el panel; duran mucho más.
+    const isError = (type === 'error' || type === 'danger')
+    if (duration === null) duration = isError ? 12000 : 3000
     notification.value = { message, type }
-    setTimeout(() => {
-      notification.value = null
-    }, duration)
+    if (duration > 0) {
+      notifTimer = setTimeout(() => { notification.value = null }, duration)
+    }
+  }
+
+  const dismissNotification = () => {
+    if (notifTimer) { clearTimeout(notifTimer); notifTimer = null }
+    notification.value = null
   }
 
   const setLoading = (state) => {
@@ -96,6 +110,7 @@ export const useMainStore = defineStore('main', () => {
     toggleSidebar,
     closeMobileMenu,
     showNotification,
+    dismissNotification,
     setLoading,
     updateUsers,
     updateDomains,

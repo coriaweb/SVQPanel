@@ -175,8 +175,16 @@
     <div class="toast-stack">
       <transition name="toast">
         <div v-if="notification" class="toast" :class="`toast--${notification.type}`">
-          <i class="bi" :class="toastIcon(notification.type)"></i>
-          <span>{{ notification.message }}</span>
+          <i class="bi toast__icon" :class="toastIcon(notification.type)"></i>
+          <span class="toast__msg">{{ notification.message }}</span>
+          <div class="toast__actions">
+            <button class="toast__btn" title="Copiar" @click="copyNotification">
+              <i class="bi" :class="copiedToast ? 'bi-check-lg' : 'bi-clipboard'"></i>
+            </button>
+            <button class="toast__btn" title="Cerrar" @click="store.dismissNotification()">
+              <i class="bi bi-x-lg"></i>
+            </button>
+          </div>
         </div>
       </transition>
     </div>
@@ -202,6 +210,22 @@ export default {
     const store  = useMainStore()
 
     const notification    = computed(() => store.notification)
+    const copiedToast     = ref(false)
+    const copyNotification = async () => {
+      const msg = store.notification?.message
+      if (!msg) return
+      try {
+        await navigator.clipboard.writeText(msg)
+      } catch (e) {
+        // Fallback si el navegador bloquea la API de portapapeles (http, etc.)
+        const ta = document.createElement('textarea')
+        ta.value = msg; document.body.appendChild(ta); ta.select()
+        try { document.execCommand('copy') } catch (_) { /* nada */ }
+        document.body.removeChild(ta)
+      }
+      copiedToast.value = true
+      setTimeout(() => { copiedToast.value = false }, 1500)
+    }
     const isAuthenticated = computed(() => store.isAuthenticated)
     const currentUser     = computed(() => store.currentUser)
     const theme           = computed(() => store.theme)
@@ -409,7 +433,7 @@ export default {
     watch(isAuthenticated, (v) => { if (v) { loadServerLoad(); checkLicense() } })
 
     return {
-      store, route, router, notification, isAuthenticated, currentUser, theme,
+      store, route, router, notification, copiedToast, copyNotification, isAuthenticated, currentUser, theme,
       sidebarCollapsed, mobileMenuOpen, navigate, dropdownOpen, visibleGroups, isActive, currentBreadcrumb,
       isGroupCollapsed, toggleGroup,
       userInitials, toastIcon, logout, openPalette, serverHostname,
@@ -741,19 +765,37 @@ export default {
   .toast { min-width: 0; max-width: 100%; }
 }
 .toast {
-  display: flex; align-items: center; gap: 12px;
-  min-width: 280px; max-width: 420px;
-  padding: 13px 16px;
+  display: flex; align-items: flex-start; gap: 12px;
+  min-width: 280px; max-width: 440px;
+  padding: 13px 14px 13px 16px;
   background: var(--surface); border: 1px solid var(--border);
   border-left: 3px solid var(--text-muted);
   border-radius: var(--r-md); box-shadow: var(--shadow-lg);
   color: var(--text); font-size: 14px;
 }
-.toast .bi { font-size: 18px; }
-.toast--success { border-left-color: var(--success); } .toast--success .bi { color: var(--success); }
-.toast--danger, .toast--error { border-left-color: var(--danger); } .toast--danger .bi, .toast--error .bi { color: var(--danger); }
-.toast--warning { border-left-color: var(--warning); } .toast--warning .bi { color: var(--warning); }
-.toast--info    { border-left-color: var(--info); }    .toast--info .bi    { color: var(--info); }
+.toast__icon { font-size: 18px; flex-shrink: 0; line-height: 1.4; }
+/* Texto seleccionable y con saltos de línea (los errores son largos) */
+.toast__msg {
+  flex: 1; line-height: 1.45;
+  word-break: break-word; white-space: pre-wrap;
+  user-select: text; -webkit-user-select: text;
+  max-height: 50vh; overflow-y: auto;
+}
+.toast__actions { display: flex; gap: 2px; flex-shrink: 0; margin: -4px -4px 0 0; }
+.toast__btn {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 26px; height: 26px; padding: 0;
+  background: transparent; border: 0; border-radius: var(--r-sm);
+  color: var(--text-muted); cursor: pointer;
+  transition: background .15s ease, color .15s ease;
+}
+.toast__btn:hover { background: var(--surface-2, rgba(127,127,127,.12)); color: var(--text); }
+.toast__btn .bi { font-size: 14px; }
+.toast--success .toast__icon { color: var(--success); } .toast--success { border-left-color: var(--success); }
+.toast--danger, .toast--error { border-left-color: var(--danger); }
+.toast--danger .toast__icon, .toast--error .toast__icon { color: var(--danger); }
+.toast--warning .toast__icon { color: var(--warning); } .toast--warning { border-left-color: var(--warning); }
+.toast--info .toast__icon { color: var(--info); } .toast--info { border-left-color: var(--info); }
 .toast-enter-active, .toast-leave-active { transition: opacity .2s ease, transform .2s ease; }
 .toast-enter-from, .toast-leave-to { opacity: 0; transform: translateX(16px); }
 
