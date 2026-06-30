@@ -429,6 +429,9 @@ def cmd_migrate_php_pools(dry_run: bool = False, only_domain: str = None,
         for d in domains:
             if only_domain and d.domain_name != only_domain:
                 continue
+            # Los dominios solo-correo/DNS no tienen web → no necesitan pool PHP.
+            if getattr(d, "mail_dns_only", False):
+                continue
             owner = db.query(User).filter(User.id == d.user_id).first()
             if not owner:
                 logger.warning(f"  {d.domain_name}: sin propietario, omitido")
@@ -1122,6 +1125,9 @@ def cmd_migrate_canonical_domain(dry_run: bool = False) -> int:
         mgr = DomainManager()
         forzados = sin_www_dns = ya_ok = fallidos = 0
         for d in domains:
+            # Los dominios solo-correo/DNS no tienen web → no hay vhost que tocar.
+            if getattr(d, "mail_dns_only", False):
+                continue
             owner = db.query(User).filter(User.id == d.user_id).first()
             if not owner:
                 logger.warning(f"  {d.domain_name}: sin propietario, omitido")

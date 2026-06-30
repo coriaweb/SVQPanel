@@ -44,9 +44,10 @@
       <article v-for="domain in groupedDomains" :key="domain.id" class="dcard" :class="[`dcard--${domainTone(domain)}`, { 'dcard--sub': domain.is_subdomain }]">
         <div class="dcard__head">
           <div class="dcard__title">
-            <i class="bi" :class="domain.is_subdomain ? 'bi-diagram-3' : 'bi-globe2'"></i>
+            <i class="bi" :class="domain.mail_dns_only ? 'bi-envelope' : (domain.is_subdomain ? 'bi-diagram-3' : 'bi-globe2')"></i>
             <a :href="'http://' + domain.domain_name" target="_blank" class="dcard__name" @click.stop>{{ domain.domain_name }}</a>
             <span v-if="domain.is_subdomain" class="sub-chip" :title="'Subdominio de ' + domain.parent_domain">sub</span>
+            <span v-if="domain.mail_dns_only" class="sub-chip" title="Solo correo/DNS — la web está en otro servidor">correo/DNS</span>
           </div>
           <StatusBadge
             :status="domain.is_suspended ? 'warning' : (domain.is_active ? 'active' : 'error')"
@@ -122,8 +123,9 @@
             <tr v-for="domain in groupedDomains" :key="domain.id" :class="{ 't-row--suspended': domain.is_suspended, 't-row--sub': domain.is_subdomain }">
               <td>
                 <span v-if="domain.is_subdomain" class="sub-indent" :title="'Subdominio de ' + domain.parent_domain">└</span>
-                <router-link :to="`/domains/${domain.id}`" class="t-domain"><i class="bi" :class="domain.is_subdomain ? 'bi-diagram-3' : 'bi-globe2'"></i>{{ domain.domain_name }}</router-link>
+                <router-link :to="`/domains/${domain.id}`" class="t-domain"><i class="bi" :class="domain.mail_dns_only ? 'bi-envelope' : (domain.is_subdomain ? 'bi-diagram-3' : 'bi-globe2')"></i>{{ domain.domain_name }}</router-link>
                 <span v-if="domain.is_subdomain" class="sub-chip" :title="'Subdominio de ' + domain.parent_domain">sub</span>
+                <span v-if="domain.mail_dns_only" class="sub-chip" title="Solo correo/DNS — la web está en otro servidor">correo/DNS</span>
               </td>
               <td v-if="isAdminOrReseller" class="t-muted">{{ getUserName(domain.user_id) }}</td>
               <td class="mono">{{ domain.php_version || '—' }}</td>

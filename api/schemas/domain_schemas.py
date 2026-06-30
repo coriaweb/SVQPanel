@@ -14,6 +14,8 @@ class DomainCreate(BaseModel):
     php_version: Optional[str] = Field("8.2", pattern="^(7\\.4|8\\.[0-5])$")
     dns_enabled:  Optional[bool] = False
     mail_enabled: Optional[bool] = False
+    # Dominio solo correo/DNS: no aloja la web aquí (no crea vhost/pool PHP).
+    mail_dns_only: Optional[bool] = False
     ipv4: Optional[str] = None
     ipv6: Optional[str] = None
     # Forzar tratarlo como subdominio (si no, se autodetecta por la zona padre).
@@ -92,6 +94,7 @@ class DomainResponse(BaseModel):
     is_suspended: Optional[bool] = False
     is_subdomain: Optional[bool] = False
     parent_domain: Optional[str] = None
+    mail_dns_only: Optional[bool] = False
     disk_usage: Optional[int] = 0
     # FastCGI cache (Fase 14)
     fastcgi_cache_enabled:     Optional[bool] = False

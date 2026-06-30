@@ -194,7 +194,9 @@ async def create_zone(
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail=(f"No existe el dominio '{data.domain_name}' en el panel. "
-                        "Crea primero el dominio (asignado a un cliente) y luego su zona DNS."),
+                        "Crea primero el dominio (asignado a un cliente) y luego su zona DNS. "
+                        "Si solo quieres correo/DNS y la web está en otro servidor, "
+                        "crea el dominio marcando «Solo correo / DNS»."),
             )
         owner = db.query(User).filter(User.id == domain.user_id).first()
         if owner and (owner.is_admin or getattr(owner, "role", None) == "admin"):

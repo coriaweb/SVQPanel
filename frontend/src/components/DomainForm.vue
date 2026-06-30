@@ -67,9 +67,23 @@
       </div>
     </div>
 
-    <div class="mb-3">
+    <!-- Solo correo/DNS: el dominio no se aloja aquí (su web/registro A apunta a
+         otro servidor); aquí solo se gestiona correo y/o DNS. -->
+    <div v-if="!isEditing && !form.is_subdomain" class="mb-3 form-check">
+      <input id="mail_dns_only" v-model="form.mail_dns_only" type="checkbox" class="form-check-input" />
+      <label for="mail_dns_only" class="form-check-label">
+        Solo correo / DNS (sin alojar la web aquí)
+      </label>
+      <div class="form-text">
+        Marca esto si la web del dominio está en otro servidor (su registro A apunta fuera)
+        y aquí solo quieres gestionar el <strong>correo</strong> y/o la <strong>zona DNS</strong>.
+        No se creará vhost ni PHP.
+      </div>
+    </div>
+
+    <div class="mb-3" v-if="!form.mail_dns_only">
       <label class="form-label">Versión PHP</label>
-      <select v-model="form.php_version" class="form-select" required>
+      <select v-model="form.php_version" class="form-select" :required="!form.mail_dns_only">
         <option value="">Selecciona versión</option>
         <option v-for="version in availablePhpVersions" :key="version" :value="version">
           PHP {{ version }}
@@ -478,6 +492,8 @@ export default {
       php_hardening_relaxed: props.domain?.php_hardening_relaxed ?? false,
       dns_enabled:  false,
       mail_enabled: false,
+      // Solo correo/DNS: el dominio no se aloja aquí (web en otro servidor).
+      mail_dns_only: false,
       // Subdominio (solo creación)
       is_subdomain: false,
       sub_label:    '',
@@ -704,19 +720,22 @@ export default {
             domainName = `${label}.${form.value.parent_name}`
             dnsEnabled = true   // el subdominio necesita su A en la zona padre
           }
+          const mailDnsOnly = form.value.mail_dns_only && !form.value.is_subdomain
           const created = await api.createDomain({
             domain_name:  domainName,
             user_id:      userId,
-            php_version:  form.value.php_version,
+            // Sin web → PHP irrelevante; el backend ignora el valor.
+            php_version:  mailDnsOnly ? '8.2' : form.value.php_version,
             is_active:    form.value.is_active,
             dns_enabled:  dnsEnabled,
             mail_enabled: form.value.mail_enabled,
+            mail_dns_only: mailDnsOnly,
             is_subdomain: form.value.is_subdomain || null,
             ipv4:         form.value.ipv4 || null,
             ipv6:         form.value.ipv6 || null,
           })
-          // Aplicar plantilla tras crear el dominio
-          if (form.value.selected_template_id && created?.id) {
+          // Aplicar plantilla tras crear el dominio (no aplica a solo-correo/DNS)
+          if (!mailDnsOnly && form.value.selected_template_id && created?.id) {
             try {
               await api.applyTemplate(created.id, form.value.selected_template_id, {
                 ttl_minutes: 60,

@@ -147,12 +147,19 @@ async def create_domain(
                     ),
                 )
 
-        # Create domain in system (Nginx, directories, etc)
-        domain_manager.create_domain(
-            user.username,
-            domain.domain_name,
-            domain.php_version or "8.2"
-        )
+        # Dominio "solo correo/DNS": NO se crea hosting web (vhost, pool PHP,
+        # estructura de directorios). Su registro A apunta a otro servidor; aquí
+        # solo se aloja correo y/o zona DNS. Para el resto del flujo se comporta
+        # como un dominio normal, pero sin tocar el webserver.
+        mail_dns_only = bool(getattr(domain, "mail_dns_only", False))
+
+        # Create domain in system (Nginx, directories, etc) — salvo solo-correo/DNS
+        if not mail_dns_only:
+            domain_manager.create_domain(
+                user.username,
+                domain.domain_name,
+                domain.php_version or "8.2"
+            )
 
         # Autorellenar IPv4 con la IP principal del servidor si no se especificó
         ipv4_assigned = getattr(domain, 'ipv4', None)
@@ -176,11 +183,14 @@ async def create_domain(
             user_id=domain.user_id,
             domain_name=domain.domain_name,
             php_version=domain.php_version or "8.2",
-            public_html=f"/home/{user.username}/web/{domain.domain_name}/public_html",
+            # Un dominio solo-correo/DNS no tiene web → public_html vacío.
+            public_html=("" if mail_dns_only
+                         else f"/home/{user.username}/web/{domain.domain_name}/public_html"),
             ipv4=ipv4_assigned,
             ipv6=getattr(domain, 'ipv6', None) or None,
             is_subdomain=is_subdomain,
             parent_domain=parent_name,
+            mail_dns_only=mail_dns_only,
             # Un subdominio no tiene variante www → sin redirección canónica.
             canonical_domain="none" if is_subdomain else "www",
         )
@@ -600,17 +610,18 @@ async def delete_domain(
                 # No bloqueamos el borrado si falla quitar la IPv6
                 print(f"Warning: no se pudo quitar IPv6 {db_domain.ipv6} de la interfaz: {e}")
 
-        # Delete domain from system (nginx config + directorios)
-        domain_manager.delete_domain(db_domain.domain_name, username=username)
-
-        # Limpiar pool PHP dedicado y zona de cache si existían
-        try:
-            from scripts import php_ini_manager as phpini
-            from scripts.utils import remove_fastcgi_cache_zone
-            phpini.remove_pool(db_domain.domain_name)
-            remove_fastcgi_cache_zone(db_domain.domain_name)
-        except Exception as e:
-            print(f"Warning: limpieza pool/cache de {db_domain.domain_name}: {e}")
+        # Delete domain from system (nginx config + directorios) — salvo los
+        # dominios solo-correo/DNS, que nunca tuvieron web (vhost/pool/dirs).
+        if not getattr(db_domain, "mail_dns_only", False):
+            domain_manager.delete_domain(db_domain.domain_name, username=username)
+            # Limpiar pool PHP dedicado y zona de cache si existían
+            try:
+                from scripts import php_ini_manager as phpini
+                from scripts.utils import remove_fastcgi_cache_zone
+                phpini.remove_pool(db_domain.domain_name)
+                remove_fastcgi_cache_zone(db_domain.domain_name)
+            except Exception as e:
+                print(f"Warning: limpieza pool/cache de {db_domain.domain_name}: {e}")
 
         # Deshacer el resto de lo que crea el alta: zona DNS y dominio de correo
         # del MISMO nombre. Reutiliza los helpers del orquestador de borrado

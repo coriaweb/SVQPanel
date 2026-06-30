@@ -39,6 +39,12 @@ class Domain(Base):
     # panel. Si la padre no está en el panel, cae a zona propia (como un dominio).
     is_subdomain  = Column(Boolean, default=False, nullable=False)
     parent_domain = Column(String(255), nullable=True, index=True)  # zona padre, ej: zococoria.es
+
+    # Dominio "solo correo/DNS": NO aloja la web aquí (su registro A apunta a otro
+    # servidor). No se crea vhost, pool PHP ni estructura web; el Domain es un
+    # registro ligero al que se le puede colgar correo y zona DNS. public_html
+    # queda vacío. Pensado para clientes que solo quieren el correo (o DNS) aquí.
+    mail_dns_only = Column(Boolean, default=False, nullable=False)
     
     # FastCGI cache (Fase 14)
     fastcgi_cache_enabled    = Column(Boolean, default=False, nullable=False)
