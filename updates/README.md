@@ -115,3 +115,4 @@ exit 0
 | 0076 | Fix: cmd_regenerate_all_vhosts generaba vhost web a dominios solo-correo/DNS (mail_dns_only) → public_html inexistente → configtest Apache fallaba y tumbaba la regeneración de TODOS. Limpia los vhosts ya creados | 2026-06-30 |
 | 0077 | Cachear peso en disco de los dominios en BD (la lista hacía du en vivo por cada uno → lenta); refresco 2/día en background + botón por dominio. Primer cálculo | 2026-06-30 |
 | 0078 | Quitar jail fail2ban relay redundante: el relay denied es spam distribuido (fail2ban no puede); ya lo cubre CrowdSec (postfix-relay-denied) | 2026-07-01 |
+| 0079 | SSH + fail2ban estricto: bantime.increment global (baneo escalado x2 hasta 4 semanas para reincidentes) + jail sshd maxretry 3/findtime 30m/bantime 12h + sshd MaxAuthTries 3/LoginGraceTime 20 | 2026-07-01 |

@@ -2499,12 +2499,26 @@ allowipv6 = auto
 banaction = svqpanel-nft
 banaction_allports = svqpanel-nft
 ignoreip = $IGNOREIP
+# ── Baneo escalado para reincidentes (global a todas las jails) ──────────────
+# Sin esto, una IP baneada vuelve cada 'bantime' indefinidamente (puerta
+# giratoria). Con increment, cada nueva reincidencia multiplica el tiempo por
+# 'factor' hasta 'maxtime'. El historial de cada IP se guarda en la BD de
+# fail2ban (persiste reinicios). rndtime añade jitter para no banear "en bloque".
+bantime.increment = true
+bantime.factor    = 2
+bantime.maxtime   = 4w
+bantime.rndtime   = 30m
 
 [sshd]
 enabled  = true
 port     = ssh
 filter   = sshd
-maxretry = 5
+# SSH es el blanco nº1 (miles de fallos/día de cientos de IPs). Política
+# estricta: 3 fallos en 30m → baneo inicial 12h, escalando (12h→24h→48h…→4sem)
+# para cualquier IP que reincida. El factor/maxtime los hereda del [DEFAULT].
+maxretry = 3
+findtime = 30m
+bantime  = 12h
 
 [svqpanel-auth]
 enabled  = true
@@ -2714,8 +2728,12 @@ cat > "$SSHD_HARDEN" << 'SSHDEOF'
 X11Forwarding no
 # No permitir contraseñas vacías (por si acaso)
 PermitEmptyPasswords no
-# Límite de intentos de auth por conexión
-MaxAuthTries 4
+# Límite de intentos de auth por conexión (estricto: 3, complementa a fail2ban)
+MaxAuthTries 3
+# Tiempo máximo para autenticarse antes de cerrar (corta bots que se cuelgan)
+LoginGraceTime 20
+# Sin sesiones múltiples sin autenticar en paralelo desde una misma conexión
+MaxStartups 10:30:60
 SSHDEOF
 # Validar la config antes de recargar para no romper el SSH
 if sshd -t 2>/dev/null; then
