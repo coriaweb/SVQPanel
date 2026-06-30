@@ -464,9 +464,14 @@ def generate_nginx_config(
     http3_header = ""
     if http3_enabled and ssl_enabled:
         # listen genérico (sin IP), por la misma razón que el resto: atarlo a la
-        # IP rompe el enrutado en servidores de una sola IP. reuseport solo en el
-        # IPv4 genérico (no puede repetirse por listen).
-        http3_listen = "\n    listen 443 quic reuseport;"
+        # IP rompe el enrutado en servidores de una sola IP.
+        # OJO: NADA de `reuseport` aquí. `reuseport` solo puede aparecer UNA vez
+        # por puerto en TODA la config de nginx; ponerlo en cada vhost hace que el
+        # SEGUNDO dominio con HTTP/3 reviente nginx entero con "duplicate listen
+        # options for 0.0.0.0:443" (y bloquea cualquier reload → migraciones y
+        # cambios de vhost fallan). reuseport no es necesario para que QUIC
+        # funcione: solo balancea conexiones UDP entre workers.
+        http3_listen = "\n    listen 443 quic;"
         if ipv6:
             http3_listen += "\n    listen [::]:443 quic;"
         http3_header = '\n    add_header Alt-Svc \'h3=":443"; ma=86400\' always;'

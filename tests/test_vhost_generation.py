@@ -167,6 +167,23 @@ def test_nginx_ssl_genera_bloque_443():
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# HTTP/3 (QUIC): el listen quic NUNCA debe llevar `reuseport`. reuseport solo
+# puede aparecer una vez por puerto en TODA la config; ponerlo en cada vhost hace
+# que el SEGUNDO dominio con HTTP/3 reviente nginx con "duplicate listen options
+# for 0.0.0.0:443" y bloquee todos los reloads (rompió migraciones en prod).
+# ─────────────────────────────────────────────────────────────────────────────
+def test_nginx_http3_no_lleva_reuseport():
+    cfg = generate_nginx_config("ejemplo.com", "user1", "8.3",
+                                ssl_enabled=True, http3_enabled=True,
+                                ipv6="2001:db8::1")
+    assert "listen 443 quic;" in cfg, "debe declarar el listen quic de HTTP/3"
+    assert "reuseport" not in cfg, \
+        "el listen quic NO debe llevar reuseport (rompe el 2º vhost con HTTP/3)"
+    # El Alt-Svc anuncia HTTP/3 al navegador.
+    assert 'Alt-Svc' in cfg
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # Apache vhost (modo dual)
 # ─────────────────────────────────────────────────────────────────────────────
 def test_apache_vhost_documentroot_y_php():
