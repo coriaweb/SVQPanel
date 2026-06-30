@@ -296,11 +296,15 @@
       <BaseCard v-show="tab === 'php'" title="Configuración PHP" icon="filetype-php">
         <template #actions>
           <select class="svq-select svq-select--sm" :value="domain.php_version" @change="changePHP($event.target.value)">
-            <option v-for="v in phpVersions" :key="v" :value="v">PHP {{ v }}</option>
+            <option v-for="v in phpVersions" :key="v" :value="v">PHP {{ v }}{{ deprecatedPhp.includes(v) ? ' ⚠ sin soporte (EOL)' : '' }}</option>
           </select>
         </template>
         <div v-if="phpLoading" class="svq-skeleton" style="height:200px"></div>
         <div v-else>
+          <p v-if="deprecatedPhp.includes(domain.php_version)" class="dd-muted" style="color:var(--warning)">
+            <i class="bi bi-exclamation-triangle"></i>
+            PHP {{ domain.php_version }} está sin soporte de seguridad oficial (EOL). Úsala solo si el sitio lo requiere.
+          </p>
           <p class="dd-muted">Ajustes php.ini propios (vacío = valor global del servidor). No puedes superar el límite del servidor.</p>
           <div class="php-table">
             <div class="php-row php-row--head">
@@ -813,6 +817,7 @@ export default {
     const loading = ref(true)
     const tab = ref('overview')
     const phpVersions = ref([])
+    const deprecatedPhp = ref([])   // versiones PHP EOL (sin soporte oficial)
 
     const _allTabs = [
       { key: 'overview', label: 'Resumen', icon: 'grid-1x2' },
@@ -1516,13 +1521,17 @@ location @maintenance {
 
     onMounted(async () => {
       await loadDomain()
-      try { const d = await api.getPHPVersions(); phpVersions.value = d?.versions?.length ? d.versions : ['8.2'] }
+      try {
+        const d = await api.getPHPVersions()
+        phpVersions.value = d?.versions?.length ? d.versions : ['8.2']
+        deprecatedPhp.value = d?.deprecated || []
+      }
       catch { phpVersions.value = ['7.4', '8.0', '8.1', '8.2', '8.3', '8.4'] }
       if (domain.value) { loadDisk(); loadPhp(); loadLogs(); loadSslState(); loadDetectedApp() }
     })
 
     return {
-      domain, loading, tab, tabList, phpVersions, reloadDomain,
+      domain, loading, tab, tabList, phpVersions, deprecatedPhp, reloadDomain,
       sslActive,
       formatMB, formatDate,
       disk, diskLoading, loadDisk,
