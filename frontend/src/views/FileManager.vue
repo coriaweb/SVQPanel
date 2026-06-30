@@ -275,7 +275,9 @@ import api from '../services/api'
 import Modal from '../components/Modal.vue'
 import { useMainStore } from '../stores/useMainStore'
 
-const editableExtensions = ['txt', 'css', 'js', 'ts', 'html', 'htm', 'php', 'json', 'md', 'xml', 'yml', 'yaml', 'env', 'ini', 'conf', 'log']
+const editableExtensions = ['txt', 'css', 'js', 'ts', 'html', 'htm', 'php', 'json', 'md', 'xml', 'yml', 'yaml', 'env', 'ini', 'conf', 'log', 'htaccess', 'htpasswd', 'sh', 'sql', 'toml', 'cfg', 'gitignore', 'lock']
+// Archivos de texto SIN extensión (o dotfiles) habituales en webs, editables por nombre completo.
+const editableNames = ['.htaccess', '.htpasswd', '.env', '.user.ini', '.gitignore', 'dockerfile', '.editorconfig', 'robots.txt', '.babelrc', '.npmrc']
 
 export default {
   name: 'FileManager',
@@ -606,7 +608,11 @@ export default {
     }
 
     const formatDate = (date) => date ? new Date(date).toLocaleString() : '-'
-    const isEditable = (entry) => editableExtensions.includes(entry.name.split('.').pop()?.toLowerCase())
+    const isEditable = (entry) => {
+      const name = entry.name.toLowerCase()
+      if (editableNames.includes(name)) return true
+      return editableExtensions.includes(name.split('.').pop())
+    }
     const isArchive = (entry) => {
       const n = entry.name.toLowerCase()
       return n.endsWith('.zip') || n.endsWith('.tar') || n.endsWith('.tar.gz') ||
