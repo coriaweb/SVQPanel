@@ -1228,6 +1228,11 @@ class APIClient {
     return this.get(`/api/domains/wp-attack-alerts`)
   }
 
+  // Vista admin: TODOS los dominios con su estado de protección WP (tabla gestión)
+  getWpProtectionOverview() {
+    return this.get(`/api/domains/wp-protection-overview`)
+  }
+
   setDomainPhpHardening(domainId, relaxed) {
     return this.put(`/api/domains/${domainId}/php-hardening`, { relaxed })
   }

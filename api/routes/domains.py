@@ -353,6 +353,55 @@ async def list_domains(
         )
 
 
+@router.get("/domains/wp-protection-overview")
+async def get_wp_protection_overview(
+    current_user: User = Depends(require_admin),
+    db:           Session = Depends(get_db),
+):
+    """
+    Vista admin: TODOS los dominios del servidor con su estado de protección
+    WordPress (xmlrpc bloqueado / rate-limit wp-login) + si están bajo ataque
+    ahora mismo. Para la tabla de gestión rápida en Seguridad. Solo admin.
+    """
+    from concurrent.futures import ThreadPoolExecutor
+    from scripts.wp_attack_detector import analyze_domain
+
+    domains = db.query(Domain).filter(Domain.is_active == True).all()  # noqa: E712
+    user_ids = {d.user_id for d in domains}
+    users = {u.id: u.username for u in db.query(User).filter(User.id.in_(user_ids)).all()} if user_ids else {}
+
+    def _row(d):
+        username = users.get(d.user_id, "")
+        under_attack = False
+        targets = []
+        try:
+            if username:
+                r = analyze_domain(username, d.domain_name)
+                # solo cuenta como "bajo ataque" lo que NO está ya mitigado
+                sx = ("xmlrpc" in r["attack_targets"]) and not d.xmlrpc_blocked
+                sl = ("wp-login" in r["attack_targets"]) and (d.wp_login_ratelimit or 0) == 0
+                under_attack = bool(sx or sl)
+                targets = (["xmlrpc"] if sx else []) + (["wp-login"] if sl else [])
+        except Exception:
+            pass
+        return {
+            "domain_id":          d.id,
+            "domain":             d.domain_name,
+            "owner":              username,
+            "xmlrpc_blocked":     bool(d.xmlrpc_blocked),
+            "wp_login_ratelimit": int(d.wp_login_ratelimit or 0),
+            "under_attack":       under_attack,
+            "targets":            targets,
+        }
+
+    rows = []
+    if domains:
+        with ThreadPoolExecutor(max_workers=min(8, len(domains))) as ex:
+            rows = list(ex.map(_row, domains))
+    rows.sort(key=lambda r: (not r["under_attack"], r["domain"]))  # ataques arriba
+    return {"domains": rows}
+
+
 @router.get("/domains/wp-attack-alerts")
 async def get_wp_attack_alerts(
     current_user: User = Depends(require_auth),
