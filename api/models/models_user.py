@@ -20,7 +20,10 @@ class User(Base):
 
     id = Column(Integer, primary_key=True, index=True)
     username = Column(String(255), unique=True, nullable=False, index=True)
-    email = Column(String(255), unique=True, nullable=False)
+    # Email NO único: el login es por username, no por email. Un mismo dueño
+    # puede tener varias cuentas con el mismo email (típico al migrar varios
+    # sitios de un cliente). Se indexa para búsquedas, sin restricción de unicidad.
+    email = Column(String(255), nullable=False, index=True)
     password_hash = Column(String(255), nullable=False)
 
     # Información personal

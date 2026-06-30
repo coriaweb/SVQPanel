@@ -370,6 +370,9 @@ def _run_migrations():
         "ALTER TABLE mail_domains ADD COLUMN IF NOT EXISTS blacklist_senders TEXT DEFAULT ''",
         # Dominio "solo correo/DNS": sin hosting web (la A apunta a otro servidor)
         "ALTER TABLE domains ADD COLUMN IF NOT EXISTS mail_dns_only BOOLEAN DEFAULT FALSE NOT NULL",
+        # Email NO único: el login es por username; un dueño puede tener varias
+        # cuentas con el mismo email (migrar varios sitios de un cliente).
+        "ALTER TABLE users DROP CONSTRAINT IF EXISTS users_email_key",
         # Importación: datos del job que lee el subproceso aislado (run_migration_job)
         "ALTER TABLE migration_jobs ADD COLUMN IF NOT EXISTS tar_path TEXT",
         "ALTER TABLE migration_jobs ADD COLUMN IF NOT EXISTS cleanup_tar INTEGER DEFAULT 0",

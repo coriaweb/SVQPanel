@@ -150,19 +150,12 @@ def _create_target_user(db: Session, username: str, email: str,
     if not email or not validate_email(email):
         # El backup puede no traer email; usamos uno placeholder del propio panel.
         email = f"{username}@local.invalid"
-    # Username único EN EL PANEL.
+    # Username único EN EL PANEL. (El email NO tiene que ser único: el login es
+    # por username, y un mismo dueño puede tener varias cuentas con el mismo
+    # email — típico al migrar varios sitios de un cliente.)
     if db.query(User).filter(User.username == username).first():
         raise HTTPException(status_code=409,
             detail=f"Ya existe un usuario «{username}». Elige otro nombre o usa el cliente existente.")
-
-    # Email único EN EL PANEL (la columna users.email es UNIQUE). Lo validamos
-    # ANTES de crear el usuario del SO: si no, el insert peta con un 500 críptico
-    # (UniqueViolation) y deja el usuario del sistema huérfano.
-    existing_email = db.query(User).filter(User.email == email).first()
-    if existing_email:
-        raise HTTPException(status_code=409,
-            detail=(f"El email «{email}» ya lo usa el cliente «{existing_email.username}». "
-                    "Indica un email distinto para este cliente."))
 
     # Contraseña: la indicada (validada) o una generada que cumple la política.
     if password:
