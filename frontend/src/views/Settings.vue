@@ -348,6 +348,10 @@
                     <div class="php-row__ver">
                       <strong class="font-monospace">PHP {{ php.version }}</strong>
                       <span v-if="php.version === form.php_default_version" class="php-tag php-tag--default">por defecto</span>
+                      <span v-if="php.deprecated" class="php-tag php-tag--eol"
+                            title="Versión sin soporte de seguridad oficial (EOL). Úsala solo para sitios antiguos que la requieran.">
+                        <i class="bi bi-exclamation-triangle"></i> Sin soporte
+                      </span>
                     </div>
                     <span v-if="php.running" class="php-tag php-tag--on"><i class="bi bi-check-circle"></i> Activo</span>
                     <span v-else-if="php.installed" class="php-tag php-tag--warn"><i class="bi bi-pause-circle"></i> Detenido</span>
@@ -1707,6 +1711,7 @@ export default {
 .php-tag--on   { background: color-mix(in srgb, var(--success) 15%, transparent); color: var(--success); }
 .php-tag--warn { background: color-mix(in srgb, var(--warning,#f59e0b) 15%, transparent); color: var(--warning,#d97706); }
 .php-tag--off  { background: var(--surface-2); color: var(--text-muted); border: 1px solid var(--border); }
+.php-tag--eol  { background: color-mix(in srgb, var(--danger,#dc2626) 13%, transparent); color: var(--danger,#dc2626); }
 
 @media (max-width: 640px) {
   .php-row {

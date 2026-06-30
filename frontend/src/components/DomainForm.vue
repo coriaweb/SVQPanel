@@ -94,10 +94,15 @@
       <select v-model="form.php_version" class="form-select" :required="isWebDomain">
         <option value="">Selecciona versión</option>
         <option v-for="version in availablePhpVersions" :key="version" :value="version">
-          PHP {{ version }}
+          PHP {{ version }}{{ deprecatedPhp.includes(version) ? ' ⚠ sin soporte (EOL)' : '' }}
         </option>
       </select>
       <div class="form-text">Solo se muestran versiones instaladas y activas en el servidor.</div>
+      <div v-if="deprecatedPhp.includes(form.php_version)" class="alert alert-warning py-2 px-3 mb-0 mt-2 small">
+        <i class="bi bi-exclamation-triangle me-1"></i>
+        PHP {{ form.php_version }} está <strong>sin soporte de seguridad oficial</strong> (EOL).
+        Úsala solo si el sitio lo requiere; considera actualizarlo a una versión con soporte.
+      </div>
     </div>
 
     <div class="mb-3 form-check">
@@ -482,6 +487,7 @@ export default {
     const isEditing = ref(!!props.domain)
     const users     = ref([])
     const localPhpVersions = ref([])
+    const deprecatedPhp = ref([])   // versiones PHP EOL (sin soporte oficial)
     const templates  = ref([])
     const serverIps  = ref([])
 
@@ -622,6 +628,7 @@ export default {
       try {
         const data = await api.getPHPVersions()
         localPhpVersions.value = data?.versions?.length ? data.versions : ['8.2']
+        deprecatedPhp.value = data?.deprecated || []
       } catch {
         localPhpVersions.value = ['8.2']
       }
@@ -853,7 +860,7 @@ export default {
 
     return {
       form, loading, isEditing, users,
-      isAdminOrReseller, isWebDomain, isMailDnsOnly, availablePhpVersions,
+      isAdminOrReseller, isWebDomain, isMailDnsOnly, availablePhpVersions, deprecatedPhp,
       templates, templateCategories, templatesByCategory,
       selectedTemplate, parsedPhpOverrides,
       serverIps, ipv6Enabled, ipv6Suggestions, ipv6Loading, _uid,

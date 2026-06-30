@@ -314,7 +314,7 @@ if [[ "$UNATTENDED" == true || -n "${SVQ_PHP:-}" ]]; then
     PHP_VERSIONS="$(echo "${SVQ_PHP:-8.3}" | tr ',' ' ')"
 else
     echo -e "${YELLOW}¿Qué versiones PHP necesitas?${NC}"
-    echo "Disponibles: 7.4, 8.0, 8.1, 8.2, 8.3, 8.4, 8.5"
+    echo "Disponibles: 7.3, 7.4, 8.0, 8.1, 8.2, 8.3, 8.4, 8.5 (7.3/7.4/8.0/8.1 EOL, sin soporte)"
     echo "Ejemplos: '8.1 8.2' o '8.5' (mínimo 1, máximo 6)"
     printf "Versiones PHP (separadas por espacio): "; read PHP_VERSIONS </dev/tty
 fi
@@ -327,7 +327,7 @@ fi
 
 # Convertir a array y validar
 mapfile -t PHP_ARRAY <<< "$(echo "$PHP_VERSIONS" | tr ' ' '\n')"
-VALID_VERSIONS=("7.4" "8.0" "8.1" "8.2" "8.3" "8.4" "8.5")
+VALID_VERSIONS=("7.3" "7.4" "8.0" "8.1" "8.2" "8.3" "8.4" "8.5")
 INVALID_VERSIONS=()
 
 for VER in "${PHP_ARRAY[@]}"; do
@@ -345,7 +345,7 @@ done
 
 if [[ ${#INVALID_VERSIONS[@]} -gt 0 ]]; then
     echo -e "${RED}Error: Versiones PHP inválidas: ${INVALID_VERSIONS[*]}${NC}"
-    echo -e "${YELLOW}Solo están disponibles: 7.4, 8.0, 8.1, 8.2, 8.3, 8.4, 8.5${NC}"
+    echo -e "${YELLOW}Solo están disponibles: 7.3, 7.4, 8.0, 8.1, 8.2, 8.3, 8.4, 8.5${NC}"
     exit 1
 fi
 

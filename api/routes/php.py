@@ -10,7 +10,7 @@ from api.models.database import get_db
 from api.models.models_user import User
 from api.models.models_domain import Domain
 from api.dependencies import require_auth, require_admin
-from scripts.php_manager import PHPManager, ALL_VERSIONS
+from scripts.php_manager import PHPManager, ALL_VERSIONS, DEPRECATED_VERSIONS
 from scripts.domain_manager import DomainManager
 
 router = APIRouter()
@@ -24,6 +24,7 @@ class PHPVersionStatus(BaseModel):
     running: bool
     enabled: bool
     socket: Optional[str] = None
+    deprecated: bool = False    # versión sin soporte oficial (EOL)
 
 
 class PHPVersionsStatusResponse(BaseModel):
@@ -32,6 +33,7 @@ class PHPVersionsStatusResponse(BaseModel):
 
 class PHPVersionsResponse(BaseModel):
     versions: List[str]
+    deprecated: List[str] = []   # subconjunto de versions que están EOL
 
 
 class PHPUpdateRequest(BaseModel):
@@ -71,13 +73,14 @@ async def get_php_versions(current_user: User = Depends(require_auth)):
         # Si no hay ninguna corriendo, devolver todas como fallback (entorno dev)
         if not available:
             available = ALL_VERSIONS
-        return {"versions": available}
+        deprecated = [v for v in available if v in DEPRECATED_VERSIONS]
+        return {"versions": available, "deprecated": deprecated}
     except PermissionError:
         # No root — devolver lista estática
-        return {"versions": ALL_VERSIONS}
-    except Exception as e:
+        return {"versions": ALL_VERSIONS, "deprecated": DEPRECATED_VERSIONS}
+    except Exception:
         # Fallback en caso de error
-        return {"versions": ALL_VERSIONS}
+        return {"versions": ALL_VERSIONS, "deprecated": DEPRECATED_VERSIONS}
 
 
 # ──────────────────────────── Instalar versión ───────────────────────────────

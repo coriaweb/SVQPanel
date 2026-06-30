@@ -7,7 +7,13 @@ from .base import SystemManager
 
 logger = logging.getLogger(__name__)
 
-ALL_VERSIONS = ["7.4", "8.0", "8.1", "8.2", "8.3", "8.4", "8.5"]
+ALL_VERSIONS = ["7.3", "7.4", "8.0", "8.1", "8.2", "8.3", "8.4", "8.5"]
+
+# Versiones EOL (sin soporte de seguridad oficial de php.net). Se ofrecen porque
+# algunos sitios legacy las necesitan (migraciones), pero se marcan "deprecated"
+# en la UI para desaconsejar elegirlas en sitios nuevos.
+# Ref: https://www.php.net/supported-versions.php (7.x y 8.0/8.1 ya EOL).
+DEPRECATED_VERSIONS = ["7.3", "7.4", "8.0", "8.1"]
 
 # Paquetes base que deben instalarse (sin estos PHP no funciona)
 BASE_EXTENSIONS = ["cli", "fpm", "pgsql", "mysql", "curl", "gd", "mbstring", "xml", "zip", "bcmath"]
@@ -69,6 +75,7 @@ class PHPManager(SystemManager):
                 "running": running,
                 "enabled": enabled,
                 "socket": self.get_socket_path(version) if running else None,
+                "deprecated": version in DEPRECATED_VERSIONS,
             })
         return result
 

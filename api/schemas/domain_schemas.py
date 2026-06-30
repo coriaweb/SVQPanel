@@ -11,7 +11,7 @@ import re
 class DomainCreate(BaseModel):
     user_id: int
     domain_name: str = Field(..., min_length=5, max_length=255)
-    php_version: Optional[str] = Field("8.2", pattern="^(7\\.4|8\\.[0-5])$")
+    php_version: Optional[str] = Field("8.2", pattern="^(7\\.[34]|8\\.[0-5])$")
     dns_enabled:  Optional[bool] = False
     mail_enabled: Optional[bool] = False
     # Dominio solo correo/DNS: no aloja la web aquí (no crea vhost/pool PHP).
@@ -23,7 +23,7 @@ class DomainCreate(BaseModel):
 
 
 class DomainUpdate(BaseModel):
-    php_version:    Optional[str]  = Field(None, pattern="^(7\.4|8\.[0-5])$")
+    php_version:    Optional[str]  = Field(None, pattern=r"^(7\.[34]|8\.[0-5])$")
     is_active:      Optional[bool] = None
     ipv4:           Optional[str]  = None
     ipv6:           Optional[str]  = None
