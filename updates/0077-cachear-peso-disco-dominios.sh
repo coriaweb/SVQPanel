@@ -26,6 +26,7 @@ VENV_PY=/opt/svqpanel/venv/bin/python
 import sys
 sys.path.insert(0, "/opt/svqpanel")
 try:
+    from sqlalchemy import text
     from api.models.database import SessionLocal, load_all_models
     load_all_models()
     from api.models.models_domain import Domain
@@ -36,6 +37,19 @@ except Exception as e:
 
 db = SessionLocal()
 try:
+    # Garantizar las columnas ANTES de calcular: el update corre antes de que el
+    # reinicio del servicio dispare los ALTER de main.py, así que si dependiéramos
+    # de eso el commit fallaría en silencio (columnas inexistentes) y todo quedaría
+    # en NULL. Idempotente (IF NOT EXISTS).
+    for ddl in (
+        "ALTER TABLE domains ADD COLUMN IF NOT EXISTS disk_public_html_bytes BIGINT",
+        "ALTER TABLE domains ADD COLUMN IF NOT EXISTS disk_logs_bytes BIGINT",
+        "ALTER TABLE domains ADD COLUMN IF NOT EXISTS disk_total_bytes BIGINT",
+        "ALTER TABLE domains ADD COLUMN IF NOT EXISTS disk_calculated_at TIMESTAMP",
+    ):
+        db.execute(text(ddl))
+    db.commit()
+
     n = 0
     for d in db.query(Domain).all():
         if getattr(d, "mail_dns_only", False):
