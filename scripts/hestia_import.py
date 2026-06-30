@@ -1131,16 +1131,20 @@ def _dovecot_scheme(md5: str) -> Optional[str]:
     """Prefijo de esquema Dovecot para un hash de Hestia, o None si desconocido."""
     if not md5:
         return None
+    if md5.startswith("{"):       # ya viene con esquema (p.ej. {SHA512-CRYPT}$6$…)
+        return md5
     if md5.startswith("$6$"):
         return "{SHA512-CRYPT}" + md5
     if md5.startswith("$5$"):
         return "{SHA256-CRYPT}" + md5
+    # MD5-CRYPT ($1$): formato viejo de Hestia para cuentas antiguas. Dovecot lo
+    # soporta; sin esto se generaba contraseña nueva innecesariamente.
+    if md5.startswith("$1$"):
+        return "{MD5-CRYPT}" + md5
     if md5.startswith(("$2y$", "$2a$", "$2b$")):
         return "{BLF-CRYPT}" + md5
     if md5.startswith("$argon2"):
         return "{ARGON2ID}" + md5 if "argon2id" in md5 else "{ARGON2I}" + md5
-    if md5.startswith("{"):       # ya viene con esquema
-        return md5
     return None
 
 
