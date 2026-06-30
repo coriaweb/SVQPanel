@@ -1101,6 +1101,15 @@ async def get_domain_wp_protection(
         try:
             from scripts.wp_attack_detector import analyze_domain
             attack = analyze_domain(owner.username, domain.domain_name)
+            # No marcar "bajo ataque" un vector que YA está mitigado en este
+            # dominio: aunque el log siga mostrando hits históricos, si ya
+            # bloqueamos xmlrpc / pusimos rate-limit, el ataque está contenido.
+            still_xmlrpc = ("xmlrpc" in attack["attack_targets"]) and not domain.xmlrpc_blocked
+            still_login  = ("wp-login" in attack["attack_targets"]) and (domain.wp_login_ratelimit or 0) == 0
+            attack["under_attack"] = bool(still_xmlrpc or still_login)
+            attack["attack_targets"] = (
+                (["xmlrpc"] if still_xmlrpc else []) + (["wp-login"] if still_login else [])
+            )
         except Exception:
             pass
 

@@ -145,10 +145,11 @@
                 móvil de WordPress o Jetpack con publicación remota.
               </small>
             </div>
-            <label class="svq-switch">
-              <input type="checkbox" :checked="prot.xmlrpc_blocked" :disabled="!!busy" @change="toggleXmlrpc($event.target.checked)" />
-              <span class="svq-switch__slider"></span>
-            </label>
+            <button type="button" class="wpm-toggle" :class="{ 'is-on': prot.xmlrpc_blocked }"
+                    :disabled="!!busy" role="switch" :aria-checked="prot.xmlrpc_blocked"
+                    @click="toggleXmlrpc(!prot.xmlrpc_blocked)">
+              <span class="wpm-toggle__knob"></span>
+            </button>
           </div>
 
           <!-- Rate-limit wp-login -->
@@ -442,14 +443,13 @@ export default {
 .wpm-sec__info small { display:block; line-height:1.4; }
 .wpm-sec__info code { background: var(--surface-inset); padding:.05rem .3rem; border-radius:4px; font-size:.8rem; }
 .wpm-sec__rl { display:flex; align-items:center; gap:.5rem; white-space:nowrap; }
-/* switch reutilizable */
-.svq-switch { position:relative; display:inline-block; width:42px; height:24px; flex-shrink:0; }
-.svq-switch input { opacity:0; width:0; height:0; }
-.svq-switch__slider { position:absolute; inset:0; cursor:pointer; background: var(--surface-inset);
-  border:1px solid var(--border); border-radius:999px; transition:.2s; }
-.svq-switch__slider::before { content:""; position:absolute; height:16px; width:16px; left:3px; top:3px;
-  background:#fff; border-radius:50%; transition:.2s; }
-.svq-switch input:checked + .svq-switch__slider { background: var(--accent); border-color: var(--accent); }
-.svq-switch input:checked + .svq-switch__slider::before { transform: translateX(18px); }
-.svq-switch input:disabled + .svq-switch__slider { opacity:.5; cursor:not-allowed; }
+/* toggle basado en clase (no depende de :checked, robusto frente a CSS global) */
+.wpm-toggle { position:relative; flex-shrink:0; width:44px; height:24px; padding:0;
+  border:1px solid var(--border); border-radius:999px; background: var(--surface-inset);
+  cursor:pointer; transition: background .2s, border-color .2s; }
+.wpm-toggle__knob { position:absolute; top:2px; left:2px; width:18px; height:18px;
+  background:#fff; border-radius:50%; transition: transform .2s; box-shadow:0 1px 2px rgba(0,0,0,.25); }
+.wpm-toggle.is-on { background: var(--accent, #6366f1); border-color: var(--accent, #6366f1); }
+.wpm-toggle.is-on .wpm-toggle__knob { transform: translateX(20px); }
+.wpm-toggle:disabled { opacity:.55; cursor:not-allowed; }
 </style>

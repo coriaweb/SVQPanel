@@ -117,6 +117,58 @@
       </div>
     </div>
 
+    <!-- Ataques de fuerza bruta a WordPress -->
+    <div class="sec-card iso-card" style="margin-top:16px">
+      <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:1rem;flex-wrap:wrap">
+        <div style="display:flex;gap:.75rem;align-items:flex-start">
+          <div class="iso-icon" :class="wpAtkList.length ? 'is-danger' : 'is-ok'">
+            <i class="bi" :class="wpAtkList.length ? 'bi-shield-fill-exclamation' : 'bi-shield-fill-check'"></i>
+          </div>
+          <div>
+            <div style="font-weight:600;font-size:1rem;margin-bottom:.25rem">Ataques de fuerza bruta a WordPress</div>
+            <p style="font-size:.82rem;color:var(--text-muted);margin:0 0 .5rem;max-width:560px">
+              Dominios que reciben ahora mismo un ataque a <code>xmlrpc.php</code> o <code>wp-login.php</code> y
+              <b>no</b> tienen la protección activada. Puedes activarla por ellos desde aquí.
+            </p>
+            <div v-if="wpAtkLoading" style="font-size:.82rem;color:var(--text-muted)">
+              <span class="spinner-border spinner-border-sm"></span> Analizando dominios…
+            </div>
+            <div v-else style="display:flex;gap:6px;flex-wrap:wrap">
+              <span class="sec-badge" :class="wpAtkList.length ? 'sec-badge--danger' : 'sec-badge--on'">
+                {{ wpAtkList.length }} bajo ataque
+              </span>
+            </div>
+          </div>
+        </div>
+        <div style="display:flex;gap:6px;flex-shrink:0">
+          <button class="sec-btn sec-btn--ghost sec-btn--sm" @click="loadWpAttacks" :disabled="wpAtkLoading">
+            <i class="bi bi-arrow-repeat"></i> Reanalizar
+          </button>
+          <button v-if="wpAtkList.length > 1" class="sec-btn sec-btn--danger sec-btn--sm"
+                  @click="protectAllWp" :disabled="wpAtkBusy">
+            <span v-if="wpAtkBusy" class="spinner-border spinner-border-sm"></span>
+            <i v-else class="bi bi-shield-fill-check"></i> Proteger todos ({{ wpAtkList.length }})
+          </button>
+        </div>
+      </div>
+      <div v-if="wpAtkList.length" class="iso-issues" style="margin-top:1rem">
+        <div v-for="d in wpAtkList" :key="d.domain_id" class="iso-issue">
+          <span class="iso-issue__domain"><i class="bi bi-globe2"></i>{{ d.domain }}</span>
+          <span class="iso-issue__msg">
+            <template v-if="d.xmlrpc_hits >= 1 && d.targets.includes('xmlrpc')"><b>{{ d.xmlrpc_hits.toLocaleString() }}</b> xmlrpc</template>
+            <template v-if="d.targets.includes('xmlrpc') && d.targets.includes('wp-login')"> · </template>
+            <template v-if="d.targets.includes('wp-login')"><b>{{ d.wplogin_hits.toLocaleString() }}</b> wp-login</template>
+            <span style="color:var(--text-muted)"> / {{ d.window_min }} min</span>
+          </span>
+          <button class="sec-btn sec-btn--danger sec-btn--sm" style="margin-left:auto"
+                  @click="protectWp(d)" :disabled="wpAtkBusy || d._busy">
+            <span v-if="d._busy" class="spinner-border spinner-border-sm"></span>
+            <i v-else class="bi bi-shield-lock"></i> Proteger
+          </button>
+        </div>
+      </div>
+    </div>
+
     <!-- Antivirus de correo (ClamAV) -->
     <div v-if="av && av.available" class="sec-card iso-card" style="margin-top:16px">
       <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:1rem;flex-wrap:wrap">
@@ -930,6 +982,43 @@ async function repairIsolation() {
   }
 }
 
+// ── Ataques de fuerza bruta a WordPress (vista admin) ──────────────────────
+const wpAtkList    = ref([])
+const wpAtkLoading = ref(false)
+const wpAtkBusy    = ref(false)
+
+async function loadWpAttacks() {
+  wpAtkLoading.value = true
+  try {
+    const r = await api.getWpAttackAlerts()   // admin: todos los dominios
+    wpAtkList.value = (r.alerts || []).map(a => ({ ...a, _busy: false }))
+  } catch (e) { console.error('Error analizando ataques WP:', e) }
+  finally { wpAtkLoading.value = false }
+}
+
+async function protectWp(d) {
+  d._busy = true
+  try {
+    // Activar lo que esté bajo ataque: xmlrpc → bloquear; wp-login → 3/min.
+    const body = {}
+    if (d.targets.includes('xmlrpc')) body.xmlrpc_blocked = true
+    if (d.targets.includes('wp-login')) body.wp_login_ratelimit = 3
+    await api.setDomainWpProtection(d.domain_id, body)
+    wpAtkList.value = wpAtkList.value.filter(x => x.domain_id !== d.domain_id)
+  } catch (e) {
+    alert('Error protegiendo ' + d.domain + ': ' + e.message)
+    d._busy = false
+  }
+}
+
+async function protectAllWp() {
+  if (!confirm(`¿Activar la protección recomendada en los ${wpAtkList.value.length} dominios bajo ataque?`)) return
+  wpAtkBusy.value = true
+  try {
+    for (const d of [...wpAtkList.value]) { await protectWp(d) }
+  } finally { wpAtkBusy.value = false }
+}
+
 // ─── Antivirus de correo (ClamAV) ─────────────────────────────────────────────
 const av = ref(null)
 const avUpdating = ref(false)
@@ -1490,7 +1579,7 @@ onMounted(() => {
   loadedTabs.value.add('firewall')
   loadFirewall()   // incluye loadStatus() + system-ports
   // Resumen superior, en segundo plano (no bloquea el render del firewall)
-  setTimeout(() => { loadIsolation(); loadAntivirus(); loadAutoUpdates() }, 0)
+  setTimeout(() => { loadIsolation(); loadAntivirus(); loadAutoUpdates(); loadWpAttacks() }, 0)
 })
 </script>
 

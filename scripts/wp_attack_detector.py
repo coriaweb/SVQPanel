@@ -19,8 +19,11 @@ from datetime import datetime, timedelta
 
 # Umbral por defecto: a partir de estos hits en la ventana, se considera ataque.
 # TEMPORAL bajo (5) para poder ver el aviso en cualquier momento; en producción
-# real con tráfico legítimo conviene subirlo (p.ej. 300-500/hora).
-DEFAULT_THRESHOLD = 5
+# real conviene un valor que el tráfico legítimo no alcance. 300/hora: un sitio
+# normal rara vez tiene 300 accesos/hora de humanos a xmlrpc/wp-login, pero un
+# ataque de fuerza bruta sí. Ajustable por env SVQ_WP_ATTACK_THRESHOLD.
+import os as _os
+DEFAULT_THRESHOLD = int(_os.environ.get("SVQ_WP_ATTACK_THRESHOLD", "300"))
 # Ventana de análisis (minutos) sobre las líneas leídas de la cola del log.
 DEFAULT_WINDOW_MIN = 60
 # Cuántos bytes leer de la cola del log (evita leer ficheros de cientos de MB).
