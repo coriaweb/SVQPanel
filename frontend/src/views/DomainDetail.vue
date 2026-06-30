@@ -197,6 +197,9 @@
           <p v-else class="dd-muted">Pulsa «Recalcular» para medir el uso de disco.</p>
         </BaseCard>
 
+        <!-- Apps web (WP Toolkit / app detectada / instalador): solo si hay web
+             aquí. Un dominio solo correo/DNS no aloja la web. -->
+        <template v-if="!domain.mail_dns_only">
         <!-- WordPress detectado → panel de gestión (WP Toolkit) -->
         <WpManager
           v-if="detectedApp.app === 'wordpress'"
@@ -271,6 +274,7 @@
             </div>
           </div>
         </BaseCard>
+        </template>
 
         <BaseCard title="Acciones rápidas" icon="lightning-charge">
           <div class="quick-col">

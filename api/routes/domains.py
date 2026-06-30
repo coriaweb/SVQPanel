@@ -1780,6 +1780,11 @@ async def install_app(
     De momento: WordPress. Crea BD MariaDB + descarga + configura + instala.
     """
     domain = _get_owned_domain(domain_id, db, current_user)
+    if getattr(domain, "mail_dns_only", False):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Este dominio es solo correo/DNS (sin web): no se pueden instalar aplicaciones.",
+        )
     owner = db.query(User).filter(User.id == domain.user_id).first()
     if not owner:
         raise HTTPException(status_code=409, detail="El dominio no tiene propietario")
