@@ -139,11 +139,8 @@ def parse_list_content(text: str, max_entries: int = 500_000) -> Tuple[List[str]
 # ─────────────────────────────────────────────────────────────────────────────
 # Fetch
 # ─────────────────────────────────────────────────────────────────────────────
-def fetch_url(url: str) -> Tuple[str, str]:
-    """
-    Descarga la URL con límite de tamaño y devuelve (texto, sha256).
-    Lanza ValueError si falla o se excede el límite.
-    """
+def _fetch_one(url: str) -> bytes:
+    """Descarga cruda de una URL con guard SSRF y límite de tamaño."""
     ok, msg = url_resolves_safe(url)
     if not ok:
         raise ValueError(f"URL bloqueada por seguridad: {msg}")
@@ -157,6 +154,46 @@ def fetch_url(url: str) -> Tuple[str, str]:
 
     if len(data) > MAX_BYTES:
         raise ValueError(f"Respuesta supera {MAX_BYTES} bytes")
+    return data
+
+
+def _geo_v6_companion_url(url: str) -> Optional[str]:
+    """
+    Si `url` es la zona IPv4 'aggregated' de ipdeny.com, devuelve la URL de la
+    zona IPv6 equivalente; en cualquier otro caso None.
+
+    Las listas de geo-bloqueo guardan en IpList.url la zona IPv4 de ipdeny. La
+    IPv6 vive en otra ruta del mismo sitio, así que la derivamos en vez de
+    añadir un segundo campo al modelo. Un país no se bloquea de verdad si solo
+    se filtra su IPv4: muchos atacantes llegan por IPv6.
+    """
+    marker = "ipdeny.com/ipblocks/data/aggregated/"
+    if marker in url and url.rstrip().endswith("-aggregated.zone"):
+        return url.replace(
+            "ipdeny.com/ipblocks/data/aggregated/",
+            "ipdeny.com/ipv6/ipaddresses/aggregated/",
+        )
+    return None
+
+
+def fetch_url(url: str) -> Tuple[str, str]:
+    """
+    Descarga la URL con límite de tamaño y devuelve (texto, sha256).
+    Lanza ValueError si falla o se excede el límite.
+
+    Caso especial geo: si la URL es la zona IPv4 de ipdeny.com, se descarga
+    además la zona IPv6 equivalente y se concatena, para que el geo-bloqueo
+    cubra ambas familias. Si la IPv6 falla (404/red), se sigue solo con IPv4
+    (no rompemos el bloqueo existente por un fallo de la fuente v6).
+    """
+    data = _fetch_one(url)
+
+    v6_url = _geo_v6_companion_url(url)
+    if v6_url:
+        try:
+            data = data + b"\n" + _fetch_one(v6_url)
+        except ValueError as e:
+            logger.warning(f"geo: zona IPv6 no disponible para {url}: {e}")
 
     sha = hashlib.sha256(data).hexdigest()
     try:

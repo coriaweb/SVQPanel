@@ -14,11 +14,21 @@ from typing import List, Dict
 
 # Plantilla de URL: solo cambia el código ISO-3166 alpha-2 en minúsculas.
 # 'aggregated' = rangos CIDR ya agregados (menos entradas, más eficiente en nft).
-IPDENY_URL_TMPL = "https://www.ipdeny.com/ipblocks/data/aggregated/{cc}-aggregated.zone"
+# IPv4 e IPv6 viven en rutas distintas en ipdeny.com (la zona "aggregated" raíz
+# es SOLO IPv4). Para bloquear de verdad un país hay que descargar AMBAS, porque
+# muchos bots/atacantes llegan por IPv6 y se saltaban el bloqueo (que era v4-only).
+IPDENY_URL_TMPL    = "https://www.ipdeny.com/ipblocks/data/aggregated/{cc}-aggregated.zone"
+IPDENY_URL_V6_TMPL = "https://www.ipdeny.com/ipv6/ipaddresses/aggregated/{cc}-aggregated.zone"
 
 
 def country_url(cc: str) -> str:
+    """URL IPv4 del país (la principal, la que se guarda en IpList.url)."""
     return IPDENY_URL_TMPL.format(cc=cc.lower())
+
+
+def country_url_v6(cc: str) -> str:
+    """URL IPv6 del país. El fetcher la deriva de la v4 al refrescar listas geo."""
+    return IPDENY_URL_V6_TMPL.format(cc=cc.lower())
 
 
 # Catálogo curado. 'risk' es una pista para la UI (alto = origen frecuente de

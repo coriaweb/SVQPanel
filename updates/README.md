@@ -108,3 +108,5 @@ exit 0
 | 0067 | Temporales de migración a /var/lib/svqpanel/migration-tmp (disco real, no /tmp/tmpfs que se llenaba con backups grandes) + limpia huérfanos de varios GB de migraciones muertas por OOM | 2026-06-29 |
 | 0070 | Fix HTTP/3: quitar `reuseport` del listen quic (rompía nginx con "duplicate listen options for 0.0.0.0:443" al 2º dominio con HTTP/3 → bloqueaba reloads y migraciones); regenera todos los vhosts | 2026-06-30 |
 | 0071 | Subir límite de subida del gestor de archivos (100→2048 MB) y de extracción (500→5120 MB); demasiado bajo para un WordPress. Solo toca filas en el default viejo | 2026-06-30 |
+| 0072 | Geo-bloqueo también cubre IPv6 (ipdeny v4+v6); refresca las listas geo_* existentes para que bloquear un país filtre además sus rangos IPv6 | 2026-06-30 |
+| 0073 | Bloquear bots de robo de credenciales cloud (Silvy X Ran) + escáneres (LeakIX/Censys/Expanse) en el catálogo de bad-bots; respeta la selección del admin | 2026-06-30 |

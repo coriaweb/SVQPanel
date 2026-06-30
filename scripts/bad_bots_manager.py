@@ -41,6 +41,12 @@ KNOWN_BAD_BOTS = [
     {"id": "ccbot",         "label": "CCBot",              "pattern": "CCBot",          "description": "Bot de Common Crawl (datos de IA)"},
     {"id": "bytespider",    "label": "ByteSpider",         "pattern": "Bytespider",     "description": "Bot de TikTok/ByteDance"},
     {"id": "amazonbot",     "label": "AmazonBot",          "pattern": "Amazonbot",      "description": "Bot de scraping de Amazon"},
+    {"id": "silvy_x_ran",   "label": "Silvy X Ran",        "pattern": "Silvy X Ran",    "description": "Bot que roba credenciales de cloud (.env, gcloud, AWS...)"},
+    {"id": "leakix",        "label": "LeakIX (l9scan)",    "pattern": "l9scan",         "description": "Scanner de vulnerabilidades (leakix.net)"},
+    {"id": "leakix_ua",     "label": "LeakIX (LEAKIX)",    "pattern": "LEAKIX",         "description": "Sonda de LeakIX (método HTTP inválido)"},
+    {"id": "censys",        "label": "Censys",             "pattern": "CensysInspect",  "description": "Scanner de superficie de ataque"},
+    {"id": "internetmeasure","label": "InternetMeasurement","pattern": "InternetMeasurement","description": "Sonda de escaneo masivo de Internet"},
+    {"id": "expanse",       "label": "Expanse/Palo Alto",  "pattern": "Expanse",        "description": "Scanner de exposición (Palo Alto)"},
 ]
 
 
@@ -100,6 +106,33 @@ def update_bad_bots(enabled_ids: list, custom_patterns: list) -> dict:
     # Por ahora, solo marcamos que se actualizaron.
 
     return {"blocked_count": len(patterns), "patterns": patterns}
+
+
+def ensure_catalog_bots_blocked(bot_ids: list) -> dict:
+    """
+    Asegura que los bots del catálogo indicados (por id) estén activos, SIN
+    tocar el resto de la selección actual (otros bots del catálogo ni los
+    patrones custom). Idempotente.
+
+    Pensado para updates/instalación que quieren forzar el bloqueo de bots
+    nuevos (p. ej. scanners de credenciales cloud) en servidores ya instalados,
+    respetando lo que el admin ya tuviera marcado.
+
+    Devuelve {"added": [...], "blocked_count": N}.
+    """
+    known = get_known_bots()
+    valid_ids = {b["id"] for b in known}
+    already_on = {b["id"] for b in known if b["enabled"]}
+
+    want = [bid for bid in bot_ids if bid in valid_ids]
+    added = [bid for bid in want if bid not in already_on]
+    if not added:
+        return {"added": [], "blocked_count": len(_read_blocked_patterns())}
+
+    enabled_ids = sorted(already_on | set(want))
+    custom = get_custom_bots()   # preservar patrones custom existentes
+    result = update_bad_bots(enabled_ids, custom)
+    return {"added": added, "blocked_count": result["blocked_count"]}
 
 
 def _read_blocked_patterns() -> set:
