@@ -87,8 +87,15 @@
           </div>
           <div class="dstat">
             <span class="dstat__k">Tamaño</span>
-            <span v-if="diskInfo[domain.id]" class="dstat__v mono">{{ formatMB(diskInfo[domain.id].public_html_mb) }}</span>
-            <button v-else class="dstat__load" @click="loadDiskInfo(domain)"><i class="bi bi-hdd"></i></button>
+            <span v-if="diskInfo[domain.id] && diskInfo[domain.id].calculated_at" class="dstat__v mono">
+              {{ formatMB(diskInfo[domain.id].public_html_mb) }}
+            </span>
+            <span v-else class="dstat__v mono t-muted">—</span>
+            <button class="dstat__load" :disabled="diskRefreshing[domain.id]"
+              :title="diskInfo[domain.id] && diskInfo[domain.id].calculated_at ? 'Recalcular tamaño' : 'Calcular tamaño'"
+              @click="refreshDiskInfo(domain)">
+              <i class="bi" :class="diskRefreshing[domain.id] ? 'bi-arrow-repeat spin' : 'bi-arrow-clockwise'"></i>
+            </button>
           </div>
         </div>
 
@@ -146,7 +153,16 @@
               <td class="mono">{{ domain.mail_dns_only ? '—' : (domain.php_version || '—') }}</td>
               <td><span v-if="domain.mail_dns_only" class="t-muted">—</span><StatusBadge v-else :status="domain.ssl_enabled ? 'valid' : 'none'" :label="domain.ssl_enabled ? 'SSL' : 'No'" :dot="false" /></td>
               <td><span v-if="domain.mail_dns_only" class="t-muted">—</span><StatusBadge v-else :status="domain.fastcgi_cache_enabled ? 'active' : 'none'" :label="domain.fastcgi_cache_enabled ? 'On' : 'Off'" :dot="false" /></td>
-              <td class="mono t-muted">{{ domain.mail_dns_only ? '—' : (diskInfo[domain.id] ? formatMB(diskInfo[domain.id].public_html_mb) : '—') }}</td>
+              <td class="mono t-muted">
+                <template v-if="domain.mail_dns_only">—</template>
+                <template v-else>
+                  <span>{{ diskInfo[domain.id] && diskInfo[domain.id].calculated_at ? formatMB(diskInfo[domain.id].public_html_mb) : '—' }}</span>
+                  <button class="disk-refresh" :disabled="diskRefreshing[domain.id]"
+                    title="Recalcular tamaño" @click="refreshDiskInfo(domain)">
+                    <i class="bi" :class="diskRefreshing[domain.id] ? 'bi-arrow-repeat spin' : 'bi-arrow-clockwise'"></i>
+                  </button>
+                </template>
+              </td>
               <td>
                 <StatusBadge :status="domain.is_suspended ? 'warning' : (domain.is_active ? 'active' : 'error')"
                   :label="domain.is_suspended ? 'Suspendido' : (domain.is_active ? 'Activo' : 'Inactivo')" />
@@ -452,12 +468,28 @@ export default {
       }
     }
 
+    const diskRefreshing = ref({})
+
+    // Lee el peso CACHEADO de BD (instantáneo). No hace du en vivo.
     const loadDiskInfo = async (domain) => {
       try {
         const info = await api.getDomainDisk(domain.id)
         diskInfo.value = { ...diskInfo.value, [domain.id]: info }
       } catch (e) {
         // silencioso: el botón quedará disponible para reintentar
+      }
+    }
+
+    // Fuerza el recálculo (du en vivo) de UN dominio y persiste el nuevo valor.
+    const refreshDiskInfo = async (domain) => {
+      diskRefreshing.value = { ...diskRefreshing.value, [domain.id]: true }
+      try {
+        const info = await api.getDomainDisk(domain.id, true)
+        diskInfo.value = { ...diskInfo.value, [domain.id]: info }
+      } catch (e) {
+        store.showNotification('No se pudo calcular el tamaño', 'danger')
+      } finally {
+        diskRefreshing.value = { ...diskRefreshing.value, [domain.id]: false }
       }
     }
 
@@ -744,7 +776,7 @@ export default {
       loadDomains, reloadDomains, getUserName,
       // Logs + disk
       showLogsViewer, logsDomain, logTab, logLines, logsData, logsLoading,
-      diskInfo, loadDiskInfo, formatMB,
+      diskInfo, loadDiskInfo, refreshDiskInfo, diskRefreshing, formatMB,
       openLogsViewer, closeLogsViewer, switchLog, loadLogs,
       // FastCGI cache
       showCacheManager, cacheDomain, cacheForm, cacheSaving,
@@ -811,6 +843,12 @@ export default {
 .dstat__k { font-size: var(--fs-sm); color: var(--text-muted); }
 .dstat__v { font-size: var(--fs-sm); font-weight: var(--fw-semibold); color: var(--text); }
 .dstat__load { border: none; background: var(--surface-inset); color: var(--text-muted); border-radius: var(--r-sm); width: 26px; height: 22px; cursor: pointer; }
+.dstat__load:disabled { opacity: .6; cursor: default; }
+.disk-refresh { border: none; background: transparent; color: var(--text-muted); cursor: pointer; padding: 0 0 0 6px; font-size: var(--fs-sm); vertical-align: middle; }
+.disk-refresh:hover:not(:disabled) { color: var(--text); }
+.disk-refresh:disabled { opacity: .6; cursor: default; }
+.spin { display: inline-block; animation: spin 0.8s linear infinite; }
+@keyframes spin { from { transform: rotate(0); } to { transform: rotate(360deg); } }
 .mono { font-family: var(--font-mono); }
 
 .dcard__actions { display: flex; align-items: center; gap: var(--sp-2); padding-top: var(--sp-3); border-top: 1px solid var(--border); }

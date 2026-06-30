@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, Boolean, DateTime, ForeignKey, Text
+from sqlalchemy import Column, Integer, BigInteger, String, Boolean, DateTime, ForeignKey, Text
 from sqlalchemy.orm import relationship
 from datetime import datetime
 from api.models.database import Base
@@ -128,8 +128,17 @@ class Domain(Base):
     git_keep_releases  = Column(Integer, default=5, nullable=False)
 
     # Estadísticas
-    disk_usage = Column(Integer, default=0)  # MB
-    
+    disk_usage = Column(Integer, default=0)  # MB (legacy)
+
+    # Peso en disco CACHEADO (bytes). El cálculo real (du -sb) es caro: recorre
+    # todo el árbol del dominio. Se calcula en background (cron 2/día) o bajo
+    # demanda (botón refrescar) y se persiste aquí, para que la lista de dominios
+    # cargue instantánea leyendo de BD en vez de hacer du en vivo por cada uno.
+    disk_public_html_bytes = Column(BigInteger, nullable=True)
+    disk_logs_bytes        = Column(BigInteger, nullable=True)
+    disk_total_bytes       = Column(BigInteger, nullable=True)
+    disk_calculated_at     = Column(DateTime, nullable=True)
+
     # Timestamps
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)

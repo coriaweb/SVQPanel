@@ -27,6 +27,7 @@ load_all_models()
 INTERVAL_SECONDS = 300        # métricas: cada 5 minutos
 DNS_HEALTH_SECONDS = 600      # salud del cluster DNS: cada 10 minutos
 LICENSE_SECONDS = 43200       # validación de licencia: cada 12 horas
+DISK_USAGE_SECONDS = 43200    # peso en disco de los dominios: cada 12 horas
 
 
 def _loop():
@@ -34,6 +35,7 @@ def _loop():
     time.sleep(15)
     last_dns = 0.0
     last_license = 0.0
+    last_disk = 0.0
     while True:
         try:
             _sample_once()
@@ -54,7 +56,40 @@ def _loop():
                 _license_check_once()
             except Exception:
                 logger.exception("Error en license-check")
+        # Peso en disco de los dominios cada 12h (du es caro: NO en cada carga
+        # de la lista; la vista lee el valor cacheado en BD).
+        if now - last_disk >= DISK_USAGE_SECONDS:
+            last_disk = now
+            try:
+                _disk_usage_once()
+            except Exception:
+                logger.exception("Error en disk-usage")
         time.sleep(INTERVAL_SECONDS)
+
+
+def _disk_usage_once():
+    """Recalcula y persiste el peso en disco de TODOS los dominios (du -sb por
+    dominio). Caro pero infrecuente (2/día). La lista de dominios lee de BD, así
+    que esta es la única vía que toca disco salvo el botón 'refrescar' manual.
+    Salta los solo-correo/DNS (sin web)."""
+    from api.models.models_domain import Domain
+    from api.routes.domains import compute_domain_disk
+
+    db = SessionLocal()
+    try:
+        domains = db.query(Domain).all()
+        n = 0
+        for d in domains:
+            if getattr(d, "mail_dns_only", False):
+                continue
+            try:
+                compute_domain_disk(d, db)
+                n += 1
+            except Exception:
+                logger.exception("disk-usage: fallo en %s", d.domain_name)
+        logger.info("disk-usage: peso recalculado para %d dominio(s)", n)
+    finally:
+        db.close()
 
 
 def _license_check_once():

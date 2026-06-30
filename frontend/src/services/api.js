@@ -803,8 +803,8 @@ class APIClient {
   getDomainLogs(domainId, type = 'access', lines = 200) {
     return this.get(`/api/domains/${domainId}/logs?type=${type}&lines=${lines}`)
   }
-  getDomainDisk(domainId) {
-    return this.get(`/api/domains/${domainId}/disk`)
+  getDomainDisk(domainId, refresh = false) {
+    return this.get(`/api/domains/${domainId}/disk${refresh ? '?refresh=true' : ''}`)
   }
 
   // Autoinstalador de apps (WordPress, …)

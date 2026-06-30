@@ -1550,24 +1550,32 @@ async def update_httpauth(
     }}
 
 
-@router.get("/domains/{domain_id}/disk")
-async def get_domain_disk(
-    domain_id:   int,
-    current_user: User = Depends(require_auth),
-    db:           Session = Depends(get_db),
-):
+def _disk_payload(domain) -> dict:
+    """Construye la respuesta de peso a partir de los bytes cacheados en BD."""
+    public_bytes = domain.disk_public_html_bytes or 0
+    logs_bytes   = domain.disk_logs_bytes or 0
+    total_bytes  = domain.disk_total_bytes or 0
+    return {
+        "domain":            domain.domain_name,
+        "public_html_mb":    public_bytes // (1024 * 1024),
+        "public_html_bytes": public_bytes,
+        "logs_mb":           logs_bytes // (1024 * 1024),
+        "logs_bytes":        logs_bytes,
+        "total_mb":          total_bytes // (1024 * 1024),
+        "total_bytes":       total_bytes,
+        "calculated_at":     domain.disk_calculated_at.isoformat() if domain.disk_calculated_at else None,
+    }
+
+
+def compute_domain_disk(domain, db: Session) -> dict:
     """
-    Devuelve el tamaño en disco del directorio del dominio:
-        /home/{user}/web/{dominio}/public_html (solo web)
-        + total del dominio entero (incluye logs, tmp...)
+    Calcula el peso real en disco (du -sb) del dominio y lo PERSISTE en BD.
+    Caro (recorre todo el árbol): se llama desde el cron 2/día o bajo demanda
+    (botón refrescar), NO en cada carga de la lista de dominios.
     """
     import os
     import subprocess
-
-    domain = _get_owned_domain(domain_id, db, current_user)
-    if not domain:
-        raise HTTPException(status_code=404, detail="Dominio no encontrado")
-    _check_access(current_user, domain, db)
+    from datetime import datetime
 
     base = _domain_owner_dir(domain, db)
 
@@ -1577,7 +1585,7 @@ async def get_domain_disk(
         try:
             r = subprocess.run(
                 ["/usr/bin/du", "-sb", "--apparent-size", path],
-                capture_output=True, text=True, timeout=60,
+                capture_output=True, text=True, timeout=120,
             )
             if r.returncode != 0:
                 return 0
@@ -1589,15 +1597,40 @@ async def get_domain_disk(
     total_bytes  = _du_bytes(base)
     logs_bytes   = _du_bytes(os.path.join(base, "logs"))
 
-    return {
-        "domain":           domain.domain_name,
-        "public_html_mb":   public_bytes // (1024 * 1024),
-        "public_html_bytes": public_bytes,
-        "logs_mb":          logs_bytes // (1024 * 1024),
-        "logs_bytes":       logs_bytes,
-        "total_mb":         total_bytes // (1024 * 1024),
-        "total_bytes":      total_bytes,
-    }
+    domain.disk_public_html_bytes = public_bytes
+    domain.disk_logs_bytes        = logs_bytes
+    domain.disk_total_bytes       = total_bytes
+    domain.disk_calculated_at     = datetime.utcnow()
+    db.commit()
+    db.refresh(domain)
+    return _disk_payload(domain)
+
+
+@router.get("/domains/{domain_id}/disk")
+async def get_domain_disk(
+    domain_id:   int,
+    refresh:     bool = False,
+    current_user: User = Depends(require_auth),
+    db:           Session = Depends(get_db),
+):
+    """
+    Peso en disco del dominio (public_html / logs / total).
+
+    Por defecto devuelve el valor CACHEADO en BD (instantáneo). Con ?refresh=true
+    recalcula con du (caro) y persiste el nuevo valor — para el botón "refrescar"
+    de un dominio concreto. Los dominios solo-correo/DNS no tienen web → 0.
+    """
+    domain = _get_owned_domain(domain_id, db, current_user)
+    if not domain:
+        raise HTTPException(status_code=404, detail="Dominio no encontrado")
+    _check_access(current_user, domain, db)
+
+    if getattr(domain, "mail_dns_only", False):
+        return _disk_payload(domain)   # sin web: ceros (o lo último cacheado)
+
+    if refresh:
+        return compute_domain_disk(domain, db)
+    return _disk_payload(domain)
 
 
 # ─────────────────────────────────────────────────────────────────────────────

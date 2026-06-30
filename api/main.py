@@ -382,6 +382,12 @@ def _run_migrations():
         "ALTER TABLE mail_domains ADD COLUMN IF NOT EXISTS is_suspended BOOLEAN DEFAULT FALSE",
         "ALTER TABLE mailboxes ADD COLUMN IF NOT EXISTS is_suspended BOOLEAN DEFAULT FALSE",
         "ALTER TABLE client_databases ADD COLUMN IF NOT EXISTS is_suspended BOOLEAN DEFAULT FALSE",
+        # Peso en disco cacheado (du es caro): la lista de dominios lee de aquí en
+        # vez de hacer du en vivo por cada dominio. Lo refresca el cron 2/día o el botón.
+        "ALTER TABLE domains ADD COLUMN IF NOT EXISTS disk_public_html_bytes BIGINT",
+        "ALTER TABLE domains ADD COLUMN IF NOT EXISTS disk_logs_bytes BIGINT",
+        "ALTER TABLE domains ADD COLUMN IF NOT EXISTS disk_total_bytes BIGINT",
+        "ALTER TABLE domains ADD COLUMN IF NOT EXISTS disk_calculated_at TIMESTAMP",
         # Índices de correo para consultas frecuentes
         "CREATE INDEX IF NOT EXISTS ix_mail_domains_user_id ON mail_domains(user_id)",
         "CREATE INDEX IF NOT EXISTS ix_mailboxes_mail_domain_id ON mailboxes(mail_domain_id)",
