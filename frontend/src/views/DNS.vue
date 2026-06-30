@@ -1283,7 +1283,17 @@ export default {
       }
     }
 
-    onMounted(async () => { await loadZones(); await loadDomains(); await loadNameservers(); await loadCluster(); await loadHealth(true) })
+    onMounted(() => {
+      // En paralelo (no encadenado) para que la página no espere a que termine
+      // una llamada antes de empezar la siguiente.
+      // loadHealth(false): usa el ÚLTIMO health-check cacheado (rápido, sin SSH).
+      // El recálculo EN VIVO (SSH a los nodos) solo lo hace el botón "Comprobar".
+      loadZones()
+      loadDomains()
+      loadNameservers()
+      loadCluster()
+      loadHealth(false)
+    })
 
     return {
       domainsWithoutZone,
