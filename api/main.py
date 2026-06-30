@@ -765,6 +765,10 @@ def _run_migrations():
         "ALTER TABLE domains ADD COLUMN IF NOT EXISTS security_headers_enabled BOOLEAN NOT NULL DEFAULT FALSE",
         # HTTP/3 por dominio
         "ALTER TABLE domains ADD COLUMN IF NOT EXISTS http3_enabled BOOLEAN NOT NULL DEFAULT FALSE",
+        # Bloqueo de XML-RPC de WordPress por dominio (off por defecto)
+        "ALTER TABLE domains ADD COLUMN IF NOT EXISTS xmlrpc_blocked BOOLEAN NOT NULL DEFAULT FALSE",
+        # Rate-limit de wp-login.php por dominio (0 = off, >0 = peticiones/min por IP)
+        "ALTER TABLE domains ADD COLUMN IF NOT EXISTS wp_login_ratelimit INTEGER NOT NULL DEFAULT 0",
         # ─────────────────────────────────────────────────────────────────
         # Fase 18: Notificaciones (avisos de cuota disco/tráfico al usuario)
         # ─────────────────────────────────────────────────────────────────

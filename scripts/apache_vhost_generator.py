@@ -49,6 +49,7 @@ def generate_apache_vhost(
     php_socket_override: Optional[str] = None,
     custom_apache_config: Optional[str] = None,
     httpauth: Optional[dict] = None,
+    xmlrpc_blocked: bool = False,  # el rate-limit de wp-login lo hace siempre Nginx
 ) -> str:
     """
     Genera el vhost Apache BACKEND (127.0.0.1:8181) de un dominio.
@@ -109,6 +110,19 @@ def generate_apache_vhost(
         custom_block = ("\n    # ── Directivas personalizadas del dominio ──\n"
                         + custom_apache_config.rstrip() + "\n")
 
+    # Bloqueo de XML-RPC: defensa en profundidad. El Nginx front ya lo corta antes
+    # de llegar aquí (return 444), pero lo negamos también en el backend Apache por
+    # si alguien accede directo a :8181. El rate-limit de wp-login se queda en Nginx
+    # (Apache requeriría mod_qos/mod_ratelimit, no garantizados).
+    xmlrpc_block = ""
+    if xmlrpc_blocked:
+        xmlrpc_block = (
+            "\n    # Bloqueo XML-RPC (lo corta el Nginx front; aquí por si acaso)\n"
+            "    <Files \"xmlrpc.php\">\n"
+            "        Require all denied\n"
+            "    </Files>\n"
+        )
+
     return f"""# SVQPanel — backend Apache de {domain_name} (front: Nginx)
 # Apache solo sirve PHP + .htaccess; SSL/headers/bots los hace Nginx.
 <VirtualHost {APACHE_BACKEND_ADDR}>
@@ -151,7 +165,7 @@ def generate_apache_vhost(
             Header set Cache-Control "public, max-age=2592000"
         </FilesMatch>
     </IfModule>
-{readonly_block}{custom_block}
+{readonly_block}{custom_block}{xmlrpc_block}
     # Proteger ficheros sensibles aunque el .htaccess del cliente no lo haga
     <FilesMatch "(^\\.|\\.(env|git|sql|bak|old|log|sh)$)">
         Require all denied

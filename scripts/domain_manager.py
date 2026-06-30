@@ -424,6 +424,8 @@ class DomainManager(SystemManager):
         httpauth: dict = None,
         canonical_domain: str = "www",
         is_subdomain: bool = False,
+        xmlrpc_blocked: bool = None,
+        wp_login_ratelimit: int = None,
     ) -> dict:
         """
         Regenera la vhost completa del dominio con TODO el estado actual
@@ -440,8 +442,11 @@ class DomainManager(SystemManager):
         #  - is_subdomain: los subdominios no llevan www. ni redirección canónica.
         #  - docroot_subdir: la subcarpeta de la plantilla (Laravel/Symfony
         #    'public'). Si se pierde, el dominio sirve desde la raíz y da 404.
-        # Esto evita propagar ambos flags por TODOS los callers de regenerate_vhost.
-        if not is_subdomain or docroot_subdir is None:
+        #  - xmlrpc_blocked / wp_login_ratelimit: protección WordPress por dominio.
+        #    Default None = "no me lo dijo el caller, léelo de la BD" → así no hay
+        #    que propagar estos flags por TODOS los callers de regenerate_vhost.
+        if (not is_subdomain or docroot_subdir is None
+                or xmlrpc_blocked is None or wp_login_ratelimit is None):
             try:
                 from api.models.database import SessionLocal
                 from api.models.models_domain import Domain as _D
@@ -453,10 +458,17 @@ class DomainManager(SystemManager):
                             is_subdomain = bool(_d.is_subdomain)
                         if docroot_subdir is None:
                             docroot_subdir = getattr(_d, "docroot_subdir", None) or None
+                        if xmlrpc_blocked is None:
+                            xmlrpc_blocked = bool(getattr(_d, "xmlrpc_blocked", False))
+                        if wp_login_ratelimit is None:
+                            wp_login_ratelimit = int(getattr(_d, "wp_login_ratelimit", 0) or 0)
                 finally:
                     _db.close()
             except Exception:
                 pass
+        # Si tras consultar la BD siguen None (dominio aún no en BD), usar defaults.
+        xmlrpc_blocked = bool(xmlrpc_blocked)
+        wp_login_ratelimit = int(wp_login_ratelimit or 0)
 
         # Auto-detectar webserver
         if webserver is None:
@@ -488,9 +500,17 @@ class DomainManager(SystemManager):
                 php_socket_override=php_socket_override,
                 custom_apache_config=custom_apache_config,
                 httpauth=httpauth,
+                xmlrpc_blocked=xmlrpc_blocked,
             )
             with open(apache_path, "w") as f:
                 f.write(apache_content)
+
+            # Zona de rate limit de wp-login (la usa el Nginx front, no Apache)
+            from scripts.utils import write_wplogin_zone, remove_wplogin_zone
+            if wp_login_ratelimit and wp_login_ratelimit > 0:
+                write_wplogin_zone(domain_name, wp_login_ratelimit)
+            else:
+                remove_wplogin_zone(domain_name)
 
             # Habilitar el sitio en Apache (symlink en sites-enabled) y recargar
             self.execute_command(["a2ensite", f"{domain_name}.conf"], check=False)
@@ -529,6 +549,8 @@ class DomainManager(SystemManager):
                 httpauth=httpauth,
                 canonical_domain=canonical_domain,
                 is_subdomain=is_subdomain,
+                xmlrpc_blocked=xmlrpc_blocked,
+                wp_login_ratelimit=wp_login_ratelimit,
             )
             with open(config_path, "w") as f:
                 f.write(config_content)
@@ -551,6 +573,13 @@ class DomainManager(SystemManager):
                 write_ratelimit_zone(domain_name, rate_limit_rps)
             else:
                 remove_ratelimit_zone(domain_name)
+
+            # Zona de rate limit de wp-login.php (anti fuerza bruta WordPress)
+            from scripts.utils import write_wplogin_zone, remove_wplogin_zone
+            if wp_login_ratelimit and wp_login_ratelimit > 0:
+                write_wplogin_zone(domain_name, wp_login_ratelimit)
+            else:
+                remove_wplogin_zone(domain_name)
 
             config_path = get_nginx_config_path(domain_name)
             config_content = generate_nginx_config(
@@ -580,6 +609,8 @@ class DomainManager(SystemManager):
                 httpauth=httpauth,
                 canonical_domain=canonical_domain,
                 is_subdomain=is_subdomain,
+                xmlrpc_blocked=xmlrpc_blocked,
+                wp_login_ratelimit=wp_login_ratelimit,
             )
             with open(config_path, "w") as f:
                 f.write(config_content)

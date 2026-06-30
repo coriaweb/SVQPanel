@@ -117,3 +117,4 @@ exit 0
 | 0078 | Quitar jail fail2ban relay redundante: el relay denied es spam distribuido (fail2ban no puede); ya lo cubre CrowdSec (postfix-relay-denied) | 2026-07-01 |
 | 0079 | SSH + fail2ban estricto: bantime.increment global (baneo escalado x2 hasta 4 semanas para reincidentes) + jail sshd maxretry 3/findtime 30m/bantime 12h + sshd MaxAuthTries 3/LoginGraceTime 20 | 2026-07-01 |
 | 0080 | fail2ban dbpurgeage = 5w (fail2ban.local): el historial de reincidencias se purgaba cada 1d y el escalado de 0079 nunca llegaba a semanas; ahora persiste > maxtime | 2026-07-01 |
+| 0081 | Protección anti fuerza bruta WordPress por dominio (xmlrpc 444 + rate-limit wp-login 3/min); crea columnas + protege los dominios bajo ataque (deja cronicasliterarias.es sin proteger para validar el aviso) | 2026-07-01 |

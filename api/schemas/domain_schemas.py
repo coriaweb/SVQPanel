@@ -55,6 +55,9 @@ class DomainUpdate(BaseModel):
     security_headers_enabled: Optional[bool] = None
     # HTTP/3 (QUIC)
     http3_enabled: Optional[bool] = None
+    # Protección WordPress (anti fuerza bruta)
+    xmlrpc_blocked: Optional[bool] = None
+    wp_login_ratelimit: Optional[int] = None
 
     @field_validator('allowed_mutation_ips')
     @classmethod
@@ -114,6 +117,9 @@ class DomainResponse(BaseModel):
     security_headers_enabled: Optional[bool] = False
     # HTTP/3 (QUIC)
     http3_enabled: Optional[bool] = False
+    # Protección WordPress (anti fuerza bruta)
+    xmlrpc_blocked: Optional[bool] = False
+    wp_login_ratelimit: Optional[int] = 0
     # Bots bloqueados por dominio (JSON array)
     blocked_user_agents: Optional[str] = None
     # Directivas personalizadas por dominio (nginx/apache extra)

@@ -1210,6 +1210,24 @@ class APIClient {
     return this.put(`/api/domains/${domainId}/bad-bots`, { patterns })
   }
 
+  // Estado de protección WP + análisis de ataque de UN dominio (pane Seguridad)
+  getDomainWpProtection(domainId) {
+    return this.get(`/api/domains/${domainId}/wp-protection`)
+  }
+
+  // Protección WordPress anti fuerza bruta (xmlrpc + rate-limit wp-login)
+  setDomainWpProtection(domainId, { xmlrpc_blocked, wp_login_ratelimit } = {}) {
+    const body = {}
+    if (xmlrpc_blocked !== undefined) body.xmlrpc_blocked = xmlrpc_blocked
+    if (wp_login_ratelimit !== undefined) body.wp_login_ratelimit = wp_login_ratelimit
+    return this.put(`/api/domains/${domainId}/wp-protection`, body)
+  }
+
+  // Avisos de ataque WP para el dashboard (dominios bajo ataque sin proteger)
+  getWpAttackAlerts() {
+    return this.get(`/api/domains/wp-attack-alerts`)
+  }
+
   setDomainPhpHardening(domainId, relaxed) {
     return this.put(`/api/domains/${domainId}/php-hardening`, { relaxed })
   }

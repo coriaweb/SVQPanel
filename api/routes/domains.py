@@ -353,6 +353,74 @@ async def list_domains(
         )
 
 
+@router.get("/domains/wp-attack-alerts")
+async def get_wp_attack_alerts(
+    current_user: User = Depends(require_auth),
+    db:           Session = Depends(get_db),
+):
+    """
+    Avisos para el dashboard: dominios del usuario que están recibiendo un ataque
+    de fuerza bruta a WordPress (xmlrpc/wp-login) y NO tienen aún la protección
+    activada. El frontend muestra un banner con botón para activarla.
+
+    Solo reporta dominios DESPROTEGIDOS bajo ataque (los ya protegidos no generan
+    aviso, aunque sigan recibiendo el ataque: ya está mitigado).
+
+    OJO: este endpoint debe declararse ANTES de GET /domains/{domain_id}, o
+    FastAPI intentaría parsear "wp-attack-alerts" como domain_id (int) → 422.
+    """
+    from concurrent.futures import ThreadPoolExecutor
+    from scripts.wp_attack_detector import analyze_domain
+
+    # Dominios accesibles según rol (mismo criterio que list_domains).
+    q = db.query(Domain).filter(Domain.is_active == True)  # noqa: E712
+    if current_user.role != "admin":
+        q = q.filter(Domain.user_id == current_user.id)
+    domains = q.all()
+
+    # Mapa user_id → username (una consulta) para construir la ruta del log.
+    user_ids = {d.user_id for d in domains}
+    users = {u.id: u.username for u in db.query(User).filter(User.id.in_(user_ids)).all()} if user_ids else {}
+
+    # Solo analizamos los que aún NO están totalmente protegidos (si ya bloqueó
+    # xmlrpc y tiene rate-limit, no hay nada que avisar).
+    candidates = [
+        d for d in domains
+        if not (d.xmlrpc_blocked and (d.wp_login_ratelimit or 0) > 0)
+        and users.get(d.user_id)
+    ]
+
+    def _check(d):
+        res = analyze_domain(users[d.user_id], d.domain_name)
+        if not res["under_attack"]:
+            return None
+        # No avisar de un vector que ya está mitigado en este dominio.
+        targets = []
+        if "xmlrpc" in res["attack_targets"] and not d.xmlrpc_blocked:
+            targets.append("xmlrpc")
+        if "wp-login" in res["attack_targets"] and (d.wp_login_ratelimit or 0) == 0:
+            targets.append("wp-login")
+        if not targets:
+            return None
+        return {
+            "domain_id":   d.id,
+            "domain":      d.domain_name,
+            "xmlrpc_hits": res["xmlrpc_hits"],
+            "wplogin_hits": res["wplogin_hits"],
+            "window_min":  res["window_min"],
+            "targets":     targets,
+        }
+
+    alerts = []
+    if candidates:
+        with ThreadPoolExecutor(max_workers=min(8, len(candidates))) as ex:
+            for r in ex.map(_check, candidates):
+                if r:
+                    alerts.append(r)
+
+    return {"alerts": alerts}
+
+
 @router.get("/domains/{domain_id}", response_model=DomainResponse)
 async def get_domain(
     domain_id: int,
@@ -969,6 +1037,130 @@ async def set_domain_bad_bots(
         "status": "ok",
         "domain": domain.domain_name,
         "blocked_patterns": patterns,
+    }
+
+
+def _regenerate_from_domain(domain: Domain, db: Session) -> None:
+    """Regenera el vhost de un dominio con TODO su estado actual de la BD.
+    regenerate_vhost lee xmlrpc_blocked/wp_login_ratelimit de la BD, así que basta
+    con haber hecho commit del cambio antes de llamar aquí."""
+    owner = db.query(User).filter(User.id == domain.user_id).first()
+    if not owner:
+        raise HTTPException(status_code=500, detail="Propietario del dominio no encontrado")
+    from scripts import php_ini_manager as phpini
+    php_socket = phpini.pool_socket_path(domain.domain_name) if phpini.has_pool(domain.domain_name) else None
+    DomainManager().regenerate_vhost(
+        username=owner.username,
+        domain_name=domain.domain_name,
+        php_version=domain.php_version,
+        ssl_enabled=domain.ssl_enabled,
+        ipv6=domain.ipv6,
+        fastcgi_cache_enabled=domain.fastcgi_cache_enabled,
+        fastcgi_cache_ttl_minutes=domain.fastcgi_cache_ttl_minutes,
+        php_socket_override=php_socket,
+        template_nginx_extra=domain.template_nginx_extra,
+        custom_nginx_config=domain.custom_nginx_config,
+        custom_apache_config=domain.custom_apache_config,
+        redirect_to=domain.redirect_to,
+        custom_docroot=domain.custom_docroot,
+        ipv4=domain.ipv4,
+        force_https=domain.force_https or False,
+        hsts=domain.hsts_enabled or False,
+        rate_limit_enabled=domain.rate_limit_enabled or False,
+        rate_limit_rps=domain.rate_limit_rps or 10,
+        rate_limit_burst=domain.rate_limit_burst or 20,
+        readonly_mode_enabled=domain.readonly_mode_enabled or False,
+        allowed_mutation_ips=domain.allowed_mutation_ips,
+        blocked_user_agents=json.loads(domain.blocked_user_agents) if domain.blocked_user_agents else [],
+        security_headers_enabled=domain.security_headers_enabled or False,
+        http3_enabled=domain.http3_enabled or False,
+        canonical_domain=domain.canonical_domain or "www",
+        # xmlrpc_blocked y wp_login_ratelimit se leen de la BD dentro de regenerate_vhost
+    )
+
+
+@router.get("/domains/{domain_id}/wp-protection")
+async def get_domain_wp_protection(
+    domain_id:    int,
+    current_user: User = Depends(require_auth),
+    db:           Session = Depends(get_db),
+):
+    """
+    Estado de protección WordPress del dominio + análisis de ataque en curso.
+    Lo consume el pane "Seguridad" del gestor WordPress en la ficha del dominio.
+    """
+    domain = _get_owned_domain(domain_id, db, current_user)
+    if not domain:
+        raise HTTPException(status_code=404, detail="Dominio no encontrado")
+    _check_access(current_user, domain, db)
+
+    owner = db.query(User).filter(User.id == domain.user_id).first()
+    attack = {"under_attack": False, "xmlrpc_hits": 0, "wplogin_hits": 0,
+              "window_min": 60, "threshold": 0}
+    if owner:
+        try:
+            from scripts.wp_attack_detector import analyze_domain
+            attack = analyze_domain(owner.username, domain.domain_name)
+        except Exception:
+            pass
+
+    return {
+        "xmlrpc_blocked":     bool(domain.xmlrpc_blocked),
+        "wp_login_ratelimit": int(domain.wp_login_ratelimit or 0),
+        "attack":             attack,
+    }
+
+
+@router.put("/domains/{domain_id}/wp-protection")
+async def set_domain_wp_protection(
+    domain_id:    int,
+    payload:      dict,
+    current_user: User = Depends(require_auth),
+    db:           Session = Depends(get_db),
+):
+    """
+    Protección anti fuerza bruta de WordPress por dominio. El cliente (dueño) o el
+    admin lo activan, típicamente tras el aviso de ataque en su dashboard.
+    Body: {"xmlrpc_blocked": bool, "wp_login_ratelimit": int}  (ambos opcionales)
+      - xmlrpc_blocked: True → nginx devuelve 444 a /xmlrpc.php (corta amplificación).
+      - wp_login_ratelimit: peticiones/min por IP a /wp-login.php (0 = sin límite).
+        Recomendado 3 (una persona necesita 1-2; un bot mete miles).
+    """
+    domain = _get_owned_domain(domain_id, db, current_user)
+    if not domain:
+        raise HTTPException(status_code=404, detail="Dominio no encontrado")
+    _check_access(current_user, domain, db)
+
+    changed = False
+    if "xmlrpc_blocked" in payload:
+        domain.xmlrpc_blocked = bool(payload["xmlrpc_blocked"])
+        changed = True
+    if "wp_login_ratelimit" in payload:
+        try:
+            rl = int(payload["wp_login_ratelimit"])
+        except (TypeError, ValueError):
+            raise HTTPException(status_code=400, detail="wp_login_ratelimit debe ser un entero")
+        if rl < 0 or rl > 600:
+            raise HTTPException(status_code=400, detail="wp_login_ratelimit fuera de rango (0-600)")
+        domain.wp_login_ratelimit = rl
+        changed = True
+
+    if not changed:
+        raise HTTPException(status_code=400, detail="Nada que cambiar")
+
+    db.commit()  # commit ANTES de regenerar: regenerate_vhost lee estos campos de la BD
+    try:
+        _regenerate_from_domain(domain, db)
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error aplicando protección WordPress: {e}")
+
+    return {
+        "status": "ok",
+        "domain": domain.domain_name,
+        "xmlrpc_blocked": domain.xmlrpc_blocked,
+        "wp_login_ratelimit": domain.wp_login_ratelimit,
     }
 
 

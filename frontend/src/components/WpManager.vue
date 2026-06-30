@@ -113,6 +113,62 @@
           <div class="app-result__row"><span>Nueva contraseña</span><span class="mono">{{ resetResult.new_password }}</span></div>
         </div>
       </div>
+
+      <!-- ── Tab Seguridad (anti fuerza bruta WordPress) ── -->
+      <div v-else-if="tab === 'security'" class="wpm-pane">
+        <!-- Aviso de ataque en curso (solo si está bajo ataque y sin proteger) -->
+        <div v-if="attack && attack.under_attack" class="wpm-attack">
+          <div class="wpm-attack__icon"><i class="bi bi-exclamation-octagon-fill"></i></div>
+          <div class="wpm-attack__body">
+            <strong>Tu WordPress está recibiendo un ataque de fuerza bruta.</strong>
+            <p>
+              En la última hora se han registrado
+              <span v-if="attack.xmlrpc_hits >= attack.threshold"><b>{{ attack.xmlrpc_hits.toLocaleString() }}</b> intentos contra <code>xmlrpc.php</code></span>
+              <span v-if="attack.xmlrpc_hits >= attack.threshold && attack.wplogin_hits >= attack.threshold"> y </span>
+              <span v-if="attack.wplogin_hits >= attack.threshold"><b>{{ attack.wplogin_hits.toLocaleString() }}</b> contra <code>wp-login.php</code></span>.
+              Activa la protección para cortarlo sin afectar a tu acceso.
+            </p>
+            <BaseButton variant="primary" size="sm" icon="shield-fill-check" :loading="busy==='wpprotect-all'" @click="enableAllProtection">
+              Activar protección recomendada
+            </BaseButton>
+          </div>
+        </div>
+
+        <div class="wpm-sec">
+          <!-- XML-RPC -->
+          <div class="wpm-sec__row">
+            <div class="wpm-sec__info">
+              <span class="wpm-sec__title"><i class="bi bi-shield-lock"></i> Bloquear XML-RPC</span>
+              <small class="dd-muted">
+                <code>xmlrpc.php</code> casi no se usa hoy (lo sustituye la API REST). Bloquearlo
+                corta los ataques de amplificación/fuerza bruta. Desactívalo solo si usas la app
+                móvil de WordPress o Jetpack con publicación remota.
+              </small>
+            </div>
+            <label class="svq-switch">
+              <input type="checkbox" :checked="prot.xmlrpc_blocked" :disabled="!!busy" @change="toggleXmlrpc($event.target.checked)" />
+              <span class="svq-switch__slider"></span>
+            </label>
+          </div>
+
+          <!-- Rate-limit wp-login -->
+          <div class="wpm-sec__row">
+            <div class="wpm-sec__info">
+              <span class="wpm-sec__title"><i class="bi bi-speedometer"></i> Limitar intentos de login</span>
+              <small class="dd-muted">
+                Limita las peticiones por minuto a <code>wp-login.php</code> desde una misma IP.
+                Una persona necesita 1-2 intentos; un bot mete miles. Recomendado: <b>3/min</b>.
+                0 = sin límite.
+              </small>
+            </div>
+            <div class="wpm-sec__rl">
+              <input type="number" min="0" max="600" class="svq-input" style="width:5rem" v-model.number="rlInput" :disabled="!!busy" />
+              <span class="dd-muted">/min</span>
+              <BaseButton variant="ghost" size="sm" :loading="busy==='wprl'" @click="saveRateLimit">Guardar</BaseButton>
+            </div>
+          </div>
+        </div>
+      </div>
     </template>
   </BaseCard>
 </template>
@@ -153,6 +209,7 @@ export default {
       { key: 'plugins', label: 'Plugins', icon: 'plug' },
       { key: 'themes',  label: 'Temas',   icon: 'palette' },
       { key: 'access',  label: 'Acceso',  icon: 'key' },
+      { key: 'security', label: 'Seguridad', icon: 'shield-check' },
     ]
     const busy = ref('')          // id de la acción en curso (desactiva botones)
     const items = ref([])
@@ -266,10 +323,48 @@ export default {
 
     const statusLabel = (s) => ({ active: 'Activo', inactive: 'Inactivo', 'must-use': 'Must-use', 'dropin': 'Drop-in', parent: 'Padre' }[s] || s)
 
+    // ── Seguridad (anti fuerza bruta WordPress) ──────────────────────────────
+    const prot = ref({ xmlrpc_blocked: false, wp_login_ratelimit: 0 })
+    const attack = ref(null)
+    const rlInput = ref(0)
+    const loadingSec = ref(false)
+
+    const loadSecurity = async () => {
+      if (did.value == null) return
+      loadingSec.value = true
+      try {
+        const r = await api.getDomainWpProtection(did.value)
+        prot.value = { xmlrpc_blocked: r.data.xmlrpc_blocked, wp_login_ratelimit: r.data.wp_login_ratelimit }
+        rlInput.value = r.data.wp_login_ratelimit || 0
+        attack.value = r.data.attack || null
+      } catch (e) { /* silencioso: el pane simplemente no muestra estado */ }
+      finally { loadingSec.value = false }
+    }
+
+    const applyProtection = async (body, busyId) => {
+      busy.value = busyId
+      try {
+        const r = await api.setDomainWpProtection(did.value, body)
+        prot.value = { xmlrpc_blocked: r.data.xmlrpc_blocked, wp_login_ratelimit: r.data.wp_login_ratelimit }
+        rlInput.value = r.data.wp_login_ratelimit || 0
+        // tras aplicar, el aviso de ataque deja de tener sentido para lo mitigado
+        await loadSecurity()
+        store.showNotification('Protección actualizada', 'success')
+      } catch (e) {
+        store.showNotification('Error: ' + (e.message || 'no se pudo aplicar'), 'danger')
+      } finally { busy.value = '' }
+    }
+
+    const toggleXmlrpc = (checked) => applyProtection({ xmlrpc_blocked: checked }, 'wpx')
+    const saveRateLimit = () => applyProtection({ wp_login_ratelimit: Math.max(0, Math.min(600, rlInput.value || 0)) }, 'wprl')
+    // Botón del aviso: bloquea xmlrpc y pone 3/min en wp-login de una vez.
+    const enableAllProtection = () => applyProtection({ xmlrpc_blocked: true, wp_login_ratelimit: 3 }, 'wpprotect-all')
+
     // Cargar listado al entrar en las pestañas de plugins/temas
     watch(tab, (t) => {
       if ((t === 'plugins' || t === 'themes')) loadItems()
       if (t === 'access' && !admins.value.length) loadAdmins()
+      if (t === 'security') loadSecurity()
     })
 
     // Cargar info cuando el componente esté montado y el id sea válido. Si el id
@@ -282,6 +377,7 @@ export default {
       admins, loadingUsers, loadingUpdates, resetResult, newUrl, itemKind, totalUpdates, adminUrl,
       loadInfo, loadItems, loadAdmins, run, toggleMaintenance, deleteItem, confirmSalts,
       resetPw, changeUrl, statusLabel,
+      prot, attack, rlInput, loadSecurity, toggleXmlrpc, saveRateLimit, enableAllProtection,
     }
   },
 }
@@ -325,4 +421,34 @@ export default {
 .wpm-urlrow { display:flex; gap:.5rem; align-items:center; }
 .wpm-urlrow .svq-input { flex:1; }
 .mono { font-family: var(--font-mono, monospace); }
+
+/* ── Pane Seguridad ── */
+.wpm-attack { display:flex; gap:.75rem; padding:.85rem 1rem; margin-bottom:1rem;
+  border:1px solid color-mix(in srgb, var(--danger) 45%, var(--border));
+  background: color-mix(in srgb, var(--danger) 10%, transparent);
+  border-radius: var(--radius-md); }
+.wpm-attack__icon { color: var(--danger); font-size:1.4rem; line-height:1; padding-top:.1rem; }
+.wpm-attack__body { flex:1; }
+.wpm-attack__body strong { color: var(--danger); }
+.wpm-attack__body p { margin:.35rem 0 .6rem; font-size:.88rem; color: var(--text); }
+.wpm-attack__body code { background: var(--surface-inset); padding:.05rem .3rem; border-radius:4px; font-size:.82rem; }
+.wpm-sec { display:flex; flex-direction:column; gap:.25rem; }
+.wpm-sec__row { display:flex; align-items:center; justify-content:space-between; gap:1rem;
+  padding:.85rem 0; border-bottom:1px solid var(--border); }
+.wpm-sec__row:last-child { border-bottom:none; }
+.wpm-sec__info { flex:1; }
+.wpm-sec__title { display:flex; align-items:center; gap:.45rem; font-weight:600; margin-bottom:.2rem; }
+.wpm-sec__info small { display:block; line-height:1.4; }
+.wpm-sec__info code { background: var(--surface-inset); padding:.05rem .3rem; border-radius:4px; font-size:.8rem; }
+.wpm-sec__rl { display:flex; align-items:center; gap:.5rem; white-space:nowrap; }
+/* switch reutilizable */
+.svq-switch { position:relative; display:inline-block; width:42px; height:24px; flex-shrink:0; }
+.svq-switch input { opacity:0; width:0; height:0; }
+.svq-switch__slider { position:absolute; inset:0; cursor:pointer; background: var(--surface-inset);
+  border:1px solid var(--border); border-radius:999px; transition:.2s; }
+.svq-switch__slider::before { content:""; position:absolute; height:16px; width:16px; left:3px; top:3px;
+  background:#fff; border-radius:50%; transition:.2s; }
+.svq-switch input:checked + .svq-switch__slider { background: var(--accent); border-color: var(--accent); }
+.svq-switch input:checked + .svq-switch__slider::before { transform: translateX(18px); }
+.svq-switch input:disabled + .svq-switch__slider { opacity:.5; cursor:not-allowed; }
 </style>

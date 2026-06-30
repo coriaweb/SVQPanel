@@ -167,6 +167,77 @@ def _ratelimit_directive(domain: str, burst: int) -> str:
     return f"\n        limit_req zone={zone} burst={burst} nodelay;"
 
 
+# ── Rate-limit específico de /wp-login.php (anti fuerza bruta WordPress) ──────
+# Zona propia, independiente del rate-limit general del sitio, para poder
+# aplicar un límite muy estricto solo al login (p.ej. 3 req/min por IP) sin
+# afectar al tráfico normal del dominio.
+def get_wplogin_conf_path(domain: str) -> str:
+    return f"/etc/nginx/conf.d/svqpanel-wplogin-{domain}.conf"
+
+
+def _wplogin_zone_name(domain: str) -> str:
+    return "svqwp_" + domain.replace('.', '_').replace('-', '_')
+
+
+def write_wplogin_zone(domain: str, per_min: int) -> str:
+    """
+    Escribe la zona limit_req_zone para /wp-login.php del dominio.
+    per_min = peticiones/min por IP (nginx admin r/m). Idempotente.
+    """
+    ensure_ratelimit_global()  # reutiliza limit_req_status 429
+    zone = _wplogin_zone_name(domain)
+    path = get_wplogin_conf_path(domain)
+    content = (
+        f"# SVQPanel — rate limit de wp-login.php de {domain}\n"
+        f"limit_req_zone $binary_remote_addr zone={zone}:10m rate={per_min}r/m;\n"
+    )
+    with open(path, "w") as f:
+        f.write(content)
+    return path
+
+
+def remove_wplogin_zone(domain: str) -> None:
+    import os
+    path = get_wplogin_conf_path(domain)
+    if os.path.isfile(path):
+        os.remove(path)
+
+
+def _wplogin_location_block(domain: str, backend_name: str, ssl: bool,
+                            proxy_to_apache: bool = False) -> str:
+    """
+    location = /wp-login.php que aplica el rate-limit y sirve la petición por el
+    MISMO camino que el resto del vhost: fastcgi a PHP-FPM en modo nginx puro, o
+    proxy a Apache (:8181) en modo dual (para no saltarse los .htaccess). burst=2
+    + nodelay deja pasar un par de reintentos humanos pero corta el flood. Es un
+    match exacto (=), así que gana siempre al 'location ~ \\.php$' / 'location /'.
+    """
+    zone = _wplogin_zone_name(domain)
+    if proxy_to_apache:
+        return (
+            f"    location = /wp-login.php {{\n"
+            f"        limit_req zone={zone} burst=2 nodelay;\n"
+            f"        proxy_pass http://127.0.0.1:8181;\n"
+            f"        proxy_set_header Host $host;\n"
+            f"        proxy_set_header X-Real-IP $remote_addr;\n"
+            f"        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;\n"
+            f"        proxy_set_header X-Forwarded-Proto $scheme;\n"
+            f"    }}\n"
+        )
+    https_param = "        fastcgi_param HTTPS on;\n" if ssl else ""
+    return (
+        f"    location = /wp-login.php {{\n"
+        f"        limit_req zone={zone} burst=2 nodelay;\n"
+        f"        try_files $uri =404;\n"
+        f"        fastcgi_pass php_{backend_name};\n"
+        f"        fastcgi_index index.php;\n"
+        f"        fastcgi_param SCRIPT_FILENAME $document_root$fastcgi_script_name;\n"
+        f"{https_param}"
+        f"        include fastcgi_params;\n"
+        f"    }}\n"
+    )
+
+
 def get_fastcgi_cache_conf_path(domain: str) -> str:
     """Ruta del fichero conf en /etc/nginx/conf.d/ con la zona de cache del dominio."""
     return f"/etc/nginx/conf.d/svqpanel-cache-{domain}.conf"
@@ -363,6 +434,8 @@ def generate_nginx_config(
     httpauth: Optional[dict] = None,
     canonical_domain: Optional[str] = "www",
     is_subdomain: bool = False,
+    xmlrpc_blocked: bool = False,
+    wp_login_ratelimit: int = 0,
 ) -> str:
     """
     Generate Nginx vhost configuration (Hestia-style paths).
@@ -397,6 +470,26 @@ def generate_nginx_config(
     skip_block  = _skip_cache_block() if fastcgi_cache_enabled else ""
     cache_block = ""  # built below after _sh is defined
     readonly_block = _readonly_mode_block(allowed_mutation_ips) if readonly_mode_enabled else ""
+    # Bloqueo de XML-RPC (WordPress): 444 = cierra la conexión sin responder, así
+    # el bot no gasta PHP-FPM ni recibe pista de que el endpoint existe. Coherente
+    # con el bloqueo de bad-bots (también 444). Solo si el dominio lo activó.
+    xmlrpc_block = (
+        "    location = /xmlrpc.php { return 444; }\n" if xmlrpc_blocked else ""
+    )
+    # Rate-limit de wp-login.php (anti fuerza bruta). Necesita su zona en
+    # /etc/nginx/conf.d (la escriben los callers con write_wplogin_zone). Aquí
+    # solo el location. Hay variante http/https por el fastcgi_param HTTPS.
+    wp_login_http = (
+        _wplogin_location_block(domain, backend_name, ssl=False, proxy_to_apache=proxy_to_apache)
+        if wp_login_ratelimit and wp_login_ratelimit > 0 else ""
+    )
+    wp_login_ssl = (
+        _wplogin_location_block(domain, backend_name, ssl=True, proxy_to_apache=proxy_to_apache)
+        if wp_login_ratelimit and wp_login_ratelimit > 0 else ""
+    )
+    # Bloques combinados de protección WordPress que se insertan en cada server.
+    wp_protect_http = xmlrpc_block + wp_login_http
+    wp_protect_ssl  = xmlrpc_block + wp_login_ssl
 
     # Bloque de bloqueo de user-agents.
     #   1) Catálogo GLOBAL (Seguridad → Bloqueo de bots): /etc/nginx/conf.d/
@@ -597,7 +690,7 @@ def generate_nginx_config(
     # Pasamos el upstream al template via variable para que los location blocks
     # de la plantilla puedan usar $phpfpm_backend en lugar del nombre hardcodeado
     set $phpfpm_backend php_{backend_name};
-{canonical_block}{tpl_extra}{bots_block}{app_block_http}
+{canonical_block}{tpl_extra}{bots_block}{wp_protect_http}{app_block_http}
     location ~ /\\.ht {{
         deny all;
     }}
@@ -647,7 +740,7 @@ server {{
 
     index index.php index.html index.htm;
 {skip_block}    set $phpfpm_backend php_{backend_name};
-{canonical_block}{tpl_extra}{bots_block}{app_block_ssl}
+{canonical_block}{tpl_extra}{bots_block}{wp_protect_ssl}{app_block_ssl}
     location ~ /\\.ht {{
         deny all;
     }}

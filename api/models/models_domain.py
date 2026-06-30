@@ -116,6 +116,19 @@ class Domain(Base):
     # Bad bots bloqueados a nivel de dominio (JSON array de patrones, ej: ["zgrab","nikto"])
     blocked_user_agents = Column(Text, nullable=True)
 
+    # Bloqueo de XML-RPC de WordPress. Desbloqueado por defecto (no rompemos la
+    # app móvil/Jetpack de nadie sin avisar). Cuando un dominio recibe un ataque
+    # masivo de fuerza bruta/amplificación a xmlrpc.php, el panel avisa al cliente
+    # y este puede activarlo: el vhost devuelve 444 a /xmlrpc.php (corta el ataque
+    # antes de arrancar PHP). Reversible desde el toggle del panel.
+    xmlrpc_blocked = Column(Boolean, default=False, nullable=False)
+
+    # Rate-limit de /wp-login.php (fuerza bruta al login de WordPress). A
+    # diferencia de xmlrpc, wp-login NO se puede bloquear (es el login real), así
+    # que se limita por IP: una persona necesita 1-2 intentos, un bot mete miles.
+    # 0 = desactivado. >0 = nº máximo de peticiones/min por IP a /wp-login.php.
+    wp_login_ratelimit = Column(Integer, default=0, nullable=False)
+
     # Despliegue Git (Fase 21) — repo desplegado en public_html (symlink a
     # releases/). La clave privada del deploy key NO va en BD (vive en ~/.ssh).
     git_enabled        = Column(Boolean, default=False, nullable=False)
