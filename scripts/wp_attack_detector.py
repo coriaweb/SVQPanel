@@ -18,7 +18,9 @@ import re
 from datetime import datetime, timedelta
 
 # Umbral por defecto: a partir de estos hits en la ventana, se considera ataque.
-DEFAULT_THRESHOLD = 500
+# TEMPORAL bajo (5) para poder ver el aviso en cualquier momento; en producción
+# real con tráfico legítimo conviene subirlo (p.ej. 300-500/hora).
+DEFAULT_THRESHOLD = 5
 # Ventana de análisis (minutos) sobre las líneas leídas de la cola del log.
 DEFAULT_WINDOW_MIN = 60
 # Cuántos bytes leer de la cola del log (evita leer ficheros de cientos de MB).
