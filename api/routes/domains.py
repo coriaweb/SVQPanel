@@ -486,8 +486,10 @@ async def update_domain(
         db.commit()
         db.refresh(db_domain)
 
-        # Regenerar vhost si cambió algún parámetro que afecta a nginx
-        if redir_changed or docroot_changed or ipv4_changed or ipv6_changed or readonly_changed or sec_headers_changed or http3_changed:
+        # Regenerar vhost si cambió algún parámetro que afecta a nginx. Los
+        # dominios solo correo/DNS no tienen vhost → nunca se regenera.
+        if (not getattr(db_domain, "mail_dns_only", False)) and \
+           (redir_changed or docroot_changed or ipv4_changed or ipv6_changed or readonly_changed or sec_headers_changed or http3_changed):
             owner = db.query(User).filter(User.id == db_domain.user_id).first()
             if owner:
                 try:

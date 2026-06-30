@@ -89,9 +89,9 @@
       </div>
     </div>
 
-    <div class="mb-3" v-if="!form.mail_dns_only">
+    <div class="mb-3" v-if="isWebDomain">
       <label class="form-label">Versión PHP</label>
-      <select v-model="form.php_version" class="form-select" :required="!form.mail_dns_only">
+      <select v-model="form.php_version" class="form-select" :required="isWebDomain">
         <option value="">Selecciona versión</option>
         <option v-for="version in availablePhpVersions" :key="version" :value="version">
           PHP {{ version }}
@@ -105,7 +105,11 @@
       <label for="is_active" class="form-check-label">Dominio activo</label>
     </div>
 
-    <!-- IPs del servidor (creación y edición) -->
+    <!-- IPs del servidor (creación y edición). No aplica a solo correo/DNS: la
+         IPv4/IPv6 de aquí son para que NGINX escuche en ellas (el vhost), y un
+         dominio sin web no tiene vhost. Para publicar un AAAA en la zona se hace
+         desde la vista DNS; el correo usa la IPv6 global del servidor. -->
+    <template v-if="isWebDomain">
     <hr class="my-3" />
     <p class="fw-semibold mb-2 text-muted small text-uppercase">
       <i class="bi bi-hdd-network me-1"></i> Direcciones IP
@@ -158,6 +162,7 @@
         Selecciona una IP dedicada del rango del servidor para este dominio.
       </div>
     </div>
+    </template>
 
     <!-- Redirección y docroot (solo al editar dominios con web) -->
     <template v-if="isEditing && isWebDomain">
