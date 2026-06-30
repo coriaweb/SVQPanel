@@ -54,7 +54,8 @@ for D in $ATTACKED; do
         "$PANEL/venv/bin/python" - "$D" <<'PYEOF' && echo "  ✓ $D protegido (xmlrpc 444 + wp-login 3/min)" || echo "  ✗ $D: fallo regenerando vhost"
 import sys
 sys.path.insert(0, "/opt/svqpanel")
-from api.models.database import SessionLocal
+from api.models.database import SessionLocal, load_all_models
+load_all_models()  # registra TODOS los modelos (si no, falla 'ClientDatabase' en relaciones string)
 from api.models.models_domain import Domain
 from api.models.models_user import User
 from scripts.domain_manager import DomainManager
