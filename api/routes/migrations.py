@@ -150,7 +150,7 @@ def _create_target_user(db: Session, username: str, email: str,
     if not email or not validate_email(email):
         # El backup puede no traer email; usamos uno placeholder del propio panel.
         email = f"{username}@local.invalid"
-    # Username único.
+    # Username único EN EL PANEL.
     if db.query(User).filter(User.username == username).first():
         raise HTTPException(status_code=409,
             detail=f"Ya existe un usuario «{username}». Elige otro nombre o usa el cliente existente.")
@@ -164,8 +164,19 @@ def _create_target_user(db: Session, username: str, email: str,
     else:
         password = generate_password(load_policy(db))
 
+    # Crear el usuario del sistema. Caso especial: un intento de migración
+    # anterior pudo crear el usuario del SO y fallar antes de registrarlo en el
+    # panel → queda HUÉRFANO (existe en el SO, no en el panel). En ese caso lo
+    # REUTILIZAMOS (reseteamos su contraseña) en vez de fallar con "User already
+    # exists", para que reintentar la migración sea idempotente.
+    mgr = UserManager()
     try:
-        UserManager().create_user(username, email, password)
+        if mgr.user_exists(username):
+            logger.info(f"Migración: reutilizando usuario del SO huérfano «{username}» "
+                        "(existe en el sistema pero no en el panel)")
+            mgr.change_password(username, password)
+        else:
+            mgr.create_user(username, email, password)
     except Exception as e:
         raise HTTPException(status_code=500,
             detail=f"No se pudo crear el usuario del sistema: {e}")
