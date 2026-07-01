@@ -321,6 +321,15 @@
         :domain-name="domain.domain_name"
       />
 
+      <!-- ===== Composer (dependencias PHP del proyecto) ===== -->
+      <!-- v-if (no v-show): se monta SOLO al abrir la pestaña; composer show/status
+           lanzan procesos como el usuario y no deben correr al entrar al dominio. -->
+      <ComposerManager
+        v-if="tab === 'composer'"
+        :domain-id="domainId"
+        :domain-name="domain.domain_name"
+      />
+
       <!-- ===== SSL ===== -->
       <BaseCard v-show="tab === 'ssl'" title="Certificado SSL" icon="shield-lock">
         <SSLManager :domain="domain" @reload="reloadDomain" />
@@ -837,10 +846,11 @@ import EmptyState from '../components/ui/EmptyState.vue'
 import SSLManager from '../components/SSLManager.vue'
 import IPv6Manager from '../components/IPv6Manager.vue'
 import WpManager from '../components/WpManager.vue'
+import ComposerManager from '../components/ComposerManager.vue'
 
 export default {
   name: 'DomainDetail',
-  components: { BaseCard, BaseButton, BaseTabs, StatusBadge, EmptyState, SSLManager, IPv6Manager, WpManager },
+  components: { BaseCard, BaseButton, BaseTabs, StatusBadge, EmptyState, SSLManager, IPv6Manager, WpManager, ComposerManager },
   setup() {
     const route = useRoute()
     const router = useRouter()
@@ -861,6 +871,7 @@ export default {
       { key: 'bots',     label: 'Bots',    icon: 'robot' },
       { key: 'stats',    label: 'Estadísticas', icon: 'bar-chart' },
       { key: 'git',      label: 'Git',     icon: 'git' },
+      { key: 'composer', label: 'Composer',icon: 'box-seam' },
       { key: 'advanced', label: 'Avanzado',icon: 'sliders' },
       { key: 'logs',     label: 'Logs',    icon: 'journal-text' },
     ]

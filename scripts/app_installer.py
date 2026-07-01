@@ -58,14 +58,26 @@ COMPOSER_PATH = "/usr/local/bin/composer"
 # ─────────────────────────────────────────────────────────────────────────────
 # Helpers
 # ─────────────────────────────────────────────────────────────────────────────
-def _run(cmd, cwd=None, as_user=None, timeout=600, input_text=None):
-    """Ejecuta un comando (lista, sin shell). Devuelve (rc, stdout, stderr)."""
+def _run(cmd, cwd=None, as_user=None, timeout=600, input_text=None, env=None):
+    """Ejecuta un comando (lista, sin shell). Devuelve (rc, stdout, stderr).
+
+    env: por defecto _SYS_ENV. Se pasa a `sudo` con env_keep vía prefijo
+    VAR=valor para que las variables sobrevivan al cambio de usuario (sudo
+    limpia el entorno; -H solo ajusta HOME)."""
+    run_env = env or _SYS_ENV
     if as_user:
-        cmd = ["sudo", "-u", as_user, "-H"] + cmd
+        # sudo sanea el entorno al cambiar de usuario; para forzar variables
+        # extra (COMPOSER_HOME, COMPOSER_NO_INTERACTION…) las inyectamos con
+        # `env VAR=val` DENTRO del contexto del usuario. Solo las que difieren
+        # de os.environ (las heredadas ya viajan por env= del subprocess).
+        extra = {k: v for k, v in run_env.items()
+                 if os.environ.get(k) != v}
+        prefix = ["env"] + [f"{k}={v}" for k, v in extra.items()] if extra else []
+        cmd = ["sudo", "-u", as_user, "-H"] + prefix + cmd
     try:
         r = subprocess.run(
             cmd, cwd=cwd, capture_output=True, text=True,
-            timeout=timeout, env=_SYS_ENV, input=input_text,
+            timeout=timeout, env=run_env, input=input_text,
         )
         return r.returncode, r.stdout.strip(), r.stderr.strip()
     except subprocess.TimeoutExpired:

@@ -869,6 +869,13 @@ class APIClient {
     return this.post(`/api/domains/${domainId}/wp/${action}`, data)
   }
 
+  // ── Composer (dependencias PHP del proyecto del dominio) ──
+  getComposerStatus(domainId)    { return this.get(`/api/domains/${domainId}/composer/status`) }
+  getComposerPackages(domainId)  { return this.get(`/api/domains/${domainId}/composer/packages`) }
+  composerAction(domainId, action, data = {}) {
+    return this.post(`/api/domains/${domainId}/composer/${action}`, data)
+  }
+
   // SFTP
   getSftpStatus(userId)           { return this.get(`/api/users/${userId}/sftp`) }
   setSftpEnabled(userId, enabled) {

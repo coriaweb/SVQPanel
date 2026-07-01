@@ -2343,3 +2343,80 @@ async def wp_action(domain_id: int, action: str,
         raise HTTPException(status_code=422, detail=str(e))
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error en acción WP: {e}")
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Composer — dependencias PHP del proyecto del cliente (require/remove/update/…)
+# El binario composer es del sistema (solo admin lo actualiza vía self-update);
+# aquí SOLO se gestionan las dependencias del docroot, como el usuario del dominio.
+# ─────────────────────────────────────────────────────────────────────────────
+class ComposerActionRequest(BaseModel):
+    package: Optional[str] = _Field(None, max_length=180,
+                                    description="vendor/paquete, p. ej. phpmailer/phpmailer")
+    dev:     Optional[bool] = False
+
+
+@router.get("/domains/{domain_id}/composer/status")
+async def composer_get_status(domain_id: int,
+                              current_user: User = Depends(require_auth),
+                              db: Session = Depends(get_db)):
+    """Estado de Composer en el docroot: composer.json/lock/vendor + versión."""
+    _domain, owner, docroot = _resolve_docroot_owner(domain_id, db, current_user)
+    from scripts.composer_manager import composer_status, ComposerError
+    try:
+        return {"status": "success", "data": composer_status(docroot, owner)}
+    except ComposerError as e:
+        raise HTTPException(status_code=422, detail=str(e))
+
+
+@router.get("/domains/{domain_id}/composer/packages")
+async def composer_get_packages(domain_id: int,
+                                current_user: User = Depends(require_auth),
+                                db: Session = Depends(get_db)):
+    """Paquetes instalados (vendor/) con su versión."""
+    _domain, owner, docroot = _resolve_docroot_owner(domain_id, db, current_user)
+    from scripts.composer_manager import composer_packages, ComposerError
+    try:
+        return {"status": "success", "data": composer_packages(docroot, owner)}
+    except ComposerError as e:
+        raise HTTPException(status_code=422, detail=str(e))
+
+
+@router.post("/domains/{domain_id}/composer/{action}")
+async def composer_action(domain_id: int, action: str,
+                          payload: ComposerActionRequest,
+                          current_user: User = Depends(require_auth),
+                          db: Session = Depends(get_db)):
+    """Ejecuta una acción Composer sobre el proyecto del dominio.
+
+    action: require | remove | update | install
+    Body: {package?: "vendor/nombre", dev?: bool}
+      - require/remove: package obligatorio.
+      - update: package opcional (sin él, actualiza todo el proyecto).
+      - install: instala lo declarado en composer.json/lock.
+    """
+    _domain, owner, docroot = _resolve_docroot_owner(domain_id, db, current_user)
+    import scripts.composer_manager as cm
+    from scripts.composer_manager import ComposerError
+    try:
+        if action == "require":
+            if not payload.package:
+                raise HTTPException(status_code=400, detail="package es obligatorio")
+            data = cm.composer_require(docroot, owner, payload.package, bool(payload.dev))
+        elif action == "remove":
+            if not payload.package:
+                raise HTTPException(status_code=400, detail="package es obligatorio")
+            data = cm.composer_remove(docroot, owner, payload.package)
+        elif action == "update":
+            data = cm.composer_update(docroot, owner, payload.package or None)
+        elif action == "install":
+            data = cm.composer_install(docroot, owner)
+        else:
+            raise HTTPException(status_code=400, detail=f"Acción no soportada: {action}")
+        return {"status": "success", "data": data}
+    except HTTPException:
+        raise
+    except ComposerError as e:
+        raise HTTPException(status_code=422, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error en acción Composer: {e}")
