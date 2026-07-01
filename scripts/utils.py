@@ -206,16 +206,21 @@ def remove_wplogin_zone(domain: str) -> None:
 def _wplogin_location_block(domain: str, backend_name: str, ssl: bool,
                             proxy_to_apache: bool = False) -> str:
     """
-    location = /wp-login.php que aplica el rate-limit y sirve la petición por el
-    MISMO camino que el resto del vhost: fastcgi a PHP-FPM en modo nginx puro, o
-    proxy a Apache (:8181) en modo dual (para no saltarse los .htaccess). burst=2
-    + nodelay deja pasar un par de reintentos humanos pero corta el flood. Es un
-    match exacto (=), así que gana siempre al 'location ~ \\.php$' / 'location /'.
+    Rate-limit de wp-login.php: aplica el límite y sirve la petición por el MISMO
+    camino que el resto del vhost: fastcgi a PHP-FPM en modo nginx puro, o proxy a
+    Apache (:8181) en modo dual (para no saltarse los .htaccess). burst=2 + nodelay
+    deja pasar un par de reintentos humanos pero corta el flood.
+
+    Usa `location ~ ^/+wp-login\\.php` (regex) y NO `location = /wp-login.php`
+    (match exacto): igual que con xmlrpc, el exacto no normaliza las barras
+    iniciales y `//wp-login.php` se lo saltaría sin rate-limit. El regex captura
+    cualquier número de barras. Un regex gana al 'location ~ \\.php$' / 'location /'
+    por orden de aparición (va antes en el vhost).
     """
     zone = _wplogin_zone_name(domain)
     if proxy_to_apache:
         return (
-            f"    location = /wp-login.php {{\n"
+            f"    location ~ ^/+wp-login\\.php {{\n"
             f"        limit_req zone={zone} burst=2 nodelay;\n"
             f"        proxy_pass http://127.0.0.1:8181;\n"
             f"        proxy_set_header Host $host;\n"
@@ -226,7 +231,7 @@ def _wplogin_location_block(domain: str, backend_name: str, ssl: bool,
         )
     https_param = "        fastcgi_param HTTPS on;\n" if ssl else ""
     return (
-        f"    location = /wp-login.php {{\n"
+        f"    location ~ ^/+wp-login\\.php {{\n"
         f"        limit_req zone={zone} burst=2 nodelay;\n"
         f"        try_files $uri =404;\n"
         f"        fastcgi_pass php_{backend_name};\n"
@@ -473,8 +478,13 @@ def generate_nginx_config(
     # Bloqueo de XML-RPC (WordPress): 444 = cierra la conexión sin responder, así
     # el bot no gasta PHP-FPM ni recibe pista de que el endpoint existe. Coherente
     # con el bloqueo de bad-bots (también 444). Solo si el dominio lo activó.
+    # OJO al regex y no `location = /xmlrpc.php`: el match exacto NO normaliza las
+    # barras iniciales, así que `//xmlrpc.php` (doble barra) se lo salta y llega a
+    # PHP/Apache arrancando WordPress. Los bots lo explotan en masa (visto ~18k
+    # hits/min a //xmlrpc.php esquivando el bloqueo). `~ ^/+xmlrpc\.php` captura
+    # cualquier número de barras iniciales y con o sin querystring.
     xmlrpc_block = (
-        "    location = /xmlrpc.php { return 444; }\n" if xmlrpc_blocked else ""
+        "    location ~ ^/+xmlrpc\\.php { return 444; }\n" if xmlrpc_blocked else ""
     )
     # Rate-limit de wp-login.php (anti fuerza bruta). Necesita su zona en
     # /etc/nginx/conf.d (la escriben los callers con write_wplogin_zone). Aquí
