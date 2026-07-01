@@ -122,3 +122,4 @@ exit 0
 | 0083 | postscreen (portero anti-bot) en SMTP 25: corta bots por comportamiento (pregreet/pipelining/basura) antes de sondear buzones; sin DNSBL (RBL las hace Rspamd vía unbound); validación+auto-reversión | 2026-07-01 |
 | 0085 | Plugins webmail Roundcube: markasjunk (botón Spam/No-spam, mueve a Junk→lo aprende el imapsieve), zipdownload, archive, attachment_reminder | 2026-07-01 |
 | 0084 | uvicorn --limit-max-requests 500→50000 y RestartSec 10→2 en svqpanel.service: el worker se reciclaba cada pocos minutos por el polling del dashboard y el corte de ~14s hacía que el frontend mostrara "la API no responde (no es JSON)" sin motivo | 2026-07-01 |
+| 0086 | Zona horaria por defecto del webmail (Roundcube) = Europe/Madrid: sin esto usaba 'auto' (UTC) y las fechas salían 1-2h atrasadas; el usuario puede sobreescribirla en Ajustes | 2026-07-01 |

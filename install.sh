@@ -1333,6 +1333,11 @@ PYEOF
 \$config['auto_create_user'] = true;
 \$config['login_autocomplete'] = 2;
 
+// Zona horaria por defecto para TODAS las cuentas (España peninsular). Sin esto,
+// Roundcube usa 'auto' → suele quedar en UTC y las fechas salen 1-2h atrasadas.
+// El usuario puede sobreescribirla en Ajustes → Preferencias → Fecha y hora.
+\$config['timezone'] = 'Europe/Madrid';
+
 // Carpetas especiales (IMAP standard)
 \$config['sent_mbox']   = 'Sent';
 \$config['trash_mbox']  = 'Trash';
