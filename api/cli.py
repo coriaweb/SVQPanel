@@ -1561,6 +1561,19 @@ def cmd_update_geoip(force: bool = False) -> int:
     return 0  # nunca bloquea la cadena de updates/install
 
 
+def cmd_refresh_cloudflare_ips(force: bool = False) -> int:
+    """Descarga los rangos de Cloudflare y escribe el conf.d de real_ip de nginx
+    (recupera la IP real del visitante tras Cloudflare para rate-limit, logs y
+    fail2ban/CrowdSec). Idempotente. Nunca bloquea install/updates."""
+    try:
+        from scripts.cloudflare_realip import refresh
+    except Exception as e:
+        logger.error(f"No se pudo importar cloudflare_realip: {e}")
+        return 0
+    refresh(force=force)
+    return 0
+
+
 def cmd_refresh_suspended_vhosts() -> int:
     """Regenera el vhost de los dominios SUSPENDIDOS (aplica el listen IPv6 a la
     página de suspensión). Idempotente."""
@@ -1929,6 +1942,9 @@ def main():
     p_geo = sub.add_parser("update_geoip",
         help="Descarga/actualiza la base GeoIP (países en estadísticas)")
     p_geo.add_argument("--force", action="store_true", help="Re-descargar aunque ya esté la del mes")
+    p_cf = sub.add_parser("refresh_cloudflare_ips",
+        help="Descarga los rangos de Cloudflare y escribe el conf.d de real_ip de nginx")
+    p_cf.add_argument("--force", action="store_true", help="Reescribir y recargar aunque no cambien los rangos")
     p_cr = sub.add_parser("cron_run",
         help="Wrapper de ejecución de un cron (registra historial). Uso: cron_run <id> '<cmd>'")
     p_cr.add_argument("cron_id", type=int)
@@ -2067,6 +2083,8 @@ def main():
         sys.exit(cmd_refresh_suspended_vhosts())
     if args.cmd == "update_geoip":
         sys.exit(cmd_update_geoip(force=getattr(args, "force", False)))
+    if args.cmd == "refresh_cloudflare_ips":
+        sys.exit(cmd_refresh_cloudflare_ips(force=getattr(args, "force", False)))
     if args.cmd == "cron_run":
         sys.exit(cmd_cron_run(args.cron_id, args.command))
     if args.cmd == "convert_subdomains":

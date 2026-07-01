@@ -2684,6 +2684,18 @@ cat > /etc/cron.d/svqpanel-geoip <<'CRONEOF'
 CRONEOF
 chmod 644 /etc/cron.d/svqpanel-geoip
 
+# Cloudflare real_ip para nginx: recupera la IP real del visitante tras Cloudflare
+# (si no, el rate-limit por IP, los logs y fail2ban/CrowdSec ven la IP de CF y no
+# sirven). Escribe /etc/nginx/conf.d/svqpanel-cloudflare-realip.conf + cron mensual
+# para mantener los rangos al día.
+(cd /opt/svqpanel && /opt/svqpanel/venv/bin/python -m api.cli refresh_cloudflare_ips) || \
+    echo "  ⚠ Rangos Cloudflare no descargados (se reintentará por cron)"
+cat > /etc/cron.d/svqpanel-cloudflare <<'CRONEOF'
+# SVQPanel — actualización mensual de los rangos de Cloudflare (real_ip nginx)
+20 4 5 * * root cd /opt/svqpanel && /opt/svqpanel/venv/bin/python -m api.cli refresh_cloudflare_ips >> /var/log/svqpanel-update.log 2>&1
+CRONEOF
+chmod 644 /etc/cron.d/svqpanel-cloudflare
+
 # Directorio raíz de copias de seguridad (destino local por defecto)
 mkdir -p /backups
 chmod 700 /backups

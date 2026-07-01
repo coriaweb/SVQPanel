@@ -123,3 +123,4 @@ exit 0
 | 0085 | Plugins webmail Roundcube: markasjunk (botón Spam/No-spam, mueve a Junk→lo aprende el imapsieve), zipdownload, archive, attachment_reminder | 2026-07-01 |
 | 0084 | uvicorn --limit-max-requests 500→50000 y RestartSec 10→2 en svqpanel.service: el worker se reciclaba cada pocos minutos por el polling del dashboard y el corte de ~14s hacía que el frontend mostrara "la API no responde (no es JSON)" sin motivo | 2026-07-01 |
 | 0086 | Zona horaria por defecto del webmail (Roundcube) = Europe/Madrid: sin esto usaba 'auto' (UTC) y las fechas salían 1-2h atrasadas; el usuario puede sobreescribirla en Ajustes | 2026-07-01 |
+| 0087 | real_ip de Cloudflare en nginx (set_real_ip_from + CF-Connecting-IP): sin esto nginx veía la IP de CF y no la real → el rate-limit por IP (fuerza bruta wp-login) era esquivable y daba falsos positivos, y fail2ban/CrowdSec baneaban a Cloudflare. Escribe conf.d global + cron mensual de rangos | 2026-07-01 |
