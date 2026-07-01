@@ -250,6 +250,32 @@ def list_collections() -> List[Dict[str, Any]]:
     return out
 
 
+def list_scenarios() -> List[Dict[str, Any]]:
+    """
+    Lista los escenarios instalados (las reglas de detección concretas). A
+    diferencia de las colecciones (paquetes), aquí se ven los escenarios sueltos
+    como http-bf-wordpress_bf_xmlrpc, que no pertenecen a ninguna colección.
+    """
+    rc, data, _ = _run_json(["scenarios", "list"])
+    if rc != 0 or data is None:
+        return []
+    # Estructura: {"scenarios":[...]}
+    items = data.get("scenarios", []) if isinstance(data, dict) else data
+    out: List[Dict[str, Any]] = []
+    for s in items:
+        if not isinstance(s, dict):
+            continue
+        out.append({
+            "name":      s.get("name"),
+            "status":    s.get("status"),
+            "version":   s.get("local_version") or s.get("version"),
+            "description": s.get("description"),
+        })
+    # Orden estable por nombre para una UI predecible.
+    out.sort(key=lambda x: (x.get("name") or ""))
+    return out
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # Métricas y estado del CAPI (community blocklist)
 # ─────────────────────────────────────────────────────────────────────────────
@@ -302,11 +328,13 @@ def overview() -> Dict[str, Any]:
             "decisions": 0,
             "bouncers":  0,
             "collections": 0,
+            "scenarios": 0,
         }
     running = is_running()
     decisions = list_decisions() if running else []
     bouncers = list_bouncers() if running else []
     collections = list_collections() if running else []
+    scenarios = list_scenarios() if running else []
     return {
         "installed":   True,
         "running":     running,
@@ -314,4 +342,5 @@ def overview() -> Dict[str, Any]:
         "decisions":   len(decisions),
         "bouncers":    len(bouncers),
         "collections": len(collections),
+        "scenarios":   len(scenarios),
     }

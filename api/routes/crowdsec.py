@@ -18,6 +18,7 @@ from api.schemas.crowdsec_schemas import (
     CrowdsecAlert,
     CrowdsecBouncer,
     CrowdsecCollection,
+    CrowdsecScenario,
     CrowdsecBanRequest,
     CrowdsecCapiStatus,
 )
@@ -155,6 +156,16 @@ async def list_bouncers(_: dict = Depends(require_admin)):
 async def list_collections(_: dict = Depends(require_admin)):
     _ensure_running()
     return cs.list_collections()
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Escenarios (reglas de detección concretas; incluye los sueltos que no van en
+# ninguna colección, p. ej. http-bf-wordpress_bf_xmlrpc)
+# ─────────────────────────────────────────────────────────────────────────────
+@router.get("/crowdsec/scenarios", response_model=List[CrowdsecScenario])
+async def list_scenarios(_: dict = Depends(require_admin)):
+    _ensure_running()
+    return cs.list_scenarios()
 
 
 # ─────────────────────────────────────────────────────────────────────────────

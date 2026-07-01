@@ -932,6 +932,7 @@ class APIClient {
   getCrowdsecAlerts(limit = 50)   { return this.get(`/api/crowdsec/alerts?limit=${limit}`) }
   getCrowdsecBouncers()           { return this.get('/api/crowdsec/bouncers') }
   getCrowdsecCollections()        { return this.get('/api/crowdsec/collections') }
+  getCrowdsecScenarios()          { return this.get('/api/crowdsec/scenarios') }
   getCrowdsecMetrics()            { return this.get('/api/crowdsec/metrics') }
 
   // Security monitor

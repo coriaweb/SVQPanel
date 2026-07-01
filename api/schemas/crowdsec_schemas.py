@@ -19,6 +19,7 @@ class CrowdsecStatus(BaseModel):
     decisions:    int = 0
     bouncers:     int = 0
     collections:  int = 0
+    scenarios:    int = 0
 
 
 class CrowdsecDecision(BaseModel):
@@ -60,6 +61,15 @@ class CrowdsecBouncer(BaseModel):
 
 
 class CrowdsecCollection(BaseModel):
+    name:        Optional[str] = None
+    status:      Optional[str] = None
+    version:     Optional[str] = None
+    description: Optional[str] = None
+
+
+class CrowdsecScenario(BaseModel):
+    # Un escenario es la regla de detección concreta (p. ej.
+    # http-bf-wordpress_bf_xmlrpc), que puede no pertenecer a ninguna colección.
     name:        Optional[str] = None
     status:      Optional[str] = None
     version:     Optional[str] = None

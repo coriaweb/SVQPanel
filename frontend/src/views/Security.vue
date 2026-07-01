@@ -474,11 +474,12 @@
         <div class="sec-counter"><div class="sec-counter-val">{{ csStatus.decisions }}</div><div class="sec-counter-lbl">Decisiones</div></div>
         <div class="sec-counter"><div class="sec-counter-val">{{ csStatus.bouncers }}</div><div class="sec-counter-lbl">Bouncers</div></div>
         <div class="sec-counter"><div class="sec-counter-val">{{ csStatus.collections }}</div><div class="sec-counter-lbl">Colecciones</div></div>
+        <div class="sec-counter"><div class="sec-counter-val">{{ csStatus.scenarios ?? '—' }}</div><div class="sec-counter-lbl">Escenarios</div></div>
       </div>
 
       <div v-if="csStatus && csStatus.running">
         <div class="sec-tabs" style="margin-bottom:16px">
-          <button v-for="t in [{key:'decisions',icon:'slash-circle',label:'Decisiones'},{key:'alerts',icon:'bell',label:'Alertas'},{key:'bouncers',icon:'shield-shaded',label:'Bouncers'},{key:'collections',icon:'collection',label:'Colecciones'}]"
+          <button v-for="t in [{key:'decisions',icon:'slash-circle',label:'Decisiones'},{key:'alerts',icon:'bell',label:'Alertas'},{key:'bouncers',icon:'shield-shaded',label:'Bouncers'},{key:'collections',icon:'collection',label:'Colecciones'},{key:'scenarios',icon:'diagram-3',label:'Escenarios'}]"
                   :key="t.key" class="sec-tab" :class="{'sec-tab--active':csTab===t.key}" @click="changeCsTab(t.key)">
             <i :class="'bi bi-'+t.icon"></i> {{ t.label }}
           </button>
@@ -572,6 +573,27 @@
                   <td style="font-size:.8rem">{{ c.version || '—' }}</td>
                   <td style="font-size:.8rem">{{ c.status || '—' }}</td>
                   <td style="font-size:.8rem;color:var(--text-muted)">{{ c.description || '—' }}</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        <div v-if="csTab==='scenarios'" class="sec-card">
+          <div class="sec-card-head">
+            <span class="sec-card-title">Escenarios activos (reglas de detección)</span>
+            <button class="sec-icon-btn" @click="loadCsScenarios"><i class="bi bi-arrow-clockwise"></i></button>
+          </div>
+          <div v-if="!csScenarios.length" class="sec-empty"><i class="bi bi-diagram-3"></i><span>No hay escenarios.</span></div>
+          <div v-else class="sec-table-wrap">
+            <table class="sec-table">
+              <thead><tr><th>Nombre</th><th>Versión</th><th>Estado</th><th>Descripción</th></tr></thead>
+              <tbody>
+                <tr v-for="s in csScenarios" :key="s.name">
+                  <td style="font-family:var(--font-mono);font-size:.8rem">{{ s.name }}</td>
+                  <td style="font-size:.8rem">{{ s.version || '—' }}</td>
+                  <td style="font-size:.8rem">{{ s.status || '—' }}</td>
+                  <td style="font-size:.8rem;color:var(--text-muted)">{{ s.description || '—' }}</td>
                 </tr>
               </tbody>
             </table>
@@ -1219,6 +1241,7 @@ const csDecisions   = ref([])
 const csAlerts      = ref([])
 const csBouncers    = ref([])
 const csCollections = ref([])
+const csScenarios   = ref([])
 const showCsBan     = ref(false)
 const csBanForm     = ref({ ip: '', duration: '4h', reason: '', type: 'ban' })
 
@@ -1462,6 +1485,7 @@ function changeCsTab(t) {
   if (t === 'alerts')      loadCsAlerts()
   if (t === 'bouncers')    loadCsBouncers()
   if (t === 'collections') loadCsCollections()
+  if (t === 'scenarios')   loadCsScenarios()
 }
 
 async function loadCsDecisions() {
@@ -1479,6 +1503,10 @@ async function loadCsBouncers() {
 async function loadCsCollections() {
   try { csCollections.value = await api.getCrowdsecCollections() }
   catch (e) { alert('CrowdSec colecciones: ' + e.message) }
+}
+async function loadCsScenarios() {
+  try { csScenarios.value = await api.getCrowdsecScenarios() }
+  catch (e) { alert('CrowdSec escenarios: ' + e.message) }
 }
 
 function openCsBan() {
