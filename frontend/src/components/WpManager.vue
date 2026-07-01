@@ -4,26 +4,25 @@
       <BaseButton variant="ghost" size="sm" icon="arrow-clockwise" :loading="loadingInfo" @click="loadInfo">Refrescar</BaseButton>
     </template>
 
-    <div v-if="loadingInfo && !info" class="wpm-loading"><span class="spinner"></span> Analizando la instalación…</div>
-    <div v-else-if="errorInfo" class="wpm-error"><i class="bi bi-exclamation-triangle"></i> {{ errorInfo }}</div>
-    <div v-else-if="!info" class="wpm-loading">
-      <i class="bi bi-info-circle"></i> No se pudo cargar la información. Pulsa «Refrescar».
-    </div>
+    <div v-if="errorInfo && !info" class="wpm-error"><i class="bi bi-exclamation-triangle"></i> {{ errorInfo }}</div>
 
     <template v-else>
-      <!-- Resumen -->
-      <div class="wpm-summary">
+      <!-- Resumen (solo cuando ya se analizó WP; no bloquea el resto) -->
+      <div v-if="info" class="wpm-summary">
         <div class="wpm-stat"><span class="wpm-stat__k">Versión WP</span><span class="wpm-stat__v mono">{{ info.version || '—' }}</span></div>
         <div class="wpm-stat"><span class="wpm-stat__k">Idioma</span><span class="wpm-stat__v">{{ info.locale || '—' }}</span></div>
         <div class="wpm-stat"><span class="wpm-stat__k">Plugins</span><span class="wpm-stat__v">{{ info.plugins_active }}/{{ info.plugins_total }} activos</span></div>
         <div class="wpm-stat"><span class="wpm-stat__k">Temas</span><span class="wpm-stat__v">{{ info.themes_total }}</span></div>
       </div>
+      <div v-else-if="loadingInfo" class="wpm-summary wpm-summary--loading">
+        <div class="wpm-stat"><span class="wpm-stat__k">Analizando la instalación…</span><span class="wpm-stat__v"><span class="spinner"></span></span></div>
+      </div>
 
-      <!-- Avisos de actualización -->
-      <div v-if="loadingUpdates && !info.updates.checked" class="wpm-uptodate">
+      <!-- Avisos de actualización (independiente; solo se muestra si hay info) -->
+      <div v-if="info && loadingUpdates && !info.updates.checked" class="wpm-uptodate">
         <span class="spinner"></span> Comprobando actualizaciones…
       </div>
-      <div v-else-if="totalUpdates > 0" class="wpm-updbanner">
+      <div v-else-if="info && totalUpdates > 0" class="wpm-updbanner">
         <i class="bi bi-arrow-up-circle"></i>
         <span>Hay <strong>{{ totalUpdates }}</strong> actualización(es) pendiente(s):
           <template v-if="info.updates.core">core, </template>
@@ -31,22 +30,27 @@
           <template v-if="info.updates.themes">{{ info.updates.themes }} tema(s)</template>
         </span>
       </div>
-      <div v-else-if="info.updates.checked" class="wpm-uptodate"><i class="bi bi-check-circle"></i> Todo está actualizado.</div>
+      <div v-else-if="info && info.updates.checked" class="wpm-uptodate"><i class="bi bi-check-circle"></i> Todo está actualizado.</div>
 
+      <!-- Los tabs SIEMPRE visibles: no esperan al análisis de WP (que es lento).
+           Cada pane carga lo suyo; Seguridad va a la BD y es instantáneo. -->
       <BaseTabs v-model="tab" :tabs="tabs" />
 
-      <!-- ── Tab General ── -->
+      <!-- ── Tab General (necesita info de WP) ── -->
       <div v-if="tab === 'general'" class="wpm-pane">
-        <div class="wpm-actions">
-          <BaseButton v-if="info.updates.core" variant="primary" size="sm" icon="arrow-up-circle" :loading="busy==='core'" @click="run('update-core', {}, 'core')">Actualizar WordPress</BaseButton>
-          <a class="wpm-link" :href="adminUrl" target="_blank"><i class="bi bi-box-arrow-up-right"></i> Abrir wp-admin</a>
-        </div>
-        <div class="wpm-quick">
-          <button class="wpm-qbtn" :disabled="!!busy" @click="run('flush-permalinks', {}, 'perma')"><i class="bi bi-link-45deg"></i> Regenerar permalinks</button>
-          <button class="wpm-qbtn" :disabled="!!busy" @click="run('flush-cache', {}, 'cache')"><i class="bi bi-trash"></i> Vaciar caché</button>
-          <button class="wpm-qbtn" :disabled="!!busy" @click="toggleMaintenance"><i class="bi bi-cone-striped"></i> {{ info.maintenance ? 'Quitar mantenimiento' : 'Modo mantenimiento' }}</button>
-          <button class="wpm-qbtn wpm-qbtn--warn" :disabled="!!busy" @click="confirmSalts"><i class="bi bi-shield-lock"></i> Regenerar claves (cierra sesiones)</button>
-        </div>
+        <div v-if="!info" class="wpm-loading"><span class="spinner"></span> Analizando la instalación de WordPress…</div>
+        <template v-else>
+          <div class="wpm-actions">
+            <BaseButton v-if="info.updates.core" variant="primary" size="sm" icon="arrow-up-circle" :loading="busy==='core'" @click="run('update-core', {}, 'core')">Actualizar WordPress</BaseButton>
+            <a class="wpm-link" :href="adminUrl" target="_blank"><i class="bi bi-box-arrow-up-right"></i> Abrir wp-admin</a>
+          </div>
+          <div class="wpm-quick">
+            <button class="wpm-qbtn" :disabled="!!busy" @click="run('flush-permalinks', {}, 'perma')"><i class="bi bi-link-45deg"></i> Regenerar permalinks</button>
+            <button class="wpm-qbtn" :disabled="!!busy" @click="run('flush-cache', {}, 'cache')"><i class="bi bi-trash"></i> Vaciar caché</button>
+            <button class="wpm-qbtn" :disabled="!!busy" @click="toggleMaintenance"><i class="bi bi-cone-striped"></i> {{ info.maintenance ? 'Quitar mantenimiento' : 'Modo mantenimiento' }}</button>
+            <button class="wpm-qbtn wpm-qbtn--warn" :disabled="!!busy" @click="confirmSalts"><i class="bi bi-shield-lock"></i> Regenerar claves (cierra sesiones)</button>
+          </div>
+        </template>
       </div>
 
       <!-- ── Tab Plugins / Temas ── -->
@@ -389,6 +393,7 @@ export default {
 .wpm-loading, .wpm-error { display:flex; align-items:center; gap:.5rem; padding:.75rem 0; color: var(--text-muted); }
 .wpm-error { color: var(--danger); }
 .wpm-summary { display:grid; grid-template-columns: repeat(auto-fit, minmax(130px,1fr)); gap:.5rem; margin-bottom:.75rem; }
+.wpm-summary--loading { opacity:.7; }
 .wpm-stat { background: var(--surface-inset); border:1px solid var(--border); border-radius: var(--radius-md); padding:.5rem .75rem; }
 .wpm-stat__k { display:block; font-size:.72rem; text-transform:uppercase; letter-spacing:.04em; color: var(--text-muted); }
 .wpm-stat__v { font-weight:600; }

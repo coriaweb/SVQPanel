@@ -1143,24 +1143,22 @@ async def get_domain_wp_protection(
         raise HTTPException(status_code=404, detail="Dominio no encontrado")
     _check_access(current_user, domain, db)
 
-    owner = db.query(User).filter(User.id == domain.user_id).first()
-    attack = {"under_attack": False, "xmlrpc_hits": 0, "wplogin_hits": 0,
-              "window_min": 60, "threshold": 0}
-    if owner:
-        try:
-            from scripts.wp_attack_detector import analyze_domain
-            attack = analyze_domain(owner.username, domain.domain_name)
-            # No marcar "bajo ataque" un vector que YA está mitigado en este
-            # dominio: aunque el log siga mostrando hits históricos, si ya
-            # bloqueamos xmlrpc / pusimos rate-limit, el ataque está contenido.
-            still_xmlrpc = ("xmlrpc" in attack["attack_targets"]) and not domain.xmlrpc_blocked
-            still_login  = ("wp-login" in attack["attack_targets"]) and (domain.wp_login_ratelimit or 0) == 0
-            attack["under_attack"] = bool(still_xmlrpc or still_login)
-            attack["attack_targets"] = (
-                (["xmlrpc"] if still_xmlrpc else []) + (["wp-login"] if still_login else [])
-            )
-        except Exception:
-            pass
+    # Lee los hits CACHEADOS en BD (los refresca el cron cada 3h, ventana 24h).
+    # NO analiza el log en vivo → el pane carga instantáneo (antes escaneaba hasta
+    # 20 MB de access.log en cada apertura y hacía lento el pane de Seguridad).
+    from scripts.wp_attack_detector import DEFAULT_THRESHOLD
+    xh = int(domain.wp_xmlrpc_hits or 0)
+    wh = int(domain.wp_wplogin_hits or 0)
+    still_xmlrpc = (xh >= DEFAULT_THRESHOLD) and not domain.xmlrpc_blocked
+    still_login  = (wh >= DEFAULT_THRESHOLD) and (domain.wp_login_ratelimit or 0) == 0
+    attack = {
+        "under_attack":   bool(still_xmlrpc or still_login),
+        "xmlrpc_hits":    xh,
+        "wplogin_hits":   wh,
+        "threshold":      DEFAULT_THRESHOLD,
+        "attack_targets": (["xmlrpc"] if still_xmlrpc else []) + (["wp-login"] if still_login else []),
+        "checked_at":     domain.wp_attack_checked_at.isoformat() if domain.wp_attack_checked_at else None,
+    }
 
     return {
         "xmlrpc_blocked":     bool(domain.xmlrpc_blocked),
