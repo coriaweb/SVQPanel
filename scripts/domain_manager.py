@@ -30,6 +30,21 @@ class DomainManager(SystemManager):
     def __init__(self):
         super().__init__(require_root=True)
 
+    def _reload_crowdsec(self) -> None:
+        """Reinicia CrowdSec (best-effort) para que descubra el log del dominio
+        recién creado. CrowdSec expande el glob de acquisitions
+        (/home/*/web/*/logs/*.access.log) SOLO al arrancar, y `reload` NO lo
+        re-escanea (verificado en v1.7.8): hace falta `restart`. Sin esto, el
+        log de un dominio cuyo directorio no existía al arrancar (típicamente un
+        usuario NUEVO) no se vigila, y ese sitio queda fuera de la protección
+        anti fuerza-bruta/scan de CrowdSec. El restart tarda ~2-3s y NO pierde
+        los baneos (viven en la BD de CrowdSec + los aplica el firewall-bouncer,
+        un proceso aparte). No es crítico: si CrowdSec no está o falla, se ignora."""
+        try:
+            self.execute_command(["systemctl", "restart", "crowdsec"], check=False)
+        except Exception as e:
+            logger.debug(f"restart crowdsec omitido: {e}")
+
     def create_domain(
         self,
         username: str,
@@ -241,6 +256,10 @@ class DomainManager(SystemManager):
 
                 # Test y reload Nginx (con diagnóstico de vhost ajeno/huérfano)
                 reload_nginx_or_diagnose(domain_name)
+
+            # Que CrowdSec empiece a vigilar el log de este dominio ya (si no,
+            # solo lo haría tras el próximo reinicio del servicio).
+            self._reload_crowdsec()
 
             logger.info(f"Domain created: {domain_name}")
             return {
