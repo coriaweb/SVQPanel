@@ -111,17 +111,29 @@ def list_decisions() -> List[Dict[str, Any]]:
             continue
         if "decisions" in src:
             # Forma anidada: solo procesamos las decisiones reales; [] se ignora.
+            # El país (source.cn) va en el objeto PADRE, no en cada decisión hija
+            # (que solo trae value/type/duration/scenario…), así que se lo pasamos.
+            country = _source_country(src.get("source"))
             for d in src.get("decisions") or []:
                 if isinstance(d, dict) and d.get("value"):
-                    out.append(_decision_row(d))
+                    out.append(_decision_row(d, country))
         elif src.get("value"):
             # Forma plana: la propia fuente es una decisión.
-            out.append(_decision_row(src))
+            out.append(_decision_row(src, _source_country(src.get("source"))))
     return out
 
 
-def _decision_row(d: Dict[str, Any]) -> Dict[str, Any]:
-    """Normaliza una decisión de cscli a la fila que consume el frontend."""
+def _source_country(source: Any) -> str:
+    """País de un 'source' de cscli. cscli usa 'cn' (country) en decisiones y
+    alertas; se admite 'country' por robustez ante versiones."""
+    if not isinstance(source, dict):
+        return ""
+    return source.get("cn") or source.get("country") or ""
+
+
+def _decision_row(d: Dict[str, Any], country: str = "") -> Dict[str, Any]:
+    """Normaliza una decisión de cscli a la fila que consume el frontend. El país
+    llega del objeto padre (source.cn); la decisión en sí no lo trae."""
     simulated = d.get("simulated", False)
     return {
         "id":         d.get("id"),
@@ -131,7 +143,7 @@ def _decision_row(d: Dict[str, Any]) -> Dict[str, Any]:
         "scenario":   d.get("scenario"),
         "origin":     d.get("origin"),
         "duration":   d.get("duration"),
-        "country":    "SIMULATED" if simulated else (d.get("country") or ""),
+        "country":    "SIMULATED" if simulated else (country or d.get("country") or ""),
         "created_at": d.get("created_at") or d.get("until"),
         "until":      d.get("until"),
     }
