@@ -858,6 +858,40 @@
             </div>
           </div>
         </div>
+
+        <!-- Tamaño máximo de mensaje (global) -->
+        <div class="card mt-3" v-if="msgSize.available">
+          <div class="card-header">
+            <i class="bi bi-paperclip me-2"></i> Tamaño máximo de mensaje
+          </div>
+          <div class="card-body">
+            <p class="text-muted small mb-3">
+              Límite de tamaño por correo (con adjuntos) que acepta el servidor, tanto al
+              <strong>recibir</strong> como al <strong>enviar</strong>. Si un mensaje lo supera,
+              se rechaza con <code>552 5.3.4 Message size exceeds fixed limit</code>.
+              Afecta a todos los dominios. Valor por defecto: {{ msgSize.default_mb }} MB.
+            </p>
+            <div class="row g-2 align-items-end" style="max-width:420px">
+              <div class="col-auto">
+                <label class="form-label small mb-1">Tamaño máximo</label>
+                <div class="input-group input-group-sm" style="width:160px">
+                  <input v-model.number="msgSize.mb" type="number" min="1" :max="msgSize.max_mb"
+                         class="form-control text-end">
+                  <span class="input-group-text">MB</span>
+                </div>
+              </div>
+              <div class="col-auto">
+                <button class="btn btn-primary btn-sm" @click="saveMsgSize" :disabled="msgSizeSaving">
+                  <span v-if="msgSizeSaving" class="spinner-border spinner-border-sm me-1"></span>
+                  <i v-else class="bi bi-save me-1"></i>Guardar
+                </button>
+              </div>
+            </div>
+            <div class="form-text mt-2">
+              Rango permitido: 1 – {{ msgSize.max_mb }} MB. Se aplica al instante (recarga Postfix).
+            </div>
+          </div>
+        </div>
       </div>
 
       <!-- Guardar configuración general (solo pestañas con campos del form) -->
@@ -1017,6 +1051,10 @@ export default {
     const smtpTestOk  = ref(false)
     const showSmtpTest = ref(false)
 
+    // ─── Tamaño máximo de mensaje (global, MX + envío) ───
+    const msgSize = reactive({ mb: 25, default_mb: 25, max_mb: 200, available: true })
+    const msgSizeSaving = ref(false)
+
     // ─── Backup del panel ───
     const panelBackups = ref([])
     const pbRunning = ref(false)
@@ -1157,6 +1195,36 @@ export default {
         smtp.from_name = r.from_name || 'SVQPanel'
         smtp.has_password = r.has_password || false
       } catch { /* silencioso */ }
+    }
+
+    const loadMsgSize = async () => {
+      try {
+        const r = await api.get('/api/mail/message-size-limit')
+        msgSize.mb = r.mb
+        msgSize.default_mb = r.default_mb ?? 25
+        msgSize.max_mb = r.max_mb ?? 200
+        msgSize.available = true
+      } catch {
+        // Postfix no instalado u otro error: ocultamos la tarjeta.
+        msgSize.available = false
+      }
+    }
+
+    const saveMsgSize = async () => {
+      const n = Math.round(Number(msgSize.mb) || 0)
+      if (n < 1 || n > msgSize.max_mb) {
+        store.showNotification(`El tamaño debe estar entre 1 y ${msgSize.max_mb} MB`, 'danger'); return
+      }
+      msgSizeSaving.value = true
+      try {
+        await api.put(`/api/mail/message-size-limit?mb=${n}`)
+        store.showNotification(`Tamaño máximo de mensaje: ${n} MB`, 'success')
+        await loadMsgSize()
+      } catch (e) {
+        store.showNotification('Error: ' + (e.message || e), 'danger')
+      } finally {
+        msgSizeSaving.value = false
+      }
     }
 
     const saveSmtp = async () => {
@@ -1581,6 +1649,7 @@ export default {
       loadCurrentTimezone()
       loadRelay()
       loadSmtp()
+      loadMsgSize()
       loadWhitelist()
       loadPanelBackups()
     })
@@ -1590,6 +1659,7 @@ export default {
       pwdTest,
       smtp, smtpSaving, smtpTesting, smtpTestMsg, smtpTestOk,
       showSmtpTest, smtpTestTo, saveSmtp, openSmtpTest, sendSmtpTest,
+      msgSize, msgSizeSaving, saveMsgSize,
       wl, wlSaving, showWlConfirm, previewIps, confirmSaveWhitelist, saveWhitelist,
       panelBackups, pbRunning, runPanelBackup, downloadUrl, fmtBytes, formatBackupDate,
       pbRetention, pbSavingRet, savePbRetention,

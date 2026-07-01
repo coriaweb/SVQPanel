@@ -883,6 +883,11 @@ if [[ "$INSTALL_MAIL" == true ]]; then
     postconf -e "myhostname = $(hostname -f)"
     postconf -e "myorigin = /etc/mailname"
 
+    # Tamaño máximo de mensaje: 25 MB (como Gmail). Postfix trae 10 MB por
+    # defecto, que se queda corto para adjuntos. Ajustable después desde el
+    # panel (Configuración → Email → Tamaño máximo de mensaje).
+    postconf -e "message_size_limit = 26214400"
+
     # Submission (puerto 587) para clientes de correo
     if ! grep -q "^submission" /etc/postfix/master.cf; then
         cat >> /etc/postfix/master.cf << 'MASTEREOF'

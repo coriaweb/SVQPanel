@@ -951,6 +951,55 @@ vacation
         return {"success": True, "domain": domain_name}
 
     # ─────────────────────────────────────────────────────────────────────
+    # Tamaño máximo de mensaje (message_size_limit, GLOBAL)
+    # ─────────────────────────────────────────────────────────────────────
+
+    # Postfix trae 10 MB por defecto; nosotros ponemos 25 MB (como Gmail).
+    DEFAULT_MESSAGE_SIZE_MB = 25
+    # Cota de seguridad para no permitir valores absurdos desde el panel.
+    MAX_MESSAGE_SIZE_MB = 200
+
+    def get_message_size_limit(self) -> dict:
+        """Lee el tope de tamaño por mensaje (message_size_limit) en bytes y MB.
+
+        Un valor 0 en Postfix significa "sin límite"; lo reportamos tal cual.
+        """
+        if not self.mail_available():
+            return {"success": False, "reason": "postfix_not_installed"}
+        code, out, _ = self.execute_command(
+            ["postconf", "-h", "message_size_limit"], check=False)
+        try:
+            bytes_ = int((out or "").strip())
+        except (ValueError, TypeError):
+            bytes_ = 10240000  # default de Postfix si no se pudo leer
+        return {
+            "success": True,
+            "bytes": bytes_,
+            "mb": round(bytes_ / (1024 * 1024), 1) if bytes_ else 0,
+        }
+
+    def set_message_size_limit(self, mb: int) -> dict:
+        """Fija el tope de tamaño por mensaje (GLOBAL) en MB y recarga Postfix.
+
+        `mb` se valida contra MAX_MESSAGE_SIZE_MB. Un valor <= 0 se rechaza
+        (no permitimos "ilimitado" desde el panel, sería un pie de disparo).
+        """
+        if not self.mail_available():
+            return {"success": False, "reason": "postfix_not_installed"}
+        try:
+            mb = int(mb)
+        except (ValueError, TypeError):
+            return {"success": False, "reason": "invalid_value"}
+        if mb < 1 or mb > self.MAX_MESSAGE_SIZE_MB:
+            return {"success": False, "reason": "out_of_range",
+                    "max_mb": self.MAX_MESSAGE_SIZE_MB}
+        bytes_ = mb * 1024 * 1024
+        self.execute_command(["postconf", "-e", f"message_size_limit = {bytes_}"])
+        self._reload_postfix()
+        logger.info(f"set_message_size_limit: {mb} MB ({bytes_} bytes)")
+        return {"success": True, "bytes": bytes_, "mb": mb}
+
+    # ─────────────────────────────────────────────────────────────────────
     # Utilidades de estado
     # ─────────────────────────────────────────────────────────────────────
 

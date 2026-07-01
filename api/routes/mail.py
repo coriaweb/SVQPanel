@@ -1205,6 +1205,45 @@ async def set_global_greylisting(enabled: bool = True,
     return {"status": "success", "enabled": bool(enabled)}
 
 
+# ─── Tamaño máximo de mensaje (global) ────────────────────────────────────────
+
+@router.get("/mail/message-size-limit")
+async def get_message_size_limit(current_user=Depends(require_admin)):
+    """[Admin] Tope de tamaño por mensaje del servidor (message_size_limit)."""
+    from scripts.mail_manager import MailManager
+    res = MailManager().get_message_size_limit()
+    if not res.get("success"):
+        raise HTTPException(status_code=400,
+            detail="Postfix no está instalado en este servidor.")
+    return {
+        "mb": res["mb"],
+        "bytes": res["bytes"],
+        "default_mb": MailManager.DEFAULT_MESSAGE_SIZE_MB,
+        "max_mb": MailManager.MAX_MESSAGE_SIZE_MB,
+    }
+
+
+@router.put("/mail/message-size-limit")
+async def set_message_size_limit(mb: int, current_user=Depends(require_admin)):
+    """[Admin] Fija el tope de tamaño por mensaje (en MB) para TODO el servidor.
+
+    Afecta a lo que aceptan tanto la recepción (MX) como el envío. Postfix se
+    recarga al aplicar. Rango permitido: 1..MAX_MESSAGE_SIZE_MB MB.
+    """
+    from scripts.mail_manager import MailManager
+    res = MailManager().set_message_size_limit(mb)
+    if not res.get("success"):
+        reason = res.get("reason", "")
+        if reason == "postfix_not_installed":
+            raise HTTPException(status_code=400,
+                detail="Postfix no está instalado en este servidor.")
+        if reason == "out_of_range":
+            raise HTTPException(status_code=422,
+                detail=f"El valor debe estar entre 1 y {res.get('max_mb')} MB.")
+        raise HTTPException(status_code=422, detail="Valor de tamaño no válido.")
+    return {"status": "success", "mb": res["mb"], "bytes": res["bytes"]}
+
+
 # ─── Mover spam a Junk (global + por dominio) ─────────────────────────────────
 
 @router.get("/mail/domains/{domain_id}/spam-to-junk")

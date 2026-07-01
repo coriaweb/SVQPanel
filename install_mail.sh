@@ -141,6 +141,11 @@ hostname -f > /etc/mailname
 postconf -e "myhostname = $(hostname -f)"
 postconf -e "myorigin = /etc/mailname"
 
+# Tamaño máximo de mensaje: 25 MB (como Gmail). Postfix trae 10 MB por defecto,
+# que se queda corto para adjuntos. Ajustable después desde el panel
+# (Configuración → Email → Tamaño máximo de mensaje).
+postconf -e "message_size_limit = 26214400"
+
 # ── SRS (Sender Rewriting Scheme) ──────────────────────────────────────────────
 # Cuando un alias/reenvío reenvía correo a Gmail/Outlook/etc., el envelope-from
 # original (de OTRO dominio) hace que el destino compruebe SPF contra NUESTRA IP
