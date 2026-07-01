@@ -129,6 +129,12 @@ class Domain(Base):
     # 0 = desactivado. >0 = nº máximo de peticiones/min por IP a /wp-login.php.
     wp_login_ratelimit = Column(Integer, default=0, nullable=False)
 
+    # Cache del análisis de ataque (lo actualiza un cron cada ~3h, ventana 24h).
+    # Evita escanear los access.log en vivo cada vez que se abre la vista admin.
+    wp_xmlrpc_hits       = Column(Integer, default=0, nullable=False)   # hits a xmlrpc.php
+    wp_wplogin_hits      = Column(Integer, default=0, nullable=False)   # hits a wp-login.php
+    wp_attack_checked_at = Column(DateTime, nullable=True)             # última medición
+
     # Despliegue Git (Fase 21) — repo desplegado en public_html (symlink a
     # releases/). La clave privada del deploy key NO va en BD (vive en ~/.ssh).
     git_enabled        = Column(Boolean, default=False, nullable=False)

@@ -28,6 +28,7 @@ INTERVAL_SECONDS = 300        # métricas: cada 5 minutos
 DNS_HEALTH_SECONDS = 600      # salud del cluster DNS: cada 10 minutos
 LICENSE_SECONDS = 43200       # validación de licencia: cada 12 horas
 DISK_USAGE_SECONDS = 43200    # peso en disco de los dominios: cada 12 horas
+WP_ATTACK_SECONDS = 10800     # análisis de ataque WP (xmlrpc/wp-login): cada 3 horas
 
 
 def _loop():
@@ -36,6 +37,7 @@ def _loop():
     last_dns = 0.0
     last_license = 0.0
     last_disk = 0.0
+    last_wp_attack = 0.0
     while True:
         try:
             _sample_once()
@@ -64,6 +66,14 @@ def _loop():
                 _disk_usage_once()
             except Exception:
                 logger.exception("Error en disk-usage")
+        # Análisis de ataque WP cada 3h: cachea los hits en BD para que la vista
+        # admin lea de BD (instantáneo) sin escanear los access.log en vivo.
+        if now - last_wp_attack >= WP_ATTACK_SECONDS:
+            last_wp_attack = now
+            try:
+                _wp_attack_once()
+            except Exception:
+                logger.exception("Error en wp-attack-scan")
         time.sleep(INTERVAL_SECONDS)
 
 
@@ -90,6 +100,16 @@ def _disk_usage_once():
         logger.info("disk-usage: peso recalculado para %d dominio(s)", n)
     finally:
         db.close()
+
+
+def _wp_attack_once():
+    """Refresca el cache de ataques WordPress (hits a xmlrpc/wp-login en 24h) de
+    todos los dominios y lo persiste en BD. La vista admin de Seguridad lee esos
+    valores cacheados en vez de escanear los access.log en vivo (que con 40+
+    dominios era lento). Ventana/umbral por defecto del detector."""
+    from scripts.wp_attack_detector import refresh_all_domains
+    n = refresh_all_domains()
+    logger.info("wp-attack-scan: ataques WP recalculados para %d dominio(s)", n)
 
 
 def _license_check_once():

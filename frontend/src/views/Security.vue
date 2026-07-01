@@ -117,75 +117,6 @@
       </div>
     </div>
 
-    <!-- Protección WordPress de todos los dominios (gestión admin) -->
-    <div class="sec-card iso-card" style="margin-top:16px">
-      <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:1rem;flex-wrap:wrap">
-        <div style="display:flex;gap:.75rem;align-items:flex-start">
-          <div class="iso-icon" :class="wpAtkCount ? 'is-danger' : 'is-ok'">
-            <i class="bi bi-wordpress"></i>
-          </div>
-          <div>
-            <div style="font-weight:600;font-size:1rem;margin-bottom:.25rem">Protección WordPress (fuerza bruta)</div>
-            <p style="font-size:.82rem;color:var(--text-muted);margin:0 0 .5rem;max-width:600px">
-              Estado de <code>xmlrpc.php</code> y <code>wp-login.php</code> de cada dominio. Activa o quita la
-              protección al vuelo. Los que reciben un ataque ahora mismo aparecen marcados arriba.
-            </p>
-            <div v-if="wpLoading" style="font-size:.82rem;color:var(--text-muted)">
-              <span class="spinner-border spinner-border-sm"></span> Analizando dominios…
-            </div>
-            <div v-else style="display:flex;gap:6px;flex-wrap:wrap">
-              <span class="sec-badge" :class="wpAtkCount ? 'sec-badge--danger' : 'sec-badge--on'">{{ wpAtkCount }} bajo ataque</span>
-              <span class="sec-badge sec-badge--on">{{ wpProtectedCount }} protegidos</span>
-              <span class="sec-badge sec-badge--off">{{ wpRows.length }} dominios</span>
-            </div>
-          </div>
-        </div>
-        <div style="display:flex;gap:6px;flex-shrink:0">
-          <button class="sec-btn sec-btn--ghost sec-btn--sm" @click="loadWpRows" :disabled="wpLoading">
-            <i class="bi bi-arrow-repeat"></i> Reanalizar
-          </button>
-          <button v-if="wpAtkCount > 1" class="sec-btn sec-btn--danger sec-btn--sm" @click="protectAllUnderAttack" :disabled="wpBusy">
-            <span v-if="wpBusy" class="spinner-border spinner-border-sm"></span>
-            <i v-else class="bi bi-shield-fill-check"></i> Proteger los {{ wpAtkCount }} atacados
-          </button>
-        </div>
-      </div>
-
-      <div v-if="!wpLoading && wpRows.length" class="wp-table-wrap" style="margin-top:1rem">
-        <table class="wp-table">
-          <thead>
-            <tr><th>Dominio</th><th>Propietario</th><th style="text-align:center">XML-RPC</th><th style="text-align:center">Login (rate-limit)</th><th></th></tr>
-          </thead>
-          <tbody>
-            <tr v-for="d in wpRows" :key="d.domain_id" :class="{ 'wp-row--attack': d.under_attack }">
-              <td>
-                <span style="font-family:var(--font-mono);font-weight:600">{{ d.domain }}</span>
-                <span v-if="d.under_attack" class="wp-attack-tag" title="Bajo ataque ahora mismo">
-                  <i class="bi bi-exclamation-octagon-fill"></i> ataque ({{ d.targets.join(' + ') }})
-                </span>
-              </td>
-              <td style="color:var(--text-muted)">{{ d.owner }}</td>
-              <td style="text-align:center">
-                <button type="button" class="wp-pill" :class="d.xmlrpc_blocked ? 'is-blocked' : 'is-open'"
-                        :disabled="d._busy" @click="toggleRowXmlrpc(d)">
-                  {{ d.xmlrpc_blocked ? 'Bloqueado' : 'Permitido' }}
-                </button>
-              </td>
-              <td style="text-align:center">
-                <button type="button" class="wp-pill" :class="d.wp_login_ratelimit ? 'is-blocked' : 'is-open'"
-                        :disabled="d._busy" @click="toggleRowLogin(d)">
-                  {{ d.wp_login_ratelimit ? (d.wp_login_ratelimit + '/min') : 'Sin límite' }}
-                </button>
-              </td>
-              <td style="text-align:right">
-                <span v-if="d._busy" class="spinner-border spinner-border-sm"></span>
-              </td>
-            </tr>
-          </tbody>
-        </table>
-      </div>
-    </div>
-
     <!-- Antivirus de correo (ClamAV) -->
     <div v-if="av && av.available" class="sec-card iso-card" style="margin-top:16px">
       <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:1rem;flex-wrap:wrap">
@@ -288,6 +219,7 @@
         {key:'fail2ban',    icon:'lock',            label:'Fail2ban'},
         {key:'iplists',     icon:'list-task',       label:'Listas IP'},
         {key:'crowdsec',    icon:'shield-check',    label:'CrowdSec'},
+        {key:'wordpress',   icon:'wordpress',       label:'WordPress'},
         {key:'connections', icon:'broadcast',       label:'Conexiones'},
         {key:'audit',       icon:'journal-text',    label:'Auditoría'},
         {key:'badbots',     icon:'robot',           label:'Bad Bots'},
@@ -648,6 +580,74 @@
       </div>
     </div>
 
+    <!-- WordPress: protección anti fuerza bruta de todos los dominios -->
+    <div v-if="tab==='wordpress'">
+      <div class="sec-card">
+        <div class="sec-card-head">
+          <span class="sec-card-title"><i class="bi bi-shield-lock"></i> Protección WordPress (fuerza bruta)</span>
+          <div style="display:flex;gap:6px;align-items:center">
+            <span class="sec-badge" :class="wpAtkCount ? 'sec-badge--danger' : 'sec-badge--on'">{{ wpAtkCount }} bajo ataque</span>
+            <span class="sec-badge sec-badge--on">{{ wpProtectedCount }} protegidos</span>
+            <span class="sec-badge sec-badge--off">{{ wpRows.length }} dominios</span>
+            <button class="sec-btn sec-btn--ghost sec-btn--sm" @click="loadWpRows" :disabled="wpLoading" title="Recargar de BD">
+              <i class="bi bi-arrow-repeat"></i>
+            </button>
+            <button v-if="wpAtkCount > 1" class="sec-btn sec-btn--danger sec-btn--sm" @click="protectAllUnderAttack" :disabled="wpBusy">
+              <span v-if="wpBusy" class="spinner-border spinner-border-sm"></span>
+              <i v-else class="bi bi-shield-fill-check"></i> Proteger los {{ wpAtkCount }}
+            </button>
+          </div>
+        </div>
+        <div class="sec-card-body">
+          <p class="sec-hint" style="margin-bottom:.75rem">
+            Intentos a <code>xmlrpc.php</code> y <code>wp-login.php</code> en las últimas 24h (se recalcula
+            cada 3h; umbral de aviso: <b>{{ wpThreshold.toLocaleString() }}</b>).
+            <span v-if="wpCheckedAt">Último análisis: {{ formatCheckedAt }}.</span>
+            <span v-else style="color:var(--warning)">Aún sin datos (el primer análisis corre al arrancar el panel).</span>
+            Pincha una celda para activar/quitar la protección.
+          </p>
+          <div v-if="wpLoading" style="color:var(--text-muted)"><span class="spinner-border spinner-border-sm"></span> Cargando…</div>
+          <div v-else class="sec-table-wrap">
+            <table class="sec-table wp-table">
+              <thead>
+                <tr>
+                  <th>Dominio</th><th>Propietario</th>
+                  <th style="text-align:right">xmlrpc (24h)</th>
+                  <th style="text-align:right">wp-login (24h)</th>
+                  <th style="text-align:center">XML-RPC</th>
+                  <th style="text-align:center">Login</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr v-for="d in wpRows" :key="d.domain_id" :class="{ 'wp-row--attack': d.under_attack }">
+                  <td>
+                    <span style="font-family:var(--font-mono);font-weight:600">{{ d.domain }}</span>
+                    <span v-if="d.under_attack" class="wp-attack-tag" title="Bajo ataque"><i class="bi bi-exclamation-octagon-fill"></i></span>
+                  </td>
+                  <td style="color:var(--text-muted)">{{ d.owner }}</td>
+                  <td style="text-align:right;font-variant-numeric:tabular-nums" :class="{ 'wp-hot': d.xmlrpc_hits >= wpThreshold }">{{ d.xmlrpc_hits.toLocaleString() }}</td>
+                  <td style="text-align:right;font-variant-numeric:tabular-nums" :class="{ 'wp-hot': d.wplogin_hits >= wpThreshold }">{{ d.wplogin_hits.toLocaleString() }}</td>
+                  <td style="text-align:center">
+                    <button type="button" class="wp-pill" :class="d.xmlrpc_blocked ? 'is-blocked' : 'is-open'"
+                            :disabled="d._busy" @click="toggleRowXmlrpc(d)">
+                      {{ d.xmlrpc_blocked ? 'Bloqueado' : 'Permitido' }}
+                    </button>
+                  </td>
+                  <td style="text-align:center">
+                    <button type="button" class="wp-pill" :class="d.wp_login_ratelimit ? 'is-blocked' : 'is-open'"
+                            :disabled="d._busy" @click="toggleRowLogin(d)">
+                      {{ d.wp_login_ratelimit ? (d.wp_login_ratelimit + '/min') : 'Sin límite' }}
+                    </button>
+                  </td>
+                </tr>
+                <tr v-if="!wpRows.length"><td colspan="6" style="text-align:center;color:var(--text-muted);padding:1rem">No hay dominios.</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    </div>
+
     <!-- Conexiones -->
     <div v-if="tab==='connections'">
       <div class="sec-card">
@@ -1000,17 +1000,26 @@ async function repairIsolation() {
 }
 
 // ── Protección WordPress de todos los dominios (gestión admin) ─────────────
-const wpRows    = ref([])
-const wpLoading = ref(false)
-const wpBusy    = ref(false)
+const wpRows      = ref([])
+const wpLoading   = ref(false)
+const wpBusy      = ref(false)
+const wpThreshold = ref(2000)
+const wpCheckedAt = ref(null)
 const wpAtkCount       = computed(() => wpRows.value.filter(d => d.under_attack).length)
 const wpProtectedCount = computed(() => wpRows.value.filter(d => d.xmlrpc_blocked && d.wp_login_ratelimit > 0).length)
+const formatCheckedAt = computed(() => {
+  if (!wpCheckedAt.value) return ''
+  const d = new Date(wpCheckedAt.value + (wpCheckedAt.value.endsWith('Z') ? '' : 'Z'))
+  return d.toLocaleString('es-ES', { day:'2-digit', month:'2-digit', hour:'2-digit', minute:'2-digit' })
+})
 
 async function loadWpRows() {
   wpLoading.value = true
   try {
     const r = await api.getWpProtectionOverview()
     wpRows.value = (r.domains || []).map(d => ({ ...d, _busy: false }))
+    wpThreshold.value = r.threshold || 2000
+    wpCheckedAt.value = r.checked_at || null
   } catch (e) { console.error('Error cargando protección WP:', e) }
   finally { wpLoading.value = false }
 }
@@ -1398,6 +1407,7 @@ function changeTab(t) {
   if (t === 'audit')       loadAudit()
   if (t === 'crowdsec')    loadCrowdsec()
   if (t === 'badbots')     loadBadBots()
+  if (t === 'wordpress')   loadWpRows()
 }
 
 // ─── Bad Bots ─────────────────────────────────────────────────────────────────
@@ -1606,7 +1616,7 @@ onMounted(() => {
   loadedTabs.value.add('firewall')
   loadFirewall()   // incluye loadStatus() + system-ports
   // Resumen superior, en segundo plano (no bloquea el render del firewall)
-  setTimeout(() => { loadIsolation(); loadAntivirus(); loadAutoUpdates(); loadWpRows() }, 0)
+  setTimeout(() => { loadIsolation(); loadAntivirus(); loadAutoUpdates() }, 0)
 })
 </script>
 
@@ -1788,4 +1798,5 @@ onMounted(() => {
 .wp-pill:disabled { opacity:.5; cursor:not-allowed; }
 .wp-pill.is-blocked { background: var(--success-bg); color: var(--success); border-color: color-mix(in srgb, var(--success) 40%, var(--border)); }
 .wp-pill.is-open { background: var(--surface-inset); color: var(--text-muted); }
+.wp-hot { color: var(--danger); font-weight:700; }
 </style>

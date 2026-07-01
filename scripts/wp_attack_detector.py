@@ -17,17 +17,18 @@ import os
 import re
 from datetime import datetime, timedelta
 
-# Umbral por defecto: a partir de estos hits en la ventana, se considera ataque.
-# TEMPORAL bajo (5) para poder ver el aviso en cualquier momento; en producción
-# real conviene un valor que el tráfico legítimo no alcance. 300/hora: un sitio
-# normal rara vez tiene 300 accesos/hora de humanos a xmlrpc/wp-login, pero un
-# ataque de fuerza bruta sí. Ajustable por env SVQ_WP_ATTACK_THRESHOLD.
+# Ventana de análisis por defecto: 24h. El cron corre cada ~3h y una ventana de
+# un día da una cifra estable (no un valle puntual). Ajustable por env.
 import os as _os
-DEFAULT_THRESHOLD = int(_os.environ.get("SVQ_WP_ATTACK_THRESHOLD", "300"))
-# Ventana de análisis (minutos) sobre las líneas leídas de la cola del log.
-DEFAULT_WINDOW_MIN = 60
+DEFAULT_WINDOW_MIN = int(_os.environ.get("SVQ_WP_ATTACK_WINDOW_MIN", "1440"))
+# Umbral por defecto: a partir de estos hits EN LA VENTANA (24h) se considera
+# ataque. ~2000/día es tráfico que un sitio legítimo no alcanza en xmlrpc/wp-login
+# pero un ataque de fuerza bruta sí (los que vimos tenían 12k-32k/día).
+DEFAULT_THRESHOLD = int(_os.environ.get("SVQ_WP_ATTACK_THRESHOLD", "2000"))
 # Cuántos bytes leer de la cola del log (evita leer ficheros de cientos de MB).
-TAIL_BYTES = 3 * 1024 * 1024  # 3 MB ≈ decenas de miles de líneas
+# 24h de un log muy activo puede ser grande; leemos hasta 20 MB de cola (cientos
+# de miles de líneas), suficiente para cubrir un día en sitios bajo ataque fuerte.
+TAIL_BYTES = 20 * 1024 * 1024
 
 # Formato de fecha del access.log de nginx: [01/Jul/2026:00:31:56 +0200]
 _TS_RE = re.compile(r"\[(\d{2}/\w{3}/\d{4}:\d{2}:\d{2}:\d{2})")
@@ -117,3 +118,58 @@ def analyze_domain(username: str, domain: str,
         "under_attack": bool(targets),
         "attack_targets": targets,
     }
+
+
+def refresh_all_domains() -> int:
+    """
+    Analiza TODOS los dominios activos (ventana por defecto = 24h) y guarda los
+    hits en la BD (wp_xmlrpc_hits / wp_wplogin_hits / wp_attack_checked_at). Lo
+    llama el cron cada ~3h para que la vista admin lea de BD (instantáneo) sin
+    escanear los access.log en vivo. Devuelve el nº de dominios actualizados.
+
+    Se apoya en el mismo patrón que el cacheo del peso en disco.
+    """
+    from datetime import datetime as _dt
+    from concurrent.futures import ThreadPoolExecutor
+    # Import perezoso para no crear dependencia circular al importar el módulo.
+    from api.models.database import SessionLocal, load_all_models
+    load_all_models()
+    from api.models.models_domain import Domain
+    from api.models.models_user import User
+
+    db = SessionLocal()
+    try:
+        domains = db.query(Domain).filter(Domain.is_active == True).all()  # noqa: E712
+        if not domains:
+            return 0
+        uids = {d.user_id for d in domains}
+        users = {u.id: u.username for u in db.query(User).filter(User.id.in_(uids)).all()}
+
+        def _measure(d):
+            u = users.get(d.user_id)
+            if not u:
+                return (d.id, 0, 0)
+            try:
+                r = analyze_domain(u, d.domain_name)  # ventana/umbral por defecto
+                return (d.id, r["xmlrpc_hits"], r["wplogin_hits"])
+            except Exception:
+                return (d.id, 0, 0)
+
+        with ThreadPoolExecutor(max_workers=min(8, len(domains))) as ex:
+            results = list(ex.map(_measure, domains))
+
+        now = _dt.utcnow()
+        by_id = {d.id: d for d in domains}
+        n = 0
+        for did, xh, wh in results:
+            d = by_id.get(did)
+            if not d:
+                continue
+            d.wp_xmlrpc_hits = xh
+            d.wp_wplogin_hits = wh
+            d.wp_attack_checked_at = now
+            n += 1
+        db.commit()
+        return n
+    finally:
+        db.close()

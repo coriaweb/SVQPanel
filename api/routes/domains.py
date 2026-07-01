@@ -360,46 +360,46 @@ async def get_wp_protection_overview(
 ):
     """
     Vista admin: TODOS los dominios del servidor con su estado de protección
-    WordPress (xmlrpc bloqueado / rate-limit wp-login) + si están bajo ataque
-    ahora mismo. Para la tabla de gestión rápida en Seguridad. Solo admin.
+    WordPress + los hits de ataque CACHEADOS en BD (los refresca un cron cada 3h,
+    ventana 24h). Lee solo de BD → instantáneo, no escanea los access.log en vivo.
+    Solo admin.
     """
-    from concurrent.futures import ThreadPoolExecutor
-    from scripts.wp_attack_detector import analyze_domain
+    from scripts.wp_attack_detector import DEFAULT_THRESHOLD
 
     domains = db.query(Domain).filter(Domain.is_active == True).all()  # noqa: E712
     user_ids = {d.user_id for d in domains}
     users = {u.id: u.username for u in db.query(User).filter(User.id.in_(user_ids)).all()} if user_ids else {}
 
-    def _row(d):
-        username = users.get(d.user_id, "")
-        under_attack = False
-        targets = []
-        try:
-            if username:
-                r = analyze_domain(username, d.domain_name)
-                # solo cuenta como "bajo ataque" lo que NO está ya mitigado
-                sx = ("xmlrpc" in r["attack_targets"]) and not d.xmlrpc_blocked
-                sl = ("wp-login" in r["attack_targets"]) and (d.wp_login_ratelimit or 0) == 0
-                under_attack = bool(sx or sl)
-                targets = (["xmlrpc"] if sx else []) + (["wp-login"] if sl else [])
-        except Exception:
-            pass
-        return {
+    rows = []
+    last_check = None
+    for d in domains:
+        xh = int(d.wp_xmlrpc_hits or 0)
+        wh = int(d.wp_wplogin_hits or 0)
+        # "bajo ataque" = supera el umbral en un vector que NO está ya mitigado.
+        sx = (xh >= DEFAULT_THRESHOLD) and not d.xmlrpc_blocked
+        sl = (wh >= DEFAULT_THRESHOLD) and (d.wp_login_ratelimit or 0) == 0
+        targets = (["xmlrpc"] if sx else []) + (["wp-login"] if sl else [])
+        if d.wp_attack_checked_at and (last_check is None or d.wp_attack_checked_at > last_check):
+            last_check = d.wp_attack_checked_at
+        rows.append({
             "domain_id":          d.id,
             "domain":             d.domain_name,
-            "owner":              username,
+            "owner":              users.get(d.user_id, ""),
             "xmlrpc_blocked":     bool(d.xmlrpc_blocked),
             "wp_login_ratelimit": int(d.wp_login_ratelimit or 0),
-            "under_attack":       under_attack,
+            "xmlrpc_hits":        xh,
+            "wplogin_hits":       wh,
+            "under_attack":       bool(sx or sl),
             "targets":            targets,
-        }
-
-    rows = []
-    if domains:
-        with ThreadPoolExecutor(max_workers=min(8, len(domains))) as ex:
-            rows = list(ex.map(_row, domains))
-    rows.sort(key=lambda r: (not r["under_attack"], r["domain"]))  # ataques arriba
-    return {"domains": rows}
+        })
+    rows.sort(key=lambda r: (not r["under_attack"],
+                             -(r["xmlrpc_hits"] + r["wplogin_hits"]),
+                             r["domain"]))  # ataques arriba, luego más hits
+    return {
+        "domains":    rows,
+        "threshold":  DEFAULT_THRESHOLD,
+        "checked_at": last_check.isoformat() if last_check else None,
+    }
 
 
 @router.get("/domains/wp-attack-alerts")
