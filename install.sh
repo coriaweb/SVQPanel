@@ -2892,6 +2892,22 @@ if [[ "$INSTALL_CROWDSEC" == true ]]; then
                 || echo -e "    ${YELLOW}⚠ crowdsecurity/apache2 (no disponible)${NC}"
         fi
 
+        # Fuerza bruta de WordPress vía XML-RPC: NO viene en la colección
+        # crowdsecurity/wordpress, hay que instalar el escenario aparte. Complementa
+        # el bloqueo de xmlrpc en nginx (defensa en profundidad).
+        cscli scenarios install crowdsecurity/http-bf-wordpress_bf_xmlrpc > /dev/null 2>&1 \
+            && echo -e "    ${GREEN}✓ crowdsecurity/http-bf-wordpress_bf_xmlrpc${NC}" \
+            || echo -e "    ${YELLOW}⚠ http-bf-wordpress_bf_xmlrpc (no disponible)${NC}"
+
+        # NOTA (Laravel / apps PHP a medida): NO existe colección específica de
+        # Laravel (su login no es una ruta fija). Quedan cubiertas por los
+        # escenarios genéricos que ya trae base-http-scenarios + http-cve:
+        # http-generic-bf, http-probing, http-sqli-probing, http-xss-probing,
+        # http-path-traversal-probing, http-backdoors-attempts, http-cve-probing…
+        # (agnósticos del framework). Protección de peticiones a fondo (WAF OWASP
+        # con AppSec) queda como mejora futura — requiere el componente appsec y
+        # rodaje en modo detección para evitar falsos positivos.
+
         if [[ "$INSTALL_MAIL" == true ]]; then
             for COL in crowdsecurity/postfix crowdsecurity/dovecot; do
                 cscli collections install "$COL" > /dev/null 2>&1 \
