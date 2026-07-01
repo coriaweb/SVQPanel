@@ -2953,14 +2953,28 @@ CSACQEOF
         # banean esas IPs por reputación — que es lo que el rate-limit por IP NO
         # puede frenar cuando el ataque viene de decenas de IPs a la vez.
         cat > /etc/crowdsec/acquis.d/svqpanel-domains.yaml << CSDOMEOF
-# SVQPanel — logs de acceso de los dominios de clientes (para escenarios http-*)
+# SVQPanel — logs de acceso Y error de los dominios de clientes.
+# access.log → escenarios http-* (fuerza bruta wp-login, scans, probing…).
+# error.log  → nginx-req-limit-exceeded: los 429 del rate-limit (p.ej. wp-login)
+#              quedan en el error.log, NO en el access → sin él CrowdSec no banea
+#              al que dispara el límite repetidamente.
 filenames:
   - /home/*/web/*/logs/nginx.access.log
 labels:
   type: nginx
 ---
 filenames:
+  - /home/*/web/*/logs/nginx.error.log
+labels:
+  type: nginx
+---
+filenames:
   - /home/*/web/*/logs/apache.access.log
+labels:
+  type: apache2
+---
+filenames:
+  - /home/*/web/*/logs/apache.error.log
 labels:
   type: apache2
 CSDOMEOF
