@@ -18,8 +18,11 @@ DEPRECATED_VERSIONS = ["7.3", "7.4", "8.0", "8.1"]
 # Paquetes base que deben instalarse (sin estos PHP no funciona)
 BASE_EXTENSIONS = ["cli", "fpm", "pgsql", "mysql", "curl", "gd", "mbstring", "xml", "zip", "bcmath"]
 
-# Extensiones opcionales — se instalan una a una, los fallos se ignoran
-OPTIONAL_EXTENSIONS = ["opcache", "intl", "soap", "readline", "imagick"]
+# Extensiones opcionales — se instalan una a una, los fallos se ignoran.
+# DEBE ser la misma lista que el loop de PHP de install.sh: una versión
+# instalada desde el panel tiene que nacer igual que una del install.
+# gmp/intl/imagick/apcu: Nextcloud. redis: caché de objetos por dominio.
+OPTIONAL_EXTENSIONS = ["opcache", "intl", "soap", "readline", "gmp", "imagick", "apcu", "redis"]
 
 
 class PHPManager(SystemManager):
@@ -130,12 +133,55 @@ class PHPManager(SystemManager):
             if rc != 0:
                 logger.debug(f"Optional extension php{version}-{ext} not available: {err.strip()}")
 
+        # Ajustes del php.ini global — los MISMOS que aplica install.sh, para
+        # que una versión instalada desde el panel nazca igual que una del
+        # install: disable_functions vacío (el hardening va por pool, y un pool
+        # puede añadir pero no quitar), cabecera X-PHP-Originating-Script para
+        # rastrear spam, y memory_limit global = techo de los overrides (256M).
+        self._apply_global_ini_policy(version)
+
         # Enable and start FPM
         self.execute_command(["systemctl", "enable", f"php{version}-fpm"])
-        self.execute_command(["systemctl", "start", f"php{version}-fpm"])
+        self.execute_command(["systemctl", "restart", f"php{version}-fpm"])
 
         logger.info(f"PHP {version} installed and FPM started")
         return self.get_status(version)
+
+    def _apply_global_ini_policy(self, version: str) -> None:
+        """Aplica al php.ini de FPM la política global del panel (best-effort)."""
+        ini = f"/etc/php/{version}/fpm/php.ini"
+        if not os.path.exists(ini):
+            return
+        try:
+            with open(ini) as f:
+                lines = f.read().splitlines()
+            wanted = {
+                "disable_functions": "disable_functions =",
+                "mail.add_x_header": "mail.add_x_header = On",
+                "memory_limit": "memory_limit = 256M",
+            }
+            seen = set()
+            out = []
+            for line in lines:
+                stripped = line.lstrip(" \t;").strip()
+                replaced = False
+                for key, repl in wanted.items():
+                    if stripped.startswith(key) and "=" in stripped and key not in seen:
+                        out.append(repl)
+                        seen.add(key)
+                        replaced = True
+                        break
+                if not replaced:
+                    out.append(line)
+            for key, repl in wanted.items():
+                if key not in seen:
+                    out.append(repl)
+            tmp = ini + ".tmp"
+            with open(tmp, "w") as f:
+                f.write("\n".join(out) + "\n")
+            os.replace(tmp, ini)
+        except OSError as e:
+            logger.warning(f"No se pudo ajustar el php.ini global de {version}: {e}")
 
     def enable(self, version: str) -> Dict:
         """Enable and start PHP-FPM (must be installed first)"""
