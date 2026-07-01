@@ -100,11 +100,12 @@ def get_nginx_config_path(domain: str) -> str:
 # ─────────────────────────────────────────────────────────────────────────────
 FASTCGI_CACHE_ROOT = "/var/cache/nginx/fastcgi"
 FASTCGI_CACHE_GLOBAL_CONF = "/etc/nginx/conf.d/svqpanel-fastcgi-cache-global.conf"
-FASTCGI_CACHE_GLOBAL_CONTENT = '''# SVQPanel — directivas FastCGI cache compartidas (nivel http)
-# fastcgi_cache_key debe declararse UNA sola vez en todo nginx; aquí lo
-# centralizamos. Las zonas (keys_zone) las define cada dominio en su
-# propio fichero svqpanel-cache-{domain}.conf.
+FASTCGI_CACHE_GLOBAL_CONTENT = '''# SVQPanel — directivas de cache de página compartidas (nivel http)
+# La cache_key debe declararse UNA sola vez en todo nginx; aquí la centralizamos.
+# Las zonas (keys_zone) las define cada dominio en su svqpanel-cache-{domain}.conf.
+# fastcgi_cache_key → modo nginx-puro; proxy_cache_key → modo Apache (proxy a :8181).
 fastcgi_cache_key "$scheme$request_method$host$request_uri";
+proxy_cache_key   "$scheme$request_method$host$request_uri";
 '''
 
 # Rate limiting (anti-abuso). Una zona por dominio (igual que la caché), con
@@ -259,15 +260,30 @@ def fastcgi_cache_zone_name(domain: str) -> str:
     return f"SVQ_{safe}"
 
 
+def _domain_proxies_to_apache() -> bool:
+    """True si el webserver está en modo Apache (nginx hace de proxy a :8181).
+    En ese modo la cache de página debe ser proxy_cache, no fastcgi_cache."""
+    try:
+        from scripts.webserver_config import get_webserver
+        return get_webserver() in ("apache", "apache+nginx")
+    except Exception:
+        return False
+
+
 def generate_fastcgi_cache_zone_conf(domain: str) -> str:
     """
     Devuelve el contenido del fichero /etc/nginx/conf.d/svqpanel-cache-{domain}.conf.
     Define la zona de cache (keys_zone) que se referencia desde la vhost.
+
+    En modo Apache usa proxy_cache_path (nginx hace proxy_pass a :8181, y el
+    fastcgi_cache NO aplica al proxy). En modo nginx-puro usa fastcgi_cache_path.
+    El nombre de zona (keys_zone) es el mismo; solo cambia la directiva _path.
     """
     cache_dir = get_fastcgi_cache_dir(domain)
     zone = fastcgi_cache_zone_name(domain)
-    return f"""# SVQPanel — FastCGI cache zone para {domain}
-fastcgi_cache_path {cache_dir}
+    directive = "proxy_cache_path" if _domain_proxies_to_apache() else "fastcgi_cache_path"
+    return f"""# SVQPanel — cache de página para {domain}
+{directive} {cache_dir}
     levels=1:2
     keys_zone={zone}:10m
     max_size=500m
@@ -292,6 +308,27 @@ def _fastcgi_cache_block(domain: str, ttl_minutes: int, sec_headers: str = "") -
         fastcgi_cache_valid  404 1m;
         fastcgi_cache_use_stale error timeout invalid_header updating http_500 http_503;
         fastcgi_cache_lock   on;
+        add_header X-Cache-Status $upstream_cache_status always;{sec_headers}
+"""
+
+
+def _proxy_cache_block(domain: str, ttl_minutes: int, sec_headers: str = "") -> str:
+    """
+    Equivalente a _fastcgi_cache_block pero para modo Apache (proxy_pass a :8181):
+    el fastcgi_cache NO funciona con proxy_pass, hay que usar proxy_cache. Mismas
+    exclusiones ($skip_cache: admin/POST/logueados/carrito WooCommerce) y misma
+    zona por dominio. Se inserta DENTRO del 'location /' que hace proxy a Apache.
+    """
+    zone = fastcgi_cache_zone_name(domain)
+    return f"""
+        # ── Proxy cache (SVQPanel, modo Apache) ──────────────────────────
+        proxy_cache          {zone};
+        proxy_cache_bypass   $skip_cache;
+        proxy_no_cache       $skip_cache;
+        proxy_cache_valid    200 301 302 {ttl_minutes}m;
+        proxy_cache_valid    404 1m;
+        proxy_cache_use_stale error timeout invalid_header updating http_500 http_503;
+        proxy_cache_lock     on;
         add_header X-Cache-Status $upstream_cache_status always;{sec_headers}
 """
 
@@ -610,19 +647,28 @@ def generate_nginx_config(
     # sirve el sitio respetando .htaccess. Nginx sigue siendo front (SSL, bots,
     # headers); solo delega la ejecución a Apache.
     if proxy_to_apache:
-        _proxy = (
-            "    location / {\n"
-            "        proxy_pass http://127.0.0.1:8181;\n"
-            "        proxy_set_header Host $host;\n"
-            "        proxy_set_header X-Real-IP $remote_addr;\n"
-            "        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;\n"
-            "        proxy_set_header X-Forwarded-Proto $scheme;\n"
-            "        proxy_set_header X-Forwarded-Host $host;\n"
-            "        proxy_read_timeout 300;\n"
-            "    }\n"
-        )
-        app_block_http = _proxy
-        app_block_ssl  = _proxy
+        # En modo Apache la cache de página es proxy_cache (fastcgi_cache no aplica
+        # al proxy_pass). Mismas exclusiones que en nginx-puro (via $skip_cache).
+        pcache_http = _proxy_cache_block(domain, fastcgi_cache_ttl_minutes, sec_headers=_sh) \
+            if fastcgi_cache_enabled else ""
+        pcache_ssl = _proxy_cache_block(domain, fastcgi_cache_ttl_minutes, sec_headers=_sh_https) \
+            if fastcgi_cache_enabled else ""
+
+        def _proxy_loc(pcache: str) -> str:
+            return (
+                "    location / {\n"
+                "        proxy_pass http://127.0.0.1:8181;\n"
+                "        proxy_set_header Host $host;\n"
+                "        proxy_set_header X-Real-IP $remote_addr;\n"
+                "        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;\n"
+                "        proxy_set_header X-Forwarded-Proto $scheme;\n"
+                "        proxy_set_header X-Forwarded-Host $host;\n"
+                "        proxy_read_timeout 300;\n"
+                f"{pcache}"
+                "    }\n"
+            )
+        app_block_http = _proxy_loc(pcache_http)
+        app_block_ssl  = _proxy_loc(pcache_ssl)
     else:
         # Cache de navegador para estáticos: CSS/JS/imágenes/fuentes con expires
         # largo (acelera la web en visitas repetidas; el navegador no los re-pide).

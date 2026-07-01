@@ -419,7 +419,7 @@ class DomainManager(SystemManager):
         php_version: str,
         ssl_enabled: bool = False,
         ipv6: str = None,
-        fastcgi_cache_enabled: bool = False,
+        fastcgi_cache_enabled: bool = None,
         fastcgi_cache_ttl_minutes: int = 60,
         php_socket_override: str = None,
         template_nginx_extra: str = None,
@@ -465,7 +465,8 @@ class DomainManager(SystemManager):
         #    Default None = "no me lo dijo el caller, léelo de la BD" → así no hay
         #    que propagar estos flags por TODOS los callers de regenerate_vhost.
         if (not is_subdomain or docroot_subdir is None
-                or xmlrpc_blocked is None or wp_login_ratelimit is None):
+                or xmlrpc_blocked is None or wp_login_ratelimit is None
+                or fastcgi_cache_enabled is None):
             try:
                 from api.models.database import SessionLocal
                 from api.models.models_domain import Domain as _D
@@ -481,6 +482,11 @@ class DomainManager(SystemManager):
                             xmlrpc_blocked = bool(getattr(_d, "xmlrpc_blocked", False))
                         if wp_login_ratelimit is None:
                             wp_login_ratelimit = int(getattr(_d, "wp_login_ratelimit", 0) or 0)
+                        if fastcgi_cache_enabled is None:
+                            fastcgi_cache_enabled = bool(getattr(_d, "fastcgi_cache_enabled", False))
+                            _ttl = getattr(_d, "fastcgi_cache_ttl_minutes", None)
+                            if _ttl:
+                                fastcgi_cache_ttl_minutes = int(_ttl)
                 finally:
                     _db.close()
             except Exception:
@@ -488,6 +494,7 @@ class DomainManager(SystemManager):
         # Si tras consultar la BD siguen None (dominio aún no en BD), usar defaults.
         xmlrpc_blocked = bool(xmlrpc_blocked)
         wp_login_ratelimit = int(wp_login_ratelimit or 0)
+        fastcgi_cache_enabled = bool(fastcgi_cache_enabled)
 
         # Auto-detectar webserver
         if webserver is None:
