@@ -2865,13 +2865,19 @@ if [[ "$INSTALL_CROWDSEC" == true ]]; then
         # iptables/UFW, pero SVQPanel usa nftables sin logging, así que no tendría
         # nada que parsear (solo añadiría ruido).
         echo -e "  ${YELLOW}→ Instalando colecciones (parsers + escenarios)...${NC}"
+        # crowdsecurity/wordpress: escenarios de fuerza bruta de wp-login
+        # (http-bf-wordpress_bf), enumeración de usuarios y sondeo de wp-config.
+        # Casi todos los sitios alojados son WordPress y el ataque más habitual es
+        # el flood DISTRIBUIDO a wp-login, que el rate-limit por IP no puede parar
+        # (cada IP va bajo el umbral) pero CrowdSec sí (banea por acumulación).
         for COL in \
             crowdsecurity/linux \
             crowdsecurity/sshd \
             crowdsecurity/nginx \
             crowdsecurity/base-http-scenarios \
             crowdsecurity/http-cve \
-            crowdsecurity/http-dos; do
+            crowdsecurity/http-dos \
+            crowdsecurity/wordpress; do
             cscli collections install "$COL" > /dev/null 2>&1 \
                 && echo -e "    ${GREEN}✓ $COL${NC}" \
                 || echo -e "    ${YELLOW}⚠ $COL (no disponible)${NC}"
