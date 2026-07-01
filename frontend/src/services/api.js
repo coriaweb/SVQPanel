@@ -758,6 +758,14 @@ class APIClient {
     return this.put(`/api/domains/${domainId}/fpm-config`, tuning)
   }
 
+  // Redis dedicado por dominio (caché de objetos)
+  getDomainRedis(domainId) {
+    return this.get(`/api/domains/${domainId}/redis`)
+  }
+  setDomainRedis(domainId, enabled, maxmemoryMb = 64) {
+    return this.put(`/api/domains/${domainId}/redis`, { enabled, maxmemory_mb: maxmemoryMb })
+  }
+
   // Tuner de MariaDB/MySQL (admin)
   getDbTunerStatus() {
     return this.get('/api/db-tuner/status')

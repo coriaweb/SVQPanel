@@ -1462,7 +1462,8 @@ for PHP_VER in "${PHP_ARRAY[@]}"; do
 
         # Extensiones opcionales (fallos ignorados)
         # gmp/bcmath/intl/imagick/apcu: requeridas/recomendadas por Nextcloud.
-        for EXT in opcache intl soap readline gmp imagick apcu; do
+        # redis: cliente phpredis para el Redis dedicado por dominio (caché de objetos).
+        for EXT in opcache intl soap readline gmp imagick apcu redis; do
             apt-get install -y -q "php${PHP_VER}-${EXT}" 2>/dev/null && \
                 echo "    ✓ php${PHP_VER}-${EXT}" || \
                 echo "    ⚠ php${PHP_VER}-${EXT} no disponible (ignorado)"
@@ -1512,6 +1513,25 @@ for PHP_VER in "${PHP_ARRAY[@]}"; do
 done
 
 echo -e "${GREEN}✓ PHP instalado: ${PHP_INSTALLED[*]:-ninguno}${NC}\n"
+
+# ── Redis para el caché de objetos por dominio ───────────────────────────────
+# Cada dominio puede activar SU instancia redis (socket unix en private/,
+# corre como el usuario, maxmemory acotado) — scripts/redis_manager.py.
+# Solo necesitamos el binario: si no hay stack de correo (que usa la instancia
+# global como backend de Rspamd), la instancia por defecto se deja apagada.
+echo -e "${YELLOW}Instalando Redis (caché de objetos por dominio)...${NC}"
+if ! command -v redis-server >/dev/null 2>&1; then
+    apt-get install -y -qq redis-server
+    if [[ "$INSTALL_MAIL" != true ]]; then
+        systemctl disable --now redis-server >/dev/null 2>&1 || true
+        echo -e "  ${GREEN}✓ redis-server instalado (instancia global desactivada: solo instancias por dominio)${NC}"
+    else
+        echo -e "  ${GREEN}✓ redis-server instalado${NC}"
+    fi
+else
+    echo -e "  ${GREEN}✓ redis-server ya presente${NC}"
+fi
+mkdir -p /etc/svqpanel/redis
 
 # ── Herramientas para el autoinstalador de apps (WordPress/Laravel/Nextcloud/…) ─
 # Nextcloud usa 'unzip' + 'curl' (instalados arriba) y occ; no requiere binario extra.
@@ -3487,6 +3507,15 @@ echo -e "${YELLOW}Aplicando aislamiento PHP por dominio (open_basedir + tmp prop
 /opt/svqpanel/venv/bin/python -m api.cli migrate_php_pools --force && \
     echo -e "${GREEN}✓ Pools PHP-FPM con seguridad aplicados${NC}" || \
     echo -e "${YELLOW}⚠ migrate_php_pools tuvo incidencias (revisar logs)${NC}"
+echo ""
+
+# Proteger el Redis global (backend de Rspamd) con contraseña. Sin esto, el
+# PHP de cualquier cliente puede conectar a 127.0.0.1:6379 (disable_functions
+# no bloquea sockets) y hacer FLUSHALL al Bayes/greylist/ratelimit de correo.
+echo -e "${YELLOW}Protegiendo el Redis de Rspamd (requirepass)...${NC}"
+/opt/svqpanel/venv/bin/python -m api.cli secure_rspamd_redis && \
+    echo -e "${GREEN}✓ Redis de Rspamd protegido con contraseña${NC}" || \
+    echo -e "${YELLOW}⚠ secure_rspamd_redis tuvo incidencias (revisar logs)${NC}"
 echo ""
 
 # Aprendizaje de spam: IMAPSieve (rspamc learn al mover a/desde Junk) + autolearn

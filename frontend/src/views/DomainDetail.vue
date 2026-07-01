@@ -458,6 +458,60 @@
         </div>
       </BaseCard>
 
+      <!-- ===== Redis dedicado (caché de objetos) ===== -->
+      <BaseCard v-show="tab === 'php'" title="Redis — caché de objetos" icon="lightning-charge">
+        <div v-if="!redisLoaded" class="svq-skeleton" style="height:70px"></div>
+        <div v-else-if="!redisStatus.available" class="dd-muted">
+          Redis no está disponible en este servidor.
+        </div>
+        <div v-else>
+          <p class="dd-muted" style="margin:0 0 1rem">
+            Instancia Redis <strong>privada de este dominio</strong> para caché de
+            objetos (WordPress/WooCommerce, Laravel, Magento…): reduce mucho las
+            consultas a la base de datos, sobre todo con usuarios logueados y
+            carritos. Aislada del resto de dominios (socket unix propio, solo tu
+            PHP puede conectar) y con memoria acotada.
+          </p>
+
+          <label class="adv-switch">
+            <input type="checkbox" v-model="redisEnabled" /> Activar Redis para este dominio
+          </label>
+
+          <div v-if="redisEnabled" class="mig-grid" style="margin-top:var(--sp-3)">
+            <label class="adv-field"><span class="adv-label">Memoria máxima</span>
+              <select class="svq-input" v-model.number="redisMaxMemory">
+                <option v-for="mb in redisMemoryOptions" :key="mb" :value="mb">{{ mb }} MB</option>
+              </select></label>
+          </div>
+
+          <div v-if="redisStatus.enabled" style="margin-top:var(--sp-3)">
+            <p style="margin:0 0 .35rem">
+              <StatusBadge :status="redisStatus.active ? 'active' : 'error'"
+                           :label="redisStatus.active ? 'En ejecución' : 'Parado'" />
+              <span v-if="redisStatus.used_memory_mb != null" class="dd-muted" style="margin-left:.6rem">
+                {{ redisStatus.used_memory_mb }} MB usados de {{ redisStatus.maxmemory_mb }} MB
+              </span>
+            </p>
+            <p class="dd-muted" style="margin:0">
+              Socket: <code>{{ redisStatus.socket }}</code>
+            </p>
+            <details style="margin-top:.5rem">
+              <summary class="dd-muted" style="cursor:pointer">Cómo conectar WordPress (plugin Redis Object Cache)</summary>
+              <pre class="adv-example__code mono" style="margin-top:.5rem">define('WP_REDIS_SCHEME', 'unix');
+define('WP_REDIS_PATH', '{{ redisStatus.socket }}');</pre>
+            </details>
+          </div>
+
+          <div class="dd-form-foot" style="margin-top:var(--sp-3)">
+            <small class="dd-muted"><i class="bi bi-lightning-charge"></i>
+              Sin persistencia en disco: es una caché volátil.</small>
+            <BaseButton variant="primary" size="sm" :loading="redisSaving" @click="saveRedis">
+              Aplicar
+            </BaseButton>
+          </div>
+        </div>
+      </BaseCard>
+
       <!-- ===== IPv6 ===== -->
       <BaseCard v-show="tab === 'ipv6'" title="IPv6" icon="diagram-3">
         <IPv6Manager :domain="domain" @reload="reloadDomain" />
@@ -1150,8 +1204,9 @@ location @maintenance {
         phpForm.value = form
       } catch (e) { store.showNotification('Error config PHP: ' + e.message, 'danger') }
       finally { phpLoading.value = false }
-      // Cargar también el tuning de recursos del pool FPM (mismo tab)
+      // Cargar también el tuning FPM y el Redis dedicado (mismo tab)
       loadFpm()
+      loadRedis()
     }
     const savePhp = async () => {
       phpSaving.value = true
@@ -1236,6 +1291,37 @@ location @maintenance {
         store.showNotification('Recursos PHP-FPM aplicados', 'success')
       } catch (e) { store.showNotification('Error: ' + e.message, 'danger') }
       finally { fpmSaving.value = false }
+    }
+
+    // ── Redis dedicado (caché de objetos) ──
+    const redisLoaded = ref(false), redisSaving = ref(false)
+    const redisEnabled = ref(false), redisMaxMemory = ref(64)
+    const redisStatus = ref({ available: false, enabled: false, active: false })
+
+    const redisMemoryOptions = computed(() => {
+      const cap = redisStatus.value.maxmemory_cap_mb || 256
+      return [32, 64, 128, 256, 512].filter(mb => mb <= cap)
+    })
+
+    const loadRedis = async () => {
+      try {
+        const st = await api.getDomainRedis(domainId.value)
+        redisStatus.value = st
+        redisEnabled.value = !!st.enabled
+        redisMaxMemory.value = st.maxmemory_mb || st.db_maxmemory_mb || st.default_maxmemory_mb || 64
+        redisLoaded.value = true
+      } catch (e) { store.showNotification('Error config Redis: ' + e.message, 'danger') }
+    }
+
+    const saveRedis = async () => {
+      redisSaving.value = true
+      try {
+        const st = await api.setDomainRedis(domainId.value, redisEnabled.value, redisMaxMemory.value)
+        redisStatus.value = st
+        store.showNotification(redisEnabled.value
+          ? 'Redis del dominio activado' : 'Redis del dominio desactivado', 'success')
+      } catch (e) { store.showNotification('Error: ' + e.message, 'danger') }
+      finally { redisSaving.value = false }
     }
 
     // ── Logs ──
@@ -1623,6 +1709,8 @@ location @maintenance {
       cacheSaving, toggleCache, purgeCache,
       phpLoading, phpSaving, phpDirectives, phpDefaults, phpForm, phpHasPool, savePhp, changePHP,
       fpmLoaded, fpmSaving, fpmAdvanced, fpmPresets, fpmCaps, fpmPreset, fpmManual,
+      redisLoaded, redisSaving, redisEnabled, redisMaxMemory, redisStatus,
+      redisMemoryOptions, saveRedis,
       selectFpmPreset, fpmEffectiveChildren, fpmEstimatedRamMb, saveFpm,
       logTab, logLines, logsLoading, logsData, loadLogs, switchLog,
       logSearch, filteredLogLines, logLineClass, highlightLog,

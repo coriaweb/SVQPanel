@@ -102,6 +102,11 @@ class Domain(Base):
     # {"preset":"low|medium|high","manual":{"pm.max_children":12,...}}. None = preset medium.
     fpm_pool_overrides = Column(Text, nullable=True)
 
+    # Redis dedicado del dominio (caché de objetos). Instancia propia con
+    # socket unix en private/ y maxmemory acotado — ver scripts/redis_manager.py.
+    redis_enabled      = Column(Boolean, default=False, nullable=False)
+    redis_maxmemory_mb = Column(Integer, default=64, nullable=False)
+
     # Modo solo-lectura HTTP: bloquea POST/PUT/DELETE/PATCH excepto desde las
     # IPs indicadas. Útil para contener un CMS comprometido o proteger APIs.
     # allowed_mutation_ips: JSON array de IPs/CIDRs, ej: ["1.2.3.4","10.0.0.0/8"]

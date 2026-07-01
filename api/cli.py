@@ -1377,6 +1377,29 @@ def cmd_setup_spam_to_junk() -> int:
     return 0
 
 
+def cmd_secure_rspamd_redis() -> int:
+    """Protege el Redis global (backend de Rspamd) con requirepass y propaga
+    la clave a /etc/rspamd/local.d/redis.conf. Sin esto cualquier PHP de un
+    cliente podía conectar a 127.0.0.1:6379 y hacer FLUSHALL (borrar el Bayes
+    o vaciar su rate-limit de envío). Idempotente; se omite sin stack de correo."""
+    try:
+        from scripts import redis_manager
+        res = redis_manager.secure_rspamd_redis()
+    except Exception as e:
+        logger.error(f"secure_rspamd_redis: {e}")
+        return 1
+    if not res.get("applied"):
+        logger.info(f"secure_rspamd_redis: omitido ({res.get('reason')})")
+        return 0
+    if res.get("verified"):
+        logger.info("secure_rspamd_redis: Redis protegido y verificado (sin "
+                    "password rechaza, con password PONG)")
+    else:
+        logger.warning("secure_rspamd_redis: aplicado pero la verificación no "
+                       "fue concluyente; revisar redis-server/rspamd")
+    return 0
+
+
 def cmd_setup_auto_updates() -> int:
     """Instala y configura unattended-upgrades (solo parches de seguridad, sin
     reinicio automático). Idempotente. Solo Debian.
@@ -1927,6 +1950,8 @@ def main():
         help="Configura el aprendizaje de spam (IMAPSieve + autolearn Bayes)")
     sub.add_parser("setup_spam_to_junk",
         help="Instala el Sieve global que mueve el spam marcado a la carpeta Junk")
+    sub.add_parser("secure_rspamd_redis",
+        help="Protege el Redis global (backend de Rspamd) con contraseña (requirepass)")
     sub.add_parser("setup_auto_updates",
         help="Activa las actualizaciones automáticas de seguridad del SO (unattended-upgrades)")
     sub.add_parser("harden_services",
@@ -2068,6 +2093,8 @@ def main():
 
     if args.cmd == "setup_spam_to_junk":
         sys.exit(cmd_setup_spam_to_junk())
+    if args.cmd == "secure_rspamd_redis":
+        sys.exit(cmd_secure_rspamd_redis())
     if args.cmd == "setup_auto_updates":
         sys.exit(cmd_setup_auto_updates())
     if args.cmd == "harden_services":

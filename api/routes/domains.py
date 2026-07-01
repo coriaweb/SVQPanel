@@ -1464,6 +1464,94 @@ async def set_domain_fpm_config(
     }
 
 
+# ─────────────────────────────────────────────────────────────────────────────
+# Redis dedicado por dominio (caché de objetos)
+# ─────────────────────────────────────────────────────────────────────────────
+@router.get("/domains/{domain_id}/redis")
+async def get_domain_redis(
+    domain_id:    int,
+    current_user: User = Depends(require_auth),
+    db:           Session = Depends(get_db),
+):
+    """Estado de la instancia Redis dedicada del dominio (para la UI)."""
+    from scripts import redis_manager
+
+    domain = _get_owned_domain(domain_id, db, current_user)
+    if not domain:
+        raise HTTPException(status_code=404, detail="Dominio no encontrado")
+    _check_access(current_user, domain, db)
+
+    owner = db.query(User).filter(User.id == domain.user_id).first()
+    if not owner:
+        raise HTTPException(status_code=500, detail="Propietario no encontrado")
+
+    status = redis_manager.instance_status(owner.username, domain.domain_name)
+    status["domain"] = domain.domain_name
+    # La verdad operativa es el sistema; la BD puede ir por detrás si algo
+    # falló a medias. Devolvemos también lo que cree la BD para diagnosticar.
+    status["db_enabled"] = domain.redis_enabled or False
+    status["db_maxmemory_mb"] = domain.redis_maxmemory_mb or 64
+    return status
+
+
+@router.put("/domains/{domain_id}/redis")
+async def set_domain_redis(
+    domain_id:    int,
+    payload:      dict,
+    current_user: User = Depends(require_auth),
+    db:           Session = Depends(get_db),
+):
+    """
+    Activa/desactiva la instancia Redis dedicada del dominio.
+    Body: {"enabled": bool, "maxmemory_mb": 64}. La instancia corre como el
+    usuario del dominio, con socket unix en private/ (solo su PHP puede
+    conectar) y maxmemory acotado por el techo del servidor.
+    """
+    from scripts import redis_manager
+
+    if not isinstance(payload, dict):
+        raise HTTPException(status_code=400, detail="payload debe ser un objeto")
+    enabled = bool(payload.get("enabled", False))
+    maxmemory = redis_manager.clamp_maxmemory(
+        payload.get("maxmemory_mb", redis_manager.DEFAULT_MAXMEMORY_MB))
+
+    domain = _get_owned_domain(domain_id, db, current_user)
+    if not domain:
+        raise HTTPException(status_code=404, detail="Dominio no encontrado")
+    _check_access(current_user, domain, db)
+    if domain.mail_dns_only:
+        raise HTTPException(status_code=422,
+                            detail="Dominio solo correo/DNS: no tiene hosting web")
+
+    owner = db.query(User).filter(User.id == domain.user_id).first()
+    if not owner:
+        raise HTTPException(status_code=500, detail="Propietario no encontrado")
+
+    if enabled and not redis_manager.redis_available():
+        raise HTTPException(
+            status_code=422,
+            detail="redis-server no está instalado en el servidor")
+
+    try:
+        if enabled:
+            status = redis_manager.enable_instance(
+                owner.username, domain.domain_name, maxmemory)
+        else:
+            status = redis_manager.disable_instance(
+                owner.username, domain.domain_name)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error aplicando Redis: {e}")
+
+    domain.redis_enabled = enabled
+    domain.redis_maxmemory_mb = maxmemory
+    db.commit()
+
+    status["domain"] = domain.domain_name
+    status["db_enabled"] = enabled
+    status["db_maxmemory_mb"] = maxmemory
+    return status
+
+
 @router.put("/domains/{domain_id}/php-hardening")
 async def set_domain_php_hardening(
     domain_id:    int,

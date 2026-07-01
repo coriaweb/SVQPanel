@@ -921,6 +921,9 @@ def _run_migrations():
         )""",
         "CREATE INDEX IF NOT EXISTS ix_api_tokens_user_id ON api_tokens(user_id)",
         "CREATE INDEX IF NOT EXISTS ix_api_tokens_token_hash ON api_tokens(token_hash)",
+        # Redis dedicado por dominio (caché de objetos, socket unix en private/)
+        "ALTER TABLE domains ADD COLUMN IF NOT EXISTS redis_enabled BOOLEAN NOT NULL DEFAULT FALSE",
+        "ALTER TABLE domains ADD COLUMN IF NOT EXISTS redis_maxmemory_mb INTEGER NOT NULL DEFAULT 64",
     ]
     with engine.connect() as conn:
         for sql in migrations:

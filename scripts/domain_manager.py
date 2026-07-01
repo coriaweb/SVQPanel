@@ -337,6 +337,13 @@ class DomainManager(SystemManager):
             except Exception as pool_err:
                 logger.warning(f"No se pudo eliminar el pool de {domain_name}: {pool_err}")
 
+            # Eliminar la instancia Redis dedicada si el dominio la tenía
+            try:
+                from scripts import redis_manager
+                redis_manager.remove_instance(domain_name, username=username)
+            except Exception as redis_err:
+                logger.warning(f"No se pudo eliminar el Redis de {domain_name}: {redis_err}")
+
             # Eliminar directorio del dominio si se conoce el usuario
             if cleanup_dirs and username:
                 domain_root = get_domain_root(username, domain_name)
