@@ -119,3 +119,4 @@ exit 0
 | 0080 | fail2ban dbpurgeage = 5w (fail2ban.local): el historial de reincidencias se purgaba cada 1d y el escalado de 0079 nunca llegaba a semanas; ahora persiste > maxtime | 2026-07-01 |
 | 0081 | Protección anti fuerza bruta WordPress por dominio (xmlrpc 444 + rate-limit wp-login 3/min); crea columnas + protege los dominios bajo ataque (deja cronicasliterarias.es sin proteger para validar el aviso) | 2026-07-01 |
 | 0082 | Cache de ataques WP en BD (wp_xmlrpc_hits/wp_wplogin_hits, ventana 24h, cron 3h) para la tabla admin del tab WordPress en Seguridad; primer análisis al aplicar | 2026-07-01 |
+| 0083 | postscreen (portero anti-bot) en SMTP 25: corta bots por comportamiento (pregreet/pipelining/basura) antes de sondear buzones; sin DNSBL (RBL las hace Rspamd vía unbound); validación+auto-reversión | 2026-07-01 |

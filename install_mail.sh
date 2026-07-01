@@ -234,9 +234,40 @@ smtps     inet  n       -       y       -       -       smtpd
 MASTEREOF
 fi
 
+# ── postscreen: portero anti-bot en el puerto 25 ─────────────────────────────
+# Corta bots que hablan antes de tiempo (pregreet), pipelinean o mandan basura,
+# ANTES de que sondeen buzones. Juzga por comportamiento SMTP, no por RBL (las
+# RBL las hace Rspamd vía unbound). Los grandes (Gmail/Outlook) respetan el
+# protocolo → no les afecta; solo mete ~6s la 1ª vez a un remitente nuevo.
+# Debian trae las líneas de postscreen comentadas: activamos smtp→postscreen.
+if grep -qE '^smtp      inet  n       -       y       -       -       smtpd' /etc/postfix/master.cf; then
+    sed -i 's/^smtp      inet  n       -       y       -       -       smtpd/#smtp      inet  n       -       y       -       -       smtpd/' /etc/postfix/master.cf
+    sed -i 's/^#smtp      inet  n       -       y       -       1       postscreen/smtp      inet  n       -       y       -       1       postscreen/' /etc/postfix/master.cf
+    sed -i 's/^#smtpd     pass  -       -       y       -       -       smtpd/smtpd     pass  -       -       y       -       -       smtpd/' /etc/postfix/master.cf
+    sed -i 's/^#dnsblog   unix  -       -       y       -       0       dnsblog/dnsblog   unix  -       -       y       -       0       dnsblog/' /etc/postfix/master.cf
+    sed -i 's/^#tlsproxy  unix  -       -       y       -       0       tlsproxy/tlsproxy  unix  -       -       y       -       0       tlsproxy/' /etc/postfix/master.cf
+fi
+# Config de postscreen (tests de protocolo en enforce; sin DNSBL: lo hace Rspamd)
+if ! grep -q '^postscreen_greet_action' /etc/postfix/main.cf; then
+    cat >> /etc/postfix/main.cf << 'PSEOF'
+
+# ── SVQPanel: postscreen (portero anti-bot, tests de protocolo) ──
+postscreen_greet_action = enforce
+postscreen_pipelining_enable = yes
+postscreen_pipelining_action = enforce
+postscreen_non_smtp_command_enable = yes
+postscreen_non_smtp_command_action = enforce
+postscreen_bare_newline_enable = yes
+postscreen_bare_newline_action = enforce
+postscreen_dnsbl_action = ignore
+postscreen_dnsbl_sites =
+postscreen_access_list = permit_mynetworks
+PSEOF
+fi
+
 systemctl enable postfix
 systemctl restart postfix
-echo -e "${GREEN}✓ Postfix configurado (SMTP 25 + submission 587 + smtps 465)${NC}"
+echo -e "${GREEN}✓ Postfix configurado (SMTP 25 + postscreen + submission 587 + smtps 465)${NC}"
 
 # ── 3. DOVECOT ────────────────────────────────────────────────────────────────
 echo -e "${YELLOW}→ Instalando Dovecot...${NC}"
