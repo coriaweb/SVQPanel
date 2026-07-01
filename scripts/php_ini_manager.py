@@ -40,6 +40,16 @@ PHP_INI_DIRECTIVES: Dict[str, dict] = {
     "opcache.enable":       {"type": "bool", "admin": True,  "cap": False, "label": "OPcache activo"},
 }
 
+# Valores por defecto POR DOMINIO (independientes del php.ini global). Cada pool
+# nace con estas directivas explícitas aunque el dominio no tenga overrides, de
+# modo que el consumo por sitio es contenido por defecto y solo lo sube quien lo
+# necesite (hasta el techo del global). Ej.: el global es 256M (techo máximo que
+# el panel permite via override), pero cada dominio arranca con 128M.
+# Un override explícito del dominio para la misma clave GANA sobre este default.
+DOMAIN_DEFAULT_OVERRIDES: Dict[str, str] = {
+    "memory_limit": "128M",
+}
+
 POOL_DIR_TMPL = "/etc/php/{ver}/fpm/pool.d/svqpanel-{domain}.conf"
 PHP_INI_TMPL  = "/etc/php/{ver}/fpm/php.ini"
 # Fuente única de verdad de las versiones PHP soportadas (evita listas duplicadas
@@ -323,8 +333,12 @@ def _pool_content(domain: str, owner: str, overrides: Dict[str, str],
     # Bloque de seguridad SIEMPRE (open_basedir, disable_functions, tmp aislado)
     lines.extend(_security_block(owner, domain, relax_hardening))
     lines.append("")
-    # Overrides opcionales del cliente (van después; no pueden tocar php_admin_value)
-    for key, raw in overrides.items():
+    # Directivas por dominio = defaults del panel (memory_limit 128M…) + overrides
+    # del cliente. El override explícito del dominio GANA sobre el default. Así
+    # cada pool nace con un consumo contenido y solo lo sube quien lo necesite.
+    effective = dict(DOMAIN_DEFAULT_OVERRIDES)
+    effective.update(overrides or {})
+    for key, raw in effective.items():
         spec = PHP_INI_DIRECTIVES.get(key)
         if not spec:
             continue
