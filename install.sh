@@ -1323,8 +1323,10 @@ PYEOF
 \$config['support_url']    = '';
 \$config['des_key']         = '${RC_DES_KEY}';
 
-// Plugin autologin SVQPanel
-\$config['plugins'] = ['svqpanel_autologin'];
+// Plugins: autologin SVQPanel + utilidades. markasjunk da el botón Spam/No-spam;
+// zipdownload baja varios adjuntos en ZIP; archive añade botón Archivar;
+// attachment_reminder avisa si mencionas un adjunto y no lo pusiste.
+\$config['plugins'] = ['svqpanel_autologin', 'markasjunk', 'zipdownload', 'archive', 'attachment_reminder'];
 
 // Skin
 \$config['skin']             = 'elastic';
@@ -1341,6 +1343,19 @@ PYEOF
 # como "Correo no deseado".
 \$config['junk_mbox']   = 'Junk';
 \$config['create_default_folders'] = true;
+
+// ── markasjunk: botón Spam/No-spam ──
+// Sin driver de learning propio: el botón solo MUEVE el correo a Junk (y de Junk
+// a Inbox para "no es spam"). El aprendizaje Bayes lo dispara el imapsieve del
+// sistema al entrar/salir de Junk (learn-spam/learn-ham), así no duplicamos la
+// lógica de entrenamiento ni exponemos rspamc al webmail.
+\$config['markasjunk_learning_driver'] = null;
+\$config['markasjunk_read_spam']       = true;   // marcar leído al mover a Junk
+\$config['markasjunk_unread_ham']      = false;
+\$config['markasjunk_spam_mbox']       = 'Junk';
+\$config['markasjunk_ham_mbox']        = 'INBOX';
+// archive: carpeta destino del botón Archivar
+\$config['archive_mbox'] = 'Archive';
 RCCONFEOF
 
     # Enlace /etc/roundcube → config en RC_APP_DIR (compatibilidad)
@@ -2019,11 +2034,15 @@ WorkingDirectory=/opt/svqpanel
 # (ssh-keygen/ssh/scp para el cluster DNS, nft, certbot, etc.). Solo con el venv
 # fallaban con FileNotFoundError.
 Environment="PATH=/opt/svqpanel/venv/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
-# --limit-max-requests: reinicia el worker cada N peticiones liberando memoria acumulada
+# --limit-max-requests: reinicia el worker cada N peticiones liberando memoria acumulada.
+#   OJO: valor bajo (p.ej. 500) recicla cada pocos minutos por el polling del dashboard;
+#   durante el reinicio nginx devuelve HTML y el frontend muestra "la API no responde".
+#   50000 recicla cada muchas horas (el pico real de RAM es ~300M, MemoryMax cubre fugas).
 # --timeout-keep-alive: cierra keep-alive rápido para no retener conexiones/memoria
-ExecStart=/opt/svqpanel/venv/bin/uvicorn api.main:app --host 127.0.0.1 --port 8001 --limit-max-requests 500 --timeout-keep-alive 2
+ExecStart=/opt/svqpanel/venv/bin/uvicorn api.main:app --host 127.0.0.1 --port 8001 --limit-max-requests 50000 --timeout-keep-alive 2
 Restart=always
-RestartSec=10
+# RestartSec bajo: acorta la ventana de caída al reciclar el worker (menos error visible).
+RestartSec=2
 TimeoutStartSec=30
 # Reiniciar automáticamente si el proceso supera 900 MB de RAM.
 # El proceso Python carga muchos modelos y puede acumular memoria;

@@ -120,3 +120,5 @@ exit 0
 | 0081 | Protección anti fuerza bruta WordPress por dominio (xmlrpc 444 + rate-limit wp-login 3/min); crea columnas + protege los dominios bajo ataque (deja cronicasliterarias.es sin proteger para validar el aviso) | 2026-07-01 |
 | 0082 | Cache de ataques WP en BD (wp_xmlrpc_hits/wp_wplogin_hits, ventana 24h, cron 3h) para la tabla admin del tab WordPress en Seguridad; primer análisis al aplicar | 2026-07-01 |
 | 0083 | postscreen (portero anti-bot) en SMTP 25: corta bots por comportamiento (pregreet/pipelining/basura) antes de sondear buzones; sin DNSBL (RBL las hace Rspamd vía unbound); validación+auto-reversión | 2026-07-01 |
+| 0085 | Plugins webmail Roundcube: markasjunk (botón Spam/No-spam, mueve a Junk→lo aprende el imapsieve), zipdownload, archive, attachment_reminder | 2026-07-01 |
+| 0084 | uvicorn --limit-max-requests 500→50000 y RestartSec 10→2 en svqpanel.service: el worker se reciclaba cada pocos minutos por el polling del dashboard y el corte de ~14s hacía que el frontend mostrara "la API no responde (no es JSON)" sin motivo | 2026-07-01 |
