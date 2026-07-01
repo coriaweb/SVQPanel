@@ -531,6 +531,14 @@ class DomainManager(SystemManager):
             with open(apache_path, "w") as f:
                 f.write(apache_content)
 
+            # Zona de cache de página (la usa el Nginx front vía proxy_cache). En
+            # modo Apache también hay que escribirla/borrarla — antes solo se hacía
+            # en la rama nginx, por eso la caché no se materializaba en modo Apache.
+            if fastcgi_cache_enabled:
+                write_fastcgi_cache_zone(domain_name)
+            else:
+                remove_fastcgi_cache_zone(domain_name)
+
             # Zona de rate limit de wp-login (la usa el Nginx front, no Apache)
             from scripts.utils import write_wplogin_zone, remove_wplogin_zone
             if wp_login_ratelimit and wp_login_ratelimit > 0:
@@ -571,6 +579,8 @@ class DomainManager(SystemManager):
                 security_headers_enabled=security_headers_enabled,
                 http3_enabled=http3_enabled,
                 proxy_to_apache=True,
+                fastcgi_cache_enabled=fastcgi_cache_enabled,
+                fastcgi_cache_ttl_minutes=fastcgi_cache_ttl_minutes,
                 custom_nginx_config=custom_nginx_config,
                 httpauth=httpauth,
                 canonical_domain=canonical_domain,
