@@ -29,6 +29,7 @@ DNS_HEALTH_SECONDS = 600      # salud del cluster DNS: cada 10 minutos
 LICENSE_SECONDS = 43200       # validación de licencia: cada 12 horas
 DISK_USAGE_SECONDS = 43200    # peso en disco de los dominios: cada 12 horas
 WP_ATTACK_SECONDS = 10800     # análisis de ataque WP (xmlrpc/wp-login): cada 3 horas
+BOUNCER_HEALTH_SECONDS = 600  # salud del firewall-bouncer de CrowdSec: cada 10 min
 
 
 def _loop():
@@ -38,6 +39,7 @@ def _loop():
     last_license = 0.0
     last_disk = 0.0
     last_wp_attack = 0.0
+    last_bouncer = 0.0
     while True:
         try:
             _sample_once()
@@ -74,7 +76,75 @@ def _loop():
                 _wp_attack_once()
             except Exception:
                 logger.exception("Error en wp-attack-scan")
+        # Salud del firewall-bouncer de CrowdSec cada 10 min: si CrowdSec tiene
+        # decisiones pero el bouncer no las aplica al firewall (nftables), lo
+        # reinicia. Detecta el fallo silencioso "banea en BD pero no en la red".
+        if now - last_bouncer >= BOUNCER_HEALTH_SECONDS:
+            last_bouncer = now
+            try:
+                _bouncer_health_once()
+            except Exception:
+                logger.exception("Error en bouncer-health")
         time.sleep(INTERVAL_SECONDS)
+
+
+def _bouncer_health_once():
+    """Detecta y repara el fallo SILENCIOSO del firewall-bouncer de CrowdSec:
+    CrowdSec decide baneos pero el bouncer NO los aplica a nftables (típicamente
+    porque un `flush ruleset` borró su tabla `ip crowdsec` y entra en bucle
+    `netlink receive: no such file`). Efecto: detecta pero no bloquea → los
+    ataques siguen pasando. Si se detecta, reinicia el bouncer (recrea la tabla
+    y re-aplica todas las decisiones). Best-effort: si CrowdSec/bouncer no están
+    instalados, no hace nada. Ver memoria svqpanel-crowdsec-bouncer-roto."""
+    import subprocess
+
+    def _sh(cmd):
+        try:
+            r = subprocess.run(cmd, capture_output=True, text=True, timeout=15)
+            return r.returncode, (r.stdout or "")
+        except Exception:
+            return 1, ""
+
+    # ¿está el bouncer instalado/activo? Si no, nada que vigilar.
+    rc, _ = _sh(["systemctl", "is-active", "crowdsec-firewall-bouncer"])
+    if rc != 0:
+        return
+
+    broken = False
+    reason = ""
+
+    # Señal 1 (inequívoca): errores netlink recientes en el log del bouncer.
+    # El bouncer usa log_mode: file → /var/log/crowdsec-firewall-bouncer.log.
+    try:
+        with open("/var/log/crowdsec-firewall-bouncer.log", "r", errors="replace") as f:
+            tail = f.readlines()[-200:]
+        netlink_errs = sum(
+            1 for ln in tail if "netlink receive: no such file" in ln
+        )
+        if netlink_errs >= 5:
+            broken, reason = True, f"{netlink_errs} errores netlink en el log"
+    except FileNotFoundError:
+        pass
+
+    # Señal 2 (corroboración): CrowdSec tiene decisiones pero la tabla nft del
+    # bouncer no tiene IPs → no las está aplicando.
+    if not broken:
+        rc_d, out_d = _sh(["cscli", "decisions", "list", "-o", "raw"])
+        n_decisions = max(0, len([l for l in out_d.splitlines() if l.strip()]) - 1)
+        if rc_d == 0 and n_decisions > 0:
+            # ¿cuántas IPs hay realmente en la tabla del bouncer?
+            _, out_nft = _sh(["nft", "list", "table", "ip", "crowdsec"])
+            has_elems = "elements = {" in out_nft
+            if not has_elems:
+                broken = True
+                reason = f"{n_decisions} decisiones en CrowdSec pero 0 IPs en nft crowdsec"
+
+    if not broken:
+        return
+
+    logger.warning(f"firewall-bouncer roto ({reason}) → reiniciando")
+    _sh(["systemctl", "restart", "crowdsec-firewall-bouncer"])
+    logger.info("firewall-bouncer reiniciado (health-check)")
 
 
 def _disk_usage_once():

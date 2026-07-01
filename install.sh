@@ -2391,7 +2391,14 @@ cat > /etc/nftables.conf << 'NFTEOF'
 # La tabla 'inet svqpanel' contiene todo lo que gestiona el panel.
 # NO edites a mano salvo emergencia; el panel regenera este archivo.
 
-flush ruleset
+# OJO: NO usar `flush ruleset` — borra TODAS las tablas, incluidas las del
+# firewall-bouncer de CrowdSec (ip crowdsec / ip6 crowdsec6). Eso deja al bouncer
+# fallando en bucle (netlink: no such file) y CrowdSec deja de aplicar baneos al
+# firewall (detecta pero no bloquea). Recreamos SOLO nuestra tabla: la creamos
+# vacía (para que el delete no falle si no existía) y la borramos antes de
+# redefinirla. Idempotente y sin tocar las tablas de otros (crowdsec, etc.).
+table inet svqpanel {}
+delete table inet svqpanel
 
 table inet svqpanel {
     # Named sets — los rellena el panel y/o fail2ban
