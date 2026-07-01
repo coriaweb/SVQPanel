@@ -704,6 +704,13 @@ def generate_nginx_config(
     location ~ /\\.ht {{
         deny all;
     }}
+    # Bloquea el acceso a metadatos de VCS y ficheros de config sensibles: los bots
+    # sondean /.git/config, /.env, /.svn/… para robar credenciales o el repo entero.
+    # 444 (cierra sin responder, no da pistas). El regex cubre el path en cualquier
+    # posición (p.ej. /subdir/.git/config).
+    location ~ /\\.(git|svn|hg|env|bzr)(/|$) {{
+        return 444;
+    }}
 
     # .well-known SIEMPRE permitido (certbot/ACME, autodiscover) — va antes de
     # los deny de ficheros ocultos para no bloquear la validación de SSL.
@@ -753,6 +760,13 @@ server {{
 {canonical_block}{tpl_extra}{bots_block}{wp_protect_ssl}{app_block_ssl}
     location ~ /\\.ht {{
         deny all;
+    }}
+    # Bloquea el acceso a metadatos de VCS y ficheros de config sensibles: los bots
+    # sondean /.git/config, /.env, /.svn/… para robar credenciales o el repo entero.
+    # 444 (cierra sin responder, no da pistas). El regex cubre el path en cualquier
+    # posición (p.ej. /subdir/.git/config).
+    location ~ /\\.(git|svn|hg|env|bzr)(/|$) {{
+        return 444;
     }}
 
     # Bloquear acceso a ficheros sensibles que algunos frameworks dejan en la

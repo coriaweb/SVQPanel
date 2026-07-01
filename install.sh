@@ -2924,6 +2924,25 @@ labels:
   application: svqpanel
 CSACQEOF
 
+        # ── 5b. Acquis: logs de acceso de los DOMINIOS de clientes ────────────
+        # Sin esto CrowdSec SOLO ve /var/log/nginx|apache2 (el panel) y queda
+        # CIEGO ante los ataques a las webs alojadas (fuerza bruta wp-login
+        # DISTRIBUIDA, scans WP, probing…). Con estos logs, los escenarios http-*
+        # banean esas IPs por reputación — que es lo que el rate-limit por IP NO
+        # puede frenar cuando el ataque viene de decenas de IPs a la vez.
+        cat > /etc/crowdsec/acquis.d/svqpanel-domains.yaml << CSDOMEOF
+# SVQPanel — logs de acceso de los dominios de clientes (para escenarios http-*)
+filenames:
+  - /home/*/web/*/logs/nginx.access.log
+labels:
+  type: nginx
+---
+filenames:
+  - /home/*/web/*/logs/apache.access.log
+labels:
+  type: apache2
+CSDOMEOF
+
         # ── 6. Servicios ──────────────────────────────────────────────────────
         systemctl enable crowdsec >/dev/null 2>&1 || true
         systemctl restart crowdsec >/dev/null 2>&1 || systemctl start crowdsec
