@@ -1,6 +1,7 @@
 """PHP version management — install, enable, disable, uninstall PHP-FPM versions"""
 
 import os
+import re
 import logging
 from typing import List, Dict, Optional
 from .base import SystemManager
@@ -23,6 +24,15 @@ BASE_EXTENSIONS = ["cli", "fpm", "pgsql", "mysql", "curl", "gd", "mbstring", "xm
 # instalada desde el panel tiene que nacer igual que una del install.
 # gmp/intl/imagick/apcu: Nextcloud. redis: caché de objetos por dominio.
 OPTIONAL_EXTENSIONS = ["opcache", "intl", "soap", "readline", "gmp", "imagick", "apcu", "redis"]
+
+# Paquetes que el gestor de extensiones NO deja desinstalar: sin ellos la
+# versión deja de funcionar (base), o el panel pierde una feature transversal
+# (redis: caché de objetos por dominio; opcache: rendimiento de todos los sitios).
+PROTECTED_EXTENSIONS = set(BASE_EXTENSIONS) | {"common", "opcache", "redis"}
+
+# Nombre de extensión válido en paquetes Debian (php8.2-<ext>).
+# \Z y no $: $ aceptaría un \n final ("ldap\n" pasaría la validación).
+_EXT_NAME_RE = re.compile(r"^[a-z0-9][a-z0-9+.-]{0,40}\Z")
 
 
 class PHPManager(SystemManager):
@@ -233,6 +243,96 @@ class PHPManager(SystemManager):
 
         logger.info(f"PHP {version} uninstalled")
         return {"version": version, "installed": False, "running": False, "enabled": False, "socket": None}
+
+    # ─────────────────── extensiones (paquetes php{ver}-*) ──────────────────
+
+    def list_extensions(self, version: str) -> List[Dict]:
+        """
+        Todas las extensiones disponibles en apt para una versión (php{ver}-*),
+        con su descripción y si están instaladas. Incluye también las instaladas
+        que ya no estén en el repo (para poder quitarlas igualmente).
+        """
+        if version not in ALL_VERSIONS:
+            raise ValueError(f"Unknown PHP version: {version}")
+        prefix = f"php{version}-"
+
+        available: Dict[str, str] = {}
+        rc, out, _ = self.execute_command(
+            ["apt-cache", "search", "--names-only", f"^{re.escape(prefix)}"],
+            check=False)
+        if rc == 0:
+            for line in out.splitlines():
+                name, sep, desc = line.partition(" - ")
+                name = name.strip()
+                if sep and name.startswith(prefix):
+                    available[name[len(prefix):]] = desc.strip()
+
+        installed = set()
+        rc, out, _ = self.execute_command(
+            ["dpkg-query", "-W", "-f=${Package}\t${Status}\n", f"{prefix}*"],
+            check=False)
+        if rc == 0:
+            for line in out.splitlines():
+                pkg, _, st = line.partition("\t")
+                if pkg.startswith(prefix) and "install ok installed" in st:
+                    installed.add(pkg[len(prefix):])
+
+        exts = []
+        for name in sorted(set(available) | installed):
+            exts.append({
+                "name":        name,
+                "package":     f"{prefix}{name}",
+                "description": available.get(name, ""),
+                "installed":   name in installed,
+                "protected":   name in PROTECTED_EXTENSIONS,
+            })
+        return exts
+
+    def install_extension(self, version: str, ext: str) -> None:
+        """Instala un paquete php{ver}-{ext} del repo y recarga FPM."""
+        self._validate_ext(version, ext)
+        pkg = f"php{version}-{ext}"
+        rc, _, _ = self.execute_command(["apt-cache", "show", pkg], check=False)
+        if rc != 0:
+            raise ValueError(f"El paquete {pkg} no existe en los repositorios")
+        rc, _, err = self.execute_command(
+            ["apt-get", "install", "-y", "-q", pkg], check=False)
+        if rc != 0:
+            raise RuntimeError(f"apt-get install {pkg} falló: {err.strip()[-300:]}")
+        self._reload_fpm(version)
+        logger.info(f"Extensión {pkg} instalada")
+
+    def remove_extension(self, version: str, ext: str) -> None:
+        """Desinstala un paquete php{ver}-{ext} (nunca los protegidos) y recarga FPM."""
+        self._validate_ext(version, ext)
+        if ext in PROTECTED_EXTENSIONS:
+            raise ValueError(
+                f"'{ext}' es un paquete protegido: sin él la versión o una "
+                f"feature del panel dejarían de funcionar")
+        pkg = f"php{version}-{ext}"
+        if not self._dpkg_installed(pkg):
+            return
+        rc, _, err = self.execute_command(
+            ["apt-get", "remove", "-y", "-q", pkg], check=False)
+        if rc != 0:
+            raise RuntimeError(f"apt-get remove {pkg} falló: {err.strip()[-300:]}")
+        self.execute_command(["apt-get", "autoremove", "-y", "-q"], check=False)
+        self._reload_fpm(version)
+        logger.info(f"Extensión {pkg} desinstalada")
+
+    def _validate_ext(self, version: str, ext: str) -> None:
+        if version not in ALL_VERSIONS:
+            raise ValueError(f"Unknown PHP version: {version}")
+        if not self.is_installed(version):
+            raise RuntimeError(f"PHP {version} no está instalado")
+        if not _EXT_NAME_RE.match(ext or ""):
+            raise ValueError(f"Nombre de extensión inválido: {ext!r}")
+
+    def _reload_fpm(self, version: str) -> None:
+        # USR2 (reload) relanza los workers con la config/extensiones nuevas
+        # sin cortar conexiones; si no está corriendo no pasa nada.
+        self.execute_command(
+            ["systemctl", "reload-or-restart", f"php{version}-fpm"], check=False)
 
     # ────────────────────────── private ─────────────────────────────────────
 

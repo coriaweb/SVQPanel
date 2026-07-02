@@ -213,6 +213,70 @@ async def uninstall_php_version(
         raise HTTPException(status_code=500, detail=f"Error al desinstalar PHP {version}: {str(e)}")
 
 
+# ──────────────────────────── Extensiones por versión ────────────────────────
+
+@router.get("/php/versions/{version}/extensions")
+async def list_php_extensions(
+    version: str,
+    current_user: User = Depends(require_admin)
+):
+    """
+    [Admin] Todas las extensiones (paquetes php{ver}-*) disponibles en apt para
+    una versión, con descripción, si están instaladas y si están protegidas.
+    """
+    if version not in ALL_VERSIONS:
+        raise HTTPException(status_code=400, detail=f"Versión PHP desconocida: {version}")
+    try:
+        manager = PHPManager()
+        return {"version": version, "extensions": manager.list_extensions(version)}
+    except PermissionError as e:
+        raise HTTPException(status_code=403, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error listando extensiones: {e}")
+
+
+@router.post("/php/versions/{version}/extensions/{ext}")
+async def install_php_extension(
+    version: str,
+    ext: str,
+    current_user: User = Depends(require_admin)
+):
+    """[Admin] Instala el paquete php{ver}-{ext} y recarga FPM."""
+    if version not in ALL_VERSIONS:
+        raise HTTPException(status_code=400, detail=f"Versión PHP desconocida: {version}")
+    try:
+        manager = PHPManager()
+        manager.install_extension(version, ext)
+        return {"success": True, "message": f"php{version}-{ext} instalado"}
+    except ValueError as e:
+        raise HTTPException(status_code=422, detail=str(e))
+    except PermissionError as e:
+        raise HTTPException(status_code=403, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error instalando php{version}-{ext}: {e}")
+
+
+@router.delete("/php/versions/{version}/extensions/{ext}")
+async def remove_php_extension(
+    version: str,
+    ext: str,
+    current_user: User = Depends(require_admin)
+):
+    """[Admin] Desinstala el paquete php{ver}-{ext} (los protegidos no) y recarga FPM."""
+    if version not in ALL_VERSIONS:
+        raise HTTPException(status_code=400, detail=f"Versión PHP desconocida: {version}")
+    try:
+        manager = PHPManager()
+        manager.remove_extension(version, ext)
+        return {"success": True, "message": f"php{version}-{ext} desinstalado"}
+    except ValueError as e:
+        raise HTTPException(status_code=422, detail=str(e))
+    except PermissionError as e:
+        raise HTTPException(status_code=403, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error desinstalando php{version}-{ext}: {e}")
+
+
 # ──────────────────────────── Cambiar PHP de un dominio ──────────────────────
 
 @router.put("/domains/{domain_id}/php")

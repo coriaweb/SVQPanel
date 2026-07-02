@@ -382,6 +382,10 @@
                         <i class="bi bi-trash me-1"></i>Desinstalar
                       </button>
                     </template>
+                    <button v-if="php.installed" class="btn btn-sm btn-outline-secondary"
+                            @click="openExtensions(php.version)">
+                      <i class="bi bi-puzzle me-1"></i>Extensiones
+                    </button>
                   </div>
                 </div>
               </div>
@@ -1019,6 +1023,59 @@
       </div>
     </div>
 
+    <!-- Modal de extensiones PHP por versión -->
+    <div v-if="extTarget" class="modal d-block" tabindex="-1" style="background:rgba(0,0,0,.5)">
+      <div class="modal-dialog modal-dialog-centered modal-lg modal-dialog-scrollable">
+        <div class="modal-content">
+          <div class="modal-header">
+            <h5 class="modal-title"><i class="bi bi-puzzle me-2"></i> Extensiones de PHP {{ extTarget }}</h5>
+            <button type="button" class="btn-close" @click="extTarget = null"></button>
+          </div>
+          <div class="modal-body">
+            <input class="form-control mb-3" v-model="extSearch"
+                   placeholder="Buscar extensión (ldap, imap, mongodb, xdebug…)" />
+            <div v-if="extLoading" class="text-center py-4">
+              <span class="spinner-border spinner-border-sm me-2"></span>
+              <span class="text-muted small">Consultando paquetes disponibles…</span>
+            </div>
+            <div v-else-if="extError" class="alert alert-danger mb-0">{{ extError }}</div>
+            <div v-else>
+              <div v-for="e in filteredExtensions" :key="e.name"
+                   class="d-flex align-items-center gap-2 py-2 border-bottom">
+                <div class="flex-grow-1" style="min-width:0">
+                  <strong class="font-monospace">{{ e.name }}</strong>
+                  <span v-if="e.installed" class="php-tag php-tag--on ms-2"><i class="bi bi-check-circle"></i> Instalada</span>
+                  <span v-if="e.protected" class="php-tag php-tag--default ms-1"
+                        title="Necesaria para la versión o para una función del panel; no se puede quitar">protegida</span>
+                  <div class="text-muted small text-truncate">{{ e.description || '—' }}</div>
+                </div>
+                <button v-if="!e.installed" class="btn btn-sm btn-outline-primary flex-shrink-0"
+                        @click="installExtension(e)" :disabled="extActionLoading === e.name">
+                  <span v-if="extActionLoading === e.name" class="spinner-border spinner-border-sm me-1"></span>
+                  <i v-else class="bi bi-download me-1"></i>Instalar
+                </button>
+                <button v-else-if="!e.protected" class="btn btn-sm btn-outline-danger flex-shrink-0"
+                        @click="removeExtension(e)" :disabled="extActionLoading === e.name">
+                  <span v-if="extActionLoading === e.name" class="spinner-border spinner-border-sm me-1"></span>
+                  <i v-else class="bi bi-trash me-1"></i>Quitar
+                </button>
+              </div>
+              <p v-if="!filteredExtensions.length" class="text-muted text-center py-3 mb-0">
+                Sin resultados para «{{ extSearch }}»
+              </p>
+            </div>
+          </div>
+          <div class="modal-footer justify-content-between">
+            <small class="text-muted">
+              <i class="bi bi-info-circle me-1"></i>
+              Al instalar o quitar una extensión se recarga PHP-FPM {{ extTarget }} (sin cortar conexiones).
+            </small>
+            <button class="btn btn-secondary" @click="extTarget = null">Cerrar</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
   </div>
 </template>
 
@@ -1554,6 +1611,64 @@ export default {
       }
     }
 
+    // ─── Extensiones PHP por versión ─────────────────────────────────────────
+
+    const extTarget = ref(null)          // versión cuyo modal está abierto
+    const extList = ref([])
+    const extSearch = ref('')
+    const extLoading = ref(false)
+    const extError = ref('')
+    const extActionLoading = ref(null)   // nombre de la extensión en curso
+
+    const filteredExtensions = computed(() => {
+      if (!extSearch.value) return extList.value
+      const q = extSearch.value.toLowerCase()
+      return extList.value.filter(e =>
+        e.name.toLowerCase().includes(q) || (e.description || '').toLowerCase().includes(q))
+    })
+
+    const openExtensions = async (version) => {
+      extTarget.value = version
+      extSearch.value = ''
+      extList.value = []
+      extError.value = ''
+      extLoading.value = true
+      try {
+        const r = await api.listPHPExtensions(version)
+        extList.value = r.extensions || []
+      } catch (e) {
+        extError.value = `No se pudieron listar las extensiones: ${e.message}`
+      } finally {
+        extLoading.value = false
+      }
+    }
+
+    const installExtension = async (e) => {
+      extActionLoading.value = e.name
+      try {
+        await api.installPHPExtension(extTarget.value, e.name)
+        e.installed = true
+        store.showNotification(`php${extTarget.value}-${e.name} instalada`, 'success')
+      } catch (err) {
+        store.showNotification(`Error instalando ${e.name}: ${err.message}`, 'danger')
+      } finally {
+        extActionLoading.value = null
+      }
+    }
+
+    const removeExtension = async (e) => {
+      extActionLoading.value = e.name
+      try {
+        await api.removePHPExtension(extTarget.value, e.name)
+        e.installed = false
+        store.showNotification(`php${extTarget.value}-${e.name} desinstalada`, 'success')
+      } catch (err) {
+        store.showNotification(`Error quitando ${e.name}: ${err.message}`, 'danger')
+      } finally {
+        extActionLoading.value = null
+      }
+    }
+
     // ─── Timezone ─────────────────────────────────────────────────────────────
 
     const tzCurrent   = ref('')
@@ -1670,6 +1785,8 @@ export default {
       uninstallTarget,
       loadPHPStatus, installPHP, enablePHP, disablePHP,
       confirmUninstall, uninstallPHP,
+      extTarget, extList, extSearch, extLoading, extError, extActionLoading,
+      filteredExtensions, openExtensions, installExtension, removeExtension,
       sslForm, sslLoading, showRevokeConfirm,
       issueSSL, revokeSSL, formatExpiry,
       tzCurrent, tzSelected, tzSearch, tzList, tzSaving,

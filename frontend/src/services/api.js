@@ -296,6 +296,17 @@ class APIClient {
     return this.delete(`/api/php/versions/${version}`)
   }
 
+  // Extensiones PHP por versión (admin)
+  listPHPExtensions(version) {
+    return this.get(`/api/php/versions/${version}/extensions`)
+  }
+  installPHPExtension(version, ext) {
+    return this.post(`/api/php/versions/${version}/extensions/${ext}`, {})
+  }
+  removePHPExtension(version, ext) {
+    return this.delete(`/api/php/versions/${version}/extensions/${ext}`)
+  }
+
   changePHPVersion(domainId, phpVersion) {
     return this.put(`/api/domains/${domainId}/php`, {
       php_version: phpVersion
