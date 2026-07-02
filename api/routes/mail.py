@@ -870,6 +870,18 @@ async def get_mail_out_ip(domain_id: int, current_user=Depends(require_auth),
     }
 
 
+def _ipv6_has_ptr(ipv6: str) -> str:
+    """Devuelve el hostname del PTR de una IPv6, o '' si no tiene. Best-effort
+    (dig); no revienta si no está disponible."""
+    import subprocess
+    try:
+        r = subprocess.run(["dig", "+short", "-x", ipv6, "@1.1.1.1"],
+                           capture_output=True, text=True, timeout=6)
+        return (r.stdout or "").strip().splitlines()[0].rstrip(".") if r.stdout.strip() else ""
+    except Exception:
+        return ""
+
+
 class MailOutIpRequest(_BM):
     pref: str = _F("ipv4", pattern="^(ipv4|ipv6)$")
 
@@ -894,9 +906,21 @@ async def set_mail_out_ip(domain_id: int, data: MailOutIpRequest,
     db.commit()
     db.refresh(md)
     _apply_domain_sender_ip(md, db)
-    return {"status": "success", "pref": md.mail_out_ip_pref,
-            "warning": ("Asegúrate de que la IPv6 tiene rDNS (PTR) o el correo "
-                        "podría ser rechazado por Gmail/Outlook.") if data.pref == "ipv6" else None}
+
+    # Al elegir IPv6, verificamos EN VIVO si esa IPv6 ya tiene PTR (rDNS). Si no,
+    # avisamos claramente: el cliente/proveedor debe configurarlo o Gmail/Outlook
+    # rechazan el correo (550 5.7.25). El envío global (por defecto) usa la IP del
+    # servidor, que sí tiene PTR — por eso ipv6 dedicada es opt-in consciente.
+    warning = None
+    if data.pref == "ipv6" and ipv6:
+        has_ptr = _ipv6_has_ptr(ipv6)
+        if has_ptr:
+            warning = f"La IPv6 {ipv6} ya tiene PTR ({has_ptr}); envío por IPv6 activado."
+        else:
+            warning = (f"⚠ La IPv6 {ipv6} NO tiene PTR (rDNS). Debes configurar el "
+                       "registro inverso con tu proveedor o Gmail/Outlook rechazarán "
+                       "el correo (550 5.7.25). Mientras tanto, considera volver a IPv4.")
+    return {"status": "success", "pref": md.mail_out_ip_pref, "warning": warning}
 
 
 @router.post("/mail/domains/{domain_id}/webmail/ssl")

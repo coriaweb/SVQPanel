@@ -745,10 +745,15 @@ vacation
             ipv4, ipv6, pref = transports[name]
             lines.append(f"{name} unix  -       -       n       -       -       smtp")
             lines.append(f"  -o smtp_bind_address={ipv4}")
-            lines.append(f"  -o smtp_bind_address6={ipv6}")
-            # Si hay IPv6 y el dominio la prefiere, salir por IPv6 (IPv4 fallback).
-            # Si no, forzar IPv4 para no usar IPv6 sin querer (rDNS).
+            # La IPv6 dedicada del dominio SOLO se usa para el correo si el
+            # dominio la prefiere EXPLÍCITAMENTE (opt-in). Motivo: una IPv6
+            # dedicada casi nunca tiene PTR (rDNS) — que lo configura el
+            # proveedor —, y sin PTR Gmail/Outlook rechazan el correo
+            # (550 5.7.25). Por defecto (pref=ipv4) el dominio NI SIQUIERA
+            # declara el bind6: sale por IPv4 (que sí tiene PTR). Si el admin
+            # elige ipv6, es porque se compromete a configurar el PTR de esa IP.
             if ipv6 and pref == "ipv6":
+                lines.append(f"  -o smtp_bind_address6={ipv6}")
                 lines.append(f"  -o smtp_address_preference=ipv6")
             else:
                 lines.append(f"  -o smtp_address_preference=ipv4")

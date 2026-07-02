@@ -18,10 +18,13 @@ def _mm():
 
 def test_bloque_ipv4_por_defecto():
     mm = _mm()
-    block = mm._build_master_bind_block({"@ejemplo.com": "1.2.3.4||ipv4"})
+    block = mm._build_master_bind_block({"@ejemplo.com": "1.2.3.4|2001:db8::1|ipv4"})
     assert "svqout_ejemplo_com" in block
     assert "smtp_bind_address=1.2.3.4" in block
-    assert "smtp_bind_address6=" in block
+    # Con pref ipv4 NO se declara la IPv6, aunque el dominio la tenga: la IPv6
+    # dedicada casi nunca tiene PTR → sin declararla, el correo sale por IPv4
+    # (con PTR) y no rebota en Gmail. El bind6 es opt-in (pref ipv6).
+    assert "smtp_bind_address6" not in block
     assert "smtp_address_preference=ipv4" in block
 
 
@@ -29,16 +32,18 @@ def test_bloque_ipv6_preferida():
     mm = _mm()
     block = mm._build_master_bind_block({"@ejemplo.com": "1.2.3.4|2001:db8::1|ipv6"})
     assert "smtp_bind_address=1.2.3.4" in block
+    # Solo al elegir ipv6 explícitamente se declara el bind6.
     assert "smtp_bind_address6=2001:db8::1" in block
     assert "smtp_address_preference=ipv6" in block
 
 
 def test_pref_ipv6_sin_ipv6_cae_a_ipv4():
-    # Si pide ipv6 pero no hay IPv6, no debe forzar preferencia ipv6
+    # Si pide ipv6 pero no hay IPv6, no debe forzar preferencia ipv6 ni bind6.
     mm = _mm()
     block = mm._build_master_bind_block({"@ejemplo.com": "1.2.3.4||ipv6"})
     assert "smtp_address_preference=ipv4" in block
     assert "smtp_address_preference=ipv6" not in block
+    assert "smtp_bind_address6" not in block
 
 
 def test_varios_dominios():

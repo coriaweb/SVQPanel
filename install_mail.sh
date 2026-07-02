@@ -187,7 +187,23 @@ fi
 # propio transporte svqout_* con su smtp_bind_address. Las IPs las detectamos del
 # enrutado por defecto (la principal de la máquina).
 MAIL_OUT_V4="$(ip -4 route get 1.1.1.1 2>/dev/null | grep -oE 'src [0-9.]+' | awk '{print $2}')"
-MAIL_OUT_V6="$(ip -6 route get 2001:4860:4860::8888 2>/dev/null | grep -oE 'src [0-9a-f:]+' | awk '{print $2}')"
+# IPv6 de salida: DEBE ser la que tiene PTR (rDNS), o Gmail/Outlook rechazan el
+# correo (550 5.7.25 "does not have a PTR record"). En un /64 hay muchas IPv6 y
+# `ip route get` elige una CUALQUIERA (normalmente sin PTR) → correo rebotado.
+# Prioridad: la IPv6 del HOSTNAME (la que el proveedor configuró con PTR y a la
+# que apunta el AAAA), verificando que esté asignada a la interfaz. Fallback a
+# ip route get solo si no se puede resolver.
+_HN="$(hostname -f 2>/dev/null || hostname)"
+MAIL_OUT_V6="$(getent ahostsv6 "$_HN" 2>/dev/null | awk '{print $1; exit}')"
+# Verificar que esa IPv6 está realmente en la interfaz (si no, no sirve).
+if [ -n "$MAIL_OUT_V6" ] && ! ip -6 addr show scope global | grep -q "${MAIL_OUT_V6}/"; then
+    MAIL_OUT_V6=""
+fi
+# Fallback: la que use el kernel para salir (puede no tener PTR — avisamos).
+if [ -z "$MAIL_OUT_V6" ]; then
+    MAIL_OUT_V6="$(ip -6 route get 2001:4860:4860::8888 2>/dev/null | grep -oE 'src [0-9a-f:]+' | awk '{print $2}')"
+    [ -n "$MAIL_OUT_V6" ] && echo -e "${YELLOW}⚠ IPv6 de salida por enrutado ($MAIL_OUT_V6): verifica que tenga PTR o Gmail rechazará el correo.${NC}"
+fi
 [ -n "$MAIL_OUT_V4" ] && postconf -e "smtp_bind_address = $MAIL_OUT_V4"
 [ -n "$MAIL_OUT_V6" ] && postconf -e "smtp_bind_address6 = $MAIL_OUT_V6"
 echo -e "${GREEN}✓ Salida de correo del servidor fijada (v4:${MAIL_OUT_V4:-none} v6:${MAIL_OUT_V6:-none})${NC}"
