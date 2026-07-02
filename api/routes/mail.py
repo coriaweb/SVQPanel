@@ -861,13 +861,36 @@ async def get_mail_out_ip(domain_id: int, current_user=Depends(require_auth),
     md = _get_mail_domain_or_404(domain_id, db)
     _require_edit(md, current_user)
     ipv4, ipv6 = _domain_ipv4_ipv6(md, db)
+    server = _server_out_ips()   # por dónde sale realmente en modo Predeterminada
     return {
         "domain": md.domain_name,
         "pref": getattr(md, "mail_out_ip_pref", "ipv4") or "ipv4",
-        "ipv4": ipv4,
-        "ipv6": ipv6,
+        "ipv4": ipv4,            # IPv4 del dominio (informativo)
+        "ipv6": ipv6,            # IPv6 dedicada del dominio (para el opt-in)
         "ipv6_available": bool(ipv6),
+        # IPs GLOBALES por las que sale el correo en modo "Predeterminada".
+        "server_ipv4": server["ipv4"],
+        "server_ipv6": server["ipv6"],
     }
+
+
+def _server_out_ips() -> dict:
+    """IPs de salida GLOBALES del servidor (por las que sale el correo en modo
+    'Predeterminada'): smtp_bind_address / smtp_bind_address6 de Postfix. Estas
+    ya tienen PTR/SPF/DKIM correctos. Best-effort; '' si no se puede leer."""
+    import subprocess
+    out = {"ipv4": "", "ipv6": ""}
+    try:
+        r = subprocess.run(["postconf", "-h", "smtp_bind_address", "smtp_bind_address6"],
+                           capture_output=True, text=True, timeout=5)
+        vals = [l.strip() for l in (r.stdout or "").splitlines()]
+        if len(vals) >= 1:
+            out["ipv4"] = vals[0]
+        if len(vals) >= 2:
+            out["ipv6"] = vals[1]
+    except Exception:
+        pass
+    return out
 
 
 def _ipv6_has_ptr(ipv6: str) -> str:

@@ -716,7 +716,11 @@
                           :class="outIp.pref==='ipv4' ? 'sv-btn--primary' : 'sv-btn--ghost'"
                           :disabled="outIpSaving || outIp.pref==='ipv4'" @click="setOutIp('ipv4')">
                     <span><i class="bi bi-shield-check"></i> Predeterminada (recomendada)</span>
-                    <small style="font-weight:400;opacity:.8">IP del servidor — PTR/SPF/DKIM ya OK</small>
+                    <small style="font-weight:400;opacity:.8">
+                      IP del servidor — PTR/SPF/DKIM ya OK<template v-if="outIp.server_ipv4 || outIp.server_ipv6">:</template>
+                    </small>
+                    <small v-if="outIp.server_ipv4" style="font-weight:400;opacity:.85">IPv4 <code>{{ outIp.server_ipv4 }}</code></small>
+                    <small v-if="outIp.server_ipv6" style="font-weight:400;opacity:.85">IPv6 <code>{{ outIp.server_ipv6 }}</code></small>
                   </button>
                   <button class="sv-btn sv-btn--sm" style="flex-direction:column;align-items:flex-start;gap:.15rem;text-align:left"
                           :class="outIp.pref==='ipv6' ? 'sv-btn--primary' : 'sv-btn--ghost'"
@@ -739,8 +743,9 @@
                   (550 5.7.25). Si no lo controlas, usa la opción <strong>Predeterminada</strong>.
                 </div>
                 <div v-else class="sv-alert sv-alert--muted" style="margin-top:.75rem;font-size:.82rem">
-                  El correo sale por la <strong>IP del servidor</strong>, que ya tiene PTR/SPF/DKIM.
-                  Es lo recomendado salvo que necesites una IP de envío propia (y controles su PTR).
+                  El correo sale por la <strong>IP del servidor</strong><template v-if="outIp.server_ipv4 || outIp.server_ipv6">
+                    (<template v-if="outIp.server_ipv4">IPv4 <code>{{ outIp.server_ipv4 }}</code></template><template v-if="outIp.server_ipv4 && outIp.server_ipv6"> · </template><template v-if="outIp.server_ipv6">IPv6 <code>{{ outIp.server_ipv6 }}</code></template>)</template>,
+                  que ya tiene PTR/SPF/DKIM. Es lo recomendado salvo que necesites una IP de envío propia (y controles su PTR).
                 </div>
               </div>
             </template>
