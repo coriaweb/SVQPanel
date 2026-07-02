@@ -217,8 +217,34 @@
           <code>cron event run --all</code>. Los comandos interactivos
           (<code>shell</code>, <code>db cli</code>) y los flags
           <code>--path/--ssh/--http/--require/--exec</code> están bloqueados.
-          Cada comando queda registrado en la auditoría.
         </p>
+
+        <!-- Historial persistente (del audit log): sobrevive a recargas -->
+        <div class="wpm-cli-hist">
+          <div class="wpm-cli-hist__head">
+            <span><i class="bi bi-clock-history"></i> Comandos ejecutados (registrados en la auditoría)</span>
+            <button class="wpm-mini" @click="loadCliHistory" title="Refrescar"><i class="bi bi-arrow-clockwise"></i></button>
+          </div>
+          <div v-if="cliHistLoading" class="dd-muted" style="font-size:.82rem"><span class="spinner"></span> Cargando…</div>
+          <table v-else-if="cliHistory.length" class="wpm-table">
+            <thead><tr><th>Fecha</th><th>Usuario</th><th>Comando</th><th>OK</th><th></th></tr></thead>
+            <tbody>
+              <tr v-for="h in cliHistory" :key="h.id">
+                <td style="font-size:.78rem;white-space:nowrap">{{ formatDate(h.created_at) }}</td>
+                <td style="font-size:.78rem">{{ h.user || '—' }}</td>
+                <td class="mono" style="font-size:.78rem">{{ h.command || '—' }}</td>
+                <td>
+                  <i v-if="h.success" class="bi bi-check-circle" style="color:var(--success)"></i>
+                  <i v-else class="bi bi-x-circle" style="color:var(--danger)"></i>
+                </td>
+                <td class="wpm-rowactions">
+                  <button v-if="h.command" class="wpm-mini" title="Reutilizar" @click="cliInput = h.command.replace(/^wp /, '')"><i class="bi bi-arrow-return-left"></i></button>
+                </td>
+              </tr>
+            </tbody>
+          </table>
+          <p v-else class="dd-muted" style="font-size:.82rem;margin:0">Aún no se ha ejecutado ningún comando en este sitio.</p>
+        </div>
       </div>
     </template>
   </BaseCard>
@@ -449,6 +475,23 @@ export default {
       cliInput.value = cliHist.value[cliHistIdx]
     }
 
+    // Historial persistente (audit log): sobrevive a recargas de página.
+    const cliHistory = ref([])
+    const cliHistLoading = ref(false)
+    const loadCliHistory = async () => {
+      if (did.value == null) return
+      cliHistLoading.value = true
+      try { const r = await api.wpCliHistory(did.value); cliHistory.value = r.data || [] }
+      catch (e) { /* silencioso: el historial es secundario */ }
+      finally { cliHistLoading.value = false }
+    }
+
+    const formatDate = (iso) => {
+      if (!iso) return '—'
+      const d = new Date(iso)
+      return isNaN(d) ? iso : d.toLocaleString()
+    }
+
     const runCli = async () => {
       const command = cliInput.value.trim()
       if (!command || cliRunning.value) return
@@ -461,6 +504,7 @@ export default {
         cliInput.value = ''
         await nextTick()
         if (cliOutEl.value) cliOutEl.value.scrollTop = cliOutEl.value.scrollHeight
+        loadCliHistory()   // refresca el registro persistente
       } catch (e) {
         store.showNotification('Error: ' + (e.message || 'no se pudo ejecutar'), 'danger')
       } finally { cliRunning.value = false }
@@ -471,6 +515,7 @@ export default {
       if ((t === 'plugins' || t === 'themes')) loadItems()
       if (t === 'access' && !admins.value.length) loadAdmins()
       if (t === 'security') loadSecurity()
+      if (t === 'cli') loadCliHistory()
     })
 
     // Cargar info cuando el componente esté montado y el id sea válido. Si el id
@@ -486,6 +531,7 @@ export default {
       prot, attack, rlInput, loadSecurity, toggleXmlrpc, saveRateLimit, enableAllProtection,
       cliInput, cliRunning, cliLog, cliQuick, cliQuickSel, cliOutEl,
       runCli, applyQuick, cliHistPrev, cliHistNext,
+      cliHistory, cliHistLoading, loadCliHistory, formatDate,
     }
   },
 }
@@ -550,6 +596,8 @@ export default {
 .wpm-cli-rc.is-err { background: color-mix(in srgb, var(--danger) 15%, transparent);  color: var(--danger); }
 .wpm-cli-stdout, .wpm-cli-stderr { margin:0; white-space:pre-wrap; word-break:break-word; font-size:.8rem; }
 .wpm-cli-stderr { color: var(--danger); }
+.wpm-cli-hist { margin-top:1.25rem; border-top:1px solid var(--border); padding-top:.75rem; }
+.wpm-cli-hist__head { display:flex; align-items:center; justify-content:space-between; gap:.5rem; margin-bottom:.5rem; font-size:.82rem; font-weight:600; color: var(--text-muted); }
 .wpm-badge { font-size:.72rem; padding:.15rem .5rem; border-radius:999px; }
 .wpm-badge.is-on { background: color-mix(in srgb, var(--success) 16%, transparent); color: var(--success); }
 .wpm-badge.is-off { background: var(--surface-inset); color: var(--text-muted); }

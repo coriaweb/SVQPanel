@@ -2410,6 +2410,45 @@ async def wp_cli_console(domain_id: int,
     return {"status": "success", "data": data}
 
 
+@router.get("/domains/{domain_id}/wp/cli-history")
+async def wp_cli_history(domain_id: int,
+                         limit: int = 30,
+                         current_user: User = Depends(require_auth),
+                         db: Session = Depends(get_db)):
+    """
+    Historial de comandos WP-CLI ejecutados en este dominio (del audit log).
+    Visible para el dueño del dominio y para admin — el mismo control de acceso
+    que la consola: _resolve_docroot_owner ya valida la propiedad.
+    """
+    import json as _json
+    from api.models.models_security import SecurityAuditLog
+
+    domain, _owner, _docroot = _resolve_docroot_owner(domain_id, db, current_user)
+
+    rows = (db.query(SecurityAuditLog)
+              .filter(SecurityAuditLog.category == "wpcli",
+                      SecurityAuditLog.target == domain.domain_name)
+              .order_by(SecurityAuditLog.created_at.desc())
+              .limit(min(max(limit, 1), 100)).all())
+    history = []
+    for r in rows:
+        command, rc = None, None
+        try:
+            payload = _json.loads(r.after) if r.after else {}
+            command, rc = payload.get("command"), payload.get("rc")
+        except (ValueError, TypeError):
+            pass
+        history.append({
+            "id":         r.id,
+            "command":    command,
+            "rc":         rc,
+            "success":    r.success,
+            "user":       r.user_label,
+            "created_at": r.created_at.isoformat() if r.created_at else None,
+        })
+    return {"status": "success", "data": history}
+
+
 @router.post("/domains/{domain_id}/wp/{action}")
 async def wp_action(domain_id: int, action: str,
                     payload: WpActionRequest,

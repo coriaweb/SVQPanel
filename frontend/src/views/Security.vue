@@ -713,6 +713,7 @@
               <option value="fail2ban">fail2ban</option>
               <option value="iplist">iplist</option>
               <option value="whitelist">whitelist</option>
+              <option value="wpcli">wpcli</option>
             </select>
             <button class="sec-icon-btn" @click="loadAudit"><i class="bi bi-arrow-clockwise"></i></button>
           </div>
