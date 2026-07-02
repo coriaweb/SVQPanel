@@ -130,6 +130,7 @@
 import { ref, onMounted } from 'vue'
 import { useMainStore } from '../stores/useMainStore'
 import api from '../services/api'
+import { formatDate as fmtDate } from '../utils/datetime'
 
 export default {
   name: 'SSLManager',
@@ -252,10 +253,7 @@ export default {
       }
     }
 
-    const formatDate = (date) => {
-      if (!date) return 'N/A'
-      return new Date(date).toLocaleDateString('es-ES', { day: '2-digit', month: 'short', year: 'numeric' })
-    }
+    const formatDate = (date) => date ? fmtDate(date) : 'N/A'
 
     onMounted(loadSSL)
 

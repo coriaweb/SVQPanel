@@ -272,6 +272,7 @@
 import { computed, nextTick, onMounted, ref } from 'vue'
 import { useRoute } from 'vue-router'
 import api from '../services/api'
+import { formatDateTime } from '../utils/datetime'
 import Modal from '../components/Modal.vue'
 import { useMainStore } from '../stores/useMainStore'
 
@@ -607,7 +608,7 @@ export default {
       return `${size.toFixed(size >= 10 || unit === 0 ? 0 : 1)} ${units[unit]}`
     }
 
-    const formatDate = (date) => date ? new Date(date).toLocaleString() : '-'
+    const formatDate = (date) => date ? formatDateTime(date) : '-'
     const isEditable = (entry) => {
       const name = entry.name.toLowerCase()
       if (editableNames.includes(name)) return true

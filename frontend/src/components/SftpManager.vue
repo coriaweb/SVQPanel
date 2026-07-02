@@ -162,6 +162,7 @@
 <script setup>
 import { ref, onMounted } from 'vue'
 import api from '../services/api'
+import { formatDateTime } from '../utils/datetime'
 import PasswordField from './PasswordField.vue'
 
 const props = defineProps({
@@ -181,10 +182,7 @@ const folders    = ref([])
 const showCreate = ref(false)
 const newAcc     = ref({ label: '', target_subpath: '', password: '' })
 
-function formatDate(s) {
-  if (!s) return '—'
-  try { return new Date(s).toLocaleString() } catch { return s }
-}
+const formatDate = formatDateTime
 
 async function load() {
   loading.value = true

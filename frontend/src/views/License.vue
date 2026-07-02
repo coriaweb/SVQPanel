@@ -69,6 +69,7 @@
 import { ref, computed, onMounted } from 'vue'
 import api from '../services/api'
 import { useMainStore } from '../stores/useMainStore'
+import { formatDate as fmtDate, formatTime } from '../utils/datetime'
 
 export default {
   name: 'License',
@@ -128,7 +129,7 @@ export default {
       checking.value = true
       try {
         status.value = await api.getLicenseStatus(true)   // refresh contra el servidor
-        lastChecked.value = new Date().toLocaleTimeString()
+        lastChecked.value = formatTime(new Date())
         store.showNotification(
           status.value.valid ? 'Licencia verificada' : 'La licencia no es válida',
           status.value.valid ? 'success' : 'warning')
@@ -139,10 +140,7 @@ export default {
       }
     }
 
-    const formatDate = (iso) => {
-      if (!iso) return '—'
-      try { return new Date(iso).toLocaleDateString() } catch { return iso }
-    }
+    const formatDate = fmtDate
 
     onMounted(() => load(true))
 

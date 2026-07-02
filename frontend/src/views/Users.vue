@@ -117,6 +117,7 @@ import { ref, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { useMainStore } from '../stores/useMainStore'
 import api from '../services/api'
+import { formatDateTime } from '../utils/datetime'
 import Modal from '../components/Modal.vue'
 import UserForm from '../components/UserForm.vue'
 import UsageBar from '../components/UsageBar.vue'
@@ -157,14 +158,7 @@ export default {
     const diskBreakdownTitle = (u) =>
       `Web: ${fmtMB(u.disk_web_mb)} · Correo: ${fmtMB(u.disk_mail_mb)} · BD: ${fmtMB(u.disk_db_mb)}`
 
-    const fmtLastLogin = (dt) => {
-      if (!dt) return '—'
-      // El backend guarda UTC naive (sin zona): añadir Z para que se muestre en hora local
-      const iso = /Z$|[+-]\d{2}:\d{2}$/.test(dt) ? dt : dt + 'Z'
-      return new Date(iso).toLocaleString('es-ES', {
-        day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit',
-      })
-    }
+    const fmtLastLogin = formatDateTime
 
     const roleTagClass = (role) => {
       switch (role) {

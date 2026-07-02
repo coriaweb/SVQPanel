@@ -29,6 +29,7 @@
 
 <script>
 import { computed } from 'vue'
+import { formatTime } from '../../utils/datetime'
 
 export default {
   name: 'MetricChart',
@@ -93,10 +94,7 @@ export default {
     const xLabels = computed(() => {
       const s = props.series
       if (s.length < 2) return []
-      const fmt = (iso) => {
-        const d = new Date(iso)
-        return d.toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit' })
-      }
+      const fmt = formatTime
       // primero, medio, último
       return [fmt(s[0].ts), fmt(s[Math.floor(s.length / 2)].ts), fmt(s[s.length - 1].ts)]
     })

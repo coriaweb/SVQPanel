@@ -749,7 +749,7 @@ define('WP_REDIS_PATH', '{{ redisStatus.socket }}');</pre>
             <thead><tr><th>Fecha</th><th>Commit</th><th>Origen</th><th>Estado</th></tr></thead>
             <tbody>
               <tr v-for="d in gitDeployments" :key="d.id">
-                <td>{{ d.created_at ? new Date(d.created_at).toLocaleString('es-ES') : '—' }}</td>
+                <td>{{ formatDateTime(d.created_at) }}</td>
                 <td class="mono">{{ (d.commit_sha || '').slice(0,7) || '—' }} {{ d.commit_msg }}</td>
                 <td>{{ d.trigger }}</td>
                 <td><StatusBadge :status="d.status === 'success' ? 'success' : 'danger'" :text="d.status" /></td>
@@ -917,6 +917,7 @@ import { ref, computed, onMounted, onBeforeUnmount, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useMainStore } from '../stores/useMainStore'
 import api from '../services/api'
+import { formatDate as fmtDate, formatDateTime } from '../utils/datetime'
 import BaseCard from '../components/ui/BaseCard.vue'
 import BaseButton from '../components/ui/BaseButton.vue'
 import BaseTabs from '../components/ui/BaseTabs.vue'
@@ -974,7 +975,7 @@ export default {
       if (mb >= 1024) return (mb / 1024).toFixed(mb % 1024 === 0 ? 0 : 1) + ' GB'
       return mb + ' MB'
     }
-    const formatDate = (d) => d ? new Date(d).toLocaleDateString('es-ES', { day: '2-digit', month: 'short', year: 'numeric' }) : '—'
+    const formatDate = fmtDate
 
     // ── Directivas personalizadas (tab Avanzado) ──
     const advNginx  = ref('')
@@ -1729,7 +1730,7 @@ location @maintenance {
       domain, loading, tab, tabList, phpVersions, deprecatedPhp, reloadDomain,
       sslActive,
       wpAttack, wpAttackBusy, protectFromBanner,
-      formatMB, formatDate,
+      formatMB, formatDate, formatDateTime,
       disk, diskLoading, loadDisk,
       cacheSaving, toggleCache, purgeCache,
       phpLoading, phpSaving, phpDirectives, phpDefaults, phpForm, phpHasPool, savePhp, changePHP,

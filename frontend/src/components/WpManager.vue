@@ -254,6 +254,7 @@
 import { ref, computed, watch, onMounted, nextTick } from 'vue'
 import { useRoute } from 'vue-router'
 import api from '../services/api'
+import { formatDateTime } from '../utils/datetime'
 import { useMainStore } from '../stores/useMainStore'
 import BaseCard from './ui/BaseCard.vue'
 import BaseButton from './ui/BaseButton.vue'
@@ -486,11 +487,7 @@ export default {
       finally { cliHistLoading.value = false }
     }
 
-    const formatDate = (iso) => {
-      if (!iso) return '—'
-      const d = new Date(iso)
-      return isNaN(d) ? iso : d.toLocaleString()
-    }
+    const formatDate = formatDateTime
 
     const runCli = async () => {
       const command = cliInput.value.trim()

@@ -683,6 +683,7 @@
 import { ref, computed, onMounted } from 'vue'
 import { useMainStore } from '../stores/useMainStore'
 import api from '../services/api'
+import { formatDateTime } from '../utils/datetime'
 
 const RECORD_TYPES = ['A', 'AAAA', 'CNAME', 'MX', 'TXT', 'NS', 'SRV', 'CAA']
 
@@ -1155,11 +1156,7 @@ export default {
       return 'text-success'
     }
 
-    const formatHealthTime = (iso) => {
-      if (!iso) return ''
-      const d = new Date(iso)
-      return d.toLocaleString()
-    }
+    const formatHealthTime = (iso) => iso ? formatDateTime(iso) : ''
 
     // ── DNSSEC ──
     const showDnssecModal = ref(false)

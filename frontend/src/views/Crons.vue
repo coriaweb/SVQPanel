@@ -261,6 +261,7 @@
 <script>
 import { ref, computed, onMounted } from 'vue'
 import api from '../services/api.js'
+import { formatDate as fmtDate } from '../utils/datetime'
 import { useMainStore } from '../stores/useMainStore.js'
 import BaseCard from '../components/ui/BaseCard.vue'
 import BaseButton from '../components/ui/BaseButton.vue'
@@ -488,10 +489,7 @@ export default {
       }
     }
 
-    const formatDate = (dt) => {
-      if (!dt) return '—'
-      return new Date(dt).toLocaleDateString('es-ES', { day: '2-digit', month: 'short', year: 'numeric' })
-    }
+    const formatDate = fmtDate
 
     onMounted(() => { loadCrons(); loadUsers() })
 

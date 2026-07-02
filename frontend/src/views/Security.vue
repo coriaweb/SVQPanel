@@ -981,6 +981,7 @@
 <script setup>
 import { ref, computed, onMounted } from 'vue'
 import api from '../services/api'
+import { formatDateTime } from '../utils/datetime'
 import Modal from '../components/Modal.vue'
 
 // ─── State ──────────────────────────────────────────────────────────────────
@@ -1031,11 +1032,8 @@ const wpThreshold = ref(2000)
 const wpCheckedAt = ref(null)
 const wpAtkCount       = computed(() => wpRows.value.filter(d => d.under_attack).length)
 const wpProtectedCount = computed(() => wpRows.value.filter(d => d.xmlrpc_blocked && d.wp_login_ratelimit > 0).length)
-const formatCheckedAt = computed(() => {
-  if (!wpCheckedAt.value) return ''
-  const d = new Date(wpCheckedAt.value + (wpCheckedAt.value.endsWith('Z') ? '' : 'Z'))
-  return d.toLocaleString('es-ES', { day:'2-digit', month:'2-digit', hour:'2-digit', minute:'2-digit' })
-})
+const formatCheckedAt = computed(() =>
+  wpCheckedAt.value ? formatDateTime(wpCheckedAt.value) : '')
 
 async function loadWpRows() {
   wpLoading.value = true
@@ -1088,11 +1086,7 @@ const avMilterSaving = ref(false)
 const au = ref(null)
 const auSaving = ref(false)
 const auRunning = ref(false)
-function fmtAuDate(iso) {
-  if (!iso) return '—'
-  try { return new Date(iso).toLocaleDateString('es-ES', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' }) }
-  catch (_) { return iso }
-}
+const fmtAuDate = formatDateTime
 async function loadAutoUpdates() {
   try { au.value = await api.get('/api/security/auto-updates') }
   catch (e) { au.value = null }
@@ -1281,10 +1275,7 @@ function ruleActionBadge(action) {
   return { allow: 'bg-success', deny: 'bg-danger', reject: 'bg-warning text-dark' }[action] || 'bg-secondary'
 }
 
-function formatDate(s) {
-  if (!s) return '—'
-  try { return new Date(s).toLocaleString() } catch { return s }
-}
+const formatDate = formatDateTime
 
 // ─── Loaders ────────────────────────────────────────────────────────────────
 async function loadStatus() {

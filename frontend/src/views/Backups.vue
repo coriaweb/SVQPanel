@@ -673,6 +673,7 @@
 <script>
 import { ref, watch, computed, onMounted, onUnmounted } from 'vue'
 import api from '../services/api.js'
+import { formatDate as fmtDate, formatDateTime as fmtDateTime } from '../utils/datetime'
 import { useMainStore } from '../stores/useMainStore.js'
 import BaseCard from '../components/ui/BaseCard.vue'
 import BaseButton from '../components/ui/BaseButton.vue'
@@ -1169,16 +1170,8 @@ export default {
       return `${job.schedule_minute} ${job.schedule_hour} ${job.schedule_day} * ${job.schedule_weekday}`
     }
 
-    const formatDate = (dt) => {
-      if (!dt) return '—'
-      return new Date(dt).toLocaleDateString('es-ES', { day: '2-digit', month: 'short', year: 'numeric' })
-    }
-    const formatDateTime = (dt) => {
-      if (!dt) return '—'
-      return new Date(dt).toLocaleString('es-ES', {
-        day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit',
-      })
-    }
+    const formatDate = fmtDate
+    const formatDateTime = fmtDateTime
 
     onMounted(async () => {
       await Promise.all([loadJobs(), loadDomains()])

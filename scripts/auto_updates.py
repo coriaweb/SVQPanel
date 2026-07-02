@@ -127,7 +127,10 @@ class AutoUpdatesManager(SystemManager):
             try:
                 import datetime
                 ts = os.path.getmtime(stamp)
-                return datetime.datetime.fromtimestamp(ts).isoformat(timespec="seconds")
+                # Con zona explícita (+00:00): el frontend asume UTC en las
+                # fechas naive, y esta viene de un mtime (epoch), no de la BD.
+                return datetime.datetime.fromtimestamp(
+                    ts, tz=datetime.timezone.utc).isoformat(timespec="seconds")
             except OSError:
                 continue
         return None

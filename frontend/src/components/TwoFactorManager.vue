@@ -125,6 +125,7 @@
 <script>
 import { ref, onMounted, nextTick } from 'vue'
 import api from '../services/api'
+import { formatDate as fmtDate } from '../utils/datetime'
 
 export default {
   name: 'TwoFactorManager',
@@ -217,10 +218,7 @@ export default {
       navigator.clipboard?.writeText(setupData.value?.secret || '')
     }
 
-    const formatDate = (iso) => {
-      if (!iso) return ''
-      return new Date(iso).toLocaleDateString('es-ES', { dateStyle: 'long' })
-    }
+    const formatDate = fmtDate
 
     return {
       loading, step, status, setupData,

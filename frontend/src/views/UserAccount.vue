@@ -331,6 +331,7 @@ import { ref, computed, onMounted } from 'vue'
 import { useRoute } from 'vue-router'
 import { useMainStore } from '../stores/useMainStore'
 import api from '../services/api'
+import { formatDate as fmtDate } from '../utils/datetime'
 import Modal from '../components/Modal.vue'
 import UserForm from '../components/UserForm.vue'
 import IPv6Manager from '../components/IPv6Manager.vue'
@@ -382,7 +383,7 @@ export default {
     // ─── Helpers ────────────────────────────────────────────────────────────
     const roleLabel     = (role) => ({ admin: '🔑 Admin', reseller: '🏪 Reseller', user: '👤 Usuario' }[role] ?? role)
     const roleBadgeClass= (role) => ({ admin: 'bg-danger', reseller: 'bg-warning text-dark', user: 'bg-secondary' }[role] ?? 'bg-secondary')
-    const formatDate    = (d) => d ? new Date(d).toLocaleDateString('es-ES', { year: 'numeric', month: 'short', day: 'numeric' }) : '—'
+    const formatDate    = fmtDate
 
     // ─── Load data ──────────────────────────────────────────────────────────
     const loadUser = async () => {

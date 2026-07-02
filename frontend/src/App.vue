@@ -199,6 +199,7 @@ import { useRoute, useRouter } from 'vue-router'
 import { useMainStore } from './stores/useMainStore'
 import { computed, ref, onMounted, onUnmounted, watch } from 'vue'
 import api from './services/api'
+import { loadPanelTimezone } from './utils/datetime'
 import CommandPalette from './components/ui/CommandPalette.vue'
 
 export default {
@@ -424,13 +425,14 @@ export default {
       return r < 0.85 ? 'ok' : r < 1.5 ? 'warn' : 'crit'
     })
     onMounted(() => {
+      if (isAuthenticated.value) loadPanelTimezone(api)  // zona horaria del panel (fechas)
       loadServerLoad()
       loadTimer = setInterval(loadServerLoad, 15000)  // refresco cada 15s
       checkLicense()
     })
     onUnmounted(() => { if (loadTimer) clearInterval(loadTimer) })
     // Cargar al iniciar sesión (cuando cambia la autenticación)
-    watch(isAuthenticated, (v) => { if (v) { loadServerLoad(); checkLicense() } })
+    watch(isAuthenticated, (v) => { if (v) { loadServerLoad(); checkLicense(); loadPanelTimezone(api) } })
 
     return {
       store, route, router, notification, copiedToast, copyNotification, isAuthenticated, currentUser, theme,

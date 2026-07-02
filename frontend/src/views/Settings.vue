@@ -1111,6 +1111,7 @@
 import { ref, reactive, computed, onMounted } from 'vue'
 import { useMainStore } from '../stores/useMainStore'
 import api from '../services/api'
+import { formatDate as fmtDate, formatDateTime } from '../utils/datetime'
 import PasswordField from '../components/PasswordField.vue'
 
 export default {
@@ -1215,14 +1216,7 @@ export default {
       if (b >= 1024) return (b / 1024).toFixed(0) + ' KB'
       return b + ' B'
     }
-    const formatBackupDate = (iso) => {
-      if (!iso) return '—'
-      try {
-        return new Date(iso).toLocaleString('es-ES', {
-          day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit',
-        })
-      } catch { return iso }
-    }
+    const formatBackupDate = formatDateTime
 
     // ─── Whitelist de IPs del panel ───
     const wl = reactive({ enabled: false, ips: '', your_ip: '' })
@@ -1745,16 +1739,7 @@ export default {
 
     // ─── SSL del Panel ────────────────────────────────────────────────────────
 
-    const formatExpiry = (isoDate) => {
-      if (!isoDate) return '—'
-      try {
-        return new Date(isoDate).toLocaleDateString('es-ES', {
-          day: '2-digit', month: 'long', year: 'numeric'
-        })
-      } catch {
-        return isoDate
-      }
-    }
+    const formatExpiry = fmtDate
 
     const issueSSL = async () => {
       if (!sslForm.hostname || !sslForm.email) return

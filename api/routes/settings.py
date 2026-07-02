@@ -812,6 +812,35 @@ async def list_timezones(current_user=Depends(require_admin)):
     return {"timezones": zones}
 
 
+@router.get("/settings/timezone")
+async def get_panel_timezone(
+    current_user=Depends(require_auth),
+    db: Session = Depends(get_db),
+):
+    """
+    Zona horaria efectiva del panel, para CUALQUIER usuario autenticado (los
+    endpoints de administración de zona son solo-admin, pero el frontend la
+    necesita para mostrar todas las fechas en esa zona, no en la del navegador).
+    Preferencia: la del SO (timedatectl, que es la que aplica el admin desde
+    Ajustes) y, si no hay timedatectl (dev), la guardada en BD.
+    """
+    import subprocess
+    tz = None
+    binary = _timedatectl_bin()
+    if binary:
+        try:
+            r = subprocess.run(
+                [binary, "show", "--property=Timezone", "--value"],
+                capture_output=True, text=True, timeout=5,
+            )
+            tz = r.stdout.strip() or None
+        except Exception:
+            tz = None
+    if not tz:
+        tz = get_or_create_settings(db).timezone or "UTC"
+    return {"timezone": tz}
+
+
 @router.get("/settings/timezone-current")
 async def get_current_timezone(current_user=Depends(require_admin)):
     """

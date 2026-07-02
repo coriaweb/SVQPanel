@@ -158,6 +158,7 @@
 <script>
 import { ref, computed, onMounted } from 'vue'
 import tokenService from '../services/tokenService'
+import { formatDateTime } from '../utils/datetime'
 import { useMainStore } from '../stores/useMainStore'
 
 export default {
@@ -177,9 +178,7 @@ export default {
 
     const isAdmin = computed(() => store.currentUser?.role === 'admin')
 
-    const fmtDate = (d) => {
-      try { return new Date(d).toLocaleString() } catch { return d }
-    }
+    const fmtDate = formatDateTime
 
     const load = async () => {
       loading.value = true

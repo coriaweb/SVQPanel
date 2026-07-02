@@ -181,6 +181,7 @@
 <script>
 import { ref, onMounted } from 'vue'
 import api from '../services/api'
+import { formatDateTime } from '../utils/datetime'
 import BaseCard from '../components/ui/BaseCard.vue'
 import BaseButton from '../components/ui/BaseButton.vue'
 import BaseTabs from '../components/ui/BaseTabs.vue'
@@ -276,7 +277,7 @@ export default {
       try {
         const data = await api.getSystemUpdates()
         packages.value = data.packages || []
-        checkedAt.value = new Date(data.refreshed_at).toLocaleString('es-ES')
+        checkedAt.value = formatDateTime(data.refreshed_at)
         checked.value   = true
       } catch (e) {
         statusError.value = true
