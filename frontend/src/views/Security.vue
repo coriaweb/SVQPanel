@@ -709,6 +709,7 @@
           <div style="display:flex;gap:6px;align-items:center">
             <select v-model="auditCategory" @change="loadAudit" class="form-select form-select-sm" style="width:160px">
               <option value="">Todas</option>
+              <option value="auth">accesos (auth)</option>
               <option value="firewall">firewall</option>
               <option value="fail2ban">fail2ban</option>
               <option value="iplist">iplist</option>

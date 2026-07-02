@@ -28,6 +28,7 @@ from api.schemas.auth_schemas import (
 )
 from api.dependencies import get_current_user, require_auth
 from api.utils.auth_log import log_auth_failed, client_ip
+from api.utils.security_audit import log_audit
 from api.utils.secret import get_secret_key
 from api.utils import rate_limit
 
@@ -75,6 +76,11 @@ def _issue_temp_token(user_id: int, username: str) -> str:
         "exp": datetime.now(timezone.utc) + timedelta(minutes=5),
     }
     return jwt.encode(payload, secret_key, algorithm="HS256")
+
+
+def _clean_username(username: str) -> str:
+    """Sanea el username para usarlo como target en el audit log."""
+    return "".join(ch for ch in (username or "") if ch.isprintable())[:64] or "?"
 
 
 def _verify_temp_token(token: str) -> dict:
@@ -125,10 +131,16 @@ async def login(
             headers={"Retry-After": str(blocked_for)},
         )
 
-    def _fail(reason: str, code: int, detail: str):
-        """Registra el fallo (log + contador) y lanza la excepción."""
+    def _fail(reason: str, code: int, detail: str, failed_user=None):
+        """Registra el fallo (log + contador + auditoría BD) y lanza la excepción."""
         log_auth_failed(request, credentials.username, reason)
         rate_limit.record_failure(ip)
+        # Auditoría en BD (los rate_limited NO llegan aquí: inundarían la tabla)
+        log_audit(
+            db, user=failed_user, category="auth", action="login_failed",
+            target=_clean_username(credentials.username),
+            request=request, success=False, error=reason,
+        )
         raise HTTPException(status_code=code, detail=detail)
 
     user = db.query(User).filter(User.username == credentials.username).first()
@@ -137,20 +149,24 @@ async def login(
         _fail("unknown_user", status.HTTP_401_UNAUTHORIZED, "Usuario o contraseña incorrectos")
 
     if not user.check_password(credentials.password):
-        _fail("bad_password", status.HTTP_401_UNAUTHORIZED, "Usuario o contraseña incorrectos")
+        _fail("bad_password", status.HTTP_401_UNAUTHORIZED, "Usuario o contraseña incorrectos", user)
 
     if not user.is_active:
-        _fail("inactive_user", status.HTTP_403_FORBIDDEN, "Usuario inactivo")
+        _fail("inactive_user", status.HTTP_403_FORBIDDEN, "Usuario inactivo", user)
 
     # Credenciales correctas → limpiar el contador de esa IP
     rate_limit.record_success(ip)
 
-    # Si 2FA está activo → segundo paso requerido
+    # Si 2FA está activo → segundo paso requerido (el acceso se audita al verificar el código)
     if user.totp_enabled and user.totp_secret:
         temp_token = _issue_temp_token(user.id, user.username)
         return {"requires_2fa": True, "temp_token": temp_token}
 
     # Login normal sin 2FA
+    user.last_login = datetime.utcnow()
+    db.commit()
+    log_audit(db, user=user, category="auth", action="login",
+              target=user.username, request=request)
     token = user.generate_token()
     return {
         "access_token": token,
@@ -172,10 +188,16 @@ async def get_current_user_info(user: User = Depends(require_auth)):
 
 
 @router.post("/auth/logout", tags=["Authentication"])
-async def logout(user: User = Depends(require_auth)):
+async def logout(
+    request: Request,
+    user:    User    = Depends(require_auth),
+    db:      Session = Depends(get_db),
+):
     """
     Logout (el token se borra desde el cliente).
     """
+    log_audit(db, user=user, category="auth", action="logout",
+              target=user.username, request=request)
     return {
         "status": "success",
         "message": f"Usuario {user.username} deslogueado correctamente"
@@ -199,6 +221,9 @@ async def change_password(
     """
     if not user.check_password(payload.current_password):
         log_auth_failed(http_request, user.username, "bad_current_password")
+        log_audit(db, user=user, category="auth", action="change_password",
+                  target=user.username, request=http_request,
+                  success=False, error="bad_current_password")
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Contraseña actual incorrecta"
@@ -206,6 +231,8 @@ async def change_password(
 
     user.set_password(payload.new_password)
     db.commit()
+    log_audit(db, user=user, category="auth", action="change_password",
+              target=user.username, request=http_request)
 
     return {
         "message": "Contraseña actualizada correctamente",
@@ -377,6 +404,9 @@ async def verify_2fa(
         # fuerza bruta del segundo factor (6 dígitos TOTP).
         log_auth_failed(request, user.username, "bad_2fa_code")
         rate_limit.record_failure(ip)
+        log_audit(db, user=user, category="auth", action="login_failed",
+                  target=user.username, request=request,
+                  success=False, error="bad_2fa_code")
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Código incorrecto o caducado"
@@ -384,6 +414,12 @@ async def verify_2fa(
 
     # Código correcto → limpiar contador
     rate_limit.record_success(ip)
+
+    # Login completado con 2FA
+    user.last_login = datetime.utcnow()
+    db.commit()
+    log_audit(db, user=user, category="auth", action="login_2fa",
+              target=user.username, request=request)
 
     # Emitir JWT completo
     token = user.generate_token()

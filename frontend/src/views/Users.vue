@@ -29,6 +29,7 @@
               <th style="min-width:160px">Disco</th>
               <th style="min-width:160px">Tráfico (mes)</th>
               <th>Estado</th>
+              <th>Último acceso</th>
               <th class="us-right">Acciones</th>
             </tr>
           </thead>
@@ -73,6 +74,9 @@
                 <span v-else class="us-status" :class="user.is_active ? 'us-status--on' : 'us-status--off'">
                   {{ user.is_active ? 'Activo' : 'Inactivo' }}
                 </span>
+              </td>
+              <td class="us-muted" style="font-size:.8rem;white-space:nowrap" :title="user.last_login ? 'Último login correcto al panel' : 'Nunca ha iniciado sesión (o antes de activarse el registro)'">
+                {{ fmtLastLogin(user.last_login) }}
               </td>
               <td class="us-right">
                 <div class="us-actions">
@@ -152,6 +156,15 @@ export default {
     }
     const diskBreakdownTitle = (u) =>
       `Web: ${fmtMB(u.disk_web_mb)} · Correo: ${fmtMB(u.disk_mail_mb)} · BD: ${fmtMB(u.disk_db_mb)}`
+
+    const fmtLastLogin = (dt) => {
+      if (!dt) return '—'
+      // El backend guarda UTC naive (sin zona): añadir Z para que se muestre en hora local
+      const iso = /Z$|[+-]\d{2}:\d{2}$/.test(dt) ? dt : dt + 'Z'
+      return new Date(iso).toLocaleString('es-ES', {
+        day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit',
+      })
+    }
 
     const roleTagClass = (role) => {
       switch (role) {
@@ -244,6 +257,7 @@ export default {
       roleTagClass,
       fmtMB,
       diskBreakdownTitle,
+      fmtLastLogin,
       goToAccount,
       openCreateForm,
       openEditForm,
