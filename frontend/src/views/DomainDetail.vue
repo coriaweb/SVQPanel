@@ -496,9 +496,34 @@
               Socket: <code>{{ redisStatus.socket }}</code>
             </p>
             <details style="margin-top:.5rem">
-              <summary class="dd-muted" style="cursor:pointer">Cómo conectar WordPress (plugin Redis Object Cache)</summary>
-              <pre class="adv-example__code mono" style="margin-top:.5rem">define('WP_REDIS_SCHEME', 'unix');
+              <summary class="dd-muted" style="cursor:pointer">Cómo activarlo en WordPress (3 pasos)</summary>
+              <ol style="margin:.6rem 0 0;padding-left:1.2rem">
+                <li style="margin-bottom:.5rem">
+                  Añade estas dos líneas a tu <code>wp-config.php</code>
+                  (antes de la línea <em>"That's all, stop editing"</em>):
+                  <pre class="adv-example__code mono" style="margin-top:.35rem">define('WP_REDIS_SCHEME', 'unix');
 define('WP_REDIS_PATH', '{{ redisStatus.socket }}');</pre>
+                </li>
+                <li style="margin-bottom:.5rem">
+                  Instala y activa el plugin
+                  <a href="https://wordpress.org/plugins/redis-cache/" target="_blank" rel="noopener">
+                    <strong>Redis Object Cache</strong></a> (de Till Krüss)
+                  desde Plugins → Añadir nuevo.
+                </li>
+                <li>
+                  En <em>Ajustes → Redis</em> pulsa <strong>"Enable Object Cache"</strong>.
+                  Ese botón instala el conector (<code>wp-content/object-cache.php</code>);
+                  sin él, los defines por sí solos no hacen nada.
+                  Debe quedar en <strong>"Status: Connected"</strong>.
+                </li>
+              </ol>
+              <p class="dd-muted" style="margin:.5rem 0 0;font-size:.85em">
+                <i class="bi bi-info-circle"></i>
+                Si dice "Not connected": revisa que los defines estén <em>antes</em> del
+                "stop editing" y que la ruta del socket sea exactamente la de arriba.
+                Sirve igual para Laravel/Magento: mismo socket unix, esquema
+                <code>unix</code>, sin host ni puerto.
+              </p>
             </details>
           </div>
 
