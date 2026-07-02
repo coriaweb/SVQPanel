@@ -354,3 +354,74 @@ def wp_login_link(docroot: str, owner: str, user_login: str) -> Dict:
     base = home.strip() if rc == 0 else ""
     return {"ok": True, "admin_url": (base.rstrip("/") + "/wp-admin") if base else None,
             "note": "El acceso mágico no está disponible; usa el wp-admin con tu usuario."}
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Consola WP-CLI (estilo Plesk): comando libre, SIEMPRE como el usuario del
+# dominio. No añade privilegios (el cliente ya puede ejecutar PHP arbitrario
+# en su sitio); las restricciones evitan salirse del dominio o colgar la consola.
+# ─────────────────────────────────────────────────────────────────────────────
+
+# Flags globales de wp-cli que permitirían operar FUERA del dominio (otra ruta,
+# otro servidor) o cargar código con privilegios de la invocación.
+_CLI_BLOCKED_FLAGS = ("--path", "--ssh", "--http", "--require", "--exec", "--prompt")
+
+# Subcomandos interactivos (REPL/cliente mysql): esperarían stdin para siempre.
+_CLI_BLOCKED_CMDS = (("shell",), ("db", "cli"))
+
+_CLI_MAX_LEN = 2000        # longitud máx. del comando
+_CLI_MAX_OUTPUT = 200_000  # bytes máx. de salida devuelta (por canal)
+_CLI_TIMEOUT = 120         # segundos
+
+
+def validate_cli_command(command: str) -> List[str]:
+    """
+    Valida el comando de la consola y lo trocea en argumentos (sin el 'wp'
+    inicial si el usuario lo escribió). Lanza WpError si no es admisible.
+    """
+    import shlex
+
+    raw = (command or "").strip()
+    if not raw:
+        raise WpError("Escribe un comando (p. ej.: plugin list)")
+    if len(raw) > _CLI_MAX_LEN:
+        raise WpError(f"Comando demasiado largo (máx. {_CLI_MAX_LEN} caracteres)")
+    if any(ch in raw for ch in ("\n", "\r", "\0")):
+        raise WpError("El comando debe ser una sola línea")
+    try:
+        args = shlex.split(raw)
+    except ValueError as e:
+        raise WpError(f"Sintaxis inválida (comillas sin cerrar?): {e}")
+    if args and args[0] == "wp":
+        args = args[1:]
+    if not args:
+        raise WpError("Escribe un comando (p. ej.: plugin list)")
+
+    for a in args:
+        low = a.lower()
+        for flag in _CLI_BLOCKED_FLAGS:
+            if low == flag or low.startswith(flag + "="):
+                raise WpError(f"El flag {flag} no está permitido en la consola "
+                              f"(el panel ya fija la ruta del sitio)")
+
+    positional = tuple(a for a in args if not a.startswith("-"))
+    for blocked in _CLI_BLOCKED_CMDS:
+        if positional[:len(blocked)] == blocked:
+            raise WpError(f"'wp {' '.join(blocked)}' es interactivo y no funciona "
+                          f"en la consola web")
+    return args
+
+
+def wp_cli_run(docroot: str, owner: str, command: str) -> Dict:
+    """Ejecuta un comando de la consola WP-CLI y devuelve rc/stdout/stderr."""
+    args = validate_cli_command(command)
+    rc, out, err = _wp_full(docroot, owner, args, timeout=_CLI_TIMEOUT)
+    out, err = out or "", err or ""
+    truncated = len(out) > _CLI_MAX_OUTPUT or len(err) > _CLI_MAX_OUTPUT
+    return {
+        "command":   "wp " + " ".join(args),
+        "rc":        rc,
+        "stdout":    out[:_CLI_MAX_OUTPUT],
+        "stderr":    err[:_CLI_MAX_OUTPUT],
+        "truncated": truncated,
+    }

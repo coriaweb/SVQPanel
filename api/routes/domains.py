@@ -8,7 +8,7 @@ import tarfile
 import tempfile
 from typing import Optional
 from datetime import datetime
-from fastapi import APIRouter, Depends, HTTPException, status, Query
+from fastapi import APIRouter, Depends, HTTPException, status, Query, Request
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field as _Field
 from starlette.background import BackgroundTask
@@ -2370,6 +2370,44 @@ async def wp_list_items(domain_id: int, kind: str,
         return {"status": "success", "data": wp_list(docroot, owner, kind)}
     except WpError as e:
         raise HTTPException(status_code=422, detail=str(e))
+
+
+class WpCliRequest(BaseModel):
+    command: str = _Field(..., max_length=2000,
+                          description="Comando wp-cli, con o sin el 'wp' inicial")
+
+
+# OJO: declarado ANTES de /wp/{action} para que 'cli' no caiga en la ruta genérica.
+@router.post("/domains/{domain_id}/wp/cli")
+async def wp_cli_console(domain_id: int,
+                         payload: WpCliRequest,
+                         request: Request,
+                         current_user: User = Depends(require_auth),
+                         db: Session = Depends(get_db)):
+    """
+    Consola WP-CLI del dominio (estilo Plesk). Ejecuta el comando SIEMPRE como
+    el usuario del dominio (mismo privilegio que su propio PHP; nunca root).
+    Flags que salen del dominio (--path/--ssh/--http/--require/--exec) y
+    comandos interactivos están bloqueados. Cada comando queda en el audit log.
+    """
+    from scripts.wp_manager import wp_cli_run, WpError
+    from api.utils.security_audit import log_audit
+
+    domain, owner, docroot = _resolve_docroot_owner(domain_id, db, current_user)
+    _wp_guard(docroot, owner)
+    try:
+        data = wp_cli_run(docroot, owner, payload.command)
+    except WpError as e:
+        raise HTTPException(status_code=422, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error ejecutando wp-cli: {e}")
+
+    log_audit(db, user=current_user, category="wpcli", action="run",
+              target=domain.domain_name, after={"command": data["command"],
+                                                "rc": data["rc"]},
+              request=request, success=data["rc"] == 0,
+              error=None if data["rc"] == 0 else (data["stderr"] or "")[:500])
+    return {"status": "success", "data": data}
 
 
 @router.post("/domains/{domain_id}/wp/{action}")

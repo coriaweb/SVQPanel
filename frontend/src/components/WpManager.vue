@@ -174,12 +174,58 @@
           </div>
         </div>
       </div>
+
+      <!-- ── Tab Consola WP-CLI ── -->
+      <div v-else-if="tab === 'cli'" class="wpm-pane">
+        <p class="dd-muted" style="margin:0 0 .75rem">
+          Ejecuta comandos <a href="https://developer.wordpress.org/cli/commands/" target="_blank"
+          rel="noopener">wp-cli</a> sobre este WordPress, como el usuario del dominio.
+          No hace falta escribir el <code>wp</code> inicial.
+        </p>
+
+        <div class="wpm-cli-bar">
+          <select class="svq-input" style="max-width:16rem" v-model="cliQuickSel" @change="applyQuick">
+            <option value="">Comandos rápidos…</option>
+            <option v-for="q in cliQuick" :key="q.cmd" :value="q.cmd">{{ q.label }}</option>
+          </select>
+        </div>
+
+        <div class="wpm-cli-inputrow">
+          <span class="wpm-cli-prompt mono">wp</span>
+          <input class="svq-input mono" v-model="cliInput" :disabled="cliRunning"
+                 placeholder="plugin list --status=active"
+                 @keyup.enter="runCli" @keyup.up="cliHistPrev" @keyup.down="cliHistNext" />
+          <BaseButton variant="primary" size="sm" icon="play-fill" :loading="cliRunning" @click="runCli">
+            Ejecutar
+          </BaseButton>
+        </div>
+
+        <div v-if="cliLog.length" class="wpm-cli-out mono" ref="cliOutEl">
+          <div v-for="(e, i) in cliLog" :key="i" class="wpm-cli-entry">
+            <div class="wpm-cli-cmd">$ {{ e.command }}
+              <span class="wpm-cli-rc" :class="e.rc === 0 ? 'is-ok' : 'is-err'">rc={{ e.rc }}</span>
+            </div>
+            <pre v-if="e.stdout" class="wpm-cli-stdout">{{ e.stdout }}</pre>
+            <pre v-if="e.stderr" class="wpm-cli-stderr">{{ e.stderr }}</pre>
+            <div v-if="e.truncated" class="wpm-cli-stderr">… salida truncada (demasiado larga)</div>
+          </div>
+        </div>
+        <p v-else class="dd-muted" style="margin:.5rem 0 0;font-size:.85em">
+          <i class="bi bi-info-circle"></i>
+          Ejemplos: <code>plugin list</code> · <code>db optimize</code> ·
+          <code>search-replace https://viejo.com https://nuevo.com --dry-run</code> ·
+          <code>cron event run --all</code>. Los comandos interactivos
+          (<code>shell</code>, <code>db cli</code>) y los flags
+          <code>--path/--ssh/--http/--require/--exec</code> están bloqueados.
+          Cada comando queda registrado en la auditoría.
+        </p>
+      </div>
     </template>
   </BaseCard>
 </template>
 
 <script>
-import { ref, computed, watch, onMounted } from 'vue'
+import { ref, computed, watch, onMounted, nextTick } from 'vue'
 import { useRoute } from 'vue-router'
 import api from '../services/api'
 import { useMainStore } from '../stores/useMainStore'
@@ -215,6 +261,7 @@ export default {
       { key: 'themes',  label: 'Temas',   icon: 'palette' },
       { key: 'access',  label: 'Acceso',  icon: 'key' },
       { key: 'security', label: 'Seguridad', icon: 'shield-check' },
+      { key: 'cli',     label: 'Consola', icon: 'terminal' },
     ]
     const busy = ref('')          // id de la acción en curso (desactiva botones)
     const items = ref([])
@@ -366,6 +413,59 @@ export default {
     // Botón del aviso: bloquea xmlrpc y pone 3/min en wp-login de una vez.
     const enableAllProtection = () => applyProtection({ xmlrpc_blocked: true, wp_login_ratelimit: 3 }, 'wpprotect-all')
 
+    // ── Consola WP-CLI ──
+    const cliInput = ref('')
+    const cliRunning = ref(false)
+    const cliLog = ref([])        // entradas {command, rc, stdout, stderr, truncated}
+    const cliQuickSel = ref('')
+    const cliOutEl = ref(null)
+    const cliHist = ref([])       // historial de comandos (flechas ↑/↓)
+    let cliHistIdx = -1
+
+    const cliQuick = [
+      { label: 'Listar plugins activos',        cmd: 'plugin list --status=active' },
+      { label: 'Optimizar base de datos',       cmd: 'db optimize' },
+      { label: 'Reparar base de datos',         cmd: 'db repair' },
+      { label: 'Vaciar transients',             cmd: 'transient delete --all' },
+      { label: 'Ejecutar crons pendientes',     cmd: 'cron event run --due-now' },
+      { label: 'Comprobar integridad del core', cmd: 'core verify-checksums' },
+      { label: 'Buscar y reemplazar (prueba)',  cmd: "search-replace 'https://viejo.com' 'https://nuevo.com' --dry-run" },
+      { label: 'Estado de Redis Object Cache',  cmd: 'redis status' },
+    ]
+
+    const applyQuick = () => {
+      if (cliQuickSel.value) { cliInput.value = cliQuickSel.value; cliQuickSel.value = '' }
+    }
+
+    const cliHistPrev = () => {
+      if (!cliHist.value.length) return
+      cliHistIdx = cliHistIdx < 0 ? cliHist.value.length - 1 : Math.max(0, cliHistIdx - 1)
+      cliInput.value = cliHist.value[cliHistIdx]
+    }
+    const cliHistNext = () => {
+      if (cliHistIdx < 0) return
+      cliHistIdx += 1
+      if (cliHistIdx >= cliHist.value.length) { cliHistIdx = -1; cliInput.value = ''; return }
+      cliInput.value = cliHist.value[cliHistIdx]
+    }
+
+    const runCli = async () => {
+      const command = cliInput.value.trim()
+      if (!command || cliRunning.value) return
+      cliRunning.value = true
+      try {
+        const r = await api.wpCli(did.value, command)
+        cliLog.value.push(r.data)
+        cliHist.value.push(command)
+        cliHistIdx = -1
+        cliInput.value = ''
+        await nextTick()
+        if (cliOutEl.value) cliOutEl.value.scrollTop = cliOutEl.value.scrollHeight
+      } catch (e) {
+        store.showNotification('Error: ' + (e.message || 'no se pudo ejecutar'), 'danger')
+      } finally { cliRunning.value = false }
+    }
+
     // Cargar listado al entrar en las pestañas de plugins/temas
     watch(tab, (t) => {
       if ((t === 'plugins' || t === 'themes')) loadItems()
@@ -384,6 +484,8 @@ export default {
       loadInfo, loadItems, loadAdmins, run, toggleMaintenance, deleteItem, confirmSalts,
       resetPw, changeUrl, statusLabel,
       prot, attack, rlInput, loadSecurity, toggleXmlrpc, saveRateLimit, enableAllProtection,
+      cliInput, cliRunning, cliLog, cliQuick, cliQuickSel, cliOutEl,
+      runCli, applyQuick, cliHistPrev, cliHistNext,
     }
   },
 }
@@ -415,6 +517,24 @@ export default {
 .wpm-table td { padding:.5rem; border-bottom:1px solid var(--border); vertical-align:top; }
 .wpm-name { font-weight:600; }
 .wpm-newver { color: var(--warning); font-size:.78rem; }
+
+/* ── Consola WP-CLI ── */
+.wpm-cli-bar { margin-bottom:.5rem; }
+.wpm-cli-inputrow { display:flex; align-items:center; gap:.5rem; }
+.wpm-cli-prompt { color: var(--text-muted); font-weight:700; }
+.wpm-cli-out {
+  margin-top:.75rem; max-height: 420px; overflow:auto;
+  background: var(--surface-inset); border:1px solid var(--border);
+  border-radius: var(--radius-md); padding:.6rem .75rem; font-size:.8rem;
+}
+.wpm-cli-entry { margin-bottom:.75rem; }
+.wpm-cli-entry:last-child { margin-bottom:0; }
+.wpm-cli-cmd { font-weight:700; margin-bottom:.2rem; }
+.wpm-cli-rc { font-weight:600; font-size:.72rem; margin-left:.5rem; padding:.05rem .4rem; border-radius:999px; }
+.wpm-cli-rc.is-ok  { background: color-mix(in srgb, var(--success) 15%, transparent); color: var(--success); }
+.wpm-cli-rc.is-err { background: color-mix(in srgb, var(--danger) 15%, transparent);  color: var(--danger); }
+.wpm-cli-stdout, .wpm-cli-stderr { margin:0; white-space:pre-wrap; word-break:break-word; font-size:.8rem; }
+.wpm-cli-stderr { color: var(--danger); }
 .wpm-badge { font-size:.72rem; padding:.15rem .5rem; border-radius:999px; }
 .wpm-badge.is-on { background: color-mix(in srgb, var(--success) 16%, transparent); color: var(--success); }
 .wpm-badge.is-off { background: var(--surface-inset); color: var(--text-muted); }

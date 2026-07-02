@@ -887,6 +887,9 @@ class APIClient {
   wpAction(domainId, action, data = {}) {
     return this.post(`/api/domains/${domainId}/wp/${action}`, data)
   }
+  wpCli(domainId, command) {
+    return this.post(`/api/domains/${domainId}/wp/cli`, { command })
+  }
 
   // ── Composer (dependencias PHP del proyecto del dominio) ──
   getComposerStatus(domainId)    { return this.get(`/api/domains/${domainId}/composer/status`) }
