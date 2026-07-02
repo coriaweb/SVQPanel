@@ -206,7 +206,9 @@ def disable_instance(username: str, domain: str) -> dict:
         pass
     _run(["systemctl", "daemon-reload"])
     logger.info(f"Redis del dominio {domain} eliminado")
-    return {"enabled": False, "active": False}
+    # Estado COMPLETO (con 'available'): la UI pinta la tarjeta entera con esta
+    # respuesta y un dict parcial hacía creer que redis no estaba en el servidor.
+    return instance_status(username, domain)
 
 
 def remove_instance(domain: str, username: str = None) -> None:
