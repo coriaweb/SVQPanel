@@ -430,7 +430,7 @@ export default {
       { label: 'Ejecutar crons pendientes',     cmd: 'cron event run --due-now' },
       { label: 'Comprobar integridad del core', cmd: 'core verify-checksums' },
       { label: 'Buscar y reemplazar (prueba)',  cmd: "search-replace 'https://viejo.com' 'https://nuevo.com' --dry-run" },
-      { label: 'Estado de Redis Object Cache',  cmd: 'redis status' },
+      { label: 'Redis Object Cache (requiere su plugin)', cmd: 'redis status' },
     ]
 
     const applyQuick = () => {
@@ -518,8 +518,23 @@ export default {
 .wpm-name { font-weight:600; }
 .wpm-newver { color: var(--warning); font-size:.78rem; }
 
+/* Inputs/selects del componente: .svq-input vive en el scoped de DomainDetail
+   y NO alcanza a los hijos; sin esta regla salían con el estilo nativo. */
+.wpm-pane .svq-input {
+  height: 36px; padding: 0 .65rem;
+  background: var(--surface); color: var(--text);
+  border: 1px solid var(--border-strong, var(--border));
+  border-radius: var(--radius-md); font-size: .86rem;
+}
+.wpm-pane select.svq-input { cursor: pointer; }
+.wpm-pane .svq-input:focus {
+  outline: none; border-color: var(--color-primary, var(--accent));
+  box-shadow: var(--shadow-focus, 0 0 0 3px color-mix(in srgb, var(--accent) 20%, transparent));
+}
+
 /* ── Consola WP-CLI ── */
 .wpm-cli-bar { margin-bottom:.5rem; }
+.wpm-cli-inputrow .svq-input { flex:1; }
 .wpm-cli-inputrow { display:flex; align-items:center; gap:.5rem; }
 .wpm-cli-prompt { color: var(--text-muted); font-weight:700; }
 .wpm-cli-out {
