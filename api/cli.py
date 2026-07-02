@@ -1872,15 +1872,19 @@ def cmd_backfill_dns_ipv6(dry_run: bool = False) -> int:
     """Backfill de zonas DNS existentes:
       - Rellena DnsZone.ip_address si está NULL (la lista mostraba '—').
       - Para dominios con IPv6 asignada: asegura AAAA + ip6 en el SPF.
+      - SPF con la IPv6 GLOBAL del servidor: el correo sale por ella (aunque el
+        dominio no tenga IPv6 dedicada); sin ip6 en el SPF → SPF fail en Gmail.
     Idempotente y seguro de re-ejecutar.
     """
-    from api.routes.dns import sync_aaaa_records_for_domain, _get_server_ipv4
-    from api.models.models_dns import DnsZone
+    from api.routes.dns import (sync_aaaa_records_for_domain, _get_server_ipv4,
+                                _get_server_ipv6, apply_ip6_to_spf, _bump_serial)
+    from api.models.models_dns import DnsZone, DnsRecord
 
     db = SessionLocal()
     try:
+        server_ipv6 = _get_server_ipv6(db)
         zonas = db.query(DnsZone).all()
-        ip_fix = aaaa_fix = 0
+        ip_fix = aaaa_fix = spf_fix = 0
         for z in zonas:
             dom = db.query(Domain).filter(Domain.domain_name == z.domain_name).first()
             # 1) ip_address NULL → poner la IPv4 del dominio o la del servidor
@@ -1893,7 +1897,7 @@ def cmd_backfill_dns_ipv6(dry_run: bool = False) -> int:
                         z.ip_address = ipv4
                         db.commit()
                     ip_fix += 1
-            # 2) dominio con IPv6 → asegurar AAAA + ip6 en SPF
+            # 2) dominio con IPv6 dedicada → asegurar AAAA + ip6 en SPF
             if dom and dom.ipv6 and not dry_run:
                 res = sync_aaaa_records_for_domain(z.domain_name, dom.ipv6, db)
                 if res.get("added") or res.get("spf_updated"):
@@ -1901,7 +1905,28 @@ def cmd_backfill_dns_ipv6(dry_run: bool = False) -> int:
             elif dom and dom.ipv6 and dry_run:
                 logger.info(f"  {z.domain_name}: sincronizaría AAAA+SPF para {dom.ipv6}")
                 aaaa_fix += 1
-        logger.info(f"backfill DNS: ip_address={ip_fix}, AAAA/SPF={aaaa_fix}")
+            # 3) SPF: asegurar la IPv6 GLOBAL del servidor en el registro SPF de
+            #    la zona (por donde sale el correo por defecto). Solo si el dominio
+            #    NO tiene IPv6 dedicada (esa ya la puso el paso 2; apply_ip6_to_spf
+            #    deja UNA ip6, así que no debemos pisar la dedicada con la global).
+            if server_ipv6 and not (dom and dom.ipv6):
+                spf_rec = (db.query(DnsRecord)
+                           .filter(DnsRecord.zone_id == z.id,
+                                   DnsRecord.record_type == "TXT",
+                                   DnsRecord.name == "@")
+                           .filter(DnsRecord.content.like("v=spf1%"))
+                           .first())
+                if spf_rec:
+                    new_spf = apply_ip6_to_spf(spf_rec.content, server_ipv6)
+                    if new_spf != spf_rec.content:
+                        if dry_run:
+                            logger.info(f"  {z.domain_name}: SPF += ip6:{server_ipv6}")
+                        else:
+                            spf_rec.content = new_spf
+                            z.serial = _bump_serial(z.serial)
+                            db.commit()
+                        spf_fix += 1
+        logger.info(f"backfill DNS: ip_address={ip_fix}, AAAA/SPF={aaaa_fix}, SPF-global-ipv6={spf_fix}")
         return 0
     finally:
         db.close()

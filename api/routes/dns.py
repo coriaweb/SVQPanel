@@ -75,6 +75,26 @@ def _get_server_ipv4(db: Session) -> str:
     return ""
 
 
+def _get_server_ipv6(db: Session) -> str:
+    """IPv6 GLOBAL de salida del correo del servidor (la que tiene PTR y por la
+    que sale el correo por defecto). Es la que DEBE ir en el SPF de cada dominio:
+    si el correo sale por IPv6 pero el SPF no la lista → SPF fail en Gmail.
+
+    Fuente: smtp_bind_address6 de Postfix (lo que arreglamos para que sea la del
+    hostname con PTR). Fallback a Settings.panel_ipv6 si Postfix no responde."""
+    try:
+        import subprocess
+        r = subprocess.run(["postconf", "-h", "smtp_bind_address6"],
+                           capture_output=True, text=True, timeout=5)
+        ip = (r.stdout or "").strip()
+        if ip and ":" in ip:
+            return ip
+    except Exception:
+        pass
+    s = db.query(Settings).filter(Settings.id == 1).first()
+    return (getattr(s, "panel_ipv6", None) or "") if s else ""
+
+
 def _sync_zone_to_bind(zone: DnsZone, db: Session):
     """
     Sincroniza la zona. Si hay cluster DNS configurado, empuja la zona al master
@@ -258,7 +278,8 @@ async def create_zone(
     db.refresh(zone)
 
     default_records = _build_template_records(data.domain_name, ipv4, ipv6, ns1, ns2,
-                                              template=data.template or "default")
+                                              template=data.template or "default",
+                                              server_ipv6=_get_server_ipv6(db))
     for r in default_records:
         db.add(DnsRecord(zone_id=zone.id, **r))
     db.commit()
@@ -331,7 +352,8 @@ async def regenerate_all_zones(current_user=Depends(require_admin), db: Session 
             zone.soa_ns = ns1
             db.query(DnsRecord).filter(DnsRecord.zone_id == zone.id).delete()
             for r in _build_template_records(zone.domain_name, ipv4, ipv6, ns1, ns2,
-                                             template=zone.template):
+                                             template=zone.template,
+                                             server_ipv6=_get_server_ipv6(db)):
                 db.add(DnsRecord(zone_id=zone.id, **r))
             zone.serial = _bump_serial(zone.serial)
             db.commit()
@@ -460,7 +482,8 @@ async def regenerate_zone(
     zone.soa_ns = ns1
     db.query(DnsRecord).filter(DnsRecord.zone_id == zone_id).delete()
     for r in _build_template_records(zone.domain_name, ipv4, ipv6, ns1, ns2,
-                                     template=zone.template):
+                                     template=zone.template,
+                                     server_ipv6=_get_server_ipv6(db)):
         db.add(DnsRecord(zone_id=zone.id, **r))
     for r in preserved:  # re-añadir los registros de subdominios
         db.add(DnsRecord(zone_id=zone.id, **r))
@@ -800,13 +823,22 @@ def remove_subdomain_dns(db: Session, fqdn: str) -> bool:
     return n > 0
 
 
-def build_spf(ipv4, ipv6=None) -> str:
-    """Construye el registro SPF incluyendo ip4 e ip6 según disponibilidad."""
+def build_spf(ipv4, ipv6=None, *extra_ipv6) -> str:
+    """Construye el registro SPF con ip4 e ip6 según disponibilidad.
+
+    ipv6 y extra_ipv6 permiten declarar VARIAS IPv6 (p.ej. la global del servidor
+    + la dedicada del dominio): el correo puede salir por cualquiera, así que
+    todas deben estar en el SPF o Gmail dará SPF fail. Se deduplican y se ignoran
+    los vacíos."""
     mechs = ["v=spf1", "a", "mx"]
     if ipv4:
         mechs.append(f"ip4:{ipv4}")
-    if ipv6:
-        mechs.append(f"ip6:{ipv6}")
+    seen6 = []
+    for v6 in (ipv6, *extra_ipv6):
+        v6 = (v6 or "").strip()
+        if v6 and v6 not in seen6:
+            seen6.append(v6)
+            mechs.append(f"ip6:{v6}")
     mechs.append("-all")
     return " ".join(mechs)
 
@@ -926,7 +958,8 @@ _TEMPLATE_ALIASES = {"minimal": "dns", "full": "default", "complete": "default"}
 
 def _build_template_records(domain: str, ipv4: str, ipv6: str = None,
                             ns1: str = None, ns2: str = None,
-                            template: str = "default") -> list:
+                            template: str = "default",
+                            server_ipv6: str = None) -> list:
     """
     Registros de una zona según la plantilla elegida:
       - dns:     NS×2 + A/AAAA(@). Zona mínima para resolver el dominio.
@@ -934,6 +967,9 @@ def _build_template_records(domain: str, ipv4: str, ipv6: str = None,
       - mail:    NS×2 + A/AAAA(mail) + MX + SPF + DMARC + CNAME webmail. Solo correo.
       - default: TODO (web + correo + SRV + CAA). La plantilla completa.
     ns1/ns2: nameservers del panel (de get_panel_nameservers).
+    server_ipv6: IPv6 GLOBAL de salida del correo del servidor. VA en el SPF
+      además de la IPv6 del dominio: si el correo sale por la IPv6 global pero el
+      SPF no la lista → SPF fail en Gmail. (ipv6 = dedicada del dominio, opcional.)
     """
     from scripts.dns_manager import DEFAULT_NS1, DEFAULT_NS2
     ns1 = (ns1 or DEFAULT_NS1).rstrip(".")
@@ -976,7 +1012,9 @@ def _build_template_records(domain: str, ipv4: str, ipv6: str = None,
     # ── Solo correo: A(mail) + MX + SPF + DMARC + CNAME webmail (sin web) ──
     if template == "mail":
         add("MX", "@", f"mail.{domain}.")
-        add("TXT", "@", build_spf(ipv4, ipv6))
+        # SPF: IPv6 global del servidor (por donde sale el correo) + la dedicada
+        # del dominio si tiene. Sin la global, el correo por IPv6 daría SPF fail.
+        add("TXT", "@", build_spf(ipv4, server_ipv6, ipv6))
         add("TXT", "_dmarc", "v=DMARC1; p=quarantine; pct=100")
         add("CNAME", "webmail", f"mail.{domain}.")
         return records
@@ -986,7 +1024,7 @@ def _build_template_records(domain: str, ipv4: str, ipv6: str = None,
     add("CNAME", "ftp",     f"{domain}.")
     add("CNAME", "webmail", f"mail.{domain}.")
     add("MX", "@", f"mail.{domain}.")
-    add("TXT", "@",      build_spf(ipv4, ipv6))
+    add("TXT", "@",      build_spf(ipv4, server_ipv6, ipv6))
     add("TXT", "_dmarc", "v=DMARC1; p=quarantine; pct=100")
     add("SRV", "_submission._tcp", f"0 587 mail.{domain}.", prio=1)
     add("SRV", "_imap._tcp",       f"0 143 mail.{domain}.", prio=1)

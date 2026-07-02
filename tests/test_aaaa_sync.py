@@ -70,6 +70,22 @@ def test_build_spf_solo_ipv4():
     assert build_spf("1.2.3.4", None) == "v=spf1 a mx ip4:1.2.3.4 -all"
 
 
+def test_build_spf_varias_ipv6_global_y_dedicada():
+    # El correo puede salir por la IPv6 global del servidor O la dedicada del
+    # dominio: AMBAS deben ir en el SPF o Gmail da SPF fail.
+    spf = build_spf("1.2.3.4", "2001:db8::1", "2001:db8::99")
+    assert "ip6:2001:db8::1" in spf and "ip6:2001:db8::99" in spf
+    assert spf.endswith("-all")
+
+
+def test_build_spf_deduplica_ipv6_y_ignora_vacios():
+    # Si la global y la dedicada coinciden (o una está vacía), no se duplica.
+    spf = build_spf("1.2.3.4", "2001:db8::1", "2001:db8::1")
+    assert spf.count("ip6:2001:db8::1") == 1
+    spf2 = build_spf("1.2.3.4", "2001:db8::1", "")
+    assert spf2 == "v=spf1 a mx ip4:1.2.3.4 ip6:2001:db8::1 -all"
+
+
 def test_apply_ip6_anade_a_spf_existente():
     spf = "v=spf1 a mx ip4:1.2.3.4 -all"
     assert apply_ip6_to_spf(spf, "2001:db8::1") == "v=spf1 a mx ip4:1.2.3.4 ip6:2001:db8::1 -all"

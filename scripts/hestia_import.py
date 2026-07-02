@@ -1780,7 +1780,8 @@ def _ensure_default_zone(domain: str, owner, db, report, server_ipv4, server_ipv
     db.add(zone)
     db.commit()
     db.refresh(zone)
-    for r in _build_template_records(domain, server_ipv4, server_ipv6, ns1, ns2):
+    for r in _build_template_records(domain, server_ipv4, server_ipv6, ns1, ns2,
+                                     server_ipv6=server_ipv6):
         db.add(DnsRecord(zone_id=zone.id, **r))
     db.commit()
     try:

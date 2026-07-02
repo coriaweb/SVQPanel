@@ -2481,9 +2481,28 @@ export default {
 /* ── Alertas e info ── */
 .sv-alert { display:flex; align-items:flex-start; gap:.5rem; padding:.65rem .85rem; border-radius:var(--radius-sm,6px); font-size:.875rem; }
 .sv-alert--success { background:color-mix(in srgb,var(--success) 10%,transparent); color:var(--success); border:1px solid color-mix(in srgb,var(--success) 25%,transparent); }
-.sv-alert--warn { background:color-mix(in srgb,var(--warning,#f59e0b) 10%,transparent); color:var(--warning,#d97706); border:1px solid color-mix(in srgb,var(--warning,#f59e0b) 25%,transparent); }
-.sv-alert--info { background:color-mix(in srgb,var(--ac) 8%,transparent); color:var(--ac); border:1px solid color-mix(in srgb,var(--ac) 20%,transparent); }
-.sv-alert--muted { background:var(--surface-2); color:var(--text-muted); border:1px solid var(--border); }
+/* Warning: texto en color normal (legible) — solo el icono y el borde en naranja,
+   para que el cuerpo del mensaje tenga contraste suficiente sobre el fondo claro. */
+.sv-alert--warn { background:color-mix(in srgb,var(--warning,#f59e0b) 12%,var(--surface)); color:var(--text); border:1px solid color-mix(in srgb,var(--warning,#f59e0b) 40%,transparent); }
+.sv-alert--warn > .bi:first-child, .sv-alert--warn i.bi { color:var(--warning,#d97706); }
+.sv-alert--info { background:color-mix(in srgb,var(--ac) 8%,var(--surface)); color:var(--text); border:1px solid color-mix(in srgb,var(--ac) 25%,transparent); }
+.sv-alert--muted { background:var(--surface-2); color:var(--text); border:1px solid var(--border); }
+/* <code> dentro de alerts/botones de esta vista: fondo y color con contraste
+   garantizado (el <code> global es de acento y quedaba ilegible sobre estos
+   fondos). En el botón primario (azul), texto blanco sobre velo oscuro. */
+.sv-alert code, .sv-info-box code {
+  background:color-mix(in srgb,var(--text) 12%,transparent);
+  color:var(--text); padding:.05rem .35rem; border-radius:4px;
+  font-family:var(--font-mono,monospace); font-size:.9em;
+}
+.sv-btn--primary code {
+  background:rgba(255,255,255,.22); color:#fff;
+  padding:.05rem .35rem; border-radius:4px;
+}
+.sv-btn--ghost code {
+  background:color-mix(in srgb,var(--text) 10%,transparent); color:var(--text);
+  padding:.05rem .35rem; border-radius:4px;
+}
 .sv-info-box { background:var(--surface-2); border:1px solid var(--border); border-radius:var(--radius-md,10px); padding:1rem; font-size:.875rem; }
 
 /* ── Vacíos y loading ── */
