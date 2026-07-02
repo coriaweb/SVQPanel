@@ -893,6 +893,40 @@ def _server_out_ips() -> dict:
     return out
 
 
+def _sync_spf_out_ip6(md, domain_ipv6: str, pref: str, db) -> bool:
+    """Pone en el SPF de la zona la IPv6 por la que SALE el correo del dominio:
+    la dedicada si pref=ipv6 (y la tiene), o la GLOBAL del servidor en caso
+    contrario. apply_ip6_to_spf deja una única ip6 (corrige la equivocada). No-op
+    si el panel no gestiona la zona. Devuelve True si cambió algo."""
+    from api.routes.dns import (apply_ip6_to_spf, _get_server_ipv6, _bump_serial,
+                                _sync_zone_to_bind)
+    from api.models.models_dns import DnsZone, DnsRecord
+    server_ipv6 = _get_server_ipv6(db)
+    ip6 = domain_ipv6 if (pref == "ipv6" and domain_ipv6) else server_ipv6
+    if not ip6:
+        return False
+    zone = db.query(DnsZone).filter(DnsZone.domain_name == md.domain_name).first()
+    if not zone:
+        return False  # DNS externo
+    rec = (db.query(DnsRecord)
+           .filter(DnsRecord.zone_id == zone.id, DnsRecord.record_type == "TXT",
+                   DnsRecord.name == "@")
+           .filter(DnsRecord.content.like("v=spf1%")).first())
+    if not rec:
+        return False
+    nuevo = apply_ip6_to_spf(rec.content, ip6)
+    if nuevo == rec.content:
+        return False
+    rec.content = nuevo
+    zone.serial = _bump_serial(zone.serial)
+    db.commit()
+    try:
+        _sync_zone_to_bind(zone, db)
+    except Exception:
+        pass
+    return True
+
+
 def _ipv6_has_ptr(ipv6: str) -> str:
     """Devuelve el hostname del PTR de una IPv6, o '' si no tiene. Best-effort
     (dig); no revienta si no está disponible."""
@@ -929,6 +963,14 @@ async def set_mail_out_ip(domain_id: int, data: MailOutIpRequest,
     db.commit()
     db.refresh(md)
     _apply_domain_sender_ip(md, db)
+
+    # El SPF debe declarar la IPv6 por la que SALE el correo: la dedicada si
+    # pref=ipv6, la global del servidor en caso contrario. Sin esto, cambiar el
+    # pref dejaría el SPF apuntando a la IPv6 equivocada → SPF fail.
+    try:
+        _sync_spf_out_ip6(md, ipv6, data.pref, db)
+    except Exception as e:
+        logger.warning(f"_sync_spf_out_ip6 {md.domain_name}: {e}")
 
     # Al elegir IPv6, verificamos EN VIVO si esa IPv6 ya tiene PTR (rDNS). Si no,
     # avisamos claramente: el cliente/proveedor debe configurarlo o Gmail/Outlook

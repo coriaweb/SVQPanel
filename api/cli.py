@@ -1897,19 +1897,34 @@ def cmd_backfill_dns_ipv6(dry_run: bool = False) -> int:
                         z.ip_address = ipv4
                         db.commit()
                     ip_fix += 1
-            # 2) dominio con IPv6 dedicada → asegurar AAAA + ip6 en SPF
+            # 2) dominio con IPv6 dedicada → asegurar el AAAA (para la web/DNS).
+            #    OJO: NO tocamos el SPF aquí; el SPF lo decide el paso 3 según por
+            #    dónde sale el CORREO (que casi siempre es la IPv6 global, no la
+            #    dedicada). Meter la dedicada en el SPF sin que el correo salga por
+            #    ella es justo el bug que hay que corregir.
             if dom and dom.ipv6 and not dry_run:
                 res = sync_aaaa_records_for_domain(z.domain_name, dom.ipv6, db)
-                if res.get("added") or res.get("spf_updated"):
+                if res.get("added"):
                     aaaa_fix += 1
             elif dom and dom.ipv6 and dry_run:
-                logger.info(f"  {z.domain_name}: sincronizaría AAAA+SPF para {dom.ipv6}")
+                logger.info(f"  {z.domain_name}: sincronizaría AAAA para {dom.ipv6}")
                 aaaa_fix += 1
-            # 3) SPF: asegurar la IPv6 GLOBAL del servidor en el registro SPF de
-            #    la zona (por donde sale el correo por defecto). Solo si el dominio
-            #    NO tiene IPv6 dedicada (esa ya la puso el paso 2; apply_ip6_to_spf
-            #    deja UNA ip6, así que no debemos pisar la dedicada con la global).
-            if server_ipv6 and not (dom and dom.ipv6):
+
+            # 3) SPF: debe listar la IPv6 por la que SALE el correo:
+            #    - pref ipv6 + IPv6 dedicada → la dedicada (el admin la eligió).
+            #    - resto (caso normal)       → la IPv6 GLOBAL del servidor (con PTR).
+            #    apply_ip6_to_spf deja UNA sola ip6, así que corrige tanto los que
+            #    no tenían como los que tenían la ip6 equivocada (dedicada sin PTR).
+            md = None
+            try:
+                from api.models.models_mail import MailDomain
+                md = db.query(MailDomain).filter(
+                    MailDomain.domain_name == z.domain_name).first()
+            except Exception:
+                pass
+            pref = getattr(md, "mail_out_ip_pref", "ipv4") if md else "ipv4"
+            spf_ip6 = (dom.ipv6 if (pref == "ipv6" and dom and dom.ipv6) else server_ipv6)
+            if spf_ip6:
                 spf_rec = (db.query(DnsRecord)
                            .filter(DnsRecord.zone_id == z.id,
                                    DnsRecord.record_type == "TXT",
@@ -1917,16 +1932,16 @@ def cmd_backfill_dns_ipv6(dry_run: bool = False) -> int:
                            .filter(DnsRecord.content.like("v=spf1%"))
                            .first())
                 if spf_rec:
-                    new_spf = apply_ip6_to_spf(spf_rec.content, server_ipv6)
+                    new_spf = apply_ip6_to_spf(spf_rec.content, spf_ip6)
                     if new_spf != spf_rec.content:
                         if dry_run:
-                            logger.info(f"  {z.domain_name}: SPF += ip6:{server_ipv6}")
+                            logger.info(f"  {z.domain_name}: SPF ip6 → {spf_ip6}")
                         else:
                             spf_rec.content = new_spf
                             z.serial = _bump_serial(z.serial)
                             db.commit()
                         spf_fix += 1
-        logger.info(f"backfill DNS: ip_address={ip_fix}, AAAA/SPF={aaaa_fix}, SPF-global-ipv6={spf_fix}")
+        logger.info(f"backfill DNS: ip_address={ip_fix}, AAAA={aaaa_fix}, SPF-ip6={spf_fix}")
         return 0
     finally:
         db.close()

@@ -930,18 +930,14 @@ def sync_aaaa_records_for_domain(domain_name: str, ipv6, db: Session) -> dict:
             db.delete(rec)
             removed += 1
 
-    # SPF: incluir ip6 cuando hay IPv6, quitarlo cuando se desactiva. Tocamos el
-    # TXT SPF de @ (el que empieza por v=spf1); dejamos otros TXT intactos.
+    # NOTA: esta función NO toca el SPF. Asignar IPv6 a un dominio es una decisión
+    # de WEB/DNS (crea el AAAA), pero el SPF declara por dónde sale el CORREO, que
+    # casi siempre es la IPv6 GLOBAL del servidor (con PTR), no la dedicada del
+    # dominio. Meter la IPv6 dedicada en el SPF cuando el correo NO sale por ella
+    # provocaba SPF fail en Gmail. El SPF lo gobierna la preferencia de salida de
+    # correo (mail_out_ip_pref) → set_domain_out_ip / regenerate_zone / backfill.
     spf_updated = False
-    for r in existing:
-        if r.record_type == "TXT" and r.name == "@" and (r.content or "").startswith("v=spf1"):
-            nuevo = apply_ip6_to_spf(r.content, ipv6)
-            if nuevo != r.content:
-                r.content = nuevo
-                spf_updated = True
-            break
-
-    if added or removed or spf_updated:
+    if added or removed:
         zone.serial = _bump_serial(zone.serial)
         db.commit()
         _sync_zone_to_bind(zone, db)
