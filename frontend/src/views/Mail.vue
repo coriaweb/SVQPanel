@@ -705,31 +705,42 @@
                 {{ relayForm.enabled ? 'Guardar relay' : 'Desactivar relay' }}
               </button>
 
-              <!-- ── IP de salida del correo (IPv4 / IPv6) ── -->
+              <!-- ── IP de salida del correo ── -->
               <div v-if="outIp" style="margin-top:2rem;border-top:1px solid var(--border);padding-top:1.5rem">
                 <h6 style="font-weight:600;font-size:.95rem;margin-bottom:.5rem">IP de salida del correo</h6>
                 <p style="font-size:.85rem;color:var(--text-muted);margin-bottom:1rem">
                   Por qué IP sale el correo de este dominio al enviarlo directo (sin relay).
                 </p>
-                <div class="sv-info-box" style="display:flex;gap:.5rem;align-items:center;flex-wrap:wrap">
-                  <button class="sv-btn sv-btn--sm" :class="outIp.pref==='ipv4' ? 'sv-btn--primary' : 'sv-btn--ghost'"
+                <div class="sv-info-box" style="display:flex;gap:.5rem;align-items:stretch;flex-wrap:wrap">
+                  <button class="sv-btn sv-btn--sm" style="flex-direction:column;align-items:flex-start;gap:.15rem;text-align:left"
+                          :class="outIp.pref==='ipv4' ? 'sv-btn--primary' : 'sv-btn--ghost'"
                           :disabled="outIpSaving || outIp.pref==='ipv4'" @click="setOutIp('ipv4')">
-                    IPv4 <code v-if="outIp.ipv4" style="font-size:.8em">{{ outIp.ipv4 }}</code>
+                    <span><i class="bi bi-shield-check"></i> Predeterminada (recomendada)</span>
+                    <small style="font-weight:400;opacity:.8">IP del servidor — PTR/SPF/DKIM ya OK</small>
                   </button>
-                  <button class="sv-btn sv-btn--sm" :class="outIp.pref==='ipv6' ? 'sv-btn--primary' : 'sv-btn--ghost'"
+                  <button class="sv-btn sv-btn--sm" style="flex-direction:column;align-items:flex-start;gap:.15rem;text-align:left"
+                          :class="outIp.pref==='ipv6' ? 'sv-btn--primary' : 'sv-btn--ghost'"
                           :disabled="outIpSaving || !outIp.ipv6_available || outIp.pref==='ipv6'"
                           :title="!outIp.ipv6_available ? 'El dominio no tiene IPv6 asignada' : ''"
                           @click="setOutIp('ipv6')">
-                    IPv6 <code v-if="outIp.ipv6" style="font-size:.8em">{{ outIp.ipv6 }}</code>
+                    <span><i class="bi bi-hdd-network"></i> IPv6 dedicada del dominio</span>
+                    <small v-if="outIp.ipv6" style="font-weight:400;opacity:.8"><code>{{ outIp.ipv6 }}</code> — requiere PTR</small>
+                    <small v-else style="font-weight:400;opacity:.8">Sin IPv6 asignada</small>
                   </button>
                 </div>
                 <div v-if="!outIp.ipv6_available" class="sv-alert sv-alert--muted" style="margin-top:.75rem;font-size:.82rem">
-                  Activa IPv6 en el dominio (pestaña del dominio) para poder enviar correo por IPv6.
+                  El correo sale por la <strong>IP del servidor</strong> (con PTR/SPF/DKIM correctos).
+                  Para enviar por la IPv6 dedicada del dominio, actívala primero en la pestaña del dominio.
                 </div>
                 <div v-else-if="outIp.pref==='ipv6'" class="sv-alert sv-alert--warn" style="margin-top:.75rem;font-size:.82rem">
                   <i class="bi bi-exclamation-triangle"></i>
-                  El correo saldrá preferentemente por IPv6. Asegúrate de que la IPv6 tiene
-                  <strong>rDNS (PTR)</strong> configurado o Gmail/Outlook podrían rechazarlo.
+                  El correo sale por la <strong>IPv6 dedicada</strong>. Debes configurar su
+                  <strong>rDNS (PTR)</strong> con tu proveedor, o Gmail/Outlook lo rechazarán
+                  (550 5.7.25). Si no lo controlas, usa la opción <strong>Predeterminada</strong>.
+                </div>
+                <div v-else class="sv-alert sv-alert--muted" style="margin-top:.75rem;font-size:.82rem">
+                  El correo sale por la <strong>IP del servidor</strong>, que ya tiene PTR/SPF/DKIM.
+                  Es lo recomendado salvo que necesites una IP de envío propia (y controles su PTR).
                 </div>
               </div>
             </template>
