@@ -18,13 +18,20 @@ router = APIRouter()
 
 # ──────────────────────────── Schemas ────────────────────────────────────────
 
+class PHPDomainRef(BaseModel):
+    id: int
+    name: str
+
+
 class PHPVersionStatus(BaseModel):
     version: str
     installed: bool
     running: bool
     enabled: bool
     socket: Optional[str] = None
-    deprecated: bool = False    # versión sin soporte oficial (EOL)
+    deprecated: bool = False           # versión sin soporte oficial (EOL)
+    domains_count: int = 0             # nº de dominios que usan esta versión
+    domains: List[PHPDomainRef] = []   # cuáles (para saber a quién migrar)
 
 
 class PHPVersionsStatusResponse(BaseModel):
@@ -44,20 +51,38 @@ class PHPUpdateRequest(BaseModel):
 
 @router.get("/php/versions/status", response_model=PHPVersionsStatusResponse)
 async def get_php_versions_status(
-    current_user: User = Depends(require_admin)
+    current_user: User = Depends(require_admin),
+    db: Session = Depends(get_db)
 ):
     """
-    [Admin] Obtener estado de todas las versiones PHP:
-    instalada, activa (FPM corriendo), habilitada en systemd.
+    [Admin] Obtener estado de todas las versiones PHP: instalada, activa (FPM
+    corriendo), habilitada en systemd, y qué dominios usan cada versión
+    (para saber a quién migrar antes de actualizar/desinstalar una versión).
     """
     try:
         manager = PHPManager()
         statuses = manager.get_all_status()
-        return {"versions": statuses}
     except PermissionError as e:
         raise HTTPException(status_code=403, detail=str(e))
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error al obtener estado PHP: {str(e)}")
+
+    # Dominios por versión (los solo-correo/DNS no corren PHP: fuera)
+    usage = {}
+    try:
+        rows = (db.query(Domain.php_version, Domain.id, Domain.domain_name)
+                  .filter(Domain.mail_dns_only.isnot(True))
+                  .order_by(Domain.domain_name).all())
+        for ver, did, name in rows:
+            usage.setdefault(ver, []).append({"id": did, "name": name})
+    except Exception:
+        pass  # sin BD (dev): solo estado del sistema
+    for s in statuses:
+        refs = usage.get(s["version"], [])
+        s["domains_count"] = len(refs)
+        s["domains"] = refs
+
+    return {"versions": statuses}
 
 
 @router.get("/php/versions", response_model=PHPVersionsResponse)

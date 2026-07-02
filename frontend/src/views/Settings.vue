@@ -343,7 +343,9 @@
 
             <div v-else>
               <div class="php-list">
-                <div v-for="php in phpVersions" :key="php.version" class="php-row">
+                <!-- eslint-disable-next-line vue/no-v-for-template-key -- Vue 3: la key VA en el template -->
+                <template v-for="php in phpVersions" :key="php.version">
+                <div class="php-row">
                   <div class="php-row__main">
                     <div class="php-row__ver">
                       <strong class="font-monospace">PHP {{ php.version }}</strong>
@@ -356,6 +358,17 @@
                     <span v-if="php.running" class="php-tag php-tag--on"><i class="bi bi-check-circle"></i> Activo</span>
                     <span v-else-if="php.installed" class="php-tag php-tag--warn"><i class="bi bi-pause-circle"></i> Detenido</span>
                     <span v-else class="php-tag php-tag--off"><i class="bi bi-x-circle"></i> No instalado</span>
+                    <button v-if="php.domains_count > 0" type="button"
+                            class="php-tag php-tag--sites"
+                            :title="'Ver los dominios que usan PHP ' + php.version"
+                            @click="sitesShown = sitesShown === php.version ? null : php.version">
+                      <i class="bi bi-globe2"></i> {{ php.domains_count }}
+                      {{ php.domains_count === 1 ? 'sitio' : 'sitios' }}
+                      <i class="bi" :class="sitesShown === php.version ? 'bi-chevron-up' : 'bi-chevron-down'"></i>
+                    </button>
+                    <span v-else-if="php.installed" class="php-tag php-tag--off">
+                      <i class="bi bi-globe2"></i> 0 sitios
+                    </span>
                   </div>
                   <div class="php-row__socket font-monospace">{{ php.socket || '—' }}</div>
                   <div class="php-row__actions">
@@ -388,6 +401,21 @@
                     </button>
                   </div>
                 </div>
+                <div v-if="sitesShown === php.version" class="php-sites">
+                  <div class="php-sites__head">
+                    Dominios con PHP {{ php.version }}
+                    <span v-if="php.deprecated" class="text-danger">
+                      — versión sin soporte: conviene migrarlos a una más nueva
+                    </span>
+                  </div>
+                  <div class="php-sites__list">
+                    <router-link v-for="d in php.domains" :key="d.id"
+                                 :to="'/domains/' + d.id" class="php-sites__item">
+                      <i class="bi bi-globe2 me-1"></i>{{ d.name }}
+                    </router-link>
+                  </div>
+                </div>
+                </template>
               </div>
 
               <div class="p-3 border-top bg-light small text-muted">
@@ -1611,6 +1639,9 @@ export default {
       }
     }
 
+    // Versión cuya lista de dominios está desplegada (chip "N sitios")
+    const sitesShown = ref(null)
+
     // ─── Extensiones PHP por versión ─────────────────────────────────────────
 
     const extTarget = ref(null)          // versión cuyo modal está abierto
@@ -1787,6 +1818,7 @@ export default {
       confirmUninstall, uninstallPHP,
       extTarget, extList, extSearch, extLoading, extError, extActionLoading,
       filteredExtensions, openExtensions, installExtension, removeExtension,
+      sitesShown,
       sslForm, sslLoading, showRevokeConfirm,
       issueSSL, revokeSSL, formatExpiry,
       tzCurrent, tzSelected, tzSearch, tzList, tzSaving,
@@ -1899,6 +1931,25 @@ export default {
 .php-tag--warn { background: color-mix(in srgb, var(--warning,#f59e0b) 15%, transparent); color: var(--warning,#d97706); }
 .php-tag--off  { background: var(--surface-2); color: var(--text-muted); border: 1px solid var(--border); }
 .php-tag--eol  { background: color-mix(in srgb, var(--danger,#dc2626) 13%, transparent); color: var(--danger,#dc2626); }
+.php-tag--sites {
+  background: var(--surface-2); color: var(--text);
+  border: 1px solid var(--border); cursor: pointer;
+}
+.php-tag--sites:hover { border-color: var(--ac); color: var(--ac); }
+
+.php-sites {
+  padding: 10px 14px; margin: 0 0 4px;
+  background: var(--surface-2); border-radius: 8px;
+  border: 1px solid var(--border);
+}
+.php-sites__head { font-size: .78rem; font-weight: 600; margin-bottom: 6px; color: var(--text-muted); }
+.php-sites__list { display: flex; flex-wrap: wrap; gap: 6px; }
+.php-sites__item {
+  font-size: .78rem; padding: .2rem .55rem; border-radius: 999px;
+  background: var(--surface); border: 1px solid var(--border);
+  color: var(--text); text-decoration: none;
+}
+.php-sites__item:hover { border-color: var(--ac); color: var(--ac); }
 
 @media (max-width: 640px) {
   .php-row {
