@@ -2483,6 +2483,11 @@ async def wp_action(domain_id: int, action: str,
             data = wpm.wp_regenerate_salts(docroot, owner)
         elif action == "flush-cache":
             data = wpm.wp_flush_cache(docroot, owner)
+        elif action == "cron-status":
+            data = wpm.wp_cron_status(docroot, owner)
+        elif action == "optimize-cron":
+            en = True if payload.enable is None else bool(payload.enable)
+            data = wpm.wp_optimize_cron(docroot, owner, enable=en)
         elif action == "admin-users":
             data = {"users": wpm.wp_admin_users(docroot, owner)}
         elif action == "reset-password":

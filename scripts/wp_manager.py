@@ -295,6 +295,74 @@ def wp_flush_cache(docroot: str, owner: str) -> Dict:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# WordPress — optimización del wp-cron
+#
+# Por defecto WordPress dispara su wp-cron EN CADA VISITA. Con plugins que
+# programan tareas frecuentes (WP Rocket preload, Action Scheduler, Jetpack sync…
+# cada 1-5 min), eso arranca PHP en cada visita y solapa procesos → picos de CPU
+# aunque el tráfico sea bajo. La práctica estándar de hosting es:
+#   1) define('DISABLE_WP_CRON', true)  → deja de dispararse por visita.
+#   2) un cron de sistema cada 5 min que ejecuta las tareas vencidas.
+# Reversible: se quita la constante y el cron.
+# ─────────────────────────────────────────────────────────────────────────────
+def _wpcron_line(docroot: str) -> str:
+    """Línea de crontab que ejecuta las tareas vencidas cada 5 min."""
+    return (f"*/5 * * * * {WPCLI_PATH} cron event run --due-now "
+            f"--path={docroot} >/dev/null 2>&1")
+
+
+def wp_cron_status(docroot: str, owner: str) -> Dict:
+    """Devuelve si el wp-cron está 'optimizado' (constante + cron de sistema)."""
+    # ¿DISABLE_WP_CRON = true en wp-config?
+    rc, out, _ = _wp(docroot, owner, ["config", "get", "DISABLE_WP_CRON"])
+    disabled = (rc == 0 and out.strip().lower() in ("true", "1"))
+    # ¿hay línea de cron de sistema para este docroot?
+    rcc, outc, _ = _run(["crontab", "-l", "-u", owner])
+    has_cron = (rcc == 0 and "cron event run" in outc and docroot in outc)
+    return {"optimized": bool(disabled and has_cron),
+            "disable_wp_cron": disabled, "system_cron": has_cron}
+
+
+def wp_optimize_cron(docroot: str, owner: str, enable: bool = True) -> Dict:
+    """Activa (enable=True) o revierte (False) la optimización del wp-cron.
+
+    enable=True:  DISABLE_WP_CRON=true + cron de sistema cada 5 min.
+    enable=False: quita la constante y la línea de cron (vuelve al modo por visita).
+    Idempotente en ambos sentidos.
+    """
+    if enable:
+        # 1) DISABLE_WP_CRON = true (vía wp-cli; --raw para valor booleano PHP).
+        rc, out, err = _wp(docroot, owner,
+            ["config", "set", "DISABLE_WP_CRON", "true", "--raw", "--type=constant"])
+        if rc != 0:
+            raise WpError(f"No pude fijar DISABLE_WP_CRON: {err or out}")
+        # 2) Añadir el cron de sistema (preservando el resto del crontab del user).
+        line = _wpcron_line(docroot)
+        rcc, cur, _ = _run(["crontab", "-l", "-u", owner])
+        existing = cur if rcc == 0 else ""
+        kept = [l for l in existing.splitlines()
+                if not ("cron event run" in l and docroot in l)]
+        new_cron = "\n".join(kept + [line]) + "\n"
+        rcw, _, errw = _run(["crontab", "-u", owner, "-"], input_text=new_cron)
+        if rcw != 0:
+            raise WpError(f"No pude instalar el cron de sistema: {errw}")
+        return {"ok": True, "optimized": True,
+                "message": "wp-cron optimizado: ya no se dispara en cada visita "
+                           "(cron de sistema cada 5 min)."}
+    else:
+        # Revertir: quitar la constante y la línea de cron.
+        _wp(docroot, owner, ["config", "delete", "DISABLE_WP_CRON"])
+        rcc, cur, _ = _run(["crontab", "-l", "-u", owner])
+        if rcc == 0:
+            kept = [l for l in cur.splitlines()
+                    if not ("cron event run" in l and docroot in l)]
+            new_cron = ("\n".join(kept) + "\n") if kept else ""
+            _run(["crontab", "-u", owner, "-"], input_text=new_cron)
+        return {"ok": True, "optimized": False,
+                "message": "wp-cron restaurado al modo por defecto (por visita)."}
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # WordPress — acceso / admin
 # ─────────────────────────────────────────────────────────────────────────────
 def wp_admin_users(docroot: str, owner: str) -> List[Dict]:

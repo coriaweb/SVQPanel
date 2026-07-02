@@ -48,6 +48,7 @@
             <button class="wpm-qbtn" :disabled="!!busy" @click="run('flush-permalinks', {}, 'perma')"><i class="bi bi-link-45deg"></i> Regenerar permalinks</button>
             <button class="wpm-qbtn" :disabled="!!busy" @click="run('flush-cache', {}, 'cache')"><i class="bi bi-trash"></i> Vaciar caché</button>
             <button class="wpm-qbtn" :disabled="!!busy" @click="toggleMaintenance"><i class="bi bi-cone-striped"></i> {{ info.maintenance ? 'Quitar mantenimiento' : 'Modo mantenimiento' }}</button>
+            <button class="wpm-qbtn" :class="{ 'wpm-qbtn--on': cronOptimized }" :disabled="!!busy" @click="toggleCronOptimize"><i class="bi bi-speedometer2"></i> {{ cronOptimized ? 'wp-cron optimizado' : 'Optimizar wp-cron' }}</button>
             <button class="wpm-qbtn wpm-qbtn--warn" :disabled="!!busy" @click="confirmSalts"><i class="bi bi-shield-lock"></i> Regenerar claves (cierra sesiones)</button>
           </div>
         </template>
@@ -316,7 +317,8 @@ export default {
         const r = await api.getWpInfo(did.value)
         info.value = r.data
         newUrl.value = r.data.siteurl || ''
-        loadUpdates()  // en segundo plano, no bloquea la vista
+        loadUpdates()      // en segundo plano, no bloquea la vista
+        loadCronStatus()   // estado del wp-cron (para el botón optimizar)
       } catch (e) { errorInfo.value = e.message || 'No pude leer la instalación' }
       finally { loadingInfo.value = false }
     }
@@ -375,6 +377,21 @@ export default {
     }
 
     const toggleMaintenance = () => run('maintenance', { enable: !info.value.maintenance }, 'maint')
+
+    const cronOptimized = ref(false)
+    const cronLoaded = ref(false)
+    const loadCronStatus = async () => {
+      if (did.value == null) return
+      try {
+        const r = await api.wpAction(did.value, 'cron-status')
+        cronOptimized.value = !!r.data?.optimized
+        cronLoaded.value = true
+      } catch (e) { /* silencioso */ }
+    }
+    const toggleCronOptimize = async () => {
+      const data = await run('optimize-cron', { enable: !cronOptimized.value }, 'wpcron')
+      if (data) cronOptimized.value = !!data.optimized
+    }
 
     const deleteItem = (it) => {
       const tipo = itemKind.value === 'theme' ? 'tema' : 'plugin'
@@ -524,6 +541,7 @@ export default {
       info, loadingInfo, errorInfo, tab, tabs, busy, items, loadingItems,
       admins, loadingUsers, loadingUpdates, resetResult, newUrl, itemKind, totalUpdates, adminUrl,
       loadInfo, loadItems, loadAdmins, run, toggleMaintenance, deleteItem, confirmSalts,
+      cronOptimized, cronLoaded, toggleCronOptimize,
       resetPw, changeUrl, statusLabel,
       prot, attack, rlInput, loadSecurity, toggleXmlrpc, saveRateLimit, enableAllProtection,
       cliInput, cliRunning, cliLog, cliQuick, cliQuickSel, cliOutEl,
