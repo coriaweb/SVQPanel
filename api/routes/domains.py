@@ -2510,6 +2510,83 @@ async def wp_staging_op(domain_id: int, op: str,
     return {"status": "success", "data": {"op": op, "job": stg.job_status(domain.id)}}
 
 
+# ─────────────────────────────────────────────────────────────────────────────
+# Actualización segura de WordPress (checkpoint + verificación + rollback).
+# OJO: declaradas ANTES de /wp/{kind}s y de /wp/{action} (mismo motivo que
+# /wp/staging y /wp/cli).
+# ─────────────────────────────────────────────────────────────────────────────
+@router.get("/domains/{domain_id}/wp/safe-update")
+async def wp_safe_update_status(domain_id: int,
+                                current_user: User = Depends(require_auth),
+                                db: Session = Depends(get_db)):
+    """Estado: toggle de auto-update, job en curso e historial de ejecuciones."""
+    domain, _owner, _docroot = _resolve_docroot_owner(domain_id, db, current_user)
+    from scripts import wp_safe_update as swu
+    return {"status": "success", "data": swu.get_status(domain, db)}
+
+
+@router.post("/domains/{domain_id}/wp/safe-update")
+async def wp_safe_update_run(domain_id: int,
+                             background_tasks: BackgroundTasks,
+                             request: Request,
+                             current_user: User = Depends(require_auth),
+                             db: Session = Depends(get_db)):
+    """
+    Lanza una actualización segura en background: sonda de salud → checkpoint
+    (tar + dump) → update core/plugins/temas → verificación → rollback
+    automático si el sitio se rompe. Progreso por polling en GET.
+    """
+    from scripts import wp_safe_update as swu
+    from scripts import wp_staging as stg
+    from api.utils.security_audit import log_audit
+
+    domain, owner, docroot = _resolve_docroot_owner(domain_id, db, current_user)
+    _wp_guard(docroot, owner)
+    if swu.job_running(domain.id):
+        raise HTTPException(status_code=409,
+                            detail="Ya hay una actualización en curso para este dominio.")
+    if stg.job_running(domain.id):
+        raise HTTPException(status_code=409,
+                            detail="Hay una operación de staging en curso; espera a que termine.")
+    from api.routes.databases import MARIADB_ENABLED
+    if not MARIADB_ENABLED:
+        raise HTTPException(status_code=503,
+                            detail="MariaDB no está habilitado; es necesario para el checkpoint.")
+
+    swu._job_init(domain.id, swu.STEPS)
+    background_tasks.add_task(swu.run_safe_update, domain.id, "manual")
+    log_audit(db, user=current_user, category="wp", action="safe-update",
+              target=domain.domain_name, request=request, success=True)
+    return {"status": "success", "data": {"job": swu.job_status(domain.id)}}
+
+
+class WpAutoUpdateRequest(BaseModel):
+    enable: bool
+
+
+@router.post("/domains/{domain_id}/wp/safe-update/auto")
+async def wp_safe_update_auto(domain_id: int,
+                              payload: WpAutoUpdateRequest,
+                              request: Request,
+                              current_user: User = Depends(require_auth),
+                              db: Session = Depends(get_db)):
+    """Activa/desactiva el auto-update nocturno (pase diario ~04:30 del panel)."""
+    from api.utils.security_audit import log_audit
+    domain, owner, docroot = _resolve_docroot_owner(domain_id, db, current_user)
+    if payload.enable:
+        _wp_guard(docroot, owner)
+    domain.wp_auto_update = payload.enable
+    db.commit()
+    log_audit(db, user=current_user, category="wp",
+              action=f"auto-update-{'on' if payload.enable else 'off'}",
+              target=domain.domain_name, request=request, success=True)
+    return {"status": "success",
+            "data": {"auto_update": payload.enable},
+            "message": ("Actualizaciones automáticas activadas (pase nocturno con "
+                        "checkpoint y rollback)." if payload.enable
+                        else "Actualizaciones automáticas desactivadas.")}
+
+
 @router.get("/domains/{domain_id}/wp/{kind}s")
 async def wp_list_items(domain_id: int, kind: str,
                         current_user: User = Depends(require_auth),

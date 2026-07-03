@@ -897,6 +897,11 @@ class APIClient {
   wpStagingOp(domainId, op) {
     return this.post(`/api/domains/${domainId}/wp/staging/${op}`, {})
   }
+  getWpSafeUpdate(domainId) { return this.get(`/api/domains/${domainId}/wp/safe-update`) }
+  wpSafeUpdateRun(domainId) { return this.post(`/api/domains/${domainId}/wp/safe-update`, {}) }
+  wpSafeUpdateAuto(domainId, enable) {
+    return this.post(`/api/domains/${domainId}/wp/safe-update/auto`, { enable })
+  }
 
   // ── Composer (dependencias PHP del proyecto del dominio) ──
   getComposerStatus(domainId)    { return this.get(`/api/domains/${domainId}/composer/status`) }

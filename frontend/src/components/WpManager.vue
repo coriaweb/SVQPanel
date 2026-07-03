@@ -195,6 +195,84 @@
         </div>
       </div>
 
+      <!-- ── Tab Actualizaciones (safe-update: checkpoint + rollback) ── -->
+      <div v-else-if="tab === 'updates'" class="wpm-pane">
+        <div v-if="safeLoading && !safeData" class="wpm-loading"><span class="spinner"></span> Consultando…</div>
+        <template v-else-if="safeData">
+          <!-- Actualización en curso -->
+          <div v-if="safeJob && safeJob.status === 'running'" class="wpm-stgjob">
+            <p class="wpm-stgjob__title"><span class="spinner"></span> Actualizando con protección…</p>
+            <ul class="wpm-stgsteps">
+              <li v-for="(s, i) in safeJob.steps" :key="i"
+                  :class="{ 'is-done': i < safeJob.current, 'is-current': i === safeJob.current }">
+                <i class="bi" :class="i < safeJob.current ? 'bi-check-circle-fill' : (i === safeJob.current ? 'bi-arrow-repeat' : 'bi-circle')"></i>
+                {{ s }}
+              </li>
+            </ul>
+            <small class="dd-muted">Si el sitio se rompe con la actualización, se restaurará solo el punto de recuperación. Puedes salir de esta página: la operación sigue en el servidor.</small>
+          </div>
+
+          <template v-else>
+            <div v-if="safeJob && safeJob.status === 'failed' && safeJob.rolled_back" class="wpm-stgfail">
+              <i class="bi bi-arrow-counterclockwise"></i> La actualización rompió el sitio y se restauró el punto de recuperación: {{ safeJob.error }}
+            </div>
+            <div v-else-if="safeJob && safeJob.status === 'failed'" class="wpm-stgfail">
+              <i class="bi bi-exclamation-triangle"></i> La última actualización falló: {{ safeJob.error }}
+            </div>
+
+            <p class="wpm-sec__title"><i class="bi bi-shield-check"></i> Actualización segura</p>
+            <p class="dd-muted" style="margin:.25rem 0 .9rem; line-height:1.5">
+              Actualiza el core, los plugins y los temas con red de seguridad: antes se crea un
+              punto de restauración (archivos + base de datos) y después se verifica que el sitio
+              sigue funcionando. Si la actualización lo rompe, se restaura solo y el sitio queda
+              como estaba.
+            </p>
+            <div class="wpm-actions">
+              <BaseButton variant="primary" icon="shield-check" :loading="busy==='safe-run'" :disabled="!!busy" @click="runSafeUpdate">Actualizar con protección</BaseButton>
+            </div>
+
+            <div class="wpm-sec__row" style="margin-top:1rem">
+              <div class="wpm-sec__info">
+                <span class="wpm-sec__title"><i class="bi bi-moon-stars"></i> Actualizaciones automáticas</span>
+                <small class="dd-muted">
+                  Cada madrugada (~04:30) el panel actualiza este WordPress con el mismo flujo
+                  seguro: checkpoint, verificación y rollback automático si algo se rompe.
+                  Si hay un rollback recibirás un aviso en el panel.
+                </small>
+              </div>
+              <div class="form-check form-switch">
+                <input class="form-check-input" type="checkbox" role="switch"
+                       :checked="safeData.auto_update" :disabled="!!busy"
+                       @change="toggleAutoUpdate($event.target.checked)" />
+              </div>
+            </div>
+
+            <!-- Historial de ejecuciones -->
+            <div class="wpm-cli-hist" style="margin-top:1rem">
+              <div class="wpm-cli-hist__head">
+                <span><i class="bi bi-clock-history"></i> Últimas actualizaciones</span>
+                <button class="wpm-mini" @click="loadSafeUpdate" title="Refrescar"><i class="bi bi-arrow-clockwise"></i></button>
+              </div>
+              <table v-if="safeData.history && safeData.history.length" class="wpm-table">
+                <thead><tr><th>Fecha</th><th>Modo</th><th>Actualizado</th><th>Resultado</th></tr></thead>
+                <tbody>
+                  <tr v-for="h in safeData.history" :key="h.id">
+                    <td style="font-size:.78rem;white-space:nowrap">{{ h.started_at ? formatDate(h.started_at) : '—' }}</td>
+                    <td style="font-size:.78rem">{{ h.mode === 'auto' ? 'Automático' : 'Manual' }}</td>
+                    <td style="font-size:.78rem">{{ safeRunDesc(h) }}</td>
+                    <td>
+                      <span class="wpm-badge" :class="h.status === 'success' ? 'is-on' : 'is-off'">{{ safeStatusLabel(h.status) }}</span>
+                      <small v-if="h.error" class="dd-muted" style="display:block;max-width:22rem">{{ h.error }}</small>
+                    </td>
+                  </tr>
+                </tbody>
+              </table>
+              <p v-else class="dd-muted" style="font-size:.82rem;margin:0">Aún no se ha ejecutado ninguna actualización segura en este sitio.</p>
+            </div>
+          </template>
+        </template>
+      </div>
+
       <!-- ── Tab Staging (clonar / push to live) ── -->
       <div v-else-if="tab === 'staging'" class="wpm-pane">
         <div v-if="stagingLoading && !stagingData" class="wpm-loading"><span class="spinner"></span> Consultando el staging…</div>
@@ -374,6 +452,7 @@ export default {
       { key: 'general', label: 'General', icon: 'speedometer2' },
       { key: 'plugins', label: 'Plugins', icon: 'plug' },
       { key: 'themes',  label: 'Temas',   icon: 'palette' },
+      { key: 'updates', label: 'Actualizaciones', icon: 'arrow-up-circle' },
       { key: 'access',  label: 'Acceso',  icon: 'key' },
       { key: 'security', label: 'Seguridad', icon: 'shield-check' },
       { key: 'staging', label: 'Staging', icon: 'layers' },
@@ -626,6 +705,90 @@ export default {
 
     onUnmounted(stopStagingPoll)
 
+    // ── Actualización segura (checkpoint + verificación + rollback) ─────────
+    const safeData = ref(null)
+    const safeLoading = ref(false)
+    let safeTimer = null
+
+    const safeJob = computed(() => safeData.value?.job || null)
+
+    const stopSafePoll = () => {
+      if (safeTimer) { clearInterval(safeTimer); safeTimer = null }
+    }
+    const startSafePoll = () => {
+      if (safeTimer) return
+      safeTimer = setInterval(async () => {
+        if (did.value == null) return
+        try {
+          const r = await api.getWpSafeUpdate(did.value)
+          safeData.value = r.data
+          const st = r.data.job?.status
+          if (st && st !== 'running') {
+            stopSafePoll()
+            if (st === 'success') {
+              store.showNotification('Actualización completada y verificada', 'success')
+              loadInfo()   // versión/updates cambiaron
+            } else if (r.data.job.rolled_back) {
+              store.showNotification('La actualización rompió el sitio: se restauró el punto de recuperación', 'warning')
+            } else {
+              store.showNotification('Actualización: ' + (r.data.job.error || 'falló'), 'danger')
+            }
+          }
+        } catch (e) { /* silencioso: se reintenta en el siguiente tick */ }
+      }, 3000)
+    }
+
+    const loadSafeUpdate = async () => {
+      if (did.value == null) return
+      safeLoading.value = true
+      try {
+        const r = await api.getWpSafeUpdate(did.value)
+        safeData.value = r.data
+        if (r.data.job?.status === 'running') startSafePoll()
+      } catch (e) { /* silencioso */ }
+      finally { safeLoading.value = false }
+    }
+
+    const runSafeUpdate = async () => {
+      if (!confirm('Se actualizarán el core, los plugins y los temas. Antes se crea un punto de restauración y, si la actualización rompe el sitio, se restaura automáticamente. ¿Continuar?')) return
+      busy.value = 'safe-run'
+      try {
+        const r = await api.wpSafeUpdateRun(did.value)
+        safeData.value = { ...(safeData.value || {}), job: r.data.job }
+        startSafePoll()
+      } catch (e) {
+        store.showNotification('Error: ' + e.message, 'danger')
+      } finally { busy.value = '' }
+    }
+
+    const toggleAutoUpdate = async (checked) => {
+      busy.value = 'safe-auto'
+      try {
+        const r = await api.wpSafeUpdateAuto(did.value, checked)
+        safeData.value = { ...(safeData.value || {}), auto_update: r.data.auto_update }
+        store.showNotification(r.message || 'Preferencia guardada', 'success')
+      } catch (e) {
+        store.showNotification('Error: ' + e.message, 'danger')
+        loadSafeUpdate()   // re-sincroniza el switch con el estado real
+      } finally { busy.value = '' }
+    }
+
+    const safeStatusLabel = (s) => ({
+      success: 'OK', rolled_back: 'Rollback', failed: 'Error', running: 'En curso',
+    }[s] || s)
+
+    const safeRunDesc = (h) => {
+      const u = h.updated_items
+      if (!u) return '—'
+      const parts = []
+      if (u.core) parts.push('core → ' + u.core)
+      if (u.plugins?.length) parts.push(u.plugins.length + ' plugin(s)')
+      if (u.themes?.length) parts.push(u.themes.length + ' tema(s)')
+      return parts.length ? parts.join(' · ') : 'Nada pendiente'
+    }
+
+    onUnmounted(stopSafePoll)
+
     // ── Consola WP-CLI ──
     const cliInput = ref('')
     const cliRunning = ref(false)
@@ -698,6 +861,7 @@ export default {
       if ((t === 'plugins' || t === 'themes')) loadItems()
       if (t === 'access' && !admins.value.length) loadAdmins()
       if (t === 'security') loadSecurity()
+      if (t === 'updates') loadSafeUpdate()
       if (t === 'staging') loadStaging()
       if (t === 'cli') loadCliHistory()
     })
@@ -716,6 +880,8 @@ export default {
       prot, attack, rlInput, loadSecurity, toggleXmlrpc, saveRateLimit, enableAllProtection,
       hardening, hardeningLoading, applyHardening,
       stagingData, stagingLoading, stagingJob, loadStaging, stagingOp,
+      safeData, safeLoading, safeJob, loadSafeUpdate, runSafeUpdate,
+      toggleAutoUpdate, safeStatusLabel, safeRunDesc,
       cliInput, cliRunning, cliLog, cliQuick, cliQuickSel, cliOutEl,
       runCli, applyQuick, cliHistPrev, cliHistNext,
       cliHistory, cliHistLoading, loadCliHistory, formatDate,

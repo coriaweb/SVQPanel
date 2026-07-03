@@ -244,6 +244,13 @@ async def startup():
     except Exception as e:
         print(f"⚠ No se pudo arrancar el cron-run ingestor: {e}")
 
+    # Auto-update nocturno de WordPress (dominios con wp_auto_update).
+    try:
+        from scripts.wp_safe_update import start_wp_update_scheduler
+        start_wp_update_scheduler()
+    except Exception as e:
+        print(f"⚠ No se pudo arrancar el scheduler de WP auto-update: {e}")
+
     # Migraciones zombie: un job en 'running' tras arrancar significa que el
     # proceso que lo ejecutaba murió a media importación (p.ej. OOM → systemd
     # reinició svqpanel). El background task vive DENTRO de este proceso, así que
@@ -927,6 +934,8 @@ def _run_migrations():
         # Staging de WordPress: el subdominio de staging apunta a su dominio live
         "ALTER TABLE domains ADD COLUMN IF NOT EXISTS staging_of_domain_id INTEGER REFERENCES domains(id) ON DELETE SET NULL",
         "CREATE INDEX IF NOT EXISTS ix_domains_staging_of_domain_id ON domains(staging_of_domain_id)",
+        # Actualizaciones automáticas seguras de WordPress (checkpoint + rollback)
+        "ALTER TABLE domains ADD COLUMN IF NOT EXISTS wp_auto_update BOOLEAN NOT NULL DEFAULT FALSE",
     ]
     with engine.connect() as conn:
         for sql in migrations:

@@ -142,6 +142,11 @@ class Domain(Base):
     # 0 = desactivado. >0 = nº máximo de peticiones/min por IP a /wp-login.php.
     wp_login_ratelimit = Column(Integer, default=0, nullable=False)
 
+    # Actualizaciones automáticas seguras de WordPress (wp_safe_update): el pase
+    # nocturno del panel actualiza core/plugins/temas con checkpoint previo,
+    # verificación y rollback automático si el sitio se rompe.
+    wp_auto_update = Column(Boolean, default=False, nullable=False)
+
     # Cache del análisis de ataque (lo actualiza un cron cada ~3h, ventana 24h).
     # Evita escanear los access.log en vivo cada vez que se abre la vista admin.
     wp_xmlrpc_hits       = Column(Integer, default=0, nullable=False)   # hits a xmlrpc.php
