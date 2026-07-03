@@ -1668,6 +1668,47 @@ def cmd_regenerate_all_vhosts() -> int:
     return 0
 
 
+def cmd_optimize_all_wp_cron() -> int:
+    """Optimiza el wp-cron de TODOS los dominios con WordPress que no lo tengan ya
+    (DISABLE_WP_CRON + cron de sistema cada 5 min). Evita el wp-cron por visita,
+    que con plugins de tareas frecuentes causa picos de CPU. Idempotente."""
+    try:
+        from api.models.database import SessionLocal, load_all_models
+        from api.models.models_domain import Domain
+        from scripts import wp_manager as wpm
+        from scripts.utils import get_public_html
+        from api.routes.domains import _wp_cron_status_db, _wp_optimize_cron_db
+        load_all_models()
+    except Exception as e:
+        logger.error(f"No se pudo cargar: {e}")
+        return 0
+    db = SessionLocal()
+    done = already = skip = fail = 0
+    for d in db.query(Domain).all():
+        if getattr(d, "mail_dns_only", False):
+            skip += 1
+            continue
+        try:
+            owner = d.user.username
+            docroot = d.custom_docroot or get_public_html(owner, d.domain_name)
+            if not wpm.wp_is_installed(docroot, owner):
+                skip += 1
+                continue
+            if _wp_cron_status_db(d, owner, docroot, db).get("optimized"):
+                already += 1
+                continue
+            _wp_optimize_cron_db(d, owner, docroot, db, enable=True)
+            done += 1
+            logger.info(f"wp-cron optimizado: {d.domain_name}")
+        except Exception as e:
+            logger.warning(f"wp-cron {d.domain_name}: {e}")
+            fail += 1
+    db.close()
+    logger.info(f"optimize_all_wp_cron: {done} optimizados, {already} ya lo estaban, "
+                f"{skip} sin WP/omitidos, {fail} con error")
+    return 0
+
+
 def cmd_setup_archive_protection() -> int:
     """Sube el peso de los símbolos de archivo de Rspamd (anti zip-bomb: ratio de
     descompresión enorme y ejecutables empaquetados). Idempotente.
@@ -2002,6 +2043,8 @@ def main():
         help="Marca como spam el correo con cuerpo en cirílico (spam de formularios/ruso)")
     sub.add_parser("regenerate_all_vhosts",
         help="Regenera el vhost de todos los dominios desde la BD")
+    sub.add_parser("optimize_all_wp_cron",
+        help="Optimiza el wp-cron de todos los WordPress (DISABLE_WP_CRON + cron sistema)")
     sub.add_parser("refresh_suspended_vhosts",
         help="Regenera el vhost de los dominios suspendidos (listen IPv6)")
     p_geo = sub.add_parser("update_geoip",
@@ -2146,6 +2189,8 @@ def main():
         sys.exit(cmd_setup_cyrillic_protection())
     if args.cmd == "regenerate_all_vhosts":
         sys.exit(cmd_regenerate_all_vhosts())
+    if args.cmd == "optimize_all_wp_cron":
+        sys.exit(cmd_optimize_all_wp_cron())
     if args.cmd == "refresh_suspended_vhosts":
         sys.exit(cmd_refresh_suspended_vhosts())
     if args.cmd == "update_geoip":

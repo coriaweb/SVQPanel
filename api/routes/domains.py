@@ -2305,6 +2305,71 @@ def _wp_guard(docroot: str, owner: str):
                             detail="Este dominio no tiene una instalación de WordPress.")
 
 
+def _wp_cron_job(domain, db):
+    """El CronJob del panel que gestiona el wp-cron de este dominio (o None)."""
+    from api.models.models_cron import CronJob
+    from scripts import wp_manager as wpm
+    comment = wpm.wp_cron_comment(domain.domain_name)
+    return (db.query(CronJob)
+              .filter(CronJob.domain_id == domain.id, CronJob.comment == comment)
+              .first())
+
+
+def _wp_cron_status_db(domain, owner, docroot, db):
+    """Estado: DISABLE_WP_CRON en wp-config + CronJob del panel activo."""
+    from scripts import wp_manager as wpm
+    disabled = wpm.wp_config_cron_disabled(docroot, owner)
+    job = _wp_cron_job(domain, db)
+    has_cron = job is not None and job.is_active
+    return {"optimized": bool(disabled and has_cron),
+            "disable_wp_cron": disabled, "system_cron": has_cron,
+            "cron_id": job.id if job else None}
+
+
+def _wp_optimize_cron_db(domain, owner, docroot, db, enable=True):
+    """Activa/revierte la optimización. El cron de 5 min se crea como CronJob del
+    panel (aparece en /crons, etiqueta 'wp-cron: dominio') y CronManager lo
+    materializa en el crontab del usuario. Idempotente."""
+    from api.models.models_cron import CronJob
+    from scripts.cron_manager import CronManager
+    from scripts import wp_manager as wpm
+
+    if enable:
+        wpm.wp_config_disable_cron(docroot, owner, True)
+        wpm.wp_cron_purge_raw_crontab(owner, docroot)
+        job = _wp_cron_job(domain, db)
+        if job is None:
+            job = CronJob(
+                user_id=domain.user_id, domain_id=domain.id,
+                minute="*/5", hour="*", day="*", month="*", weekday="*",
+                command=wpm.wp_cron_command(docroot),
+                comment=wpm.wp_cron_comment(domain.domain_name),
+                is_active=True,
+            )
+            db.add(job); db.commit(); db.refresh(job)
+            try:
+                CronManager().add_cron(
+                    username=owner, cron_id=job.id,
+                    minute=job.minute, hour=job.hour, day=job.day,
+                    month=job.month, weekday=job.weekday,
+                    command=job.command, comment=job.comment or "")
+            except Exception:
+                pass
+        return {"ok": True, "optimized": True,
+                "message": "wp-cron optimizado (cron cada 5 min, visible en Cron)."}
+    else:
+        wpm.wp_config_disable_cron(docroot, owner, False)
+        job = _wp_cron_job(domain, db)
+        if job is not None:
+            try:
+                CronManager().remove_cron(owner, job.id)
+            except Exception:
+                pass
+            db.delete(job); db.commit()
+        return {"ok": True, "optimized": False,
+                "message": "wp-cron restaurado al modo por defecto (por visita)."}
+
+
 class WpActionRequest(BaseModel):
     kind:       Optional[str] = _Field(None, description="plugin|theme")
     name:       Optional[str] = _Field(None, max_length=120)
@@ -2485,7 +2550,7 @@ async def wp_action(domain_id: int, action: str,
         elif action == "flush-cache":
             data = wpm.wp_flush_cache(docroot, owner)
         elif action == "cron-status":
-            data = wpm.wp_cron_status(docroot, owner)
+            data = _wp_cron_status_db(_domain, owner, docroot, db)
         elif action == "hardening-status":
             data = wpm.wp_hardening_status(docroot, owner)
         elif action == "hardening-apply":
@@ -2493,7 +2558,7 @@ async def wp_action(domain_id: int, action: str,
             data = wpm.wp_hardening_apply(docroot, owner, fix_ids)
         elif action == "optimize-cron":
             en = True if payload.enable is None else bool(payload.enable)
-            data = wpm.wp_optimize_cron(docroot, owner, enable=en)
+            data = _wp_optimize_cron_db(_domain, owner, docroot, db, enable=en)
         elif action == "admin-users":
             data = {"users": wpm.wp_admin_users(docroot, owner)}
         elif action == "reset-password":
