@@ -666,6 +666,11 @@ def _do_delete(db, live_domain_id: int) -> None:
         remove_subdomain_dns(db, staging.domain_name)
     except Exception as e:
         logger.warning(f"Staging: DNS de {staging.domain_name}: {e}")
+    try:
+        from scripts.wp_safe_update import remove_domain_checkpoints
+        remove_domain_checkpoints(staging.domain_name)
+    except Exception as e:
+        logger.warning(f"Staging: checkpoints de {staging.domain_name}: {e}")
 
     # La fila Domain (cascade borra sus client_databases del panel)
     db.delete(staging)

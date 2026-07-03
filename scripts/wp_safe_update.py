@@ -196,6 +196,15 @@ def create_checkpoint(domain_name: str, docroot: str, db_name: str) -> str:
     return cdir
 
 
+def remove_domain_checkpoints(domain_name: str) -> None:
+    """Borra TODOS los checkpoints y backups pre-push de un dominio. Se llama
+    al eliminar el dominio (DELETE /domains, purge de usuario, borrado de
+    staging) para no dejar copias huérfanas en /var/lib/svqpanel."""
+    from scripts.wp_staging import BACKUP_DIR as STAGING_BACKUP_DIR
+    for base in (CHECKPOINT_DIR, STAGING_BACKUP_DIR):
+        shutil.rmtree(os.path.join(base, domain_name), ignore_errors=True)
+
+
 def _prune_checkpoints(domain_name: str) -> None:
     base = os.path.join(CHECKPOINT_DIR, domain_name)
     try:

@@ -130,6 +130,12 @@ def purge_user_system(db: Session, user) -> List[str]:
             remove_fastcgi_cache_zone(d.domain_name)
         except Exception:
             pass
+        # checkpoints de safe-update y backups pre-push de staging
+        try:
+            from scripts.wp_safe_update import remove_domain_checkpoints
+            remove_domain_checkpoints(d.domain_name)
+        except Exception:
+            pass
 
     # ── 5. Zonas DNS (zone file + named.conf.zones + slave del cluster) ───────
     # Las zonas no tienen user_id: se asocian por nombre de dominio del usuario.

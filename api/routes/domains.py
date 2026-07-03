@@ -749,6 +749,12 @@ async def delete_domain(
                 remove_fastcgi_cache_zone(db_domain.domain_name)
             except Exception as e:
                 print(f"Warning: limpieza pool/cache de {db_domain.domain_name}: {e}")
+            # Checkpoints de safe-update y backups pre-push del staging
+            try:
+                from scripts.wp_safe_update import remove_domain_checkpoints
+                remove_domain_checkpoints(db_domain.domain_name)
+            except Exception as e:
+                print(f"Warning: limpieza checkpoints de {db_domain.domain_name}: {e}")
 
         # Deshacer el resto de lo que crea el alta: zona DNS y dominio de correo
         # del MISMO nombre. Reutiliza los helpers del orquestador de borrado
