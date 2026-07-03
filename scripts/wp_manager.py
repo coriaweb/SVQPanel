@@ -312,9 +312,12 @@ def wp_cron_comment(domain_name: str) -> str:
     return f"wp-cron: {domain_name}"
 
 
-def wp_cron_command(docroot: str) -> str:
-    """Comando que ejecuta las tareas vencidas de WordPress."""
-    return f"{WPCLI_PATH} cron event run --due-now --path={docroot}"
+def wp_cron_command(docroot: str, php_version: str = None) -> str:
+    """Comando que ejecuta las tareas vencidas de WordPress. Usa el PHP del
+    dominio (php{version}), NO el del sistema: un sitio en PHP 7.4 debe correr su
+    wp-cron con 7.4 o peta si el sistema tiene 8.x (plugins/temas incompatibles)."""
+    php = f"php{php_version} " if php_version else ""
+    return f"{php}{WPCLI_PATH} cron event run --due-now --path={docroot}"
 
 
 def wp_cron_purge_raw_crontab(owner: str, docroot: str) -> None:

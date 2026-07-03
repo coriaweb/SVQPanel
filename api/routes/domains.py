@@ -2342,7 +2342,7 @@ def _wp_optimize_cron_db(domain, owner, docroot, db, enable=True):
             job = CronJob(
                 user_id=domain.user_id, domain_id=domain.id,
                 minute="*/5", hour="*", day="*", month="*", weekday="*",
-                command=wpm.wp_cron_command(docroot),
+                command=wpm.wp_cron_command(docroot, domain.php_version),
                 comment=wpm.wp_cron_comment(domain.domain_name),
                 is_active=True,
             )
