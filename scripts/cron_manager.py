@@ -68,8 +68,14 @@ try:
 except Exception:
     pass
 
-# Reemitir salida (para MAILTO si lo hay) y devolver el código real.
-sys.stdout.write(out)
+# Reemitir salida SOLO si el comando fallo (code != 0). El cron del sistema
+# manda por email cualquier stdout/stderr al dueño; un job correcto que imprime
+# ("Success: ..." de wp-cli, por ej.) generaria un email por ejecucion -> miles
+# de correos del usuario a si mismo, frenados por el ratelimit y apilados en cola.
+# La salida completa (exito incluido) YA queda en el historial del panel; aqui
+# solo reemitimos los fallos, que si conviene que lleguen por correo al usuario.
+if code != 0:
+    sys.stdout.write(out)
 sys.exit(code)
 '''
 
