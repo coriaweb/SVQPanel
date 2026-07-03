@@ -363,6 +363,109 @@ def wp_optimize_cron(docroot: str, owner: str, enable: bool = True) -> Dict:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# WordPress — endurecimiento (hardening) con checklist
+#
+# Cada medida es una comprobación (status) + una aplicación (apply). Solo medidas
+# seguras y estándar que no rompen sitios normales. Devuelve una lista de checks
+# con id, label, descripción, estado (ok/warn) y si es aplicable/reversible.
+# ─────────────────────────────────────────────────────────────────────────────
+def _wp_config_has_true(docroot: str, owner: str, const: str) -> bool:
+    rc, out, _ = _wp(docroot, owner, ["config", "get", const])
+    return rc == 0 and out.strip().lower() in ("true", "1")
+
+
+def wp_hardening_status(docroot: str, owner: str) -> Dict:
+    """Audita las medidas de endurecimiento. Devuelve {checks:[...], score:{ok,total}}."""
+    checks = []
+
+    # 1) DISALLOW_FILE_EDIT — sin editor de temas/plugins desde el admin.
+    disallow_edit = _wp_config_has_true(docroot, owner, "DISALLOW_FILE_EDIT")
+    checks.append({
+        "id": "disallow_file_edit",
+        "label": "Editor de código deshabilitado",
+        "desc": "Impide editar temas/plugins desde el admin (bloquea inyección de código si roban el acceso).",
+        "ok": disallow_edit, "fixable": True,
+    })
+
+    # 2) DISALLOW_UNFILTERED_HTML — nadie puede meter HTML/JS sin filtrar.
+    no_unfiltered = _wp_config_has_true(docroot, owner, "DISALLOW_UNFILTERED_HTML")
+    checks.append({
+        "id": "disallow_unfiltered_html",
+        "label": "HTML sin filtrar bloqueado",
+        "desc": "Impide que usuarios no-admin inserten HTML/JavaScript arbitrario (anti-XSS almacenado).",
+        "ok": no_unfiltered, "fixable": True,
+    })
+
+    # 3) readme.html / license.txt — revelan la versión de WP.
+    readme = os.path.join(docroot, "readme.html")
+    license_ = os.path.join(docroot, "license.txt")
+    version_files = os.path.exists(readme) or os.path.exists(license_)
+    checks.append({
+        "id": "remove_version_files",
+        "label": "Ficheros que revelan la versión eliminados",
+        "desc": "readme.html y license.txt exponen la versión exacta de WordPress a los atacantes.",
+        "ok": not version_files, "fixable": True,
+    })
+
+    # 4) Ejecución de PHP en uploads bloqueada (webshells).
+    uploads_guard = os.path.join(docroot, "wp-content", "uploads", ".htaccess")
+    guarded = False
+    if os.path.exists(uploads_guard):
+        try:
+            guarded = "php" in open(uploads_guard, "r", errors="replace").read().lower()
+        except OSError:
+            guarded = False
+    checks.append({
+        "id": "block_php_uploads",
+        "label": "PHP bloqueado en /uploads",
+        "desc": "Impide ejecutar PHP subido a wp-content/uploads (vector típico de webshells tras una subida maliciosa).",
+        "ok": guarded, "fixable": True,
+    })
+
+    # 5) XML-RPC — informativo: se gestiona por dominio en el panel (Seguridad).
+    #    No lo tocamos aquí para no chocar con esa gestión; solo informamos.
+    ok = sum(1 for c in checks if c["ok"])
+    return {"checks": checks, "score": {"ok": ok, "total": len(checks)}}
+
+
+def wp_hardening_apply(docroot: str, owner: str, fix_ids: Optional[List[str]] = None) -> Dict:
+    """Aplica las medidas indicadas (o todas las 'fixables' si fix_ids es None).
+    Idempotente. Devuelve el status actualizado tras aplicar."""
+    todo = set(fix_ids) if fix_ids else {
+        "disallow_file_edit", "disallow_unfiltered_html",
+        "remove_version_files", "block_php_uploads",
+    }
+
+    if "disallow_file_edit" in todo:
+        _wp(docroot, owner, ["config", "set", "DISALLOW_FILE_EDIT", "true",
+                             "--raw", "--type=constant"])
+    if "disallow_unfiltered_html" in todo:
+        _wp(docroot, owner, ["config", "set", "DISALLOW_UNFILTERED_HTML", "true",
+                             "--raw", "--type=constant"])
+    if "remove_version_files" in todo:
+        for fn in ("readme.html", "license.txt"):
+            p = os.path.join(docroot, fn)
+            try:
+                if os.path.exists(p):
+                    os.remove(p)
+            except OSError:
+                pass
+    if "block_php_uploads" in todo:
+        updir = os.path.join(docroot, "wp-content", "uploads")
+        try:
+            os.makedirs(updir, exist_ok=True)
+            guard = os.path.join(updir, ".htaccess")
+            with open(guard, "w") as f:
+                f.write("# SVQPanel — bloquear ejecución de PHP en uploads\n"
+                        "<Files *.php>\n  Require all denied\n</Files>\n")
+            _run(["chown", f"{owner}:{owner}", guard])
+        except OSError:
+            pass
+
+    return wp_hardening_status(docroot, owner)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # WordPress — acceso / admin
 # ─────────────────────────────────────────────────────────────────────────────
 def wp_admin_users(docroot: str, owner: str) -> List[Dict]:

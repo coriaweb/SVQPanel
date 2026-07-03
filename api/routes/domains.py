@@ -6,7 +6,7 @@ import os
 import socket
 import tarfile
 import tempfile
-from typing import Optional
+from typing import Optional, List
 from datetime import datetime
 from fastapi import APIRouter, Depends, HTTPException, status, Query, Request
 from fastapi.responses import FileResponse
@@ -2313,6 +2313,7 @@ class WpActionRequest(BaseModel):
     user_login: Optional[str] = _Field(None, max_length=120)
     password:   Optional[str] = _Field(None, max_length=128)
     url:        Optional[str] = _Field(None, max_length=200)
+    fix_ids:    Optional[List[str]] = None
 
 
 @router.get("/domains/{domain_id}/app")
@@ -2485,6 +2486,11 @@ async def wp_action(domain_id: int, action: str,
             data = wpm.wp_flush_cache(docroot, owner)
         elif action == "cron-status":
             data = wpm.wp_cron_status(docroot, owner)
+        elif action == "hardening-status":
+            data = wpm.wp_hardening_status(docroot, owner)
+        elif action == "hardening-apply":
+            fix_ids = payload.fix_ids if getattr(payload, "fix_ids", None) else None
+            data = wpm.wp_hardening_apply(docroot, owner, fix_ids)
         elif action == "optimize-cron":
             en = True if payload.enable is None else bool(payload.enable)
             data = wpm.wp_optimize_cron(docroot, owner, enable=en)

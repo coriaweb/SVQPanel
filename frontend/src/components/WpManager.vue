@@ -174,6 +174,25 @@
             </div>
           </div>
         </div>
+
+        <!-- Endurecimiento (hardening) con checklist -->
+        <div class="wpm-harden">
+          <div class="wpm-harden__head">
+            <span class="wpm-sec__title"><i class="bi bi-shield-check"></i> Endurecer WordPress</span>
+            <span v-if="hardening" class="wpm-harden__score" :class="{ 'is-full': hardening.score.ok === hardening.score.total }">{{ hardening.score.ok }}/{{ hardening.score.total }}</span>
+            <BaseButton v-if="hardening && hardening.score.ok < hardening.score.total" variant="primary" size="sm" icon="shield-fill-check" :loading="busy==='harden'" @click="applyHardening">Aplicar todo</BaseButton>
+          </div>
+          <div v-if="hardeningLoading" class="dd-muted"><span class="spinner"></span> Analizando…</div>
+          <ul v-else-if="hardening" class="wpm-harden__list">
+            <li v-for="c in hardening.checks" :key="c.id" :class="{ 'is-ok': c.ok }">
+              <i class="bi" :class="c.ok ? 'bi-check-circle-fill' : 'bi-exclamation-circle'"></i>
+              <div>
+                <span class="wpm-harden__label">{{ c.label }}</span>
+                <small class="dd-muted">{{ c.desc }}</small>
+              </div>
+            </li>
+          </ul>
+        </div>
       </div>
 
       <!-- ── Tab Consola WP-CLI ── -->
@@ -440,6 +459,23 @@ export default {
         attack.value = r.attack || null
       } catch (e) { /* silencioso: el pane simplemente no muestra estado */ }
       finally { loadingSec.value = false }
+      loadHardening()
+    }
+
+    const hardening = ref(null)
+    const hardeningLoading = ref(false)
+    const loadHardening = async () => {
+      if (did.value == null) return
+      hardeningLoading.value = true
+      try {
+        const r = await api.wpAction(did.value, 'hardening-status')
+        hardening.value = r.data
+      } catch (e) { /* silencioso */ }
+      finally { hardeningLoading.value = false }
+    }
+    const applyHardening = async () => {
+      const data = await run('hardening-apply', {}, 'harden')
+      if (data) hardening.value = data
     }
 
     const applyProtection = async (body, busyId) => {
@@ -548,6 +584,7 @@ export default {
       cronOptimized, cronLoaded, cronBtnLabel, toggleCronOptimize,
       resetPw, changeUrl, statusLabel,
       prot, attack, rlInput, loadSecurity, toggleXmlrpc, saveRateLimit, enableAllProtection,
+      hardening, hardeningLoading, applyHardening,
       cliInput, cliRunning, cliLog, cliQuick, cliQuickSel, cliOutEl,
       runCli, applyQuick, cliHistPrev, cliHistNext,
       cliHistory, cliHistLoading, loadCliHistory, formatDate,
@@ -650,6 +687,16 @@ export default {
 .wpm-sec__info small { display:block; line-height:1.4; }
 .wpm-sec__info code { background: var(--surface-inset); padding:.05rem .3rem; border-radius:4px; font-size:.8rem; }
 .wpm-sec__rl { display:flex; align-items:center; gap:.5rem; white-space:nowrap; }
+.wpm-harden { margin-top:1rem; padding-top:1rem; border-top:1px solid var(--border); }
+.wpm-harden__head { display:flex; align-items:center; gap:.75rem; margin-bottom:.6rem; }
+.wpm-harden__score { font-weight:700; font-size:.8rem; padding:.1rem .5rem; border-radius:999px; background: color-mix(in srgb, var(--warning) 18%, transparent); color: var(--warning); }
+.wpm-harden__score.is-full { background: color-mix(in srgb, var(--success) 18%, transparent); color: var(--success); }
+.wpm-harden__list { list-style:none; padding:0; margin:0; display:flex; flex-direction:column; gap:.5rem; }
+.wpm-harden__list li { display:flex; gap:.6rem; align-items:flex-start; }
+.wpm-harden__list li > i { color: var(--warning); font-size:1.05rem; margin-top:.1rem; }
+.wpm-harden__list li.is-ok > i { color: var(--success); }
+.wpm-harden__label { display:block; font-weight:600; font-size:.9rem; }
+.wpm-harden__list small { display:block; line-height:1.35; }
 /* toggle basado en clase (no depende de :checked, robusto frente a CSS global) */
 .wpm-toggle { position:relative; flex-shrink:0; width:44px; height:24px; padding:0;
   border:1px solid var(--border); border-radius:999px; background: var(--surface-inset);
