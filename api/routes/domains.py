@@ -8,7 +8,7 @@ import tarfile
 import tempfile
 from typing import Optional, List
 from datetime import datetime
-from fastapi import APIRouter, Depends, HTTPException, status, Query, Request
+from fastapi import APIRouter, Depends, HTTPException, status, Query, Request, BackgroundTasks
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field as _Field
 from starlette.background import BackgroundTask
@@ -2420,6 +2420,94 @@ async def wp_get_updates(domain_id: int,
         return {"status": "success", "data": wp_updates_summary(docroot, owner)}
     except WpError as e:
         raise HTTPException(status_code=422, detail=str(e))
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Staging de WordPress (clonar a staging.{dominio} / push to live / eliminar)
+# OJO: declaradas ANTES de /wp/{kind}s y de /wp/{action} para que 'staging' no
+# caiga en las rutas genéricas (mismo motivo que /wp/cli).
+# ─────────────────────────────────────────────────────────────────────────────
+@router.get("/domains/{domain_id}/wp/staging")
+async def wp_staging_status(domain_id: int,
+                            current_user: User = Depends(require_auth),
+                            db: Session = Depends(get_db)):
+    """Estado del staging del dominio: si existe, sus datos y el job en curso."""
+    domain, _owner, _docroot = _resolve_docroot_owner(domain_id, db, current_user)
+    from scripts import wp_staging as stg
+    return {"status": "success", "data": stg.get_status(domain, db)}
+
+
+@router.post("/domains/{domain_id}/wp/staging/{op}")
+async def wp_staging_op(domain_id: int, op: str,
+                        background_tasks: BackgroundTasks,
+                        request: Request,
+                        current_user: User = Depends(require_auth),
+                        db: Session = Depends(get_db)):
+    """
+    Lanza una operación de staging en background (create | push | delete).
+    El progreso se consulta por polling en GET /wp/staging. Solo puede haber
+    una operación en curso por dominio.
+    """
+    from scripts import wp_staging as stg
+    from api.utils.security_audit import log_audit
+
+    if op not in ("create", "push", "delete"):
+        raise HTTPException(status_code=400, detail=f"Operación no soportada: {op}")
+
+    domain, owner, docroot = _resolve_docroot_owner(domain_id, db, current_user)
+    if getattr(domain, "staging_of_domain_id", None):
+        raise HTTPException(status_code=400,
+                            detail="Este dominio ya ES un staging; gestiona el "
+                                   "staging desde su dominio live.")
+    if stg.job_running(domain.id):
+        raise HTTPException(status_code=409,
+                            detail="Ya hay una operación de staging en curso para este dominio.")
+
+    existing = (db.query(Domain)
+                  .filter(Domain.staging_of_domain_id == domain.id).first())
+
+    if op == "create":
+        _wp_guard(docroot, owner)
+        from api.routes.databases import MARIADB_ENABLED
+        if not MARIADB_ENABLED:
+            raise HTTPException(status_code=503,
+                                detail="MariaDB no está habilitado; es necesario para clonar la BD.")
+        if existing:
+            raise HTTPException(status_code=409,
+                                detail=f"Ya existe un staging: {existing.domain_name}")
+        stg_name = stg.staging_name_for(domain.domain_name)
+        if db.query(Domain).filter(Domain.domain_name == stg_name).first():
+            raise HTTPException(status_code=409,
+                                detail=f"Ya existe un dominio «{stg_name}» en el panel.")
+        # El staging cuenta como un dominio más del usuario (límite del plan).
+        user = db.query(User).filter(User.id == domain.user_id).first()
+        if user and user.domains_limit and user.domains_limit > 0:
+            count = db.query(Domain).filter(Domain.user_id == user.id).count()
+            if count >= user.domains_limit:
+                raise HTTPException(status_code=403,
+                                    detail=f"Límite de dominios alcanzado ({count}/{user.domains_limit}); "
+                                           "el staging cuenta como un dominio.")
+        stg._job_init(domain.id, "create", stg.CREATE_STEPS)
+        background_tasks.add_task(stg.run_create, domain.id)
+
+    elif op == "push":
+        if not existing:
+            raise HTTPException(status_code=404,
+                                detail="Este dominio no tiene un staging que volcar.")
+        _wp_guard(docroot, owner)
+        stg._job_init(domain.id, "push", stg.PUSH_STEPS)
+        background_tasks.add_task(stg.run_push, domain.id)
+
+    else:  # delete
+        if not existing:
+            raise HTTPException(status_code=404,
+                                detail="Este dominio no tiene un staging que eliminar.")
+        stg._job_init(domain.id, "delete", stg.DELETE_STEPS)
+        background_tasks.add_task(stg.run_delete, domain.id)
+
+    log_audit(db, user=current_user, category="wp", action=f"staging-{op}",
+              target=domain.domain_name, request=request, success=True)
+    return {"status": "success", "data": {"op": op, "job": stg.job_status(domain.id)}}
 
 
 @router.get("/domains/{domain_id}/wp/{kind}s")

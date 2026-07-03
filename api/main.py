@@ -924,6 +924,9 @@ def _run_migrations():
         # Redis dedicado por dominio (caché de objetos, socket unix en private/)
         "ALTER TABLE domains ADD COLUMN IF NOT EXISTS redis_enabled BOOLEAN NOT NULL DEFAULT FALSE",
         "ALTER TABLE domains ADD COLUMN IF NOT EXISTS redis_maxmemory_mb INTEGER NOT NULL DEFAULT 64",
+        # Staging de WordPress: el subdominio de staging apunta a su dominio live
+        "ALTER TABLE domains ADD COLUMN IF NOT EXISTS staging_of_domain_id INTEGER REFERENCES domains(id) ON DELETE SET NULL",
+        "CREATE INDEX IF NOT EXISTS ix_domains_staging_of_domain_id ON domains(staging_of_domain_id)",
     ]
     with engine.connect() as conn:
         for sql in migrations:

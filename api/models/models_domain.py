@@ -40,6 +40,14 @@ class Domain(Base):
     is_subdomain  = Column(Boolean, default=False, nullable=False)
     parent_domain = Column(String(255), nullable=True, index=True)  # zona padre, ej: zococoria.es
 
+    # Staging de WordPress: si este dominio es un entorno de staging clonado
+    # desde otro (staging.dominio.com), apunta al Domain live del que se clonó.
+    # NULL = dominio normal. Si el live se borra, el puntero queda a NULL (el
+    # staging pasa a ser un subdominio normal, borrable a mano).
+    staging_of_domain_id = Column(Integer,
+                                  ForeignKey("domains.id", ondelete="SET NULL"),
+                                  nullable=True, index=True)
+
     # Dominio "solo correo/DNS": NO aloja la web aquí (su registro A apunta a otro
     # servidor). No se crea vhost, pool PHP ni estructura web; el Domain es un
     # registro ligero al que se le puede colgar correo y zona DNS. public_html

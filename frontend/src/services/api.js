@@ -893,6 +893,10 @@ class APIClient {
   wpCliHistory(domainId, limit = 30) {
     return this.get(`/api/domains/${domainId}/wp/cli-history?limit=${limit}`)
   }
+  getWpStaging(domainId) { return this.get(`/api/domains/${domainId}/wp/staging`) }
+  wpStagingOp(domainId, op) {
+    return this.post(`/api/domains/${domainId}/wp/staging/${op}`, {})
+  }
 
   // ── Composer (dependencias PHP del proyecto del dominio) ──
   getComposerStatus(domainId)    { return this.get(`/api/domains/${domainId}/composer/status`) }

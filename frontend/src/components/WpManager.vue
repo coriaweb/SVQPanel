@@ -195,6 +195,74 @@
         </div>
       </div>
 
+      <!-- ── Tab Staging (clonar / push to live) ── -->
+      <div v-else-if="tab === 'staging'" class="wpm-pane">
+        <div v-if="stagingLoading && !stagingData" class="wpm-loading"><span class="spinner"></span> Consultando el staging…</div>
+        <template v-else-if="stagingData">
+          <!-- Operación en curso -->
+          <div v-if="stagingJob && stagingJob.status === 'running'" class="wpm-stgjob">
+            <p class="wpm-stgjob__title"><span class="spinner"></span>
+              {{ stagingJob.op === 'create' ? 'Creando el entorno de staging…' : stagingJob.op === 'push' ? 'Volcando el staging a producción…' : 'Eliminando el staging…' }}
+            </p>
+            <ul class="wpm-stgsteps">
+              <li v-for="(s, i) in stagingJob.steps" :key="i"
+                  :class="{ 'is-done': i < stagingJob.current, 'is-current': i === stagingJob.current }">
+                <i class="bi" :class="i < stagingJob.current ? 'bi-check-circle-fill' : (i === stagingJob.current ? 'bi-arrow-repeat' : 'bi-circle')"></i>
+                {{ s }}
+              </li>
+            </ul>
+            <small class="dd-muted">Puede tardar varios minutos en sitios grandes. Puedes salir de esta página: la operación sigue en el servidor.</small>
+          </div>
+
+          <template v-else>
+            <div v-if="stagingJob && stagingJob.status === 'failed'" class="wpm-stgfail">
+              <i class="bi bi-exclamation-triangle"></i> La última operación de staging falló: {{ stagingJob.error }}
+            </div>
+
+            <!-- Sin staging: explicación + crear -->
+            <div v-if="!stagingData.exists" class="wpm-stgempty">
+              <p class="wpm-sec__title"><i class="bi bi-layers"></i> Entorno de staging</p>
+              <p class="dd-muted" style="margin:.25rem 0 .9rem; line-height:1.5">
+                Crea una copia exacta de este WordPress en <code>{{ stagingData.staging_name }}</code>
+                para probar cambios (plugins, temas, actualizaciones) sin tocar el sitio real.
+                Cuando todo funcione, vuelca los cambios a producción con un clic (con copia de
+                seguridad previa del live). El staging no se indexa en buscadores.
+              </p>
+              <BaseButton variant="primary" icon="layers" :loading="busy==='stg-create'" :disabled="!!busy" @click="stagingOp('create')">Crear staging</BaseButton>
+            </div>
+
+            <!-- Staging existente -->
+            <template v-else>
+              <div class="wpm-summary" style="margin-bottom:.25rem">
+                <div class="wpm-stat">
+                  <span class="wpm-stat__k">Staging activo</span>
+                  <span class="wpm-stat__v mono"><a :href="stagingData.staging.url" target="_blank" rel="noopener">{{ stagingData.staging.domain_name }}</a></span>
+                </div>
+                <div class="wpm-stat">
+                  <span class="wpm-stat__k">Creado</span>
+                  <span class="wpm-stat__v">{{ stagingData.staging.created_at ? formatDate(stagingData.staging.created_at) : '—' }}</span>
+                </div>
+                <div class="wpm-stat">
+                  <span class="wpm-stat__k">SSL</span>
+                  <span class="wpm-stat__v">{{ stagingData.staging.ssl_enabled ? 'Activo' : 'HTTP (actívalo en su ficha de dominio)' }}</span>
+                </div>
+              </div>
+              <div class="wpm-actions" style="margin-top:.75rem">
+                <a class="wpm-link" :href="stagingData.staging.url" target="_blank" rel="noopener"><i class="bi bi-box-arrow-up-right"></i> Abrir staging</a>
+                <BaseButton variant="primary" size="sm" icon="rocket-takeoff" :loading="busy==='stg-push'" :disabled="!!busy" @click="stagingOp('push')">Volcar a producción</BaseButton>
+                <BaseButton variant="danger" size="sm" icon="trash" :loading="busy==='stg-delete'" :disabled="!!busy" @click="stagingOp('delete')">Eliminar staging</BaseButton>
+              </div>
+              <p class="dd-muted" style="font-size:.82rem;margin-top:.75rem;line-height:1.5">
+                <i class="bi bi-info-circle"></i> «Volcar a producción» sobrescribe los archivos y la
+                base de datos del sitio live con los del staging (antes se guarda una copia de seguridad
+                del live en el servidor). El staging aparece también en tu lista de dominios como un
+                subdominio más.
+              </p>
+            </template>
+          </template>
+        </template>
+      </div>
+
       <!-- ── Tab Consola WP-CLI ── -->
       <div v-else-if="tab === 'cli'" class="wpm-pane">
         <p class="dd-muted" style="margin:0 0 .75rem">
@@ -271,7 +339,7 @@
 </template>
 
 <script>
-import { ref, computed, watch, onMounted, nextTick } from 'vue'
+import { ref, computed, watch, onMounted, onUnmounted, nextTick } from 'vue'
 import { useRoute } from 'vue-router'
 import api from '../services/api'
 import { formatDateTime } from '../utils/datetime'
@@ -308,6 +376,7 @@ export default {
       { key: 'themes',  label: 'Temas',   icon: 'palette' },
       { key: 'access',  label: 'Acceso',  icon: 'key' },
       { key: 'security', label: 'Seguridad', icon: 'shield-check' },
+      { key: 'staging', label: 'Staging', icon: 'layers' },
       { key: 'cli',     label: 'Consola', icon: 'terminal' },
     ]
     const busy = ref('')          // id de la acción en curso (desactiva botones)
@@ -497,6 +566,66 @@ export default {
     // Botón del aviso: bloquea xmlrpc y pone 3/min en wp-login de una vez.
     const enableAllProtection = () => applyProtection({ xmlrpc_blocked: true, wp_login_ratelimit: 3 }, 'wpprotect-all')
 
+    // ── Staging (clonar / push to live) ──────────────────────────────────────
+    const stagingData = ref(null)
+    const stagingLoading = ref(false)
+    let stagingTimer = null
+
+    const stagingJob = computed(() => stagingData.value?.job || null)
+
+    const stopStagingPoll = () => {
+      if (stagingTimer) { clearInterval(stagingTimer); stagingTimer = null }
+    }
+    // Mientras hay una operación en curso, refresca el estado cada 3 s. Al
+    // terminar, notifica el resultado y recarga (aparece/desaparece el staging).
+    const startStagingPoll = () => {
+      if (stagingTimer) return
+      stagingTimer = setInterval(async () => {
+        if (did.value == null) return
+        try {
+          const r = await api.getWpStaging(did.value)
+          stagingData.value = r.data
+          const st = r.data.job?.status
+          if (st && st !== 'running') {
+            stopStagingPoll()
+            if (st === 'success') store.showNotification('Operación de staging completada', 'success')
+            else store.showNotification('Staging: ' + (r.data.job.error || 'la operación falló'), 'danger')
+          }
+        } catch (e) { /* silencioso: se reintenta en el siguiente tick */ }
+      }, 3000)
+    }
+
+    const loadStaging = async () => {
+      if (did.value == null) return
+      stagingLoading.value = true
+      try {
+        const r = await api.getWpStaging(did.value)
+        stagingData.value = r.data
+        if (r.data.job?.status === 'running') startStagingPoll()
+      } catch (e) { /* silencioso */ }
+      finally { stagingLoading.value = false }
+    }
+
+    const stagingOp = async (op) => {
+      const stgName = stagingData.value?.staging_name || ('staging.' + (props.domainName || ''))
+      const msgs = {
+        create: `Se creará ${stgName} con una copia completa de los archivos y la base de datos de este sitio. ¿Continuar?`,
+        push: 'VOLCAR EL STAGING A PRODUCCIÓN:\n\nLos archivos y la base de datos del sitio LIVE se sobrescribirán con los del staging. Antes se guarda una copia de seguridad del live en el servidor, pero los cambios hechos en producción después de crear el staging (pedidos, comentarios, entradas…) se PERDERÁN.\n\n¿Continuar?',
+        delete: '¿Eliminar el entorno de staging? Se borrarán su subdominio, sus archivos y su base de datos. El sitio de producción no se toca.',
+      }
+      if (!confirm(msgs[op])) return
+      busy.value = 'stg-' + op
+      try {
+        const r = await api.wpStagingOp(did.value, op)
+        stagingData.value = { ...(stagingData.value || {}), job: r.data.job }
+        startStagingPoll()
+      } catch (e) {
+        store.showNotification('Error: ' + e.message, 'danger')
+      } finally { busy.value = '' }
+    }
+
+    onUnmounted(stopStagingPoll)
+
     // ── Consola WP-CLI ──
     const cliInput = ref('')
     const cliRunning = ref(false)
@@ -569,6 +698,7 @@ export default {
       if ((t === 'plugins' || t === 'themes')) loadItems()
       if (t === 'access' && !admins.value.length) loadAdmins()
       if (t === 'security') loadSecurity()
+      if (t === 'staging') loadStaging()
       if (t === 'cli') loadCliHistory()
     })
 
@@ -585,6 +715,7 @@ export default {
       resetPw, changeUrl, statusLabel,
       prot, attack, rlInput, loadSecurity, toggleXmlrpc, saveRateLimit, enableAllProtection,
       hardening, hardeningLoading, applyHardening,
+      stagingData, stagingLoading, stagingJob, loadStaging, stagingOp,
       cliInput, cliRunning, cliLog, cliQuick, cliQuickSel, cliOutEl,
       runCli, applyQuick, cliHistPrev, cliHistNext,
       cliHistory, cliHistLoading, loadCliHistory, formatDate,
@@ -697,6 +828,22 @@ export default {
 .wpm-harden__list li.is-ok > i { color: var(--success); }
 .wpm-harden__label { display:block; font-weight:600; font-size:.9rem; }
 .wpm-harden__list small { display:block; line-height:1.35; }
+/* ── Pane Staging ── */
+.wpm-stgjob__title { display:flex; align-items:center; gap:.5rem; font-weight:600; margin:0 0 .75rem; }
+.wpm-stgsteps { list-style:none; padding:0; margin:0 0 .75rem; display:flex; flex-direction:column; gap:.45rem; }
+.wpm-stgsteps li { display:flex; align-items:center; gap:.55rem; font-size:.9rem; color: var(--text-muted); }
+.wpm-stgsteps li > i { color: var(--text-muted); }
+.wpm-stgsteps li.is-done { color: var(--text); }
+.wpm-stgsteps li.is-done > i { color: var(--success); }
+.wpm-stgsteps li.is-current { color: var(--text); font-weight:600; }
+.wpm-stgsteps li.is-current > i { color: var(--accent); animation: wpm-spin 1s linear infinite; }
+@keyframes wpm-spin { to { transform: rotate(360deg); } }
+.wpm-stgfail { display:flex; align-items:flex-start; gap:.5rem; padding:.6rem .8rem; margin-bottom:.75rem;
+  border:1px solid color-mix(in srgb, var(--danger) 40%, var(--border));
+  background: color-mix(in srgb, var(--danger) 10%, transparent);
+  border-radius: var(--radius-md); color: var(--danger); font-size:.88rem; }
+.wpm-stgempty code { background: var(--surface-inset); padding:.05rem .3rem; border-radius:4px; font-size:.85rem; }
+
 /* toggle basado en clase (no depende de :checked, robusto frente a CSS global) */
 .wpm-toggle { position:relative; flex-shrink:0; width:44px; height:24px; padding:0;
   border:1px solid var(--border); border-radius:999px; background: var(--surface-inset);
