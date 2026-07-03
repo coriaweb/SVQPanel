@@ -779,6 +779,8 @@ def generate_nginx_config(
     location = /package.json {{ deny all; }}
     location = /.user.ini {{ deny all; }}
     location = /wp-config.php.bak {{ deny all; }}
+    # Anti-webshell: nunca ejecutar PHP subido a wp-content/uploads (WordPress).
+    location ~* /wp-content/uploads/.*\\.php$ {{ deny all; }}
 
     error_log {logs_dir}/nginx.error.log;
     access_log {logs_dir}/nginx.access.log;
@@ -831,6 +833,8 @@ server {{
     location = /package.json {{ deny all; }}
     location = /.user.ini {{ deny all; }}
     location = /wp-config.php.bak {{ deny all; }}
+    # Anti-webshell: nunca ejecutar PHP subido a wp-content/uploads (WordPress).
+    location ~* /wp-content/uploads/.*\\.php$ {{ deny all; }}
 
     error_log {logs_dir}/nginx.error.log;
     access_log {logs_dir}/nginx.access.log;

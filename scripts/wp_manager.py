@@ -407,23 +407,10 @@ def wp_hardening_status(docroot: str, owner: str) -> Dict:
         "ok": not version_files, "fixable": True,
     })
 
-    # 4) Ejecución de PHP en uploads bloqueada (webshells).
-    uploads_guard = os.path.join(docroot, "wp-content", "uploads", ".htaccess")
-    guarded = False
-    if os.path.exists(uploads_guard):
-        try:
-            guarded = "php" in open(uploads_guard, "r", errors="replace").read().lower()
-        except OSError:
-            guarded = False
-    checks.append({
-        "id": "block_php_uploads",
-        "label": "PHP bloqueado en /uploads",
-        "desc": "Impide ejecutar PHP subido a wp-content/uploads (vector típico de webshells tras una subida maliciosa).",
-        "ok": guarded, "fixable": True,
-    })
-
-    # 5) XML-RPC — informativo: se gestiona por dominio en el panel (Seguridad).
-    #    No lo tocamos aquí para no chocar con esa gestión; solo informamos.
+    # NOTA: el bloqueo de PHP en wp-content/uploads (anti-webshell) NO es un check
+    # aquí: va SIEMPRE en el vhost (nginx y Apache), como el bloqueo de .env/.git.
+    # Un .htaccess se ignora en nginx puro, así que la protección real está en el
+    # vhost y aplica a todos los dominios por defecto sin depender del cliente.
     ok = sum(1 for c in checks if c["ok"])
     return {"checks": checks, "score": {"ok": ok, "total": len(checks)}}
 
@@ -433,7 +420,7 @@ def wp_hardening_apply(docroot: str, owner: str, fix_ids: Optional[List[str]] = 
     Idempotente. Devuelve el status actualizado tras aplicar."""
     todo = set(fix_ids) if fix_ids else {
         "disallow_file_edit", "disallow_unfiltered_html",
-        "remove_version_files", "block_php_uploads",
+        "remove_version_files",
     }
 
     if "disallow_file_edit" in todo:
@@ -450,17 +437,6 @@ def wp_hardening_apply(docroot: str, owner: str, fix_ids: Optional[List[str]] = 
                     os.remove(p)
             except OSError:
                 pass
-    if "block_php_uploads" in todo:
-        updir = os.path.join(docroot, "wp-content", "uploads")
-        try:
-            os.makedirs(updir, exist_ok=True)
-            guard = os.path.join(updir, ".htaccess")
-            with open(guard, "w") as f:
-                f.write("# SVQPanel — bloquear ejecución de PHP en uploads\n"
-                        "<Files *.php>\n  Require all denied\n</Files>\n")
-            _run(["chown", f"{owner}:{owner}", guard])
-        except OSError:
-            pass
 
     return wp_hardening_status(docroot, owner)
 

@@ -170,6 +170,12 @@ def generate_apache_vhost(
     <FilesMatch "(^\\.|\\.(env|git|sql|bak|old|log|sh)$)">
         Require all denied
     </FilesMatch>
+    # Anti-webshell: nunca ejecutar PHP subido a wp-content/uploads (WordPress).
+    <Directory {docroot}/wp-content/uploads>
+        <FilesMatch "\\.php$">
+            Require all denied
+        </FilesMatch>
+    </Directory>
 </VirtualHost>
 """
 
