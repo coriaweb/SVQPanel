@@ -312,6 +312,28 @@ def wp_cron_comment(domain_name: str) -> str:
     return f"wp-cron: {domain_name}"
 
 
+# Intervalo por defecto del wp-cron del sistema (minutos). 10 da margen de CPU
+# sin retrasar tareas de forma perceptible en la mayoría de sitios.
+WP_CRON_INTERVAL_MIN = 10
+
+
+def wp_cron_minute_field(domain_id: int, interval: int = WP_CRON_INTERVAL_MIN) -> str:
+    """Campo 'minute' del crontab ESCALONADO para este dominio.
+
+    Si todos los WordPress usan '*/N' arrancan en el MISMO minuto (0,N,2N…) y
+    despiertan decenas de procesos PHP a la vez → pico de load sincronizado
+    (thundering herd). En su lugar damos a cada dominio un offset estable
+    (domain_id % interval) y generamos la lista explícita de minutos:
+      interval=10, offset=3  ->  "3,13,23,33,43,53"
+    Así cada dominio sigue corriendo cada `interval` min, pero los arranques se
+    reparten a lo largo del reloj en vez de amontonarse. El offset es estable
+    (depende solo del id) para que regenerar el cron no lo mueva."""
+    interval = max(1, min(int(interval), 30))
+    offset = int(domain_id) % interval
+    minutes = list(range(offset, 60, interval))
+    return ",".join(str(m) for m in minutes)
+
+
 def wp_cron_command(docroot: str, php_version: str = None) -> str:
     """Comando que ejecuta las tareas vencidas de WordPress. Usa el PHP del
     dominio (php{version}), NO el del sistema: un sitio en PHP 7.4 debe correr su

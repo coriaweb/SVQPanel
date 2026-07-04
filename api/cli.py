@@ -1670,8 +1670,9 @@ def cmd_regenerate_all_vhosts() -> int:
 
 def cmd_optimize_all_wp_cron() -> int:
     """Optimiza el wp-cron de TODOS los dominios con WordPress que no lo tengan ya
-    (DISABLE_WP_CRON + cron de sistema cada 5 min). Evita el wp-cron por visita,
-    que con plugins de tareas frecuentes causa picos de CPU. Idempotente."""
+    (DISABLE_WP_CRON + cron de sistema escalonado, cada 10 min por dominio). Evita
+    el wp-cron por visita, que con plugins de tareas frecuentes causa picos de CPU.
+    El minuto se reparte por dominio para no arrancarlos todos a la vez. Idempotente."""
     try:
         from api.models.database import SessionLocal, load_all_models
         from api.models.models_domain import Domain
@@ -1706,6 +1707,55 @@ def cmd_optimize_all_wp_cron() -> int:
     db.close()
     logger.info(f"optimize_all_wp_cron: {done} optimizados, {already} ya lo estaban, "
                 f"{skip} sin WP/omitidos, {fail} con error")
+    return 0
+
+
+def cmd_restagger_wp_cron() -> int:
+    """Re-escalona los wp-cron YA existentes: cambia su campo 'minute' de '*/5'
+    (o cualquier valor) al minuto escalonado por dominio (cada 10 min, repartido)
+    para eliminar el pico de load sincronizado. También reescribe el crontab del
+    usuario. Idempotente: si ya está en el minuto correcto, no toca nada."""
+    try:
+        from api.models.database import SessionLocal, load_all_models
+        from api.models.models_domain import Domain
+        from api.models.models_cron import CronJob
+        from scripts import wp_manager as wpm
+        from scripts.cron_manager import CronManager
+        load_all_models()
+    except Exception as e:
+        logger.error(f"No se pudo cargar: {e}")
+        return 0
+    db = SessionLocal()
+    cm = CronManager()
+    changed = same = fail = 0
+    # Solo los CronJob cuyo comment es de wp-cron ("wp-cron: dominio").
+    jobs = db.query(CronJob).filter(CronJob.comment.like("wp-cron: %")).all()
+    for job in jobs:
+        try:
+            dom = db.query(Domain).filter(Domain.id == job.domain_id).first()
+            if dom is None:
+                continue
+            target = wpm.wp_cron_minute_field(dom.id)
+            if job.minute == target:
+                same += 1
+                continue
+            job.minute = target
+            db.commit()
+            owner = dom.user.username
+            # Reescribir la línea en el crontab del usuario (add_cron reemplaza
+            # el bloque existente por cron_id).
+            cm.add_cron(username=owner, cron_id=job.id,
+                        minute=job.minute, hour=job.hour, day=job.day,
+                        month=job.month, weekday=job.weekday,
+                        command=job.command, comment=job.comment or "")
+            changed += 1
+            logger.info(f"wp-cron re-escalonado: {dom.domain_name} -> {target}")
+        except Exception as e:
+            logger.warning(f"restagger {job.comment}: {e}")
+            fail += 1
+    db.close()
+    logger.info(f"restagger_wp_cron: {changed} reescalonados, {same} ya OK, {fail} error")
+    print(f"restagger_wp_cron: {changed} reescalonados, {same} ya OK, {fail} error")
     return 0
 
 
@@ -2045,6 +2095,8 @@ def main():
         help="Regenera el vhost de todos los dominios desde la BD")
     sub.add_parser("optimize_all_wp_cron",
         help="Optimiza el wp-cron de todos los WordPress (DISABLE_WP_CRON + cron sistema)")
+    sub.add_parser("restagger_wp_cron",
+        help="Re-escalona los wp-cron existentes (minuto repartido por dominio, evita pico de load)")
     sub.add_parser("refresh_suspended_vhosts",
         help="Regenera el vhost de los dominios suspendidos (listen IPv6)")
     p_geo = sub.add_parser("update_geoip",
@@ -2191,6 +2243,8 @@ def main():
         sys.exit(cmd_regenerate_all_vhosts())
     if args.cmd == "optimize_all_wp_cron":
         sys.exit(cmd_optimize_all_wp_cron())
+    if args.cmd == "restagger_wp_cron":
+        sys.exit(cmd_restagger_wp_cron())
     if args.cmd == "refresh_suspended_vhosts":
         sys.exit(cmd_refresh_suspended_vhosts())
     if args.cmd == "update_geoip":

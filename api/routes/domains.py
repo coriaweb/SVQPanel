@@ -2406,9 +2406,13 @@ def _wp_optimize_cron_db(domain, owner, docroot, db, enable=True):
         wpm.wp_cron_purge_raw_crontab(owner, docroot)
         job = _wp_cron_job(domain, db)
         if job is None:
+            # Minuto ESCALONADO por dominio (no '*/5' fijo): evita que los N
+            # WordPress arranquen su wp-cron en el mismo minuto y provoquen un
+            # pico de load sincronizado. Ver wp_manager.wp_cron_minute_field.
             job = CronJob(
                 user_id=domain.user_id, domain_id=domain.id,
-                minute="*/5", hour="*", day="*", month="*", weekday="*",
+                minute=wpm.wp_cron_minute_field(domain.id),
+                hour="*", day="*", month="*", weekday="*",
                 command=wpm.wp_cron_command(docroot, domain.php_version),
                 comment=wpm.wp_cron_comment(domain.domain_name),
                 is_active=True,
@@ -2423,7 +2427,7 @@ def _wp_optimize_cron_db(domain, owner, docroot, db, enable=True):
             except Exception:
                 pass
         return {"ok": True, "optimized": True,
-                "message": "wp-cron optimizado (cron cada 5 min, visible en Cron)."}
+                "message": f"wp-cron optimizado (cada {wpm.WP_CRON_INTERVAL_MIN} min, escalonado, visible en Cron)."}
     else:
         wpm.wp_config_disable_cron(docroot, owner, False)
         job = _wp_cron_job(domain, db)
