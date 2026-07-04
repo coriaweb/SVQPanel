@@ -496,6 +496,9 @@ class HestiaBackup:
                 "letsencrypt": conf.get("LETSENCRYPT", "no") == "yes",
                 "custom_docroot": conf.get("CUSTOM_DOCROOT", "") or None,
                 "redirect": conf.get("REDIRECT", "") or None,
+                # Suspensión del origen: se respeta al importar (el cliente la
+                # puso a propósito — p.ej. web apagada pero correo activo).
+                "suspended": conf.get("SUSPENDED", "no") == "yes",
                 "has_data": bool(data_tar),
                 "_data_tar": data_tar,
                 "_conf_dir": cdir,
@@ -537,10 +540,17 @@ class HestiaBackup:
                             # FWD_ONLY='yes' = redirección pura (sin copia local).
                             "fwd": a.get("FWD", "") or None,
                             "fwd_only": (a.get("FWD_ONLY", "") or "").strip().lower() == "yes",
+                            # Buzón suspendido en el origen → llega suspendido.
+                            "suspended": (a.get("SUSPENDED", "") or "").strip().lower() == "yes",
                         })
+            # Suspensión del DOMINIO de correo entero (mail.conf del dominio).
+            dom_conf = {}
+            if cdir and os.path.isfile(os.path.join(cdir, "mail.conf")):
+                dom_conf = parse_conf_single(self._read(os.path.join(cdir, "mail.conf")))
             out.append({
                 "domain": domain,
                 "accounts": accounts,
+                "suspended": dom_conf.get("SUSPENDED", "no") == "yes",
                 "accounts_tar": self._find_data_archive("mail", domain, "accounts"),
                 "_conf_dir": cdir,
             })
@@ -1001,6 +1011,21 @@ def import_web(backup: "HestiaBackup", web: Dict, owner, db, report: ImportRepor
     except Exception as e:
         report.fail("web-vhost", domain_name, f"vhost no regenerado: {e}")
 
+    # 5) Suspensión del origen: la web estaba suspendida en Hestia → llega
+    #    suspendida aquí (página de "sitio suspendido", reversible desde el
+    #    panel). Sin esto, importar reactivaba webs que el cliente apagó.
+    if web.get("suspended"):
+        try:
+            from scripts.domain_suspend_manager import DomainSuspendManager
+            DomainSuspendManager().suspend_domain(domain_name)
+            db_domain.is_suspended = True
+            db.commit()
+            report.ok("web-suspend", domain_name,
+                      "importado suspendido (como en el origen)")
+        except Exception as e:
+            report.fail("web-suspend", domain_name,
+                        f"no se pudo suspender tras importar: {e}")
+
     report.ok("web", domain_name, f"PHP {php_version}"
               + (" + archivos" if has_data else " (sin datos)") + php_note)
     return db_domain
@@ -1440,6 +1465,33 @@ def import_mail(backup: "HestiaBackup", mailinfo: Dict, owner, db, report: Impor
     # en migraciones de Hestia.)
     for acc in mailinfo.get("accounts", []):
         _subscribe_mailboxes(f"{acc['account']}@{domain}")
+
+    # Suspensiones del origen (al FINAL: la restauración/suscripción necesita
+    # los buzones activos en Dovecot). Dominio entero suspendido → todos sus
+    # buzones; si no, solo los buzones marcados SUSPENDED en el backup.
+    try:
+        suspended_accs = {a["account"] for a in mailinfo.get("accounts", [])
+                          if a.get("suspended")}
+        if mailinfo.get("suspended"):
+            from scripts.suspend_manager import suspend_mail_domain
+            suspend_mail_domain(mail_domain, owner.username, True, db)
+            report.ok("mail-suspend", domain,
+                      "dominio de correo importado suspendido (como en el origen)")
+        elif suspended_accs:
+            from scripts.suspend_manager import suspend_mailbox
+            db.refresh(mail_domain)
+            n_susp = 0
+            for mb in mail_domain.mailboxes:
+                if mb.username in suspended_accs:
+                    suspend_mailbox(mb, owner.username, True)
+                    mb.is_suspended = True
+                    n_susp += 1
+            db.commit()
+            if n_susp:
+                report.ok("mail-suspend", domain,
+                          f"{n_susp} buzón(es) importados suspendidos (como en el origen)")
+    except Exception as e:
+        report.fail("mail-suspend", domain, e)
 
     report.ok("mail", domain, f"{n_ok} buzón(es)")
 
