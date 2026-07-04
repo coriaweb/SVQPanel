@@ -100,6 +100,7 @@
 import { ref, computed, onMounted } from 'vue'
 import { useMainStore } from '../stores/useMainStore'
 import api from '../services/api'
+import { dayISO } from '../utils/datetime'
 
 export default {
   name: 'MailMonitor',
@@ -110,12 +111,22 @@ export default {
     const search  = ref('')
     const typeFilter = ref('')
 
-    const todayStr = new Date().toISOString().slice(0, 10)
-    const yesterdayStr = new Date(Date.now() - 86400000).toISOString().slice(0, 10)
-    const date = ref(todayStr)
+    // "Hoy"/"Ayer" según la zona horaria configurada en Ajustes del panel
+    // (dayISO), NO en UTC: a las 00:09 hora local, toISOString() aún decía el
+    // día anterior y el calendario no dejaba elegir el día ya en curso.
+    // Son refs refrescadas en cada reload para sobrevivir al cambio de día
+    // con la pestaña abierta.
+    const todayStr = ref(dayISO())
+    const yesterdayStr = ref(dayISO(-1))
+    const date = ref(todayStr.value)
 
-    const isToday = computed(() => date.value === todayStr)
-    const isYesterday = computed(() => date.value === yesterdayStr)
+    const refreshDays = () => {
+      todayStr.value = dayISO()
+      yesterdayStr.value = dayISO(-1)
+    }
+
+    const isToday = computed(() => date.value === todayStr.value)
+    const isYesterday = computed(() => date.value === yesterdayStr.value)
 
     const filteredEvents = computed(() => {
       let ev = data.value.events || []
@@ -143,6 +154,7 @@ export default {
       (e.spam_symbols || []).map(s => `${s.label || s.name} (+${s.weight})`).join('\n') || ''
 
     const reload = async () => {
+      refreshDays()
       loading.value = true
       try {
         data.value = await api.mailMonitor({ date: date.value, search: search.value })
@@ -153,7 +165,8 @@ export default {
     }
 
     const setDay = (which) => {
-      date.value = which === 'today' ? todayStr : yesterdayStr
+      refreshDays()
+      date.value = which === 'today' ? todayStr.value : yesterdayStr.value
       reload()
     }
 

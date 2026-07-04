@@ -2553,12 +2553,83 @@ _RE_RSPAMD = re.compile(
 )
 
 
+def _bisect_log_offset(f, day: bytes, size: int) -> int:
+    """Offset de la primera línea con fecha >= day en un log CRONOLÓGICO
+    (fichero abierto en binario). Búsqueda binaria por bytes: ~25 saltos aunque
+    el fichero pese cientos de MB."""
+    lo, hi = 0, size
+    while lo < hi:
+        mid = (lo + hi) // 2
+        f.seek(mid)
+        if mid:
+            f.readline()          # alinear al inicio de la siguiente línea
+        line = f.readline()
+        if not line or line[:10] >= day:
+            hi = mid
+        else:
+            lo = mid + 1
+    f.seek(lo)
+    if lo:
+        f.readline()
+    return f.tell()
+
+
+def _log_lines_for_date(path: str, day: str, max_bytes: int) -> list[str]:
+    """Líneas de un log que empiezan por `day` (YYYY-MM-DD, formato ISO al
+    inicio de línea, como mail.log y rspamd.log).
+
+    Los logs son cronológicos: en ficheros planos se localiza el inicio del día
+    con búsqueda binaria y se lee SOLO ese tramo. (Antes se escaneaba desde el
+    principio con un tope de MB "para no agotar memoria": cuando el log crecía
+    más que el tope, los días del final quedaban invisibles y el monitor decía
+    "No hay registros" — p. ej. la semana del 2026-07-04, con un mail.log de
+    144 MB por la tormenta de correos de cron.) En .gz, escaneo secuencial (los
+    rotados comprimidos son pequeños). Si el día supera max_bytes se conservan
+    las ÚLTIMAS líneas (las más recientes), no las primeras.
+    """
+    from collections import deque
+    day_b = day.encode()
+    out: deque = deque()
+    kept = 0
+
+    def _push(line_b: bytes):
+        nonlocal kept
+        out.append(line_b)
+        kept += len(line_b)
+        while kept > max_bytes and out:
+            kept -= len(out.popleft())
+
+    if path.endswith(".gz"):
+        import gzip
+        with gzip.open(path, "rb") as f:
+            scanned = 0
+            for line in f:
+                scanned += len(line)
+                if scanned > max_bytes:
+                    break
+                if line[:10] == day_b:
+                    _push(line)
+                elif out and line[:1].isdigit() and line[:10] > day_b:
+                    break     # ya pasamos el día pedido
+    else:
+        with open(path, "rb") as f:
+            size = os.path.getsize(path)
+            start = _bisect_log_offset(f, day_b, size)
+            f.seek(start)
+            for line in f:
+                p = line[:10]
+                if p == day_b:
+                    _push(line)
+                elif line[:1].isdigit() and p > day_b:
+                    break
+    return [l.decode("utf-8", errors="replace").rstrip("\n") for l in out]
+
+
 def _rspamd_logs_for_date(date_str: str, max_bytes: int = 60_000_000) -> dict:
     """Mapa qid → {action, score, threshold, symbols} para un día, leyendo el log
     de Rspamd (y sus rotados). Solo se queda con el ÚLTIMO veredicto por qid (el
     definitivo: un correo puede pasar por greylist y luego 'no action')."""
     import glob
-    import gzip
     base = next((p for p in _RSPAMD_LOGS if os.path.exists(p)), None)
     if not base:
         return {}
@@ -2569,28 +2640,21 @@ def _rspamd_logs_for_date(date_str: str, max_bytes: int = 60_000_000) -> dict:
     out: dict[str, dict] = {}
     for path in candidates:
         try:
-            opener = gzip.open if path.endswith(".gz") else open
-            with opener(path, "rt", encoding="utf-8", errors="replace") as f:
-                read = 0
-                for line in f:
-                    read += len(line)
-                    if read > max_bytes:
-                        break
-                    # El log de rspamd usa "YYYY-MM-DD HH:MM:SS" al inicio.
-                    if line[:10] != date_str:
-                        continue
-                    m = _RE_RSPAMD.search(line)
-                    if not m:
-                        continue
-                    qid, action, score, thr, syms = m.groups()
-                    out[qid] = {
-                        "action": action.strip(),
-                        "score": None if score == "nan" else _safe_float(score),
-                        "threshold": _safe_float(thr),
-                        "symbols": _top_symbols(syms),
-                    }
+            lines = _log_lines_for_date(path, date_str, max_bytes)
         except Exception as e:
             logger.warning(f"No se pudo leer {path}: {e}")
+            continue
+        for line in lines:
+            m = _RE_RSPAMD.search(line)
+            if not m:
+                continue
+            qid, action, score, thr, syms = m.groups()
+            out[qid] = {
+                "action": action.strip(),
+                "score": None if score == "nan" else _safe_float(score),
+                "threshold": _safe_float(thr),
+                "symbols": _top_symbols(syms),
+            }
     return out
 
 
@@ -2694,11 +2758,11 @@ def _read_mail_log_for_date(date_str: str, max_bytes: int = 30_000_000) -> list[
     """Lee las líneas del log de correo cuyo día coincide con date_str (YYYY-MM-DD).
 
     Recorre el mail.log activo y sus rotados (.1, .2, … y .gz) hasta cubrir la
-    fecha pedida. Eficiente: para en cuanto pasa de largo la fecha. Cap de bytes
-    por fichero para no agotar memoria con logs enormes.
+    fecha pedida (un día puede quedar repartido entre el activo y el .1 tras la
+    rotación). La lectura por fichero usa búsqueda binaria (_log_lines_for_date),
+    así que funciona igual de rápido aunque el log pese cientos de MB.
     """
     import glob
-    import gzip
     base = _mail_log_base()
     if not base:
         return []
@@ -2709,23 +2773,16 @@ def _read_mail_log_for_date(date_str: str, max_bytes: int = 30_000_000) -> list[
     out: list[str] = []
     for path in candidates:
         try:
-            opener = gzip.open if path.endswith(".gz") else open
-            with opener(path, "rt", encoding="utf-8", errors="replace") as f:
-                read = 0
-                matched_here = False
-                for line in f:
-                    read += len(line)
-                    if read > max_bytes:
-                        break
-                    if line[:10] == date_str:
-                        out.append(line.rstrip("\n"))
-                        matched_here = True
-            # Si este fichero NO tenía la fecha pero ya teníamos líneas, parar
-            # (los más antiguos no la tendrán). Si aún no hay nada, seguir buscando.
-            if out and not matched_here:
-                break
+            lines = _log_lines_for_date(path, date_str, max_bytes)
         except Exception as e:
             logger.warning(f"No se pudo leer {path}: {e}")
+            continue
+        if lines:
+            # Este fichero es más ANTIGUO que los ya leídos → sus líneas van delante
+            out = lines + out
+        elif out:
+            # Ya teníamos la fecha y este fichero (más antiguo) no la tiene: parar.
+            break
     return out
 
 

@@ -69,3 +69,15 @@ export const formatDate = (dt) =>
 /** «23:51» — solo hora (ticks de gráficas, etc.). */
 export const formatTime = (dt) =>
   fmt(dt, { hour: '2-digit', minute: '2-digit' })
+
+/** «2026-07-05» — el día de HOY (± offsetDays) en la zona horaria del PANEL.
+ *  Para selectores de fecha: nunca usar new Date().toISOString() (eso es UTC:
+ *  a las 00:09 en Madrid aún diría "ayer"). 'en-CA' formatea como YYYY-MM-DD. */
+export function dayISO(offsetDays = 0) {
+  const d = new Date(Date.now() + offsetDays * 86400000)
+  try {
+    return d.toLocaleDateString('en-CA', { timeZone: panelTz || undefined })
+  } catch {
+    return d.toLocaleDateString('en-CA')   // panelTz corrupta: zona del navegador
+  }
+}
