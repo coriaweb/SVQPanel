@@ -708,10 +708,13 @@ async def update_domain(
                     if not name_filter:
                         token_old = f"ip4:{old_ipv4}"
                         token_new = f"ip4:{db_domain.ipv4}"
+                        # LIKE en cualquier posición: los TXT importados de
+                        # Hestia llevan las comillas DENTRO del contenido
+                        # ("v=spf1 …"), así que un prefijo estricto no casa.
                         for rec in (db.query(DnsRecord)
                                     .filter(DnsRecord.zone_id == zone.id,
                                             DnsRecord.record_type == "TXT",
-                                            DnsRecord.content.like("v=spf1%"))
+                                            DnsRecord.content.like("%v=spf1%"))
                                     .all()):
                             if token_old in rec.content:
                                 rec.content = rec.content.replace(token_old, token_new)
