@@ -730,21 +730,30 @@ vacation
                 f.write(f"\n# SVQPanel: IP de salida por dominio\n{directive}\n")
             logger.info("main.cf: sender_dependent_default_transport_maps añadido")
 
-    def _build_master_bind_block(self, cfg: dict) -> str:
+    def _build_master_bind_block(self, cfg: dict, server_ipv4: str = "") -> str:
         """Construye el bloque de master.cf (entre marcadores) a partir del mapa
-        de config {@dominio: 'ipv4|ipv6|pref'}. Función pura (testeable)."""
+        de config {@dominio: 'ipv4|ipv6|pref'}. Función pura (testeable).
+
+        `server_ipv4`: IP global de salida del servidor. Si el bind del dominio
+        es OTRA IP (dedicada), el transporte anuncia HELO mail.{dominio}: el
+        PTR de una IP dedicada apunta a mail.{dominio} (a cargo del admin) y
+        el HELO debe coincidir con él — saludar con el hostname del servidor
+        provoca SPF_HELO_SOFTFAIL y rompe el par PTR↔HELO en el receptor.
+        """
         transports: dict = {}
         for sender, raw in cfg.items():
             dom = sender.lstrip("@")
             parts = (raw.split("|") + ["", "", ""])[:3]
             ipv4, ipv6, pref = parts[0].strip(), parts[1].strip(), (parts[2].strip() or "ipv4")
-            transports[self._transport_name(dom)] = (ipv4, ipv6, pref)
+            transports[self._transport_name(dom)] = (dom, ipv4, ipv6, pref)
 
         lines = [self._MASTER_START]
         for name in sorted(transports):
-            ipv4, ipv6, pref = transports[name]
+            dom, ipv4, ipv6, pref = transports[name]
             lines.append(f"{name} unix  -       -       n       -       -       smtp")
             lines.append(f"  -o smtp_bind_address={ipv4}")
+            if ipv4 and server_ipv4 and ipv4 != server_ipv4:
+                lines.append(f"  -o smtp_helo_name=mail.{dom}")
             # La IPv6 dedicada del dominio SOLO se usa para el correo si el
             # dominio la prefiere EXPLÍCITAMENTE (opt-in). Motivo: una IPv6
             # dedicada casi nunca tiene PTR (rDNS) — que lo configura el
@@ -760,6 +769,17 @@ vacation
         lines.append(self._MASTER_END)
         return "\n".join(lines) + "\n"
 
+    def _server_bind_ipv4(self) -> str:
+        """IP global de salida IPv4 del servidor (smtp_bind_address), '' si no
+        se puede leer. Sirve para distinguir binds de dominio 'dedicados'."""
+        import subprocess
+        try:
+            r = subprocess.run(["postconf", "-h", "smtp_bind_address"],
+                               capture_output=True, text=True, timeout=5)
+            return (r.stdout or "").strip()
+        except Exception:
+            return ""
+
     def _rebuild_master_cf_smtp_binds(self):
         """
         Regenera la sección marcada en master.cf: un transporte por dominio con
@@ -768,7 +788,7 @@ vacation
         """
         cfg = self._read_map(self.SENDER_IP_CFG_MAP)
         has_entries = bool(cfg)
-        new_block = self._build_master_bind_block(cfg)
+        new_block = self._build_master_bind_block(cfg, self._server_bind_ipv4())
 
         try:
             with open(self.POSTFIX_MASTER_CF, "r", encoding="utf-8") as f:

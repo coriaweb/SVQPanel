@@ -60,3 +60,29 @@ def test_varios_dominios():
 def test_transport_name_sanitiza():
     mm = _mm()
     assert mm._transport_name("mi-dominio.com") == "svqout_mi_dominio_com"
+
+
+def test_helo_propio_con_ip_dedicada():
+    # Bind con IP DEDICADA (≠ IP global del servidor) → HELO mail.{dominio},
+    # que es a lo que apunta el PTR de esa IP. Sin esto el receptor ve
+    # SPF_HELO_SOFTFAIL y el par PTR↔HELO roto (visto con globatel.es).
+    mm = _mm()
+    block = mm._build_master_bind_block(
+        {"@globatel.es": "185.104.188.44||ipv4"}, server_ipv4="185.104.188.71")
+    assert "smtp_helo_name=mail.globatel.es" in block
+
+
+def test_sin_helo_propio_con_ip_del_servidor():
+    # Bind con la IP global del servidor → HELO por defecto (hostname), que
+    # coincide con el PTR de esa IP. No debe inyectarse smtp_helo_name.
+    mm = _mm()
+    block = mm._build_master_bind_block(
+        {"@a.com": "185.104.188.71||ipv4"}, server_ipv4="185.104.188.71")
+    assert "smtp_helo_name" not in block
+
+
+def test_sin_helo_si_no_se_conoce_la_ip_del_servidor():
+    # Sin server_ipv4 (entorno raro/dev) no se puede distinguir → no tocar HELO.
+    mm = _mm()
+    block = mm._build_master_bind_block({"@a.com": "1.2.3.4||ipv4"})
+    assert "smtp_helo_name" not in block

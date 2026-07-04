@@ -2001,7 +2001,75 @@ def run_import(tar_path: str, target_user_id: int, scope: List[str], db,
                 db.rollback()
                 report.fail("dns", name, f"zona por defecto: {e}")
 
+        # DKIM: la zona importada del backup publica la clave pública VIEJA
+        # del servidor origen, pero aquí Rspamd firma con una clave nueva →
+        # reconciliar el TXT con la clave real (si no, DKIM_INVALID en todos
+        # los correos del dominio). Corre al final: las zonas ya existen.
+        if "mail" in scope:
+            for m_ in manifest.get("mail", []):
+                try:
+                    _reconcile_dkim_txt(m_["domain"], db, report)
+                except Exception as e:
+                    db.rollback()
+                    report.fail("dkim", m_["domain"], f"reconciliar TXT: {e}")
+
     return report.to_dict()
+
+
+def _reconcile_dkim_txt(domain: str, db, report: ImportReport) -> None:
+    """El TXT {selector}._domainkey de la zona debe publicar la clave con la
+    que firma ESTE servidor.
+
+    Bug real (visto con globatel.es): el backup de Hestia trae en su zona DNS
+    la clave pública ANTIGUA, pero al importar el correo el panel genera una
+    clave NUEVA para Rspamd → el TXT importado invalida TODAS las firmas
+    (DKIM_INVALID en el receptor). Tras importar, se reescribe el TXT con la
+    clave pública derivada del fichero privado real de Rspamd. Idempotente.
+    """
+    from api.models.models_mail import MailDomain
+    from api.models.models_dns import DnsZone, DnsRecord
+
+    md = db.query(MailDomain).filter(MailDomain.domain_name == domain).first()
+    if not md or not getattr(md, "dkim_enabled", False):
+        return
+    selector = getattr(md, "dkim_selector", None) or "mail"
+    key_path = f"/etc/rspamd/dkim/{domain}.{selector}.key"
+    if not os.path.isfile(key_path):
+        return
+    import subprocess
+    out = subprocess.run(["openssl", "rsa", "-in", key_path, "-pubout"],
+                         capture_output=True, text=True)
+    pub = "".join(l for l in (out.stdout or "").splitlines()
+                  if l and not l.startswith("-"))
+    if not pub:
+        return
+    if getattr(md, "dkim_public_key", None) != pub:
+        md.dkim_public_key = pub
+        db.commit()
+
+    zone = db.query(DnsZone).filter(DnsZone.domain_name == domain).first()
+    if not zone:
+        return
+    name = f"{selector}._domainkey"
+    value = f"v=DKIM1; k=rsa; p={pub}"
+    rec = db.query(DnsRecord).filter(DnsRecord.zone_id == zone.id,
+                                     DnsRecord.record_type == "TXT",
+                                     DnsRecord.name == name).first()
+    changed = False
+    if rec is None:
+        db.add(DnsRecord(zone_id=zone.id, record_type="TXT", name=name,
+                         content=value, ttl=14400, priority=0))
+        changed = True
+    elif pub not in (rec.content or ""):
+        rec.content = value
+        changed = True
+    if changed:
+        from api.routes.dns import _sync_zone_to_bind, _bump_serial
+        zone.serial = _bump_serial(zone.serial)
+        db.commit()
+        _sync_zone_to_bind(zone, db)
+        report.ok("dkim", domain,
+                  "TXT de la zona actualizado a la clave DKIM de este servidor")
 
 
 def _ensure_mail_dns_only_domain(domain: str, owner, db, report: ImportReport,
