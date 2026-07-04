@@ -1966,20 +1966,27 @@ def run_import(tar_path: str, target_user_id: int, scope: List[str], db,
                     db.rollback()
                     report.fail("cron", (job.get("cmd") or "")[:40], e)
 
-        # Aunque NO se importe el DNS del backup, todo dominio web migrado debe
+        # Aunque NO se importe el DNS del backup, todo dominio migrado debe
         # tener una zona DNS con el template por defecto (igual que un dominio
-        # creado normalmente en el panel) — si no, queda sin DNS propio. Solo
-        # para los que aún no tienen zona (no pisa lo importado).
+        # creado normalmente en el panel) — si no, queda sin DNS propio. Cubre
+        # los dominios web Y los solo-correo/DNS (su zona es la que lleva el
+        # MX/SPF del correo alojado aquí). Solo para los que aún no tienen zona
+        # (no pisa lo importado por el ámbito dns).
+        zone_targets: List[str] = []
         if "web" in scope:
-            # Procesar primero los dominios "padre" (menos etiquetas) y luego los
-            # subdominios, para que la zona padre exista cuando se cuelgue el sub.
-            for web in sorted(manifest["web"], key=lambda w: w["domain"].count(".")):
-                try:
-                    _ensure_default_zone(web["domain"], owner, db, report,
-                                         server_ipv4, server_ipv6)
-                except Exception as e:
-                    db.rollback()
-                    report.fail("dns", web["domain"], f"zona por defecto: {e}")
+            zone_targets += [w["domain"] for w in manifest.get("web", [])]
+        if "mail" in scope:
+            zone_targets += [m_["domain"] for m_ in manifest.get("mail", [])]
+        # Procesar primero los dominios "padre" (menos etiquetas) y luego los
+        # subdominios, para que la zona padre exista cuando se cuelgue el sub.
+        for name in sorted(dict.fromkeys(zone_targets),
+                           key=lambda d_: d_.count(".")):
+            try:
+                _ensure_default_zone(name, owner, db, report,
+                                     server_ipv4, server_ipv6)
+            except Exception as e:
+                db.rollback()
+                report.fail("dns", name, f"zona por defecto: {e}")
 
     return report.to_dict()
 
