@@ -700,7 +700,23 @@ async def update_domain(
                         q = q.filter(DnsRecord.name.in_(name_filter))
                     changed = q.update({DnsRecord.content: db_domain.ipv4},
                                        synchronize_session=False)
-                    if changed:
+                    # SPF: el TXT v=spf1 lleva la IP incrustada (ip4:X.X.X.X) y
+                    # este mismo cambio reconfigura la salida SMTP del dominio →
+                    # el token con la IP antigua también se reescribe. (Solo en
+                    # la zona propia; el SPF de un subdominio es de la padre.)
+                    spf_changed = 0
+                    if not name_filter:
+                        token_old = f"ip4:{old_ipv4}"
+                        token_new = f"ip4:{db_domain.ipv4}"
+                        for rec in (db.query(DnsRecord)
+                                    .filter(DnsRecord.zone_id == zone.id,
+                                            DnsRecord.record_type == "TXT",
+                                            DnsRecord.content.like("v=spf1%"))
+                                    .all()):
+                            if token_old in rec.content:
+                                rec.content = rec.content.replace(token_old, token_new)
+                                spf_changed += 1
+                    if changed or spf_changed:
                         if zone.ip_address == old_ipv4 and not name_filter:
                             zone.ip_address = db_domain.ipv4
                         zone.serial = _bump_serial(zone.serial)
