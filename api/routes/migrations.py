@@ -553,6 +553,66 @@ async def migration_analyze(
 # ─────────────────────────────────────────────────────────────────────────────
 # Importación (background) — solo si el preflight de conflictos pasa
 # ─────────────────────────────────────────────────────────────────────────────
+class _JobProgress:
+    """Progreso del import persistido en el MigrationJob (lo lee la UI al poll).
+
+    Implementa la interfaz de scripts.hestia_import.NullProgress. El % se
+    calcula por BYTES procesados (total = tar + datos a restaurar), así es
+    fiable con cualquier reparto (30GB de correo, webs grandes, dumps…).
+    Usa una sesión de BD PROPIA: los commits del progreso no deben interferir
+    con las transacciones del import (recursos a medio añadir en su Session).
+    Los UPDATE van throttled (máx. ~1 cada 2s) para no castigar PostgreSQL.
+    """
+
+    def __init__(self, job_id: int):
+        self.job_id = job_id
+        self._db = SessionLocal()
+        self._total = 1
+        self._done = 0
+        self._detail = ""
+        self._last_flush = 0.0
+
+    def set_total(self, total: int, done=None) -> None:
+        self._total = max(1, int(total))
+        if done is not None:
+            self._done = int(done)
+        self._flush(force=True)
+
+    def set_phase(self, detail: str) -> None:
+        self._detail = detail
+        self._flush(force=True)
+
+    def add(self, n: int) -> None:
+        self._done += max(0, int(n))
+        self._flush()
+
+    def _flush(self, force: bool = False) -> None:
+        now = time.time()
+        if not force and now - self._last_flush < 2:
+            return
+        self._last_flush = now
+        # Tope 99: el 100 lo pone el cierre del job (con el informe ya guardado).
+        pct = min(99, int(self._done * 100 / self._total))
+        try:
+            from sqlalchemy import text as _text
+            self._db.execute(
+                _text("UPDATE migration_jobs SET progress = :p, "
+                      "progress_detail = :d WHERE id = :i"),
+                {"p": pct, "d": self._detail, "i": self.job_id})
+            self._db.commit()
+        except Exception:
+            try:
+                self._db.rollback()
+            except Exception:
+                pass
+
+    def close(self) -> None:
+        try:
+            self._db.close()
+        except Exception:
+            pass
+
+
 def run_migration_job_inproc(job_id: int):
     """Ejecuta la importación leyendo todos sus datos del MigrationJob.
 
@@ -568,6 +628,7 @@ def run_migration_job_inproc(job_id: int):
     db = SessionLocal()
     tar_path = None
     cleanup_tar = False
+    prog = None
     try:
         job = db.query(MigrationJob).filter(MigrationJob.id == job_id).first()
         if not job:
@@ -579,6 +640,7 @@ def run_migration_job_inproc(job_id: int):
         job.started_at = datetime.utcnow()
         db.commit()
 
+        prog = _JobProgress(job_id)
         scope = [s for s in (job.scope or "").split(",") if s]
         report = run_import(tar_path, job.target_user_id, scope, db,
                             dns_records=dns_records,
@@ -586,10 +648,13 @@ def run_migration_job_inproc(job_id: int):
                             # tar temporal nuestro → se borra en cuanto está
                             # extraído (recorta el pico de disco); el finally
                             # de abajo queda como red de seguridad.
-                            cleanup_tar=cleanup_tar)
+                            cleanup_tar=cleanup_tar,
+                            progress=prog)
 
         job.report_json = json.dumps(report, ensure_ascii=False)
         job.status = "failed" if report["summary"]["errors"] and not report["summary"]["created"] else "success"
+        job.progress = 100
+        job.progress_detail = None
         job.finished_at = datetime.utcnow()
         db.commit()
     except Exception as e:
@@ -605,6 +670,8 @@ def run_migration_job_inproc(job_id: int):
             pass
         raise
     finally:
+        if prog:
+            prog.close()
         db.close()
         if cleanup_tar and tar_path and os.path.exists(tar_path):
             try:
@@ -810,6 +877,8 @@ async def migration_job_status(
         "status": job.status,
         "scope": job.scope,
         "target_user_id": job.target_user_id,
+        "progress": getattr(job, "progress", 0) or 0,
+        "progress_detail": getattr(job, "progress_detail", None),
         "manifest": json.loads(job.manifest_json) if job.manifest_json else None,
         "report": json.loads(job.report_json) if job.report_json else None,
         "error": job.error,

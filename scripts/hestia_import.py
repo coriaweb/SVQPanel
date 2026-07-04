@@ -264,8 +264,25 @@ def _is_heavy_data_member(name: str) -> bool:
     return False
 
 
+class _CountingReader:
+    """Envuelve un fichero y notifica los bytes leídos (progreso del import)."""
+
+    def __init__(self, fh, cb):
+        self._fh = fh
+        self._cb = cb
+
+    def read(self, n=-1):
+        data = self._fh.read(n)
+        if data and self._cb:
+            self._cb(len(data))
+        return data
+
+    def close(self):
+        self._fh.close()
+
+
 def safe_extract_tar(tar_path: str, dest: str, config_only: bool = False,
-                     fileobj=None) -> list:
+                     fileobj=None, progress_cb=None) -> list:
     """Extrae un .tar(.gz) validando que ningún miembro escape de `dest`.
 
     Soporta el filtro 'data' de Python 3.12+; en versiones previas valida a mano.
@@ -277,6 +294,8 @@ def safe_extract_tar(tar_path: str, dest: str, config_only: bool = False,
     `fileobj`: si se pasa, se lee el tar EN STREAMING de ese fichero/pipe (modo
     "r|*", no busca hacia atrás) en vez de abrir tar_path — lo usa la extracción
     de .zst para descomprimir directo a disco sin materializar el .tar entero.
+    `progress_cb(n)`: notifica los bytes de cada miembro procesado (en un tar
+    plano suman ~el tamaño del archivo → porcentaje fiable del import).
     """
     try:
         if fileobj is not None:
@@ -327,6 +346,8 @@ def safe_extract_tar(tar_path: str, dest: str, config_only: bool = False,
                 tar.extract(m, dest, filter="data")  # Python ≥ 3.12
             else:
                 tar.extract(m, dest)                 # validado arriba
+            if progress_cb:
+                progress_cb(m.size or 0)
         return names
 
 
@@ -352,7 +373,7 @@ def is_zst(path: str) -> bool:
 class HestiaBackup:
     """Abre y analiza un backup de Hestia/Vesta. Context manager: limpia el tmp."""
 
-    def __init__(self, tar_path: str, config_only: bool = False):
+    def __init__(self, tar_path: str, config_only: bool = False, progress_cb=None):
         if not os.path.isfile(tar_path):
             raise HestiaImportError(f"No existe el archivo de backup: {tar_path}")
         self.tar_path = tar_path
@@ -363,6 +384,7 @@ class HestiaBackup:
         # del tar para poder reportar has_data/has_dump sin haberlos extraído.
         self.config_only = config_only
         self._tar_names: List[str] = []
+        self.progress_cb = progress_cb   # bytes extraídos → progreso del import
 
     def __enter__(self):
         self.extract()
@@ -389,7 +411,8 @@ class HestiaBackup:
         if self._extracted:
             return
         self._tar_names = safe_extract_tar(
-            self.tar_path, self.tmpdir, config_only=self.config_only)
+            self.tar_path, self.tmpdir, config_only=self.config_only,
+            progress_cb=self.progress_cb)
         self._extracted = True
         # Detectar sistema de origen: hay un fichero/carpeta marcador.
         for marker in ("hestia", "vesta"):
@@ -730,7 +753,7 @@ def find_conflicts(manifest: Dict, db, scope: Optional[List[str]] = None) -> Lis
 # ─────────────────────────────────────────────────────────────────────────────
 # Descompresión de un .tar.{gz,zst} a un directorio destino
 # ─────────────────────────────────────────────────────────────────────────────
-def extract_data_archive(archive: str, dest: str) -> None:
+def extract_data_archive(archive: str, dest: str, progress_cb=None) -> None:
     """Extrae un domain_data/accounts .tar.(gz|zst) en `dest` de forma segura.
 
     Para .zst descomprime EN STREAMING directo a la extracción (módulo
@@ -738,15 +761,23 @@ def extract_data_archive(archive: str, dest: str) -> None:
     intermedio de tamaño completo: antes, un accounts.tar.zst de 30GB creaba un
     .tar temporal de 30GB más durante toda la extracción (pico de disco
     duplicado). Para .gz lo gestiona tarfile directamente.
+
+    `progress_cb(n)`: recibe los bytes COMPRIMIDOS consumidos del archivo (su
+    suma final = getsize(archive), la misma unidad con la que el import calcula
+    el total → porcentaje coherente).
     """
     os.makedirs(dest, exist_ok=True)
     if is_zst(archive):
-        _extract_zst_streaming(archive, dest)
+        _extract_zst_streaming(archive, dest, progress_cb)
+    elif progress_cb:
+        with open(archive, "rb") as fin:
+            safe_extract_tar(archive, dest,
+                             fileobj=_CountingReader(fin, progress_cb))
     else:
         safe_extract_tar(archive, dest)
 
 
-def _extract_zst_streaming(archive: str, dest: str) -> None:
+def _extract_zst_streaming(archive: str, dest: str, progress_cb=None) -> None:
     """Extrae un .tar.zst descomprimiendo en streaming (cero espacio intermedio).
 
     Con el módulo `zstandard` lee el tar del stream_reader; si no está, hace
@@ -756,8 +787,11 @@ def _extract_zst_streaming(archive: str, dest: str) -> None:
     try:
         import zstandard
         with open(archive, "rb") as fin:
+            # El contador va sobre el fichero COMPRIMIDO (misma unidad que el
+            # total del progreso), no sobre el stream descomprimido.
+            src = _CountingReader(fin, progress_cb) if progress_cb else fin
             dctx = zstandard.ZstdDecompressor()
-            with dctx.stream_reader(fin) as reader:
+            with dctx.stream_reader(src) as reader:
                 safe_extract_tar(archive, dest, fileobj=reader)
         return
     except ImportError:
@@ -785,6 +819,10 @@ def _extract_zst_streaming(archive: str, dest: str) -> None:
     if rc != 0:
         raise HestiaImportError(
             f"zstd devolvió error {rc} descomprimiendo {os.path.basename(archive)}.")
+    if progress_cb:
+        # Sin visibilidad por bytes en el fallback de binario: se abona el
+        # archivo completo al terminar.
+        progress_cb(os.path.getsize(archive) if os.path.isfile(archive) else 0)
 
 
 def _zst_decompress(src: str, dst: str) -> None:
@@ -812,6 +850,26 @@ def _zst_decompress(src: str, dst: str) -> None:
 # ─────────────────────────────────────────────────────────────────────────────
 # Informe de la importación
 # ─────────────────────────────────────────────────────────────────────────────
+class NullProgress:
+    """Interfaz de progreso no-op (imports por CLI/tests, sin UI que informar).
+
+    La implementación real (persistir % y fase en el MigrationJob para el poll
+    de la UI) vive en api/routes/migrations.py (_JobProgress). El porcentaje se
+    calcula por BYTES: total = tamaño del tar (extracción) + tamaño de los
+    archivos de datos internos (restauración); done avanza con cada byte/miembro
+    procesado. Eso lo hace fiable con cualquier reparto web/correo/BD.
+    """
+
+    def set_total(self, total: int, done: Optional[int] = None) -> None:
+        pass
+
+    def set_phase(self, detail: str) -> None:
+        pass
+
+    def add(self, n: int) -> None:
+        pass
+
+
 class ImportReport:
     """Acumula el resultado de una importación, serializable a JSON."""
 
@@ -847,7 +905,8 @@ class ImportReport:
 # ─────────────────────────────────────────────────────────────────────────────
 # Importación de WEB (dominio + archivos + vhost + SSL)
 # ─────────────────────────────────────────────────────────────────────────────
-def import_web(backup: "HestiaBackup", web: Dict, owner, db, report: ImportReport):
+def import_web(backup: "HestiaBackup", web: Dict, owner, db, report: ImportReport,
+               progress=None):
     """Crea el dominio en SVQPanel, restaura public_html y regenera el vhost.
 
     `web` es un item de manifest['web'] (incluye los campos internos _data_tar).
@@ -857,7 +916,9 @@ def import_web(backup: "HestiaBackup", web: Dict, owner, db, report: ImportRepor
     from api.models.models_domain import Domain
     from api.models.models_settings import Settings as _Settings
 
+    progress = progress or NullProgress()
     domain_name = web["domain"]
+    progress.set_phase(f"Restaurando la web de {domain_name}…")
     wanted_php = web.get("php_version") or "8.2"
     php_version = resolve_php_version(wanted_php)
     php_note = ""
@@ -889,7 +950,8 @@ def import_web(backup: "HestiaBackup", web: Dict, owner, db, report: ImportRepor
             # su CONTENIDO directamente al public_html creado por el panel.
             _copy_into(data_dir, public_html)
         else:
-            _restore_web_files(data_tar, web_root, public_html)
+            _restore_web_files(data_tar, web_root, public_html,
+                               progress_cb=progress.add)
         # Neutralizar en el .htaccess la regla "RewriteCond %{HTTPS} off → 301 a
         # https": es redundante (nginx ya fuerza https en el front) y en nuestra
         # arquitectura Apache-tras-Nginx causa un bucle infinito de redirección
@@ -978,7 +1040,8 @@ def _neutralize_htaccess_https_redirect(public_html: str) -> None:
             logger.warning(f"No se pudo editar {ht}: {e}")
 
 
-def _restore_web_files(data_tar: str, web_root: str, public_html: str) -> None:
+def _restore_web_files(data_tar: str, web_root: str, public_html: str,
+                       progress_cb=None) -> None:
     """Extrae domain_data a un tmp y copia public_html (y dirs hermanos) al sitio.
 
     Hestia guarda dentro del tar el árbol del dominio (public_html/, etc.). Para
@@ -993,7 +1056,7 @@ def _restore_web_files(data_tar: str, web_root: str, public_html: str) -> None:
     except OSError:
         tmp = tempfile.mkdtemp(prefix="svq_webdata_", dir=_tmp_dir())
     try:
-        extract_data_archive(data_tar, tmp)
+        extract_data_archive(data_tar, tmp, progress_cb)
         _remove_quiet(data_tar)   # ya extraído: liberar su tamaño AHORA
         # Buscar el public_html dentro del extraído (puede estar a distinta
         # profundidad según la versión de Hestia).
@@ -1073,7 +1136,8 @@ def _move_into(src_dir: str, dst_dir: str) -> None:
 # ─────────────────────────────────────────────────────────────────────────────
 # Importación de BASE DE DATOS (BD + usuario + dump)
 # ─────────────────────────────────────────────────────────────────────────────
-def import_db(backup: "HestiaBackup", dbinfo: Dict, owner, db, report: ImportReport):
+def import_db(backup: "HestiaBackup", dbinfo: Dict, owner, db, report: ImportReport,
+              progress=None):
     """Recrea una BD MariaDB y su usuario, e importa el dump.
 
     Intenta reutilizar el hash de contraseña original del usuario MySQL
@@ -1129,8 +1193,12 @@ def import_db(backup: "HestiaBackup", dbinfo: Dict, owner, db, report: ImportRep
     # 4) Importar el dump (y liberar su espacio en cuanto está dentro)
     dump = dbinfo.get("_dump")
     if dump and os.path.isfile(dump):
+        progress = progress or NullProgress()
+        progress.set_phase(f"Importando la base de datos {name}…")
+        dump_size = os.path.getsize(dump)
         _import_sql_dump(dump, safe_name)
         _remove_quiet(dump)
+        progress.add(dump_size)
 
     # 5) Registrar en el panel (ClientDatabase). Sin la pass en claro del hash
     #    reusado, guardamos un placeholder de hash y dejamos enc=None.
@@ -1259,7 +1327,8 @@ def _dovecot_scheme(md5: str) -> Optional[str]:
     return None
 
 
-def import_mail(backup: "HestiaBackup", mailinfo: Dict, owner, db, report: ImportReport):
+def import_mail(backup: "HestiaBackup", mailinfo: Dict, owner, db, report: ImportReport,
+                progress=None):
     """Crea el dominio de correo y sus buzones, reutilizando el hash de cada uno.
 
     Estrategia: usa create_mailbox() (que monta maildir + postfix + dovecot) con
@@ -1277,7 +1346,9 @@ def import_mail(backup: "HestiaBackup", mailinfo: Dict, owner, db, report: Impor
     from api.models.models_mail import MailDomain, Mailbox
     from api.routes.databases import _generate_password
 
+    progress = progress or NullProgress()
     domain = mailinfo["domain"]
+    progress.set_phase(f"Creando buzones de {domain}…")
     mgr = MailManager()
 
     # 1) Dominio de correo + registro
@@ -1348,10 +1419,12 @@ def import_mail(backup: "HestiaBackup", mailinfo: Dict, owner, db, report: Impor
     if not acc_tar and not acc_dir and hasattr(backup, "_find_data_archive"):
         acc_tar = backup._find_data_archive("mail", domain, "accounts")
     try:
+        progress.set_phase(f"Restaurando los correos de {domain}…")
         if acc_dir and os.path.isdir(acc_dir):
             _restore_maildirs_dir(acc_dir, owner.username, domain)
         elif acc_tar and os.path.isfile(acc_tar):
-            _restore_maildirs(acc_tar, owner.username, domain)
+            _restore_maildirs(acc_tar, owner.username, domain,
+                              progress_cb=progress.add)
     except Exception as e:
         report.fail("mail-data", domain, f"maildir no restaurado: {e}")
 
@@ -1384,7 +1457,8 @@ def _restore_maildirs_dir(src_dir: str, panel_username: str, domain: str) -> Non
     subprocess.run(["chown", "-R", "vmail:vmail", dest], capture_output=True)
 
 
-def _restore_maildirs(acc_tar: str, panel_username: str, domain: str) -> None:
+def _restore_maildirs(acc_tar: str, panel_username: str, domain: str,
+                      progress_cb=None) -> None:
     """Extrae accounts.tar y MUEVE los maildirs al mail dir del dominio.
 
     Ahorro de disco (correos grandes): el tmp se crea JUNTO al destino (mismo
@@ -1402,7 +1476,7 @@ def _restore_maildirs(acc_tar: str, panel_username: str, domain: str) -> None:
     except OSError:
         tmp = tempfile.mkdtemp(prefix="svq_maildata_", dir=_tmp_dir())
     try:
-        extract_data_archive(acc_tar, tmp)
+        extract_data_archive(acc_tar, tmp, progress_cb)
         _remove_quiet(acc_tar)   # ya extraído: liberar su tamaño AHORA
         # El tar suele contener {cuenta}/{cur,new,tmp}. Movemos su contenido.
         src = tmp
@@ -1636,7 +1710,8 @@ def import_dns(backup: "HestiaBackup", zoneinfo: Dict, owner, db, report: Import
 # ─────────────────────────────────────────────────────────────────────────────
 # Orquestador de la importación (lo invoca el job en segundo plano)
 # ─────────────────────────────────────────────────────────────────────────────
-def open_backup(source_panel: str, tar_path: str, config_only: bool = False):
+def open_backup(source_panel: str, tar_path: str, config_only: bool = False,
+                progress_cb=None):
     """Factory: devuelve el backup adecuado según el panel de origen.
 
     Tanto HestiaBackup como CpanelBackup exponen analyze() y son context managers,
@@ -1645,6 +1720,7 @@ def open_backup(source_panel: str, tar_path: str, config_only: bool = False):
     `config_only`: en el ANÁLISIS, no extrae los datos pesados (web/buzones/dumps)
     — basta con los .conf para el manifiesto y evita extraer varios GB (el 504).
     La importación real abre el backup SIN config_only (extrae todo).
+    `progress_cb(n)`: bytes extraídos del tar (progreso del import en la UI).
     """
     if (source_panel or "hestia").lower() == "cpanel":
         from scripts.cpanel_import import CpanelBackup
@@ -1652,7 +1728,7 @@ def open_backup(source_panel: str, tar_path: str, config_only: bool = False):
             return CpanelBackup(tar_path, config_only=config_only)
         except TypeError:
             return CpanelBackup(tar_path)  # cpanel aún no soporta config_only
-    return HestiaBackup(tar_path, config_only=config_only)
+    return HestiaBackup(tar_path, config_only=config_only, progress_cb=progress_cb)
 
 
 def _adapt_cron_command(cmd: str, new_user: str, installed_php: List[str],
@@ -1741,7 +1817,8 @@ def import_cron(job: Dict, owner, db, report: "ImportReport"):
 
 def run_import(tar_path: str, target_user_id: int, scope: List[str], db,
                dns_records: Optional[Dict[str, List[Dict]]] = None,
-               source_panel: str = "hestia", cleanup_tar: bool = False) -> Dict:
+               source_panel: str = "hestia", cleanup_tar: bool = False,
+               progress=None) -> Dict:
     """Importa el backup al usuario destino. Devuelve el informe (dict).
 
     `scope`: subconjunto de {'web','db','mail','dns'}. Asume que el preflight de
@@ -1753,10 +1830,13 @@ def run_import(tar_path: str, target_user_id: int, scope: List[str], db,
     `cleanup_tar`: el .tar es un temporal NUESTRO (upload/descarga, no una ruta
     del admin) → se borra en cuanto está extraído, liberando su tamaño para el
     resto de la importación (baja el pico de disco en backups grandes).
+    `progress`: objeto con la interfaz de NullProgress; el % va por BYTES
+    (extracción del tar + restauración de los datos internos del scope).
     """
     from api.models.models_user import User
 
     report = ImportReport()
+    progress = progress or NullProgress()
     dns_records = dns_records or {}
     owner = db.query(User).filter(User.id == target_user_id).first()
     if not owner:
@@ -1781,7 +1861,18 @@ def run_import(tar_path: str, target_user_id: int, scope: List[str], db,
     except Exception:
         pass
 
-    with open_backup(source_panel, tar_path) as backup:
+    # Progreso por bytes. Total provisional durante la extracción: el tar + ~su
+    # mismo volumen de restauración (los datos pesados viajan DENTRO del tar).
+    # Tras extraer se recalcula con los tamaños reales de los datos del scope.
+    tar_size = 0
+    try:
+        tar_size = os.path.getsize(tar_path)
+    except OSError:
+        pass
+    progress.set_total(max(1, tar_size * 2))
+    progress.set_phase("Extrayendo el backup…")
+
+    with open_backup(source_panel, tar_path, progress_cb=progress.add) as backup:
         manifest = backup.analyze()
 
         # El backup ya está extraído en su tmpdir: si el .tar era un temporal
@@ -1790,10 +1881,30 @@ def run_import(tar_path: str, target_user_id: int, scope: List[str], db,
         if cleanup_tar:
             _remove_quiet(tar_path)
 
+        # Total REAL: extracción (hecha = tar_size) + bytes de los archivos de
+        # datos que se van a restaurar según el scope (web data, dumps, buzones).
+        def _sz(p):
+            try:
+                return os.path.getsize(p) if p and os.path.isfile(p) else 0
+            except OSError:
+                return 0
+        data_total = 0
+        if "web" in scope:
+            data_total += sum(_sz(w.get("_data_tar")) for w in manifest.get("web", []))
+        if "db" in scope:
+            data_total += sum(_sz(d.get("_dump")) for d in manifest.get("db", []))
+        if "mail" in scope:
+            for m_ in manifest.get("mail", []):
+                t = m_.get("accounts_tar")
+                if not t and hasattr(backup, "_find_data_archive"):
+                    t = backup._find_data_archive("mail", m_["domain"], "accounts")
+                data_total += _sz(t)
+        progress.set_total(max(1, tar_size + data_total), done=tar_size)
+
         if "web" in scope:
             for web in manifest["web"]:
                 try:
-                    import_web(backup, web, owner, db, report)
+                    import_web(backup, web, owner, db, report, progress=progress)
                 except Exception as e:
                     db.rollback()
                     report.fail("web", web["domain"], e)
@@ -1801,7 +1912,7 @@ def run_import(tar_path: str, target_user_id: int, scope: List[str], db,
         if "db" in scope:
             for dbinfo in manifest["db"]:
                 try:
-                    import_db(backup, dbinfo, owner, db, report)
+                    import_db(backup, dbinfo, owner, db, report, progress=progress)
                 except Exception as e:
                     db.rollback()
                     report.fail("db", dbinfo["db"], e)
@@ -1809,12 +1920,14 @@ def run_import(tar_path: str, target_user_id: int, scope: List[str], db,
         if "mail" in scope:
             for mailinfo in manifest["mail"]:
                 try:
-                    import_mail(backup, mailinfo, owner, db, report)
+                    import_mail(backup, mailinfo, owner, db, report,
+                                progress=progress)
                 except Exception as e:
                     db.rollback()
                     report.fail("mail", mailinfo["domain"], e)
 
         if "dns" in scope:
+            progress.set_phase("Configurando las zonas DNS…")
             for zoneinfo in manifest["dns"]:
                 try:
                     approved = dns_records.get(zoneinfo["domain"])
@@ -1824,6 +1937,8 @@ def run_import(tar_path: str, target_user_id: int, scope: List[str], db,
                 except Exception as e:
                     db.rollback()
                     report.fail("dns", zoneinfo["domain"], e)
+
+        progress.set_phase("Finalizando (registro de dominios, crons, zonas)…")
 
         # Dominios traídos SOLO como correo y/o DNS (el ámbito web no se importó
         # o el backup no traía web para ellos) → registrarlos en Dominios como

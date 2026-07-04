@@ -243,8 +243,16 @@
 
     <!-- Paso 3: progreso / informe -->
     <BaseCard v-if="job" title="3 · Importación" icon="hourglass-split">
-      <div v-if="job.status === 'pending' || job.status === 'running'" class="mig-running">
-        <span class="spinner"></span> Importando… ({{ job.status }}). Esto puede tardar varios minutos.
+      <div v-if="job.status === 'pending' || job.status === 'running'" class="mig-progress">
+        <div class="mig-progress__head">
+          <span class="spinner"></span>
+          <span class="mig-progress__msg">{{ job.progress_detail || 'Preparando la importación…' }}</span>
+          <strong class="mig-progress__pct">{{ job.progress || 0 }}%</strong>
+        </div>
+        <div class="mig-progress__bar">
+          <div class="mig-progress__fill" :style="{ width: (job.progress || 0) + '%' }"></div>
+        </div>
+        <p class="mig-progress__hint">Progreso real por datos procesados. Un backup grande puede tardar varios minutos.</p>
       </div>
       <div v-else-if="job.status === 'failed' && !job.report" class="mig-error">
         <i class="bi bi-x-circle"></i> La importación falló: {{ job.error }}
@@ -554,6 +562,13 @@ input[type="file"].svq-input { padding: var(--sp-2); height: auto; }
 .mig-conflicts__title { color: var(--danger); font-weight: var(--fw-semibold); margin: 0 0 6px; display: flex; align-items: center; gap: 6px; }
 .mig-running, .mig-error { display: flex; align-items: center; gap: .5rem; padding: .5rem 0; }
 .mig-error { color: var(--danger); }
+.mig-progress { padding: .5rem 0; }
+.mig-progress__head { display: flex; align-items: center; gap: .6rem; margin-bottom: var(--sp-2); }
+.mig-progress__msg { flex: 1; min-width: 0; }
+.mig-progress__pct { font-variant-numeric: tabular-nums; color: var(--color-primary); }
+.mig-progress__bar { height: 8px; border-radius: 999px; background: var(--surface-2); border: 1px solid var(--border); overflow: hidden; }
+.mig-progress__fill { height: 100%; border-radius: 999px; background: var(--color-primary); transition: width .8s ease; }
+.mig-progress__hint { margin: var(--sp-2) 0 0; font-size: var(--fs-sm); color: var(--text-muted); }
 .mig-report-head { display: flex; align-items: center; gap: .5rem; font-weight: var(--fw-semibold); margin-bottom: var(--sp-3); padding: .5rem .8rem; border-radius: var(--radius-md); }
 .mig-report-head.is-ok { background: color-mix(in srgb, var(--success) 12%, transparent); color: var(--success); }
 .mig-report-head.is-warn { background: color-mix(in srgb, var(--warning) 14%, transparent); color: var(--warning); }

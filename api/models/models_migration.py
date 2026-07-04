@@ -30,6 +30,12 @@ class MigrationJob(Base):
     report_json = Column(Text, nullable=True)     # informe final (JSON)
     error = Column(Text, nullable=True)
 
+    # Progreso en vivo (lo escribe el subproceso, lo lee la UI en el poll).
+    # Calculado por BYTES procesados (extracción + restauración), no por fases
+    # a ojo: fiable también con backups desequilibrados (p.ej. 30GB de correo).
+    progress = Column(Integer, nullable=False, default=0)   # 0-100
+    progress_detail = Column(Text, nullable=True)           # "Restaurando buzones de X…"
+
     # Datos que necesita el subproceso de importación (corre aislado para que un
     # pico de RAM / OOM mate solo al hijo, no al panel). Se persisten aquí en vez
     # de pasarlos por argv: el CLI run_migration_job solo recibe el id y lee esto.

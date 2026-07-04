@@ -59,3 +59,37 @@ def test_streaming_sigue_bloqueando_rutas_que_escapan(tmp_path):
     with pytest.raises(hi.HestiaImportError):
         hi.extract_data_archive(archive, dest)
     assert not os.path.exists(str(tmp_path / "fuera.txt"))
+
+
+def test_progress_cb_suma_el_tamano_comprimido_del_archivo(tmp_path):
+    """El % del import va por bytes COMPRIMIDOS consumidos: la suma que reciba
+    el callback debe ser exactamente getsize(archive) (misma unidad que el
+    total que calcula run_import con los tamaños de los archivos)."""
+    archive = str(tmp_path / "accounts.tar.zst")
+    dest = str(tmp_path / "dest")
+    _make_tar_zst(archive, {"buzon1/cur/msg1": "x" * 10000})
+
+    contados = []
+    hi.extract_data_archive(archive, dest, progress_cb=contados.append)
+
+    assert sum(contados) == os.path.getsize(archive)
+
+
+def test_progress_cb_tambien_en_tar_plano(tmp_path):
+    """La vía no-zst (tar/tar.gz) también notifica bytes vía _CountingReader."""
+    archive = str(tmp_path / "domain_data.tar")
+    dest = str(tmp_path / "dest")
+    buf = io.BytesIO()
+    with tarfile.open(fileobj=buf, mode="w") as tar:
+        data = b"y" * 5000
+        info = tarfile.TarInfo(name="public_html/index.php")
+        info.size = len(data)
+        tar.addfile(info, io.BytesIO(data))
+    with open(archive, "wb") as f:
+        f.write(buf.getvalue())
+
+    contados = []
+    hi.extract_data_archive(archive, dest, progress_cb=contados.append)
+
+    assert sum(contados) == os.path.getsize(archive)
+    assert os.path.isfile(os.path.join(dest, "public_html", "index.php"))

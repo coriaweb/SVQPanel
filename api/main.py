@@ -384,6 +384,9 @@ def _run_migrations():
         "ALTER TABLE migration_jobs ADD COLUMN IF NOT EXISTS tar_path TEXT",
         "ALTER TABLE migration_jobs ADD COLUMN IF NOT EXISTS cleanup_tar INTEGER DEFAULT 0",
         "ALTER TABLE migration_jobs ADD COLUMN IF NOT EXISTS dns_records_json TEXT",
+        # Progreso en vivo del import (porcentaje por bytes + fase actual)
+        "ALTER TABLE migration_jobs ADD COLUMN IF NOT EXISTS progress INTEGER DEFAULT 0 NOT NULL",
+        "ALTER TABLE migration_jobs ADD COLUMN IF NOT EXISTS progress_detail TEXT",
         # Suspensión administrativa (cascada de usuario + granular)
         "ALTER TABLE users ADD COLUMN IF NOT EXISTS is_suspended BOOLEAN DEFAULT FALSE",
         "ALTER TABLE mail_domains ADD COLUMN IF NOT EXISTS is_suspended BOOLEAN DEFAULT FALSE",
