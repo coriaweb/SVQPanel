@@ -342,19 +342,34 @@ def _rebuild_rspamd(db: Session):
         logger.error(f"Error actualizando Rspamd: {e}")
 
 
+def _domain_effective_ipv4(domain_name: str, db: Session) -> str:
+    """IPv4 por la que vive el dominio: su IP DEDICADA si la tiene (el PTR de
+    esa IP apunta a mail.{dominio}), si no la principal del servidor. Los
+    helpers de DNS de correo deben usar SIEMPRE esta, no la de Settings a
+    secas: forzar la del servidor pisaba la dedicada (visto con globatel.es,
+    su mail A volvía a la IP compartida al activar el TLS de correo)."""
+    try:
+        from api.models.models_domain import Domain as _D
+        d = db.query(_D).filter(_D.domain_name == domain_name).first()
+        if d and getattr(d, "ipv4", None):
+            return d.ipv4
+    except Exception:
+        pass
+    from api.models.models_settings import Settings
+    s = db.query(Settings).filter(Settings.id == 1).first()
+    return (s.server_ipv4 if s else None) or ""
+
+
 def _dns_ensure_mail_record(domain_name: str, db: Session) -> bool:
     """
-    Asegura el registro 'mail' (A → IP del servidor) en la zona del panel, para
-    que mail.{dominio} resuelva (necesario para el cert TLS y para que los
-    clientes conecten). Devuelve True si la zona está en el panel.
+    Asegura el registro 'mail' (A → IP efectiva del dominio) en la zona del
+    panel, para que mail.{dominio} resuelva (necesario para el cert TLS y para
+    que los clientes conecten). Devuelve True si la zona está en el panel.
     """
     zone = db.query(DnsZone).filter(DnsZone.domain_name == domain_name).first()
     if not zone:
         return False
-    # IP del servidor desde settings
-    from api.models.models_settings import Settings
-    s = db.query(Settings).filter(Settings.id == 1).first()
-    server_ip = (s.server_ipv4 if s else None) or zone.ip_address
+    server_ip = _domain_effective_ipv4(domain_name, db) or zone.ip_address
     if not server_ip:
         return True  # zona en panel pero sin IP conocida; no rompemos
 
@@ -395,18 +410,19 @@ def _dns_add_spf_dmarc(domain_name: str, db: Session) -> bool:
     if not zone:
         return False
 
-    from api.models.models_settings import Settings
     from api.routes.dns import _sync_zone_to_bind, _bump_serial
-    s = db.query(Settings).filter(Settings.id == 1).first()
-    server_ip = (s.server_ipv4 if s else None) or zone.ip_address
+    server_ip = _domain_effective_ipv4(domain_name, db) or zone.ip_address
     changed = False
 
     # ── SPF (TXT en la raíz @) ──
+    # ilike en cualquier posición: los TXT importados de Hestia llevan las
+    # comillas DENTRO del contenido ("v=spf1 …") y con prefijo estricto no
+    # casaría → añadiríamos un SPF duplicado (dos SPF = permerror).
     spf_exists = db.query(DnsRecord).filter(
         DnsRecord.zone_id == zone.id,
         DnsRecord.record_type == "TXT",
         DnsRecord.name.in_(["@", domain_name + "."]),
-        DnsRecord.content.ilike("v=spf1%"),
+        DnsRecord.content.ilike("%v=spf1%"),
     ).first()
     if not spf_exists:
         ip_part = f" ip4:{server_ip}" if server_ip else ""
