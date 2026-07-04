@@ -1966,16 +1966,18 @@ def run_import(tar_path: str, target_user_id: int, scope: List[str], db,
                     db.rollback()
                     report.fail("cron", (job.get("cmd") or "")[:40], e)
 
-        # Aunque NO se importe el DNS del backup, todo dominio migrado debe
+        # Aunque NO se importe el DNS del backup, todo dominio web migrado debe
         # tener una zona DNS con el template por defecto (igual que un dominio
-        # creado normalmente en el panel) — si no, queda sin DNS propio. Cubre
-        # los dominios web Y los solo-correo/DNS (su zona es la que lleva el
-        # MX/SPF del correo alojado aquí). Solo para los que aún no tienen zona
-        # (no pisa lo importado por el ámbito dns).
+        # creado normalmente en el panel) — si no, queda sin DNS propio. Los
+        # dominios SOLO correo la reciben únicamente si el ámbito dns va
+        # marcado: si el usuario no lo marca es que su DNS se administra FUERA
+        # (registrador/otro proveedor) y una zona aquí solo estorbaría — los
+        # registros de correo (MX/SPF/DKIM…) los crea allí. Idempotente: no
+        # pisa zonas ya importadas por el ámbito dns.
         zone_targets: List[str] = []
         if "web" in scope:
             zone_targets += [w["domain"] for w in manifest.get("web", [])]
-        if "mail" in scope:
+        if "mail" in scope and "dns" in scope:
             zone_targets += [m_["domain"] for m_ in manifest.get("mail", [])]
         # Procesar primero los dominios "padre" (menos etiquetas) y luego los
         # subdominios, para que la zona padre exista cuando se cuelgue el sub.
