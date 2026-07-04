@@ -1670,9 +1670,36 @@ def import_dns(backup: "HestiaBackup", zoneinfo: Dict, owner, db, report: Import
     """
     from scripts.dns_manager import DNSManager
     from api.models.models_dns import DnsZone, DnsRecord
+    from api.models.models_domain import Domain as _Domain
 
     domain = zoneinfo["domain"]
     old_ip = zoneinfo.get("ip")
+
+    # ¿Es en realidad un SUBDOMINIO de una zona del panel (incluida una recién
+    # importada en esta misma pasada — el bucle procesa los padres primero)?
+    # → NO crear zona propia: A/AAAA en la zona padre + marcar el Domain,
+    # igual que el alta manual. Los backups de Hestia traen una zona por CADA
+    # dominio, subdominios incluidos; importarla tal cual dejaba una zona
+    # redundante (lo que arregla a posteriori el CLI convert_subdomains).
+    try:
+        from api.routes.dns import find_parent_zone, apply_subdomain_dns
+        parent = find_parent_zone(db, domain)
+    except Exception:
+        parent = None
+    if parent:
+        res = apply_subdomain_dns(db, domain, ipv4=server_ipv4 or old_ip,
+                                  ipv6=server_ipv6)
+        if res == "parent":
+            d = db.query(_Domain).filter(_Domain.domain_name == domain).first()
+            if d:
+                d.is_subdomain = True
+                d.parent_domain = parent.domain_name
+                db.commit()
+            report.ok("dns", domain,
+                      f"subdominio de {parent.domain_name}: A en la zona padre "
+                      "(sin zona propia)")
+            return
+
     mgr = DNSManager()
 
     # NS/SOA + zona base la crea SVQPanel apuntando a ESTE servidor.
@@ -1963,7 +1990,10 @@ def run_import(tar_path: str, target_user_id: int, scope: List[str], db,
 
         if "dns" in scope:
             progress.set_phase("Configurando las zonas DNS…")
-            for zoneinfo in manifest["dns"]:
+            # Padres primero (menos etiquetas): así, cuando llegue la zona de
+            # un subdominio, su padre ya existe y import_dns lo detecta.
+            for zoneinfo in sorted(manifest["dns"],
+                                   key=lambda z_: z_["domain"].count(".")):
                 try:
                     approved = dns_records.get(zoneinfo["domain"])
                     import_dns(backup, zoneinfo, owner, db, report,
