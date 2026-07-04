@@ -2,6 +2,8 @@
 Rutas API para gestión DNS (zonas y registros BIND9)
 """
 
+import ipaddress
+
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 from typing import List
@@ -555,6 +557,42 @@ async def list_records(
 
 
 @router.post("/dns/{zone_id}/records", response_model=DnsRecordResponse, status_code=status.HTTP_201_CREATED)
+def normalize_hostname_content(record_type: str, content: str) -> str:
+    """Añade el punto final a los contenidos que son un FQDN (MX/CNAME/NS y el
+    target de SRV). Función PURA.
+
+    Sin el punto, BIND interpreta el valor como nombre RELATIVO a la zona y le
+    pega el dominio detrás: un cliente que escribe `mail.sudominio.com` en un
+    MX publica `mail.sudominio.com.sudominio.com.` (correo caído). Es un
+    tecnicismo de ficheros de zona que el usuario final no tiene por qué
+    conocer — lo corrige el editor, no el cliente. Un nombre SIN puntos
+    (`mail`) se respeta: es un relativo válido y a veces intencionado.
+    """
+    c = (content or "").strip()
+    rtype = (record_type or "").upper()
+
+    def _fqdn_dot(value: str) -> str:
+        if "." in value and not value.endswith("."):
+            try:
+                ipaddress.ip_address(value)   # una IP no lleva punto final
+                return value
+            except ValueError:
+                return value + "."
+        return value
+
+    # Todos los tipos cuyo contenido es un hostname llevan la protección.
+    if rtype in ("MX", "CNAME", "NS", "PTR", "DNAME"):
+        return _fqdn_dot(c)
+    if rtype == "SRV":
+        # SRV: "peso puerto destino" (la prioridad va aparte) → el destino es
+        # el último token.
+        parts = c.split()
+        if parts:
+            parts[-1] = _fqdn_dot(parts[-1])
+            return " ".join(parts)
+    return c
+
+
 async def add_record(
     zone_id: int,
     data: DnsRecordCreate,
@@ -570,7 +608,8 @@ async def add_record(
 
     record = DnsRecord(
         zone_id=zone_id, record_type=data.record_type,
-        name=data.name, content=data.content,
+        name=data.name,
+        content=normalize_hostname_content(data.record_type, data.content),
         ttl=data.ttl, priority=data.priority,
     )
     db.add(record)
@@ -602,7 +641,8 @@ async def update_record(
     if not record:
         raise HTTPException(status_code=404, detail="Registro no encontrado")
 
-    if data.content  is not None: record.content  = data.content
+    if data.content  is not None:
+        record.content = normalize_hostname_content(record.record_type, data.content)
     if data.ttl      is not None: record.ttl      = data.ttl
     if data.priority is not None: record.priority = data.priority
 
