@@ -1639,6 +1639,23 @@ def _rewrite_spf_ip(content: str, old_ip: str, new_ipv4: Optional[str],
     return new
 
 
+def _normalize_txt_content(content: str) -> str:
+    """Convierte un TXT en formato de fichero de zona a su valor crudo.
+
+    Los backups traen los TXT tal cual estaban en la zona BIND: con comillas
+    ("v=spf1 …"), en trozos ("parte1" "parte2" — claves DKIM largas) y con
+    puntos y coma escapados (\\;). Guardado así, ningún buscador del panel lo
+    encuentra (LIKE 'v=spf1%', apply_ip6_to_spf, detector de SPF duplicado…).
+    El valor crudo se sirve bien: el render de zona vuelve a entrecomillar.
+    """
+    c = (content or "").strip()
+    if '"' in c:
+        parts = re.findall(r'"([^"]*)"', c)
+        if parts:
+            c = "".join(parts)   # los trozos de un TXT se concatenan (RFC 1035)
+    return c.replace("\\;", ";").strip()
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # Importación de DNS (zona + registros aprobados)
 # ─────────────────────────────────────────────────────────────────────────────
@@ -1695,6 +1712,13 @@ def import_dns(backup: "HestiaBackup", zoneinfo: Dict, owner, db, report: Import
                 content = rec.get("content") or ""
             if not content:
                 continue
+            # TXT: normalizar las comillas del formato de zona ("v=spf1 …" o
+            # varios trozos "a" "b" de claves DKIM largas). Guardarlas DENTRO
+            # del contenido rompía todos los buscadores del panel (LIKE
+            # v=spf1%, apply_ip6_to_spf…) — visto 3 veces con zonas de Hestia.
+            # El render de la zona vuelve a entrecomillar al servir.
+            if rtype == "TXT":
+                content = _normalize_txt_content(content)
             db.add(DnsRecord(
                 zone_id=zone.id,
                 record_type=rtype,

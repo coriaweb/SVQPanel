@@ -939,10 +939,16 @@ def _sync_spf_out_ip6(md, domain_ipv6: str, pref: str, db) -> bool:
     rec = (db.query(DnsRecord)
            .filter(DnsRecord.zone_id == zone.id, DnsRecord.record_type == "TXT",
                    DnsRecord.name == "@")
-           .filter(DnsRecord.content.like("v=spf1%")).first())
+           .filter(DnsRecord.content.like("%v=spf1%")).first())
     if not rec:
         return False
-    nuevo = apply_ip6_to_spf(rec.content, ip6)
+    # Los TXT importados de Hestia llevan las comillas DENTRO del contenido
+    # ("v=spf1 …") → normalizar antes de operar (apply_ip6_to_spf espera el
+    # valor limpio) y guardar ya sin comillas (el render las añade al servir).
+    contenido = (rec.content or "").strip()
+    if contenido.startswith('"') and contenido.endswith('"'):
+        contenido = contenido[1:-1]
+    nuevo = apply_ip6_to_spf(contenido, ip6)
     if nuevo == rec.content:
         return False
     rec.content = nuevo
