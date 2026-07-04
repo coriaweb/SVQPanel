@@ -264,7 +264,8 @@ def _is_heavy_data_member(name: str) -> bool:
     return False
 
 
-def safe_extract_tar(tar_path: str, dest: str, config_only: bool = False) -> list:
+def safe_extract_tar(tar_path: str, dest: str, config_only: bool = False,
+                     fileobj=None) -> list:
     """Extrae un .tar(.gz) validando que ningún miembro escape de `dest`.
 
     Soporta el filtro 'data' de Python 3.12+; en versiones previas valida a mano.
@@ -272,10 +273,16 @@ def safe_extract_tar(tar_path: str, dest: str, config_only: bool = False) -> lis
     dumps de BD): basta para analizar el manifiesto y evita extraer varios GB.
     Devuelve la lista de TODOS los nombres del tar (extraídos u omitidos), para
     que el análisis pueda saber qué datos existen sin haberlos extraído.
+
+    `fileobj`: si se pasa, se lee el tar EN STREAMING de ese fichero/pipe (modo
+    "r|*", no busca hacia atrás) en vez de abrir tar_path — lo usa la extracción
+    de .zst para descomprimir directo a disco sin materializar el .tar entero.
     """
-    mode = "r:*"  # autodetecta gz/bz2/xz/plano
     try:
-        tar = tarfile.open(tar_path, mode)
+        if fileobj is not None:
+            tar = tarfile.open(fileobj=fileobj, mode="r|*")  # pipe, sin seek
+        else:
+            tar = tarfile.open(tar_path, "r:*")  # autodetecta gz/bz2/xz/plano
     except (tarfile.ReadError, tarfile.CompressionError, OSError):
         raise HestiaImportError(
             "El archivo no es un .tar válido de HestiaCP. Sube el backup que "
@@ -726,22 +733,58 @@ def find_conflicts(manifest: Dict, db, scope: Optional[List[str]] = None) -> Lis
 def extract_data_archive(archive: str, dest: str) -> None:
     """Extrae un domain_data/accounts .tar.(gz|zst) en `dest` de forma segura.
 
-    Para .zst usa el módulo `zstandard` si está, o el binario `zstd` como
-    fallback. Para .gz lo gestiona tarfile directamente.
+    Para .zst descomprime EN STREAMING directo a la extracción (módulo
+    `zstandard` o el binario `zstd` en pipe), sin materializar el .tar
+    intermedio de tamaño completo: antes, un accounts.tar.zst de 30GB creaba un
+    .tar temporal de 30GB más durante toda la extracción (pico de disco
+    duplicado). Para .gz lo gestiona tarfile directamente.
     """
     os.makedirs(dest, exist_ok=True)
     if is_zst(archive):
-        # Descomprimir zst a un .tar temporal y luego extraer con safe_extract.
-        tmp_tar = archive[:-4] if archive.endswith(".zst") else archive[:-5]
-        tmp_tar = tmp_tar + ".__tmp.tar"
-        _zst_decompress(archive, tmp_tar)
-        try:
-            safe_extract_tar(tmp_tar, dest)
-        finally:
-            if os.path.exists(tmp_tar):
-                os.remove(tmp_tar)
+        _extract_zst_streaming(archive, dest)
     else:
         safe_extract_tar(archive, dest)
+
+
+def _extract_zst_streaming(archive: str, dest: str) -> None:
+    """Extrae un .tar.zst descomprimiendo en streaming (cero espacio intermedio).
+
+    Con el módulo `zstandard` lee el tar del stream_reader; si no está, hace
+    pipe del binario `zstd -dc`. Las validaciones de rutas/symlinks son las
+    mismas de siempre (safe_extract_tar con fileobj).
+    """
+    try:
+        import zstandard
+        with open(archive, "rb") as fin:
+            dctx = zstandard.ZstdDecompressor()
+            with dctx.stream_reader(fin) as reader:
+                safe_extract_tar(archive, dest, fileobj=reader)
+        return
+    except ImportError:
+        pass
+
+    import subprocess
+    zstd_bin = shutil.which("zstd") or shutil.which("unzstd")
+    if not zstd_bin:
+        raise HestiaImportError(
+            "No hay soporte zstd (ni módulo `zstandard` ni binario `zstd`) "
+            f"para extraer {os.path.basename(archive)}.")
+    cmd = [zstd_bin, "-dc", archive] if os.path.basename(zstd_bin) != "unzstd" \
+        else [zstd_bin, "-c", archive]
+    proc = subprocess.Popen(cmd, stdout=subprocess.PIPE)
+    try:
+        safe_extract_tar(archive, dest, fileobj=proc.stdout)
+        # Drenar lo que quede del pipe (el padding final del tar, que tarfile
+        # no consume): si no, zstd muere por SIGPIPE al cerrar y devolvería un
+        # código de error falso con la extracción ya completada.
+        while proc.stdout.read(1024 * 1024):
+            pass
+    finally:
+        proc.stdout.close()
+        rc = proc.wait()
+    if rc != 0:
+        raise HestiaImportError(
+            f"zstd devolvió error {rc} descomprimiendo {os.path.basename(archive)}.")
 
 
 def _zst_decompress(src: str, dst: str) -> None:
