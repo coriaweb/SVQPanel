@@ -130,7 +130,10 @@
         >{{ ip.address }}{{ ip.note ? ' — ' + ip.note : '' }}</option>
       </select>
       <div class="form-text">
-        Nginx escuchará en esta IP. Dejar en blanco para usar la IP principal del servidor.
+        Al cambiarla se regenera el vhost, se actualiza la IP de salida del correo
+        y los registros A de su zona DNS que apuntaban a la IP anterior pasan a la
+        nueva (los que apuntan a otras IPs no se tocan). Dejar en blanco = IP
+        principal del servidor.
       </div>
     </div>
     <div v-if="ipv6Enabled" class="mb-3">

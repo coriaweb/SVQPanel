@@ -546,6 +546,7 @@ async def update_domain(
             db_domain.is_active = domain_update.is_active
 
         ipv4_changed = False
+        old_ipv4 = db_domain.ipv4
         if 'ipv4' in domain_update.model_fields_set:
             new_ipv4 = domain_update.ipv4 or None
             if new_ipv4 != db_domain.ipv4:
@@ -668,6 +669,47 @@ async def update_domain(
                 logging.getLogger(__name__).warning(
                     f"No se pudo configurar IPv6 en interfaz para {db_domain.domain_name}: {_ipv6_err}"
                 )
+
+        # Sincronizar la zona DNS al cambiar la IPv4 del dominio: los registros
+        # A que apuntaban a la IP ANTIGUA pasan a la nueva (misma regla que el
+        # importador: cualquier OTRA IP —correo externo, sip, oficina…— no se
+        # toca). Con el vhost (arriba) y la IP de salida SMTP (abajo), el cambio
+        # de IP queda automatizado de punta a punta (caso típico: asignar una
+        # IP dedicada a un dominio ya creado).
+        if ipv4_changed and old_ipv4 and db_domain.ipv4:
+            try:
+                from api.models.models_dns import DnsZone, DnsRecord
+                from api.routes.dns import _sync_zone_to_bind, _bump_serial
+                zone = db.query(DnsZone).filter(
+                    DnsZone.domain_name == db_domain.domain_name).first()
+                name_filter = None
+                if not zone and getattr(db_domain, "parent_domain", None):
+                    # Subdominio: sus A viven en la zona PADRE. Restringir por
+                    # nombre para no tocar a los hermanos que compartan IP.
+                    parent = db_domain.parent_domain
+                    zone = db.query(DnsZone).filter(
+                        DnsZone.domain_name == parent).first()
+                    sub = db_domain.domain_name[: -(len(parent) + 1)]
+                    name_filter = [sub, f"www.{sub}"]
+                if zone:
+                    q = db.query(DnsRecord).filter(
+                        DnsRecord.zone_id == zone.id,
+                        DnsRecord.record_type == "A",
+                        DnsRecord.content == old_ipv4)
+                    if name_filter:
+                        q = q.filter(DnsRecord.name.in_(name_filter))
+                    changed = q.update({DnsRecord.content: db_domain.ipv4},
+                                       synchronize_session=False)
+                    if changed:
+                        if zone.ip_address == old_ipv4 and not name_filter:
+                            zone.ip_address = db_domain.ipv4
+                        zone.serial = _bump_serial(zone.serial)
+                        db.commit()
+                        _sync_zone_to_bind(zone, db)
+            except Exception as dns_err:
+                import logging
+                logging.getLogger(__name__).warning(
+                    f"sync DNS tras cambio de IPv4 de {db_domain.domain_name}: {dns_err}")
 
         # Actualizar IP de salida SMTP en Postfix si cambió la IPv4. Reaplicamos
         # según la preferencia del dominio (ipv4/ipv6), leyendo su MailDomain.
