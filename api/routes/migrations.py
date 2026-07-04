@@ -77,19 +77,27 @@ def purge_migration_tmp(max_age: int = 0) -> int:
     prefixes = ("svq_hestia_", "svq_webdata_", "svq_maildata_", "svq_hestia_up_")
     now = time.time()
     removed = 0
+    # Ubicaciones: los dirs de temporales clásicos + los tmp que la restauración
+    # crea JUNTO al destino (mismo filesystem, para mover sin duplicar espacio):
+    # /home/{user}/mail/svq_maildata_* y /home/{user}/web/{dominio}/svq_webdata_*.
+    patterns = []
     for base in (MIGRATION_TMP_DIR, tempfile.gettempdir()):
         for pref in prefixes:
-            for p in glob.glob(os.path.join(base, pref + "*")):
-                try:
-                    if max_age and now - os.path.getmtime(p) < max_age:
-                        continue
-                    if os.path.isdir(p):
-                        shutil.rmtree(p, ignore_errors=True)
-                    else:
-                        os.remove(p)
-                    removed += 1
-                except OSError:
-                    pass
+            patterns.append(os.path.join(base, pref + "*"))
+    patterns.append("/home/*/mail/svq_maildata_*")
+    patterns.append("/home/*/web/*/svq_webdata_*")
+    for pattern in patterns:
+        for p in glob.glob(pattern):
+            try:
+                if max_age and now - os.path.getmtime(p) < max_age:
+                    continue
+                if os.path.isdir(p):
+                    shutil.rmtree(p, ignore_errors=True)
+                else:
+                    os.remove(p)
+                removed += 1
+            except OSError:
+                pass
     return removed
 
 
@@ -574,7 +582,11 @@ def run_migration_job_inproc(job_id: int):
         scope = [s for s in (job.scope or "").split(",") if s]
         report = run_import(tar_path, job.target_user_id, scope, db,
                             dns_records=dns_records,
-                            source_panel=job.source_kind or "hestia")
+                            source_panel=job.source_kind or "hestia",
+                            # tar temporal nuestro → se borra en cuanto está
+                            # extraído (recorta el pico de disco); el finally
+                            # de abajo queda como red de seguridad.
+                            cleanup_tar=cleanup_tar)
 
         job.report_json = json.dumps(report, ensure_ascii=False)
         job.status = "failed" if report["summary"]["errors"] and not report["summary"]["created"] else "success"

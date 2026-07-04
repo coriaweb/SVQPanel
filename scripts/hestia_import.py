@@ -942,17 +942,24 @@ def _restore_web_files(data_tar: str, web_root: str, public_html: str) -> None:
     no pisar el vhost ni el pool, copiamos el CONTENIDO de public_html del backup
     dentro del public_html ya creado por create_domain().
     """
-    tmp = tempfile.mkdtemp(prefix="svq_webdata_", dir=_tmp_dir())
+    # Tmp dentro del propio web_root (mismo filesystem que public_html): mover
+    # es un rename sin duplicar espacio, y el domain_data.tar se borra en cuanto
+    # está extraído (mismo ahorro de pico de disco que en _restore_maildirs).
+    try:
+        tmp = tempfile.mkdtemp(prefix="svq_webdata_", dir=web_root)
+    except OSError:
+        tmp = tempfile.mkdtemp(prefix="svq_webdata_", dir=_tmp_dir())
     try:
         extract_data_archive(data_tar, tmp)
+        _remove_quiet(data_tar)   # ya extraído: liberar su tamaño AHORA
         # Buscar el public_html dentro del extraído (puede estar a distinta
         # profundidad según la versión de Hestia).
         src_ph = _find_subdir(tmp, "public_html")
         if src_ph:
-            _copy_into(src_ph, public_html)
+            _move_into(src_ph, public_html)
         else:
-            # Sin public_html explícito: copiar todo el contenido extraído.
-            _copy_into(tmp, public_html)
+            # Sin public_html explícito: mover todo el contenido extraído.
+            _move_into(tmp, public_html)
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
 
@@ -977,6 +984,47 @@ def _copy_into(src_dir: str, dst_dir: str) -> None:
             shutil.copytree(s, d, dirs_exist_ok=True)
         else:
             shutil.copy2(s, d)
+
+
+def _remove_quiet(path: Optional[str]) -> None:
+    """Borra un fichero ignorando errores. Para liberar temporales SOBRE LA
+    MARCHA durante la importación (cada archivo interno del backup deja de
+    hacer falta en cuanto se extrae) y que el pico de disco no sea ~3-4x el
+    tamaño del backup (visto: ENOSPC importando un correo de 30GB)."""
+    try:
+        if path and os.path.isfile(path):
+            os.remove(path)
+    except OSError:
+        pass
+
+
+def _move_into(src_dir: str, dst_dir: str) -> None:
+    """Mueve el contenido de src_dir dentro de dst_dir (mezcla, pisa como
+    _copy_into) LIBERANDO el origen sobre la marcha.
+
+    Si origen y destino están en el mismo filesystem, cada entrada es un rename
+    instantáneo (cero espacio extra). Si cruza de dispositivo, shutil.move copia
+    y borra entrada a entrada: el pico de disco es ~la entrada más grande (un
+    buzón, una carpeta), no el total del dominio.
+    """
+    os.makedirs(dst_dir, exist_ok=True)
+    for entry in os.listdir(src_dir):
+        s = os.path.join(src_dir, entry)
+        d = os.path.join(dst_dir, entry)
+        if (os.path.isdir(s) and not os.path.islink(s)
+                and os.path.isdir(d) and not os.path.islink(d)):
+            _move_into(s, d)                    # el destino ya la tiene → merge
+            shutil.rmtree(s, ignore_errors=True)
+        else:
+            if os.path.lexists(d):              # pisar lo que hubiera
+                if os.path.isdir(d) and not os.path.islink(d):
+                    shutil.rmtree(d, ignore_errors=True)
+                else:
+                    try:
+                        os.remove(d)
+                    except OSError:
+                        pass
+            shutil.move(s, d)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -1035,10 +1083,11 @@ def import_db(backup: "HestiaBackup", dbinfo: Dict, owner, db, report: ImportRep
         f"TO '{safe_user}'@'localhost';")
     _run_mariadb("FLUSH PRIVILEGES;")
 
-    # 4) Importar el dump
+    # 4) Importar el dump (y liberar su espacio en cuanto está dentro)
     dump = dbinfo.get("_dump")
     if dump and os.path.isfile(dump):
         _import_sql_dump(dump, safe_name)
+        _remove_quiet(dump)
 
     # 5) Registrar en el panel (ClientDatabase). Sin la pass en claro del hash
     #    reusado, guardamos un placeholder de hash y dejamos enc=None.
@@ -1293,13 +1342,26 @@ def _restore_maildirs_dir(src_dir: str, panel_username: str, domain: str) -> Non
 
 
 def _restore_maildirs(acc_tar: str, panel_username: str, domain: str) -> None:
-    """Extrae accounts.tar y copia los maildirs al mail dir del dominio."""
+    """Extrae accounts.tar y MUEVE los maildirs al mail dir del dominio.
+
+    Ahorro de disco (correos grandes): el tmp se crea JUNTO al destino (mismo
+    filesystem) para que mover cada buzón sea un rename sin duplicar espacio, y
+    el accounts.tar se borra en cuanto está extraído. El pico pasa de ~3x el
+    tamaño del correo a ~1x. Los restos de un proceso matado (OOM) los barre
+    purge_migration_tmp al arrancar.
+    """
     import subprocess
     dest = f"/home/{panel_username}/mail/{domain}"
-    tmp = tempfile.mkdtemp(prefix="svq_maildata_", dir=_tmp_dir())
+    parent = os.path.dirname(dest)
+    try:
+        os.makedirs(parent, exist_ok=True)
+        tmp = tempfile.mkdtemp(prefix="svq_maildata_", dir=parent)
+    except OSError:
+        tmp = tempfile.mkdtemp(prefix="svq_maildata_", dir=_tmp_dir())
     try:
         extract_data_archive(acc_tar, tmp)
-        # El tar suele contener {cuenta}/{cur,new,tmp}. Copiamos su contenido.
+        _remove_quiet(acc_tar)   # ya extraído: liberar su tamaño AHORA
+        # El tar suele contener {cuenta}/{cur,new,tmp}. Movemos su contenido.
         src = tmp
         # Si está anidado un nivel, ajustamos.
         entries = os.listdir(tmp)
@@ -1307,7 +1369,7 @@ def _restore_maildirs(acc_tar: str, panel_username: str, domain: str) -> None:
             inner = os.path.join(tmp, entries[0])
             if any(os.path.isdir(os.path.join(inner, e)) for e in os.listdir(inner)):
                 src = inner
-        _copy_into(src, dest)
+        _move_into(src, dest)
         subprocess.run(["chown", "-R", "vmail:vmail", dest], capture_output=True)
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
@@ -1636,7 +1698,7 @@ def import_cron(job: Dict, owner, db, report: "ImportReport"):
 
 def run_import(tar_path: str, target_user_id: int, scope: List[str], db,
                dns_records: Optional[Dict[str, List[Dict]]] = None,
-               source_panel: str = "hestia") -> Dict:
+               source_panel: str = "hestia", cleanup_tar: bool = False) -> Dict:
     """Importa el backup al usuario destino. Devuelve el informe (dict).
 
     `scope`: subconjunto de {'web','db','mail','dns'}. Asume que el preflight de
@@ -1645,6 +1707,9 @@ def run_import(tar_path: str, target_user_id: int, scope: List[str], db,
     `dns_records`: {domain: [registros aprobados]} desde la UI. Si una zona no
     está, se usa la propuesta automática.
     `source_panel`: 'hestia' | 'cpanel'.
+    `cleanup_tar`: el .tar es un temporal NUESTRO (upload/descarga, no una ruta
+    del admin) → se borra en cuanto está extraído, liberando su tamaño para el
+    resto de la importación (baja el pico de disco en backups grandes).
     """
     from api.models.models_user import User
 
@@ -1675,6 +1740,12 @@ def run_import(tar_path: str, target_user_id: int, scope: List[str], db,
 
     with open_backup(source_panel, tar_path) as backup:
         manifest = backup.analyze()
+
+        # El backup ya está extraído en su tmpdir: si el .tar era un temporal
+        # nuestro, borrarlo YA (no al final) recorta el pico de disco en su
+        # tamaño completo durante toda la restauración.
+        if cleanup_tar:
+            _remove_quiet(tar_path)
 
         if "web" in scope:
             for web in manifest["web"]:
