@@ -581,11 +581,30 @@
                     <i v-else class="bi bi-lock"></i>
                     {{ webmailSslIssuing ? 'Emitiendo…' : 'Activar HTTPS (Let\'s Encrypt)' }}
                   </button>
-                  <div v-if="webmailSslIssuing" class="sv-ssl-progress">
+                  <!-- Progreso real del job de emisión (fases + salida de certbot) -->
+                  <div v-if="webmailSslIssuing && !webmailSslJob" class="sv-ssl-progress">
                     <span class="sv-spin sv-spin--lg"></span>
-                    <div>
-                      <strong>Emitiendo el certificado…</strong>
-                      <div style="font-size:.78rem;color:var(--text-muted)">Validando el dominio con Let's Encrypt (~30s). No cierres esta pestaña.</div>
+                    <div><strong>Iniciando la emisión…</strong></div>
+                  </div>
+                  <div v-if="webmailSslJob" class="sv-ssl-progress sv-ssl-progress--steps">
+                    <div class="sv-ssl-steps">
+                      <div v-for="(s, i) in webmailSslJob.steps" :key="i" class="sv-ssl-step" :class="'is-' + webmailSslStepState(i)">
+                        <i v-if="webmailSslStepState(i) === 'done'" class="bi bi-check-circle-fill"></i>
+                        <i v-else-if="webmailSslStepState(i) === 'failed'" class="bi bi-x-circle-fill"></i>
+                        <span v-else-if="webmailSslStepState(i) === 'running'" class="sv-spin" style="margin:0"></span>
+                        <i v-else class="bi bi-circle"></i>
+                        <span>{{ s }}</span>
+                      </div>
+                    </div>
+                    <div v-if="webmailSslJob.status === 'running' && webmailSslJob.detail" class="sv-ssl-step-live" :title="webmailSslJob.detail">
+                      {{ webmailSslJob.detail }}
+                    </div>
+                    <div v-if="webmailSslJob.status === 'failed'" class="sv-ssl-step-error">
+                      <strong><i class="bi bi-x-circle-fill"></i> La emisión falló</strong>
+                      <pre class="sv-ssl-error-text">{{ webmailSslJob.error }}</pre>
+                    </div>
+                    <div v-if="webmailSslJob.status === 'running'" style="font-size:.75rem;color:var(--text-muted)">
+                      Suele tardar ~30 segundos. Puedes salir de esta página: la emisión continúa en el servidor.
                     </div>
                   </div>
                 </div>
@@ -1364,7 +1383,7 @@
 </template>
 
 <script>
-import { ref, reactive, computed, onMounted } from 'vue'
+import { ref, reactive, computed, onMounted, onUnmounted } from 'vue'
 import { useMainStore } from '../stores/useMainStore'
 import api from '../services/api'
 import PasswordField from '../components/PasswordField.vue'
@@ -1839,6 +1858,19 @@ export default {
       } finally {
         loadingWebmail.value = false
       }
+      // Si hay una emisión SSL en curso (p. ej. se recargó la página a mitad,
+      // o se cambió de dominio y se volvió), retomar checklist y polling.
+      try {
+        if (!webmailSslIssuing.value) {
+          webmailSslJob.value = null   // no arrastrar el job de otro dominio
+          const r = await api.getWebmailSslProgress(domainId)
+          if (r.job?.status === 'running') {
+            webmailSslIssuing.value = true
+            webmailSslJob.value = r.job
+            pollWebmailSsl(domainId)
+          }
+        }
+      } catch { /* sin job previo */ }
     }
 
     const toggleWebmail = async (enabled) => {
@@ -1855,16 +1887,54 @@ export default {
       }
     }
 
+    // Emisión con progreso real: POST lanza el job y aquí se hace polling
+    // cada 2s (fases + última línea de certbot). Mismo patrón que SSLManager.
+    const webmailSslJob = ref(null)
+    let webmailSslPollAlive = false
+    const _sleep = (ms) => new Promise(r => setTimeout(r, ms))
+
+    const webmailSslStepState = (i) => {
+      const j = webmailSslJob.value
+      if (!j) return 'pending'
+      if (j.status === 'success' || i < j.current) return 'done'
+      if (i === j.current) return j.status === 'failed' ? 'failed' : 'running'
+      return 'pending'
+    }
+
+    const pollWebmailSsl = async (domainId) => {
+      webmailSslPollAlive = true
+      while (webmailSslPollAlive) {
+        await _sleep(2000)
+        if (!webmailSslPollAlive) return
+        try {
+          const r = await api.getWebmailSslProgress(domainId)
+          if (r.job) webmailSslJob.value = r.job
+        } catch { /* transitorio */ }
+        const st = webmailSslJob.value?.status
+        if (st === 'success') {
+          webmailSslIssuing.value = false
+          webmailSslJob.value = null
+          store.showNotification('HTTPS activado en el webmail', 'success')
+          await loadWebmail(domainId)
+          return
+        }
+        if (st === 'failed') {
+          webmailSslIssuing.value = false  // el error queda visible en el checklist
+          return
+        }
+      }
+    }
+
     const issueWebmailSsl = async () => {
       webmailSslIssuing.value = true
+      webmailSslJob.value = null
       try {
         const r = await api.issueWebmailSsl(selectedDomain.value.id)
-        store.showNotification(r.message || 'HTTPS activado en el webmail', 'success')
-        await loadWebmail(selectedDomain.value.id)
+        webmailSslJob.value = r.job
+        await pollWebmailSsl(selectedDomain.value.id)
       } catch (e) {
-        store.showNotification('No se pudo activar HTTPS: ' + (e.message || e), 'danger')
-      } finally {
         webmailSslIssuing.value = false
+        store.showNotification('No se pudo iniciar la emisión: ' + (e.message || e), 'danger')
       }
     }
 
@@ -2345,6 +2415,7 @@ export default {
       loadRoundcubeStatus()
       loadUsers()
     })
+    onUnmounted(() => { webmailSslPollAlive = false })
 
     return {
       isAdminOrReseller, clientUsers, fmtMailSize,
@@ -2366,6 +2437,7 @@ export default {
       roundcubeEnabled, roundcubeUrl, openingWebmail,
       // Webmail por dominio
       webmail, loadingWebmail, webmailSaving, webmailSslIssuing,
+      webmailSslJob, webmailSslStepState,
       loadWebmail, toggleWebmail, issueWebmailSsl,
       relay, relayForm, loadingRelay, relaySaving, loadRelay, saveDomainRelay,
       outIp, outIpSaving, setOutIp, outIpV4, outIpV4Dedicated,
@@ -2455,6 +2527,21 @@ export default {
 .sv-ssl-progress { display:flex; align-items:center; gap:.75rem; margin-top:.7rem; padding:.7rem 1rem;
   border-radius:var(--r-md,10px); background:color-mix(in srgb,var(--ac) 8%,transparent);
   border:1px solid color-mix(in srgb,var(--ac) 25%,transparent); }
+/* Checklist de fases reales del job de emisión SSL del webmail */
+.sv-ssl-progress--steps { flex-direction:column; align-items:stretch; gap:.55rem; }
+.sv-ssl-steps { display:flex; flex-direction:column; gap:.45rem; }
+.sv-ssl-step { display:flex; align-items:center; gap:.55rem; font-size:.85rem; color:var(--text-muted); }
+.sv-ssl-step i { font-size:.95rem; }
+.sv-ssl-step.is-done    { color:var(--success); }
+.sv-ssl-step.is-running { color:var(--text-primary,inherit); font-weight:500; }
+.sv-ssl-step.is-failed  { color:var(--danger); }
+.sv-ssl-step .sv-spin   { flex-shrink:0; }
+.sv-ssl-step-live { font-size:.72rem; color:var(--text-muted); background:var(--surface-2);
+  border-radius:6px; padding:.35rem .55rem; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;
+  font-family:var(--font-mono,monospace); }
+.sv-ssl-step-error { font-size:.82rem; color:var(--danger); }
+.sv-ssl-error-text { white-space:pre-wrap; word-break:break-word; margin:.35rem 0 0;
+  font-size:.72rem; color:var(--danger); max-height:180px; overflow:auto; }
 .sv-badge--warn { background:color-mix(in srgb,var(--warning,#f59e0b) 15%,transparent); color:var(--warning,#f59e0b); }
 .sv-badge--danger { background:color-mix(in srgb,var(--danger) 15%,transparent); color:var(--danger); }
 

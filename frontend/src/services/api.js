@@ -561,6 +561,10 @@ class APIClient {
     return this.post(`/api/mail/domains/${domainId}/webmail/ssl`, {})
   }
 
+  getWebmailSslProgress(domainId) {
+    return this.get(`/api/mail/domains/${domainId}/webmail/ssl`)
+  }
+
   // Mail — SMTP relay
   getGlobalRelay() {
     return this.get('/api/settings/relay')
@@ -1193,6 +1197,14 @@ class APIClient {
 
   toggleDomainSSL(domainId, data) {
     return this.put(`/api/domains/${domainId}/ssl/toggle`, data)
+  }
+
+  startDomainSslIssue(domainId, data) {
+    return this.post(`/api/domains/${domainId}/ssl/issue`, data)
+  }
+
+  getDomainSslIssue(domainId) {
+    return this.get(`/api/domains/${domainId}/ssl/issue`)
   }
 
   // ── Actualizaciones del sistema ──────────────────────────────────────────

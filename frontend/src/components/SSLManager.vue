@@ -113,12 +113,32 @@
           </button>
           <button class="btn btn-secondary btn-sm" @click="showForm = false" :disabled="loading">Cancelar</button>
         </div>
-        <!-- Aviso de progreso bien visible mientras certbot trabaja (~30s) -->
-        <div v-if="loading" class="ssl-progress">
+        <!-- Progreso real de la emisión: fases del job + salida de certbot en vivo -->
+        <div v-if="loading && !issueJob" class="ssl-progress">
           <span class="ssl-spin ssl-spin--lg"></span>
           <div>
-            <strong>Emitiendo el certificado…</strong>
-            <div class="ssl-hint">Validando el dominio con Let's Encrypt. Puede tardar ~30 segundos, no cierres esta ventana.</div>
+            <strong>Iniciando la emisión…</strong>
+          </div>
+        </div>
+        <div v-if="issueJob" class="ssl-progress ssl-progress--steps">
+          <div class="ssl-steps">
+            <div v-for="(s, i) in issueJob.steps" :key="i" class="ssl-step" :class="'is-' + stepState(i)">
+              <i v-if="stepState(i) === 'done'" class="bi bi-check-circle-fill"></i>
+              <i v-else-if="stepState(i) === 'failed'" class="bi bi-x-circle-fill"></i>
+              <span v-else-if="stepState(i) === 'running'" class="ssl-spin"></span>
+              <i v-else class="bi bi-circle"></i>
+              <span>{{ s }}</span>
+            </div>
+          </div>
+          <div v-if="issueJob.status === 'running' && issueJob.detail" class="ssl-step-live mono" :title="issueJob.detail">
+            {{ issueJob.detail }}
+          </div>
+          <div v-if="issueJob.status === 'failed'" class="ssl-step-error">
+            <strong><i class="bi bi-x-circle-fill me-1"></i>La emisión falló</strong>
+            <pre class="ssl-error-text">{{ issueJob.error }}</pre>
+          </div>
+          <div v-if="issueJob.status === 'running'" class="ssl-hint">
+            Suele tardar ~30 segundos. Puedes salir de esta página: la emisión continúa en el servidor.
           </div>
         </div>
       </div>
@@ -127,7 +147,7 @@
 </template>
 
 <script>
-import { ref, onMounted } from 'vue'
+import { ref, onMounted, onUnmounted } from 'vue'
 import { useMainStore } from '../stores/useMainStore'
 import api from '../services/api'
 import { formatDate as fmtDate } from '../utils/datetime'
@@ -205,23 +225,62 @@ export default {
       }
     }
 
+    // ── Emisión con progreso real: el POST lanza un job en el servidor y aquí
+    //    se hace polling cada 2s (fases + última línea de certbot). Si el
+    //    usuario sale y vuelve, onMounted reanuda el polling del job en curso.
+    const issueJob = ref(null)
+    let pollAlive = false
+    const sleep = (ms) => new Promise(r => setTimeout(r, ms))
+
+    const stepState = (i) => {
+      const j = issueJob.value
+      if (!j) return 'pending'
+      if (j.status === 'success' || i < j.current) return 'done'
+      if (i === j.current) return j.status === 'failed' ? 'failed' : 'running'
+      return 'pending'
+    }
+
+    const pollIssue = async () => {
+      pollAlive = true
+      while (pollAlive) {
+        await sleep(2000)
+        if (!pollAlive) return
+        try {
+          const r = await api.getDomainSslIssue(props.domain.id)
+          if (r.job) issueJob.value = r.job
+        } catch { /* fallo transitorio de red: seguir intentando */ }
+        const st = issueJob.value?.status
+        if (st === 'success') {
+          loading.value = false
+          showForm.value = false
+          issueJob.value = null
+          store.showNotification('Certificado SSL emitido correctamente', 'success')
+          await loadSSL()
+          emit('reload')
+          return
+        }
+        if (st === 'failed') {
+          loading.value = false   // el detalle del error queda visible en el checklist
+          return
+        }
+      }
+    }
+
     const createSSL = async () => {
       loading.value = true
+      issueJob.value = null
       try {
-        await api.toggleDomainSSL(props.domain.id, {
+        const r = await api.startDomainSslIssue(props.domain.id, {
           enabled: true,
-          force_https: forceHttps.value,
+          force_https: true,
           hsts_enabled: hsts.value,
           email: email.value,
         })
-        store.showNotification('Certificado SSL emitido correctamente', 'success')
-        showForm.value = false
-        await loadSSL()
-        emit('reload')
+        issueJob.value = r.job
+        await pollIssue()
       } catch (e) {
-        store.showNotification('Error al crear certificado: ' + e.message, 'danger')
-      } finally {
         loading.value = false
+        store.showNotification('Error al iniciar la emisión: ' + e.message, 'danger')
       }
     }
 
@@ -255,11 +314,25 @@ export default {
 
     const formatDate = (date) => date ? fmtDate(date) : 'N/A'
 
-    onMounted(loadSSL)
+    onMounted(async () => {
+      await loadSSL()
+      // Si hay una emisión en curso (p. ej. el usuario recargó la página a
+      // mitad), retomar el checklist y el polling donde estaba.
+      try {
+        const r = await api.getDomainSslIssue(props.domain.id)
+        if (r.job?.status === 'running') {
+          showForm.value = true
+          loading.value = true
+          issueJob.value = r.job
+          pollIssue()
+        }
+      } catch { /* sin job previo */ }
+    })
+    onUnmounted(() => { pollAlive = false })
 
     return {
       ssl, loading, toggling, showForm, showRevokeConfirm,
-      forceHttps, hsts, email,
+      forceHttps, hsts, email, issueJob, stepState,
       canonical, savingCanonical, canonicalOptions, setCanonical,
       createSSL, renewSSL, revokeSSL, saveToggle, formatDate,
     }
@@ -389,5 +462,28 @@ export default {
   padding: .75rem 1rem; border-radius: var(--r-md, 10px);
   background: color-mix(in srgb, var(--ac) 8%, transparent);
   border: 1px solid color-mix(in srgb, var(--ac) 25%, transparent);
+}
+
+/* Checklist de fases reales del job de emisión */
+.ssl-progress--steps { flex-direction: column; align-items: stretch; gap: .55rem; }
+.ssl-steps { display: flex; flex-direction: column; gap: .45rem; }
+.ssl-step {
+  display: flex; align-items: center; gap: .55rem;
+  font-size: .85rem; color: var(--text-muted);
+}
+.ssl-step i { font-size: .95rem; }
+.ssl-step.is-done    { color: var(--success); }
+.ssl-step.is-running { color: var(--text-primary, inherit); font-weight: 500; }
+.ssl-step.is-failed  { color: var(--danger); }
+.ssl-step .ssl-spin  { margin: 0; width: .95rem; height: .95rem; color: var(--ac); flex-shrink: 0; }
+.ssl-step-live {
+  font-size: .72rem; color: var(--text-muted);
+  background: var(--surface-2); border-radius: 6px; padding: .35rem .55rem;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.ssl-step-error { font-size: .82rem; color: var(--danger); }
+.ssl-error-text {
+  white-space: pre-wrap; word-break: break-word; margin: .35rem 0 0;
+  font-size: .72rem; color: var(--danger); max-height: 180px; overflow: auto;
 }
 </style>

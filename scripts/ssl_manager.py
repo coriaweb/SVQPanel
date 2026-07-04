@@ -53,6 +53,32 @@ class SSLManager(SystemManager):
             return apt_certbot
         raise RuntimeError("certbot not found. Install with: snap install certbot --classic")
 
+    def _run_certbot(self, cmd: list, line_cb=None):
+        """
+        Ejecuta certbot. Con line_cb, streama la salida (stdout+stderr mezclados)
+        línea a línea llamando line_cb(línea) — es lo que permite a la UI enseñar
+        el progreso real durante la emisión. Devuelve (rc, salida_completa).
+        """
+        if line_cb is None:
+            rc, stdout, stderr = self.execute_command(cmd, check=False)
+            return rc, (stderr or "").strip() or (stdout or "").strip()
+        env = os.environ.copy()
+        env["PATH"] = self._SYSTEM_PATH
+        logger.info(f"Executing (streaming): {' '.join(cmd)}")
+        proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                                text=True, bufsize=1, env=env)
+        lines = []
+        for raw in proc.stdout:
+            line = raw.rstrip()
+            if line.strip():
+                lines.append(line)
+                try:
+                    line_cb(line)
+                except Exception:
+                    pass
+        proc.wait()
+        return proc.returncode, "\n".join(lines)
+
     def create_ssl(self, domain_name: str) -> dict:
         """
         Create SSL certificate with Let's Encrypt
@@ -116,9 +142,10 @@ class SSLManager(SystemManager):
             raise
 
     def create_ssl_with_email(self, domain_name: str, email: str,
-                              extra_domains: list = None) -> dict:
+                              extra_domains: list = None, line_cb=None) -> dict:
         """
         Igual que create_ssl pero con email configurable y SANs extra opcionales.
+        line_cb (opcional): recibe cada línea de salida de certbot en vivo.
         """
         if not validate_domain(domain_name):
             raise ValueError(f"Invalid domain: {domain_name}")
@@ -149,9 +176,9 @@ class SSLManager(SystemManager):
                         logger.warning(f"Skipping extra domain {d} (DNS validation failed)")
             cmd += ["--non-interactive", "--agree-tos", "-m", email, "--expand"]
 
-            rc, stdout, stderr = self.execute_command(cmd, check=False)
+            rc, output = self._run_certbot(cmd, line_cb=line_cb)
             if rc != 0:
-                error_msg = stderr.strip() if stderr else f"certbot exit code {rc}"
+                error_msg = output.strip() or f"certbot exit code {rc}"
                 logger.error(f"certbot failed: {error_msg}")
                 raise RuntimeError(f"certbot failed: {error_msg}")
 
@@ -177,7 +204,7 @@ class SSLManager(SystemManager):
         except Exception:
             return []
 
-    def expand_for_webmail(self, domain_name: str, email: str) -> dict:
+    def expand_for_webmail(self, domain_name: str, email: str, line_cb=None) -> dict:
         """
         Emite o expande el cert para webmail.{dominio}:
         - Si ya existe cert del dominio principal → --expand añadiendo webmail como SAN
@@ -207,9 +234,9 @@ class SSLManager(SystemManager):
             for d in wanted:
                 cmd += ["-d", d]
             cmd += ["--non-interactive", "--agree-tos", "-m", email]
-            rc, stdout, stderr = self.execute_command(cmd, check=False)
+            rc, output = self._run_certbot(cmd, line_cb=line_cb)
             if rc != 0:
-                raise RuntimeError(f"certbot expand failed: {(stderr or '').strip()}")
+                raise RuntimeError(f"certbot expand failed: {output.strip() or f'exit code {rc}'}")
             logger.info(f"Cert expanded (SANs={wanted}) with webmail: {webmail_host}")
             return {"success": True, "domain": webmail_host,
                     "cert": domain_cert}
@@ -222,9 +249,9 @@ class SSLManager(SystemManager):
                 "-d", webmail_host,
                 "--non-interactive", "--agree-tos", "-m", email,
             ]
-            rc, stdout, stderr = self.execute_command(cmd, check=False)
+            rc, output = self._run_certbot(cmd, line_cb=line_cb)
             if rc != 0:
-                raise RuntimeError(f"certbot failed: {(stderr or '').strip()}")
+                raise RuntimeError(f"certbot failed: {output.strip() or f'exit code {rc}'}")
             logger.info(f"Webmail standalone cert issued: {webmail_host}")
             return {"success": True, "domain": webmail_host,
                     "cert": f"/etc/letsencrypt/live/{webmail_host}/fullchain.pem"}

@@ -2,7 +2,7 @@
 Rutas API para gestión de certificados SSL
 """
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 from datetime import datetime, timedelta
 from api.models.database import get_db
@@ -145,6 +145,47 @@ async def toggle_ssl(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Error al gestionar SSL: {str(e)}"
         )
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Emisión con progreso real: POST lanza el job en background (fases + salida de
+# certbot en vivo) y la UI hace polling en el GET. Ver api/utils/ssl_jobs.py.
+# ─────────────────────────────────────────────────────────────────────────────
+
+@router.post("/domains/{domain_id}/ssl/issue", status_code=status.HTTP_202_ACCEPTED)
+async def start_ssl_issue(
+    domain_id: int,
+    body: SSLToggleRequest,
+    background_tasks: BackgroundTasks,
+    current_user: User = Depends(require_auth),
+    db: Session = Depends(get_db)
+):
+    """Lanza la emisión del certificado en background y devuelve el job."""
+    from api.utils import ssl_jobs
+
+    domain = db.query(Domain).filter(Domain.id == domain_id).first()
+    if not domain:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Dominio no encontrado")
+    if ssl_jobs.job_running("web", domain_id):
+        raise HTTPException(status_code=409, detail="Ya hay una emisión SSL en curso para este dominio.")
+
+    raw_email = (body.email or "").strip() or (current_user.email or "").strip()
+    email = _validate_acme_email(raw_email)
+
+    ssl_jobs.job_init("web", domain_id, ssl_jobs.web_steps(domain.domain_name))
+    background_tasks.add_task(ssl_jobs.run_web_issue, domain_id, email, body.hsts_enabled)
+    return {"status": "success", "job": ssl_jobs.job_status("web", domain_id)}
+
+
+@router.get("/domains/{domain_id}/ssl/issue")
+async def get_ssl_issue_status(
+    domain_id: int,
+    current_user: User = Depends(require_auth),
+    db: Session = Depends(get_db)
+):
+    """Estado del job de emisión (polling de la UI). job=null si nunca hubo."""
+    from api.utils import ssl_jobs
+    return {"status": "success", "job": ssl_jobs.job_status("web", domain_id)}
 
 
 @router.post("/domains/{domain_id}/ssl/renew", response_model=SSLResponse)

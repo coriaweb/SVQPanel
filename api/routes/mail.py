@@ -10,7 +10,7 @@ import base64
 import hashlib
 import logging
 from datetime import datetime, timedelta
-from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request, status
 from fastapi.responses import Response
 from sqlalchemy.orm import Session
 from typing import List
@@ -1022,9 +1022,10 @@ async def set_mail_out_ip(domain_id: int, data: MailOutIpRequest,
     return {"status": "success", "pref": md.mail_out_ip_pref, "warning": warning}
 
 
-@router.post("/mail/domains/{domain_id}/webmail/ssl")
+@router.post("/mail/domains/{domain_id}/webmail/ssl", status_code=status.HTTP_202_ACCEPTED)
 async def issue_webmail_ssl(
     domain_id: int,
+    background_tasks: BackgroundTasks,
     current_user=Depends(require_auth),
     db: Session = Depends(get_db),
 ):
@@ -1032,30 +1033,37 @@ async def issue_webmail_ssl(
     Emite/expande el certificado del dominio para incluir webmail.{dominio} y
     regenera el vhost webmail con HTTPS. Requiere que webmail.{dominio} resuelva
     (DNS) hacia este servidor para que pase la validación ACME.
+
+    Corre en background con progreso real (fases + salida de certbot); la UI
+    hace polling en GET /webmail/ssl. Ver api/utils/ssl_jobs.py.
     """
+    from api.utils import ssl_jobs
+
     md = _get_mail_domain_or_404(domain_id, db)
     _require_edit(md, current_user)
+    if ssl_jobs.job_running("webmail", domain_id):
+        raise HTTPException(status_code=409,
+                            detail="Ya hay una emisión SSL de webmail en curso para este dominio.")
 
     # Email del admin para Let's Encrypt
     email = getattr(current_user, "email", None) or "admin@" + md.domain_name
 
-    try:
-        from scripts.ssl_manager import SSLManager
-        SSLManager().expand_for_webmail(md.domain_name, email)
-    except PermissionError:
-        raise HTTPException(status_code=403, detail="Se necesitan privilegios root")
-    except Exception as e:
-        raise HTTPException(status_code=502,
-                            detail=f"No se pudo emitir el certificado de webmail.{md.domain_name}: {e}. "
-                                   f"Comprueba que webmail.{md.domain_name} apunta a este servidor.")
+    ssl_jobs.job_init("webmail", domain_id, ssl_jobs.webmail_steps(md.domain_name))
+    background_tasks.add_task(ssl_jobs.run_webmail_issue, domain_id, md.domain_name, email)
+    return {"status": "success", "job": ssl_jobs.job_status("webmail", domain_id)}
 
-    # Regenerar el vhost webmail ahora con SSL
-    try:
-        from scripts.webmail_manager import WebmailManager
-        ok, msg = WebmailManager().enable(md.domain_name, ssl=True)
-        return {"status": "success", "ssl": True, "message": msg}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+
+@router.get("/mail/domains/{domain_id}/webmail/ssl")
+async def get_webmail_ssl_progress(
+    domain_id: int,
+    current_user=Depends(require_auth),
+    db: Session = Depends(get_db),
+):
+    """Estado del job de emisión del SSL de webmail (polling). job=null si nunca hubo."""
+    from api.utils import ssl_jobs
+    md = _get_mail_domain_or_404(domain_id, db)
+    _require_edit(md, current_user)
+    return {"status": "success", "job": ssl_jobs.job_status("webmail", domain_id)}
 
 
 # ─────────────────────────────────────────────────────────────────────────────
