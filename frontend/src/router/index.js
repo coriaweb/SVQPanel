@@ -239,6 +239,26 @@ const router = createRouter({
   linkExactActiveClass: 'is-active-exact'
 })
 
+// Chunk viejo tras una actualización del panel: el build borra los JS antiguos
+// (nombres con hash), así que una pestaña abierta de ANTES del deploy falla al
+// cargar la vista (import dinámico → 404) y el click en el menú "no hace nada"
+// hasta recargar. Al detectarlo, navegamos con recarga completa a la ruta
+// destino: baja el index.html nuevo con los chunks nuevos y el click funciona.
+router.onError((error, to) => {
+  const msg = String(error && error.message || '')
+  const chunkFailed =
+    msg.includes('Failed to fetch dynamically imported module') ||   // Chrome
+    msg.includes('error loading dynamically imported module') ||     // Firefox
+    msg.includes('Importing a module script failed')                 // Safari
+  if (!chunkFailed) return
+  // Cortafuegos anti-bucle: si acabamos de recargar por esto mismo (<10s),
+  // no reintentar (el fallo sería real, no un chunk desfasado).
+  const last = Number(sessionStorage.getItem('svq_chunk_reload') || 0)
+  if (Date.now() - last < 10000) return
+  sessionStorage.setItem('svq_chunk_reload', String(Date.now()))
+  window.location.assign((to && to.fullPath) || window.location.href)
+})
+
 router.beforeEach((to, from, next) => {
   const authenticated = isAuthenticated()
   const user = JSON.parse(localStorage.getItem('user') || '{}')
