@@ -531,7 +531,16 @@ class HestiaBackup:
             if cdir:
                 acc_conf = os.path.join(cdir, f"{domain}.conf")
                 if os.path.isfile(acc_conf):
+                    vistos = set()
                     for a in parse_conf_multi(self._read(acc_conf), "ACCOUNT"):
+                        # Hestia a veces trae la MISMA cuenta duplicada en el
+                        # conf → nos quedamos con la primera. Sin esto, el
+                        # segundo insert violaba la unicidad de la BD y (antes
+                        # del rollback de import_mail) arrastraba al resto.
+                        nombre = a.get("ACCOUNT", "")
+                        if not nombre or nombre in vistos:
+                            continue
+                        vistos.add(nombre)
                         accounts.append({
                             "account": a.get("ACCOUNT", ""),
                             "md5": a.get("MD5", ""),      # hash (reutilizable)
@@ -1441,6 +1450,10 @@ def import_mail(backup: "HestiaBackup", mailinfo: Dict, owner, db, report: Impor
 
             n_ok += 1
         except Exception as e:
+            # ROLLBACK obligatorio: sin él, un fallo aquí (p.ej. un duplicado)
+            # dejaba la sesión envenenada y arrastraba a los buzones restantes,
+            # al maildir e incluso al SIGUIENTE dominio de correo.
+            db.rollback()
             report.fail("mail-account", email, e)
 
     # 3) Restaurar los maildir reales. Hestia los trae en accounts.tar(.gz);
@@ -1457,6 +1470,7 @@ def import_mail(backup: "HestiaBackup", mailinfo: Dict, owner, db, report: Impor
             _restore_maildirs(acc_tar, owner.username, domain,
                               progress=progress)
     except Exception as e:
+        db.rollback()
         report.fail("mail-data", domain, f"maildir no restaurado: {e}")
 
     # Suscribir INBOX + carpetas estándar en cada buzón. Sin esto, el maildir

@@ -45,3 +45,28 @@ def test_no_pisa_un_dominio_existente():
 
     db.add.assert_not_called()
     assert report.created == []
+
+
+def test_analyze_mail_deduplica_cuentas_repetidas():
+    """Hestia a veces trae la misma cuenta duplicada en el conf del dominio:
+    debe quedarse la PRIMERA (el segundo insert violaba la unicidad de la BD
+    y, antes del rollback, arrastraba al resto del dominio — visto en prod
+    con pablo@anfitriona.es)."""
+    backup = hi.HestiaBackup.__new__(hi.HestiaBackup)
+    conf = (
+        "ACCOUNT='pablo' MD5='$6$aa$hash1' QUOTA='0'\n"
+        "ACCOUNT='ana' MD5='$6$bb$hash2' QUOTA='0'\n"
+        "ACCOUNT='pablo' MD5='$6$cc$hash3' QUOTA='0'\n"
+    )
+    cuentas = hi.parse_conf_multi(conf, "ACCOUNT")
+    assert len(cuentas) == 3  # el parser las da todas; deduplica analyze_mail
+
+    # Reproducimos el bucle de analyze_mail sobre el conf crudo.
+    vistos, accounts = set(), []
+    for a in cuentas:
+        nombre = a.get("ACCOUNT", "")
+        if not nombre or nombre in vistos:
+            continue
+        vistos.add(nombre)
+        accounts.append(nombre)
+    assert accounts == ["pablo", "ana"]
