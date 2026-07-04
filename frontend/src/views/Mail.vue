@@ -717,9 +717,10 @@
                           :disabled="outIpSaving || outIp.pref==='ipv4'" @click="setOutIp('ipv4')">
                     <span><i class="bi bi-shield-check"></i> Predeterminada (recomendada)</span>
                     <small style="font-weight:400;opacity:.8">
-                      IP del servidor — PTR/SPF/DKIM ya OK<template v-if="outIp.server_ipv4 || outIp.server_ipv6">:</template>
+                      <template v-if="outIpV4Dedicated">IPv4 dedicada del dominio + IPv6 del servidor:</template>
+                      <template v-else>IP del servidor — PTR/SPF/DKIM ya OK<template v-if="outIpV4 || outIp.server_ipv6">:</template></template>
                     </small>
-                    <small v-if="outIp.server_ipv4" style="font-weight:400;opacity:.85">IPv4 <code>{{ outIp.server_ipv4 }}</code></small>
+                    <small v-if="outIpV4" style="font-weight:400;opacity:.85">IPv4 <code>{{ outIpV4 }}</code><template v-if="outIpV4Dedicated"> (dedicada)</template></small>
                     <small v-if="outIp.server_ipv6" style="font-weight:400;opacity:.85">IPv6 <code>{{ outIp.server_ipv6 }}</code></small>
                   </button>
                   <button class="sv-btn sv-btn--sm" style="flex-direction:column;align-items:flex-start;gap:.15rem;text-align:left"
@@ -743,9 +744,18 @@
                   (550 5.7.25). Si no lo controlas, usa la opción <strong>Predeterminada</strong>.
                 </div>
                 <div v-else class="sv-alert sv-alert--muted" style="margin-top:.75rem;font-size:.82rem">
-                  El correo sale por la <strong>IP del servidor</strong><template v-if="outIp.server_ipv4 || outIp.server_ipv6">
-                    (<template v-if="outIp.server_ipv4">IPv4 <code>{{ outIp.server_ipv4 }}</code></template><template v-if="outIp.server_ipv4 && outIp.server_ipv6"> · </template><template v-if="outIp.server_ipv6">IPv6 <code>{{ outIp.server_ipv6 }}</code></template>)</template>,
-                  que ya tiene PTR/SPF/DKIM. Es lo recomendado salvo que necesites una IP de envío propia (y controles su PTR).
+                  <template v-if="outIpV4Dedicated">
+                    El correo sale por la <strong>IPv4 dedicada del dominio</strong>
+                    (<code>{{ outIpV4 }}</code>)<template v-if="outIp.server_ipv6"> y, hacia destinos IPv6,
+                    por la IPv6 del servidor (<code>{{ outIp.server_ipv6 }}</code>)</template>.
+                    Recuerda que el <strong>PTR de la IP dedicada</strong> corre de tu cuenta
+                    (debe apuntar a <code>mail.{{ outIp.domain }}</code>) y que su SPF la autorice.
+                  </template>
+                  <template v-else>
+                    El correo sale por la <strong>IP del servidor</strong><template v-if="outIpV4 || outIp.server_ipv6">
+                      (<template v-if="outIpV4">IPv4 <code>{{ outIpV4 }}</code></template><template v-if="outIpV4 && outIp.server_ipv6"> · </template><template v-if="outIp.server_ipv6">IPv6 <code>{{ outIp.server_ipv6 }}</code></template>)</template>,
+                    que ya tiene PTR/SPF/DKIM. Es lo recomendado salvo que necesites una IP de envío propia (y controles su PTR).
+                  </template>
                 </div>
               </div>
             </template>
@@ -1704,6 +1714,12 @@ export default {
     // IP de salida del correo (IPv4/IPv6) del dominio
     const outIp        = ref(null)
     const outIpSaving  = ref(false)
+    // IPv4 EFECTIVA de salida: si el dominio tiene IPv4 dedicada, Postfix hace
+    // bind por ella aunque la preferencia sea "Predeterminada" — mostrar la del
+    // servidor aquí sería mentir (visto con globatel.es y su IP dedicada).
+    const outIpV4 = computed(() => outIp.value?.ipv4 || outIp.value?.server_ipv4 || '')
+    const outIpV4Dedicated = computed(() =>
+      !!(outIp.value?.ipv4 && outIp.value.ipv4 !== outIp.value.server_ipv4))
 
     // ── TLS propio del dominio (SNI) ──
     const mailtls       = ref(null)
@@ -2352,7 +2368,7 @@ export default {
       webmail, loadingWebmail, webmailSaving, webmailSslIssuing,
       loadWebmail, toggleWebmail, issueWebmailSsl,
       relay, relayForm, loadingRelay, relaySaving, loadRelay, saveDomainRelay,
-      outIp, outIpSaving, setOutIp,
+      outIp, outIpSaving, setOutIp, outIpV4, outIpV4Dedicated,
       mailtls, mailtlsSaving, toggleMailTls,
       antivirus, antivirusSaving, toggleAntivirus,
       // Monitoreo de envío
