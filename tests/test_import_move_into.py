@@ -52,6 +52,20 @@ def test_pisa_ficheros_existentes_como_copy_into(tmp_path):
     assert open(str(dest / "maildirsize")).read() == "nuevo"
 
 
+def test_on_entry_notifica_cada_buzon_del_primer_nivel(tmp_path):
+    """on_entry da progreso legible por buzón (solo primer nivel, no recursión)."""
+    src = tmp_path / "src"
+    dest = tmp_path / "dest"
+    _write(str(src / "buzon1" / "cur" / "m1"), "a")
+    _write(str(src / "buzon2" / "cur" / "m2"), "b")
+
+    vistos = []
+    hi._move_into(str(src), str(dest),
+                  on_entry=lambda name, i, n: vistos.append((name, i, n)))
+
+    assert vistos == [("buzon1", 1, 2), ("buzon2", 2, 2)]
+
+
 def test_crea_destino_si_no_existe(tmp_path):
     src = tmp_path / "src"
     dest = tmp_path / "no_existe" / "dest"

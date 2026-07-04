@@ -1104,7 +1104,7 @@ def _remove_quiet(path: Optional[str]) -> None:
         pass
 
 
-def _move_into(src_dir: str, dst_dir: str) -> None:
+def _move_into(src_dir: str, dst_dir: str, on_entry=None) -> None:
     """Mueve el contenido de src_dir dentro de dst_dir (mezcla, pisa como
     _copy_into) LIBERANDO el origen sobre la marcha.
 
@@ -1112,9 +1112,15 @@ def _move_into(src_dir: str, dst_dir: str) -> None:
     instantáneo (cero espacio extra). Si cruza de dispositivo, shutil.move copia
     y borra entrada a entrada: el pico de disco es ~la entrada más grande (un
     buzón, una carpeta), no el total del dominio.
+
+    `on_entry(nombre, i, n)`: se llama por cada entrada del PRIMER nivel antes
+    de moverla (progreso legible por buzón/carpeta); la recursión no lo llama.
     """
     os.makedirs(dst_dir, exist_ok=True)
-    for entry in os.listdir(src_dir):
+    entries = sorted(os.listdir(src_dir))
+    for idx, entry in enumerate(entries, 1):
+        if on_entry:
+            on_entry(entry, idx, len(entries))
         s = os.path.join(src_dir, entry)
         d = os.path.join(dst_dir, entry)
         if (os.path.isdir(s) and not os.path.islink(s)
@@ -1424,7 +1430,7 @@ def import_mail(backup: "HestiaBackup", mailinfo: Dict, owner, db, report: Impor
             _restore_maildirs_dir(acc_dir, owner.username, domain)
         elif acc_tar and os.path.isfile(acc_tar):
             _restore_maildirs(acc_tar, owner.username, domain,
-                              progress_cb=progress.add)
+                              progress=progress)
     except Exception as e:
         report.fail("mail-data", domain, f"maildir no restaurado: {e}")
 
@@ -1458,7 +1464,7 @@ def _restore_maildirs_dir(src_dir: str, panel_username: str, domain: str) -> Non
 
 
 def _restore_maildirs(acc_tar: str, panel_username: str, domain: str,
-                      progress_cb=None) -> None:
+                      progress=None) -> None:
     """Extrae accounts.tar y MUEVE los maildirs al mail dir del dominio.
 
     Ahorro de disco (correos grandes): el tmp se crea JUNTO al destino (mismo
@@ -1468,6 +1474,7 @@ def _restore_maildirs(acc_tar: str, panel_username: str, domain: str,
     purge_migration_tmp al arrancar.
     """
     import subprocess
+    progress = progress or NullProgress()
     dest = f"/home/{panel_username}/mail/{domain}"
     parent = os.path.dirname(dest)
     try:
@@ -1476,7 +1483,7 @@ def _restore_maildirs(acc_tar: str, panel_username: str, domain: str,
     except OSError:
         tmp = tempfile.mkdtemp(prefix="svq_maildata_", dir=_tmp_dir())
     try:
-        extract_data_archive(acc_tar, tmp, progress_cb)
+        extract_data_archive(acc_tar, tmp, progress.add)
         _remove_quiet(acc_tar)   # ya extraído: liberar su tamaño AHORA
         # El tar suele contener {cuenta}/{cur,new,tmp}. Movemos su contenido.
         src = tmp
@@ -1486,7 +1493,11 @@ def _restore_maildirs(acc_tar: str, panel_username: str, domain: str,
             inner = os.path.join(tmp, entries[0])
             if any(os.path.isdir(os.path.join(inner, e)) for e in os.listdir(inner)):
                 src = inner
-        _move_into(src, dest)
+        # Fase legible por buzón: sin esto, tras contar los bytes extraídos el
+        # porcentaje aparca en 99% "Restaurando…" mientras se colocan los
+        # buzones, sin señal de vida.
+        _move_into(src, dest, on_entry=lambda name, i, n: progress.set_phase(
+            f"Colocando el buzón {name}@{domain} ({i}/{n})…"))
         subprocess.run(["chown", "-R", "vmail:vmail", dest], capture_output=True)
     finally:
         shutil.rmtree(tmp, ignore_errors=True)

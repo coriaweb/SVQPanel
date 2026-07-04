@@ -586,6 +586,14 @@ class _JobProgress:
         self._done += max(0, int(n))
         self._flush()
 
+    @staticmethod
+    def _human(n: int) -> str:
+        if n >= 1024 ** 3:
+            return f"{n / 1024 ** 3:.1f} GB"
+        if n >= 1024 ** 2:
+            return f"{n / 1024 ** 2:.0f} MB"
+        return f"{n / 1024:.0f} KB"
+
     def _flush(self, force: bool = False) -> None:
         now = time.time()
         if not force and now - self._last_flush < 2:
@@ -593,12 +601,19 @@ class _JobProgress:
         self._last_flush = now
         # Tope 99: el 100 lo pone el cierre del job (con el informe ya guardado).
         pct = min(99, int(self._done * 100 / self._total))
+        # Detalle con los datos procesados: la fase sola se queda "muda" en los
+        # tramos largos (extraer/restaurar GB); con los bytes se ve avanzar.
+        detail = self._detail
+        if self._total > 1 and self._done > 0:
+            detail = (f"{self._detail} · "
+                      f"{self._human(min(self._done, self._total))} de "
+                      f"{self._human(self._total)}")
         try:
             from sqlalchemy import text as _text
             self._db.execute(
                 _text("UPDATE migration_jobs SET progress = :p, "
                       "progress_detail = :d WHERE id = :i"),
-                {"p": pct, "d": self._detail, "i": self.job_id})
+                {"p": pct, "d": detail, "i": self.job_id})
             self._db.commit()
         except Exception:
             try:
