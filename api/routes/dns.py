@@ -868,23 +868,40 @@ def apply_ip6_to_spf(spf: str, ipv6) -> str:
     return " ".join(["v=spf1"] + body + [all_mech])
 
 
-def compute_aaaa_changes(existing: list, ipv6) -> dict:
+def compute_aaaa_changes(existing: list, ipv6, own_ipv4s=None) -> dict:
     """Decide qué AAAA crear/actualizar/borrar para reflejar `ipv6`. Función PURA.
 
     `existing`: lista de dicts {"record_type","name","content"} de la zona.
+    `own_ipv4s`: colección de IPv4 del PROPIO servidor/dominio. Solo los A que
+    apuntan a una de ellas reciben AAAA paralelo: un A hacia una IP EXTERNA
+    (sip, facturacion, oficina… típico en zonas importadas) NO debe ganar un
+    AAAA nuestro — ese servicio vive en otra máquina y los clientes dual-stack
+    acabarían conectando aquí por IPv6. None = todos los A (compat).
     Devuelve {"upsert": [(name, ipv6), ...], "delete_names": [name, ...]}:
       - upsert: nombres que deben tener AAAA con ese contenido (A→AAAA paralelo).
-      - delete_names: nombres cuyo AAAA sobra (huérfano, o desactivación de IPv6).
+      - delete_names: nombres cuyo AAAA sobra (huérfano, desactivación de IPv6,
+        o AAAA nuestro colgado de un A externo — artefacto del bug anterior).
     """
     aaaa = {r["name"]: r.get("content") for r in existing if r["record_type"] == "AAAA"}
     if not ipv6:
         # Desactivar: borrar todos los AAAA existentes.
         return {"upsert": [], "delete_names": sorted(aaaa.keys())}
 
-    a_names = sorted({r["name"] for r in existing if r["record_type"] == "A"})
+    a_all = {r["name"]: r.get("content") for r in existing if r["record_type"] == "A"}
+    if own_ipv4s:
+        own = {ip for ip in own_ipv4s if ip}
+        a_names = sorted(n for n, c in a_all.items() if c in own)
+        external = {n for n, c in a_all.items() if c not in own}
+    else:
+        a_names = sorted(a_all.keys())
+        external = set()
     upsert = [(n, ipv6) for n in a_names if aaaa.get(n) != ipv6]
-    # AAAA cuyo name ya no tiene A → huérfano, fuera.
-    delete_names = sorted(n for n in aaaa if n not in a_names)
+    # Fuera: AAAA cuyo name ya no tiene A (huérfano) y AAAA con NUESTRA IPv6
+    # colgado de un nombre cuyo A es externo (paridad rota: v4 allí, v6 aquí).
+    delete_names = sorted(
+        {n for n in aaaa if n not in a_all} |
+        {n for n in external if aaaa.get(n) == ipv6}
+    )
     return {"upsert": upsert, "delete_names": delete_names}
 
 
@@ -910,7 +927,31 @@ def sync_aaaa_records_for_domain(domain_name: str, ipv6, db: Session) -> dict:
         {"record_type": r.record_type, "name": r.name, "content": r.content}
         for r in existing
     ]
-    plan = compute_aaaa_changes(existing_dicts, ipv6)
+    # IPs v4 "propias": la del dominio + la principal del servidor + todas las
+    # registradas en el panel (ServerIP). Solo los A que apuntan a ellas llevan
+    # AAAA paralelo; los A externos (zonas importadas) no se tocan.
+    own_ips = set()
+    try:
+        from api.models.models_domain import Domain as _Domain
+        d = db.query(_Domain).filter(_Domain.domain_name == domain_name).first()
+        if d and d.ipv4:
+            own_ips.add(d.ipv4)
+    except Exception:
+        pass
+    try:
+        ip4 = _get_server_ipv4(db)
+        if ip4:
+            own_ips.add(ip4)
+    except Exception:
+        pass
+    try:
+        from api.models.models_server_ip import ServerIP as _SIP
+        for r in db.query(_SIP).filter(_SIP.is_ipv6 == False).all():  # noqa: E712
+            own_ips.add(r.address)
+    except Exception:
+        pass
+    plan = compute_aaaa_changes(existing_dicts, ipv6,
+                                own_ipv4s=own_ips or None)
     aaaa_by_name = {r.name: r for r in existing if r.record_type == "AAAA"}
     added = removed = 0
 

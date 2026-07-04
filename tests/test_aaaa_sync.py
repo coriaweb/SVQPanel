@@ -116,6 +116,47 @@ def test_apply_ip6_no_toca_si_no_es_spf():
     assert apply_ip6_to_spf("v=DMARC1; p=quarantine", "2001:db8::1") == "v=DMARC1; p=quarantine"
 
 
+def test_a_externo_no_recibe_aaaa():
+    # Zona importada: sip/facturacion apuntan a OTRO servidor (centralita…).
+    # Darles nuestro AAAA rompería el servicio para clientes dual-stack.
+    existing = [
+        _rec("A", "@", "1.2.3.4"),
+        _rec("A", "mail", "1.2.3.4"),
+        _rec("A", "sip", "9.9.9.9"),           # externo
+        _rec("A", "facturacion", "8.8.4.4"),   # externo
+    ]
+    plan = compute_aaaa_changes(existing, "2001:db8::1", own_ipv4s={"1.2.3.4"})
+    names = sorted(n for n, _ in plan["upsert"])
+    assert names == ["@", "mail"], "solo los A que apuntan a IPs propias"
+    assert plan["delete_names"] == []
+
+
+def test_aaaa_erroneo_sobre_a_externo_se_limpia():
+    # Artefacto del bug: un A externo con NUESTRO AAAA colgado → re-sincronizar
+    # debe borrarlo (v4 allí, v6 aquí = paridad rota).
+    existing = [
+        _rec("A", "@", "1.2.3.4"),
+        _rec("A", "sip", "9.9.9.9"),
+        _rec("AAAA", "@", "2001:db8::1"),
+        _rec("AAAA", "sip", "2001:db8::1"),    # mal puesto por el bug
+    ]
+    plan = compute_aaaa_changes(existing, "2001:db8::1", own_ipv4s={"1.2.3.4"})
+    assert plan["delete_names"] == ["sip"]
+    assert plan["upsert"] == []
+
+
+def test_aaaa_ajeno_sobre_a_externo_se_respeta():
+    # Si el AAAA de un nombre externo NO es nuestra IPv6 (el cliente tiene su
+    # propia v6 en la otra máquina), no se toca.
+    existing = [
+        _rec("A", "sip", "9.9.9.9"),
+        _rec("AAAA", "sip", "2001:beef::7"),   # v6 legítima de la otra máquina
+    ]
+    plan = compute_aaaa_changes(existing, "2001:db8::1", own_ipv4s={"1.2.3.4"})
+    assert plan["delete_names"] == []
+    assert plan["upsert"] == []
+
+
 def test_aaaa_huerfano_se_limpia_al_activar():
     # Un AAAA de un nombre que ya no tiene A debe eliminarse
     existing = [
