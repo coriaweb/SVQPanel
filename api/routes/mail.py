@@ -619,11 +619,21 @@ def _activate_webmail(domain_name: str, db: Session) -> dict:
     return result
 
 
-def _deactivate_webmail(domain_name: str, db: Session) -> None:
-    """Quita el vhost webmail + el registro DNS. Tolerante a fallos."""
+def _deactivate_webmail(domain_name: str, db: Session, destroy: bool = False) -> None:
+    """Quita el vhost webmail + el registro DNS. Tolerante a fallos.
+
+    Con destroy=False (desactivar webmail de un dominio que sigue existiendo) el
+    vhost se sustituye por el placeholder 503; con destroy=True (el dominio de
+    correo se borra entero) el vhost se elimina por completo — si quedara, sería
+    un fichero huérfano en sites-available/enabled para siempre.
+    """
     try:
         from scripts.webmail_manager import WebmailManager
-        WebmailManager().remove(domain_name)
+        wm = WebmailManager()
+        if destroy:
+            wm.destroy(domain_name)
+        else:
+            wm.remove(domain_name)
     except PermissionError:
         pass
     except Exception as e:
@@ -716,8 +726,10 @@ async def delete_mail_domain(
     if md.dkim_enabled:
         _dns_remove_dkim_record(domain_name, dkim_selector, db)
 
-    # Quitar el webmail por dominio (vhost + DNS) antes de borrar la zona/datos
-    _deactivate_webmail(domain_name, db)
+    # Quitar el webmail por dominio (vhost + DNS) antes de borrar la zona/datos.
+    # destroy=True: se borra el dominio de correo entero, así que el vhost debe
+    # desaparecer del todo (no dejar el placeholder 503, que quedaría huérfano).
+    _deactivate_webmail(domain_name, db, destroy=True)
 
     # Eliminar de la BD (cascade elimina mailboxes y aliases)
     db.delete(md)

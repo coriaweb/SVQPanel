@@ -1711,6 +1711,24 @@ def run_import(tar_path: str, target_user_id: int, scope: List[str], db,
                     db.rollback()
                     report.fail("dns", zoneinfo["domain"], e)
 
+        # Dominios traídos SOLO como correo y/o DNS (el ámbito web no se importó
+        # o el backup no traía web para ellos) → registrarlos en Dominios como
+        # «solo correo\DNS», igual que si se hubieran creado a mano con esa
+        # opción. Corre DESPUÉS de web: si import_web ya creó el Domain, el
+        # helper lo detecta y no hace nada.
+        if ("mail" in scope) or ("dns" in scope):
+            names: List[str] = []
+            if "mail" in scope:
+                names += [m["domain"] for m in manifest.get("mail", [])]
+            if "dns" in scope:
+                names += [z["domain"] for z in manifest.get("dns", [])]
+            for name in dict.fromkeys(names):   # únicos, en orden
+                try:
+                    _ensure_mail_dns_only_domain(name, owner, db, report, server_ipv4)
+                except Exception as e:
+                    db.rollback()
+                    report.fail("domain", name, f"registro solo correo\\DNS: {e}")
+
         if "cron" in scope:
             for job in manifest.get("cron", []):
                 try:
@@ -1735,6 +1753,46 @@ def run_import(tar_path: str, target_user_id: int, scope: List[str], db,
                     report.fail("dns", web["domain"], f"zona por defecto: {e}")
 
     return report.to_dict()
+
+
+def _ensure_mail_dns_only_domain(domain: str, owner, db, report: ImportReport,
+                                 server_ipv4: Optional[str] = None) -> None:
+    """Registra el dominio como «solo correo/DNS» si no existe ya en Dominios.
+
+    Un dominio importado sin el ámbito web (solo correo y/o DNS) no crea vhost,
+    pool PHP ni directorios, pero debe aparecer en la lista de Dominios del
+    panel igual que uno creado a mano marcando «solo correo/DNS» — con
+    mail_dns_only=True y public_html vacío. Idempotente: si el Domain ya existe
+    (importado como web en esta pasada, o previo), no toca nada. Enlaza además
+    el MailDomain importado (domain_id) con el Domain creado.
+    """
+    from api.models.models_domain import Domain
+
+    if db.query(Domain).filter(Domain.domain_name == domain).first():
+        return  # ya existe (con web o sin ella): no pisar
+
+    db_domain = Domain(
+        user_id=owner.id,
+        domain_name=domain,
+        public_html="",          # sin web (misma convención que el alta manual)
+        ipv4=server_ipv4,
+        mail_dns_only=True,
+    )
+    db.add(db_domain)
+    db.commit()
+    db.refresh(db_domain)
+
+    # Colgar el dominio de correo (si se importó) de este Domain.
+    try:
+        from api.models.models_mail import MailDomain
+        md = db.query(MailDomain).filter(MailDomain.domain_name == domain).first()
+        if md and not md.domain_id:
+            md.domain_id = db_domain.id
+            db.commit()
+    except Exception:
+        db.rollback()
+
+    report.ok("domain", domain, "registrado como solo correo\\DNS (sin web)")
 
 
 def _ensure_default_zone(domain: str, owner, db, report, server_ipv4, server_ipv6):
