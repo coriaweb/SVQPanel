@@ -13,7 +13,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from api.models.database import create_tables, get_db
 from config.config import PANEL_NAME, PANEL_VERSION
 
-from api.routes import users, domains, php, ssl, ipv6, auth, settings, dns, system, mail, databases, firewall, fail2ban, security_monitor, ip_lists, file_manager, crowdsec, plans, sftp, crons, server_ips, backups, templates, notifications, dns_cluster, git, git_webhook, monitoring, db_tuner, migrations, migration_sources, terminal, license, api_tokens, mail_queue, process_manager, outbound_mail, antispam
+from api.routes import users, domains, php, ssl, ipv6, auth, settings, dns, system, mail, databases, firewall, fail2ban, security_monitor, ip_lists, file_manager, crowdsec, plans, sftp, crons, server_ips, backups, templates, notifications, dns_cluster, git, git_webhook, monitoring, db_tuner, migrations, migration_sources, terminal, license, api_tokens, mail_queue, process_manager, outbound_mail, antispam, branding
 
 # ── Descripción de la API (se muestra en /docs y /redoc) ──────────────────────
 API_DESCRIPTION = f"""
@@ -939,6 +939,16 @@ def _run_migrations():
         "CREATE INDEX IF NOT EXISTS ix_domains_staging_of_domain_id ON domains(staging_of_domain_id)",
         # Actualizaciones automáticas seguras de WordPress (checkpoint + rollback)
         "ALTER TABLE domains ADD COLUMN IF NOT EXISTS wp_auto_update BOOLEAN NOT NULL DEFAULT FALSE",
+        # Marca blanca (branding): NULL/False en todo = marca SVQPanel por defecto
+        "ALTER TABLE settings ADD COLUMN IF NOT EXISTS brand_name VARCHAR(64)",
+        "ALTER TABLE settings ADD COLUMN IF NOT EXISTS brand_accent_color VARCHAR(9)",
+        "ALTER TABLE settings ADD COLUMN IF NOT EXISTS brand_logo TEXT",
+        "ALTER TABLE settings ADD COLUMN IF NOT EXISTS brand_logo_mime VARCHAR(64)",
+        "ALTER TABLE settings ADD COLUMN IF NOT EXISTS brand_favicon TEXT",
+        "ALTER TABLE settings ADD COLUMN IF NOT EXISTS brand_favicon_mime VARCHAR(64)",
+        "ALTER TABLE settings ADD COLUMN IF NOT EXISTS brand_support_url VARCHAR(255)",
+        "ALTER TABLE settings ADD COLUMN IF NOT EXISTS brand_support_email VARCHAR(255)",
+        "ALTER TABLE settings ADD COLUMN IF NOT EXISTS brand_hide_powered_by BOOLEAN NOT NULL DEFAULT FALSE",
     ]
     with engine.connect() as conn:
         for sql in migrations:
@@ -1055,6 +1065,7 @@ app.include_router(mail_queue.router,        prefix="/api", tags=["Mail Queue"])
 app.include_router(process_manager.router,   prefix="/api", tags=["Processes"])
 app.include_router(outbound_mail.router,      prefix="/api", tags=["Outbound Mail"])
 app.include_router(antispam.router,           prefix="/api", tags=["Antispam"])
+app.include_router(branding.router,           prefix="/api", tags=["Branding"])
 # Autoconfig/Autodiscover sin prefijo (clientes de correo los buscan en rutas raíz)
 app.include_router(mail.router, prefix="", include_in_schema=False)
 # Webhook de despliegue Git sin prefijo (GitHub/GitLab llaman a /git/webhook/{token})

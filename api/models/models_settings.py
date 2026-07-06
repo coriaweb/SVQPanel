@@ -122,6 +122,20 @@ class Settings(Base):
     # Lo gestiona scripts/rspamd_tuning.py; persiste para regenerar en install/update.
     rspamd_overrides = Column(Text, nullable=True)
 
+    # ── Marca blanca (branding) ────────────────────────────────────────────
+    # NULL/False en todo = marca SVQPanel por defecto. Logo y favicon van en
+    # base64 dentro de la BD (son pequeños y así viajan solos en el backup del
+    # panel, sin ficheros sueltos que sincronizar).
+    brand_name            = Column(String(64),  nullable=True)  # nombre visible del panel
+    brand_accent_color    = Column(String(9),   nullable=True)  # #rrggbb; sustituye al naranja SVQ
+    brand_logo            = Column(Text,        nullable=True)  # imagen base64 (sidebar + login)
+    brand_logo_mime       = Column(String(64),  nullable=True)
+    brand_favicon         = Column(Text,        nullable=True)
+    brand_favicon_mime    = Column(String(64),  nullable=True)
+    brand_support_url     = Column(String(255), nullable=True)  # portal de soporte del reseller
+    brand_support_email   = Column(String(255), nullable=True)
+    brand_hide_powered_by = Column(Boolean, default=False, nullable=False)
+
     # Timestamps
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 

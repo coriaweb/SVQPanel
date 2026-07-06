@@ -75,8 +75,18 @@ def _smtp_config(settings):
         "username": (settings.panel_smtp_username or "").strip(),
         "password": decrypt_password(settings.panel_smtp_password or ""),
         "from_email": from_email,
-        "from_name": (settings.panel_smtp_from_name or "SVQPanel").strip(),
+        "from_name": _effective_from_name(settings),
     }
+
+
+def _effective_from_name(settings) -> str:
+    """Nombre del remitente. Si hay marca blanca y el admin dejó el from_name
+    por defecto ('SVQPanel' o vacío), los correos salen con la marca del cliente."""
+    from_name = (settings.panel_smtp_from_name or "").strip()
+    brand = (getattr(settings, "brand_name", None) or "").strip()
+    if brand and from_name in ("", "SVQPanel"):
+        return brand
+    return from_name or "SVQPanel"
 
 
 def _send(cfg, to_email, subject, body_text, body_html=None):
@@ -131,17 +141,19 @@ def send_test_email(settings, to):
     contraseña que el usuario acaba de introducir o la guardada).
     """
     cfg = _smtp_config(settings)
-    subject = "Correo de prueba — SVQPanel"
+    panel = cfg["from_name"]
+    accent = (getattr(settings, "brand_accent_color", None) or "").strip() or "#f08a2a"
+    subject = f"Correo de prueba — {panel}"
     body = (
         "¡Funciona!\n\n"
-        "Este es un correo de prueba enviado por SVQPanel a través del SMTP "
+        f"Este es un correo de prueba enviado por {panel} a través del SMTP "
         f"configurado ({cfg['host']}:{cfg['port']}).\n\n"
         "Si lo recibes, los avisos del panel se entregarán correctamente desde "
         f"{cfg['from_email']}.\n"
     )
     html = f"""<div style="font-family:sans-serif;max-width:520px">
-      <h2 style="color:#f08a2a">¡Funciona! ✅</h2>
-      <p>Este es un correo de prueba enviado por <strong>SVQPanel</strong> a través del SMTP
+      <h2 style="color:{accent}">¡Funciona! ✅</h2>
+      <p>Este es un correo de prueba enviado por <strong>{panel}</strong> a través del SMTP
       configurado (<code>{cfg['host']}:{cfg['port']}</code>).</p>
       <p>Los avisos del panel se entregarán desde <strong>{cfg['from_email']}</strong>.</p>
     </div>"""

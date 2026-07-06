@@ -19,12 +19,121 @@
         {key:'archivos',icon:'file-arrow-up', label:'Archivos'},
         {key:'email',   icon:'envelope-at', label:'Email'},
         {key:'sistema', icon:'sliders', label:'SSL y Sistema'},
+        {key:'marca',   icon:'palette', label:'Marca blanca'},
       ]" :key="t.key" class="set-tab" :class="{'set-tab--active': tab===t.key}" @click="tab=t.key">
         <i :class="'bi bi-'+t.icon"></i> {{ t.label }}
       </button>
     </div>
 
     <div v-if="!loading" class="sv-grid">
+
+      <!-- ══ MARCA BLANCA ══ -->
+      <div class="sv-full" v-show="tab==='marca'">
+        <div class="card">
+          <div class="card-header">
+            <i class="bi bi-palette me-2"></i> Marca blanca
+          </div>
+          <div class="card-body">
+            <p class="text-muted small mb-4">
+              Personaliza el panel con tu propia marca: nombre, logotipo, color e información
+              de soporte. Se aplica a la interfaz, la pantalla de login, la pestaña del
+              navegador y los correos que envía el panel. Deja un campo vacío para usar el
+              valor por defecto de SVQPanel.
+            </p>
+
+            <div class="row g-4">
+              <div class="sv-half">
+                <label class="form-label fw-semibold">Nombre del panel</label>
+                <input v-model="brand.name" type="text" class="form-control"
+                       maxlength="64" placeholder="SVQPanel" />
+                <div class="form-text">Sustituye a «SVQPanel» en el menú, el login y los correos.</div>
+
+                <div class="mt-3">
+                  <div class="form-check form-switch">
+                    <input id="brand_use_color" v-model="brand.useColor"
+                           class="form-check-input" type="checkbox" role="switch" />
+                    <label for="brand_use_color" class="form-check-label fw-semibold">
+                      Color de acento personalizado
+                    </label>
+                  </div>
+                  <div class="d-flex align-items-center gap-2 mt-2" :class="{ 'opacity-50': !brand.useColor }">
+                    <input v-model="brand.accent_color" type="color"
+                           class="form-control form-control-color" :disabled="!brand.useColor" />
+                    <input v-model="brand.accent_color" type="text"
+                           class="form-control font-monospace" style="max-width:120px"
+                           placeholder="#f08a2a" :disabled="!brand.useColor" />
+                  </div>
+                  <div class="form-text">Sustituye al naranja SVQ en botones, enlaces y acentos.</div>
+                </div>
+
+                <div class="mt-3">
+                  <label class="form-label fw-semibold">URL de soporte <span class="text-muted small">(opcional)</span></label>
+                  <input v-model="brand.support_url" type="url" class="form-control"
+                         placeholder="https://soporte.tuempresa.com" />
+                </div>
+                <div class="mt-3">
+                  <label class="form-label fw-semibold">Email de soporte <span class="text-muted small">(opcional)</span></label>
+                  <input v-model="brand.support_email" type="email" class="form-control"
+                         placeholder="soporte@tuempresa.com" />
+                  <div class="form-text">Ambos se muestran al pie de la pantalla de login.</div>
+                </div>
+
+                <div class="form-check form-switch mt-3">
+                  <input id="brand_hide_pb" v-model="brand.hide_powered_by"
+                         class="form-check-input" type="checkbox" role="switch" />
+                  <label for="brand_hide_pb" class="form-check-label">
+                    Ocultar «powered by SVQPanel» en el login
+                  </label>
+                </div>
+              </div>
+
+              <div class="sv-half">
+                <label class="form-label fw-semibold">Logotipo</label>
+                <div class="brand-drop mb-2">
+                  <img v-if="brandLogoPreview" :src="brandLogoPreview" alt="Logo" class="brand-drop__img" />
+                  <span v-else class="text-muted small">Sin logo — se muestra el nombre en texto</span>
+                </div>
+                <div class="d-flex gap-2">
+                  <input type="file" class="form-control" accept="image/png,image/jpeg,image/webp,image/svg+xml,image/gif"
+                         @change="onBrandFile($event, 'logo')" />
+                  <button v-if="brandLogoPreview" class="btn btn-outline-danger flex-shrink-0"
+                          @click="removeBrandImage('logo')" title="Quitar logo">
+                    <i class="bi bi-trash"></i>
+                  </button>
+                </div>
+                <div class="form-text">PNG, JPG, WebP o SVG · máx. 512 KB. Ideal: fondo transparente, ~4:1.</div>
+
+                <label class="form-label fw-semibold mt-4">Favicon</label>
+                <div class="d-flex align-items-center gap-3 mb-2">
+                  <div class="brand-favicon-box">
+                    <img v-if="brandFaviconPreview" :src="brandFaviconPreview" alt="Favicon" />
+                    <i v-else class="bi bi-globe text-muted"></i>
+                  </div>
+                  <div class="flex-grow-1 d-flex gap-2">
+                    <input type="file" class="form-control" accept="image/png,image/x-icon,image/vnd.microsoft.icon,image/svg+xml"
+                           @change="onBrandFile($event, 'favicon')" />
+                    <button v-if="brandFaviconPreview" class="btn btn-outline-danger flex-shrink-0"
+                            @click="removeBrandImage('favicon')" title="Quitar favicon">
+                      <i class="bi bi-trash"></i>
+                    </button>
+                  </div>
+                </div>
+                <div class="form-text">PNG, ICO o SVG cuadrado (32×32 o 64×64) · máx. 512 KB.</div>
+              </div>
+            </div>
+
+            <div class="d-flex align-items-center gap-2 mt-4 pt-3 border-top">
+              <button class="btn btn-primary" @click="saveBrand" :disabled="brandSaving">
+                <span v-if="brandSaving" class="spinner-border spinner-border-sm me-1"></span>
+                Guardar marca
+              </button>
+              <button class="btn btn-outline-secondary" @click="resetBrand" :disabled="brandSaving">
+                <i class="bi bi-arrow-counterclockwise me-1"></i> Restaurar marca SVQPanel
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
 
       <!-- ══ RED ══ -->
       <!-- IPv6 - ancho completo -->
@@ -1125,6 +1234,113 @@ export default {
     const tab = ref('red')
     const pwdTest = ref('')
 
+    // ─── Marca blanca ───
+    const brand = reactive({
+      name: '', useColor: false, accent_color: '#f08a2a',
+      support_url: '', support_email: '', hide_powered_by: false,
+      has_logo: false, has_favicon: false, version: '0',
+      // imágenes recién elegidas (aún sin guardar) o marcadas para borrar
+      logo_base64: null, logo_mime: null, logo_preview: null, remove_logo: false,
+      favicon_base64: null, favicon_mime: null, favicon_preview: null, remove_favicon: false,
+    })
+    const brandSaving = ref(false)
+
+    const brandLogoPreview = computed(() => {
+      if (brand.logo_preview) return brand.logo_preview
+      if (brand.has_logo && !brand.remove_logo)
+        return `/api/branding/logo?v=${encodeURIComponent(brand.version)}`
+      return null
+    })
+    const brandFaviconPreview = computed(() => {
+      if (brand.favicon_preview) return brand.favicon_preview
+      if (brand.has_favicon && !brand.remove_favicon)
+        return `/api/branding/favicon?v=${encodeURIComponent(brand.version)}`
+      return null
+    })
+
+    const loadBrand = async () => {
+      try {
+        const r = await api.get('/api/branding')
+        brand.name = (r.is_custom && r.panel_name !== 'SVQPanel') ? r.panel_name : ''
+        brand.useColor = !!r.accent_color
+        brand.accent_color = r.accent_color || '#f08a2a'
+        brand.support_url = r.support_url || ''
+        brand.support_email = r.support_email || ''
+        brand.hide_powered_by = !!r.hide_powered_by
+        brand.has_logo = !!r.has_logo
+        brand.has_favicon = !!r.has_favicon
+        brand.version = r.version || '0'
+        brand.logo_base64 = null; brand.logo_preview = null; brand.remove_logo = false
+        brand.favicon_base64 = null; brand.favicon_preview = null; brand.remove_favicon = false
+      } catch { /* silencioso */ }
+    }
+
+    const onBrandFile = (event, kind) => {
+      const file = event.target.files?.[0]
+      if (!file) return
+      if (file.size > 512 * 1024) {
+        store.showNotification('La imagen supera el máximo de 512 KB', 'danger')
+        event.target.value = ''
+        return
+      }
+      const reader = new FileReader()
+      reader.onload = () => {
+        // reader.result es una data-URL: data:image/png;base64,....
+        brand[`${kind}_base64`] = String(reader.result)
+        brand[`${kind}_mime`] = file.type
+        brand[`${kind}_preview`] = String(reader.result)
+        brand[`remove_${kind}`] = false
+      }
+      reader.readAsDataURL(file)
+    }
+
+    const removeBrandImage = (kind) => {
+      brand[`${kind}_base64`] = null
+      brand[`${kind}_mime`] = null
+      brand[`${kind}_preview`] = null
+      brand[`remove_${kind}`] = true
+    }
+
+    const saveBrand = async () => {
+      brandSaving.value = true
+      try {
+        const payload = {
+          name: brand.name.trim(),
+          accent_color: brand.useColor ? brand.accent_color.trim() : '',
+          support_url: brand.support_url.trim(),
+          support_email: brand.support_email.trim(),
+          hide_powered_by: brand.hide_powered_by,
+        }
+        if (brand.remove_logo) { payload.logo_base64 = '' }
+        else if (brand.logo_base64) { payload.logo_base64 = brand.logo_base64; payload.logo_mime = brand.logo_mime }
+        if (brand.remove_favicon) { payload.favicon_base64 = '' }
+        else if (brand.favicon_base64) { payload.favicon_base64 = brand.favicon_base64; payload.favicon_mime = brand.favicon_mime }
+
+        await api.put('/api/branding', payload)
+        await loadBrand()
+        await store.loadBranding()   // aplicar en vivo (sidebar, título, color…)
+        store.showNotification('Marca guardada y aplicada', 'success')
+      } catch (e) {
+        store.showNotification('Error: ' + (e.message || e), 'danger')
+      } finally {
+        brandSaving.value = false
+      }
+    }
+
+    const resetBrand = async () => {
+      brandSaving.value = true
+      try {
+        await api.put('/api/branding', { reset: true })
+        await loadBrand()
+        await store.loadBranding()
+        store.showNotification('Marca SVQPanel restaurada', 'success')
+      } catch (e) {
+        store.showNotification('Error: ' + (e.message || e), 'danger')
+      } finally {
+        brandSaving.value = false
+      }
+    }
+
     // ─── SMTP del panel ───
     const smtp = reactive({
       enabled: false, host: '', port: 587, security: 'starttls',
@@ -1783,6 +1999,7 @@ export default {
       loadMsgSize()
       loadWhitelist()
       loadPanelBackups()
+      loadBrand()
     })
 
     return {
@@ -1810,6 +2027,8 @@ export default {
       filteredTimezones, saveTimezone,
       relay, relaySaving, saveRelay,
       assigningPanelIpv6, panelIpv6Msg, panelIpv6Ok, assignPanelIpv6,
+      brand, brandSaving, brandLogoPreview, brandFaviconPreview,
+      onBrandFile, removeBrandImage, saveBrand, resetBrand,
     }
   }
 }
@@ -1817,6 +2036,26 @@ export default {
 
 <style scoped>
 .sv-view { display: flex; flex-direction: column; gap: 20px; }
+
+/* Marca blanca */
+.brand-drop {
+  min-height: 84px;
+  display: flex; align-items: center; justify-content: center;
+  border: 1px dashed var(--border-strong);
+  border-radius: var(--r-lg, 8px);
+  background: var(--surface-inset);
+  padding: 12px;
+}
+.brand-drop__img { max-height: 60px; max-width: 100%; object-fit: contain; }
+.brand-favicon-box {
+  width: 44px; height: 44px; flex-shrink: 0;
+  display: grid; place-items: center;
+  border: 1px dashed var(--border-strong);
+  border-radius: var(--r-md, 6px);
+  background: var(--surface-inset);
+  font-size: 18px;
+}
+.brand-favicon-box img { width: 32px; height: 32px; object-fit: contain; }
 .sv-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; flex-wrap: wrap; }
 .sv-title { margin: 0 0 4px; font-size: 1.5rem; font-weight: 700; letter-spacing: -.01em; display:flex; align-items:center; gap:.5rem; }
 .sv-title .bi { color: var(--svq-orange); }

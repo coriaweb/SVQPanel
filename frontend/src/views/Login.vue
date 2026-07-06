@@ -9,7 +9,11 @@
         <!-- Cabecera: logo + título -->
         <div class="login-header">
           <div class="login-logo">
-            <span class="login-logo__svq">SVQ</span><span class="login-logo__panel">Panel</span>
+            <img v-if="branding?.has_logo" class="login-logo__img" :src="brandLogoUrl" :alt="brandName" />
+            <span v-else-if="branding" class="login-logo__custom">{{ brandName }}</span>
+            <template v-else>
+              <span class="login-logo__svq">SVQ</span><span class="login-logo__panel">Panel</span>
+            </template>
           </div>
           <h1 class="login-title">Bienvenido</h1>
           <p class="login-subtitle">Panel de control de servidores</p>
@@ -108,7 +112,11 @@
 
         <!-- Footer -->
         <div class="login-footer">
-          <p>SVQPanel © 2026</p>
+          <p>{{ footerText }}</p>
+          <p v-if="branding?.support_url || branding?.support_email" class="login-footer__support">
+            <a v-if="branding.support_url" :href="branding.support_url" target="_blank" rel="noopener">Soporte</a>
+            <a v-if="branding.support_email" :href="'mailto:' + branding.support_email">{{ branding.support_email }}</a>
+          </p>
         </div>
       </div>
 
@@ -119,7 +127,7 @@
 </template>
 
 <script>
-import { ref, nextTick } from 'vue'
+import { ref, computed, nextTick } from 'vue'
 import { useRouter } from 'vue-router'
 import { useMainStore } from '../stores/useMainStore'
 import api from '../services/api'
@@ -136,6 +144,18 @@ export default {
     const tempToken     = ref(null)
     const totpCode      = ref('')
     const totpInput     = ref(null)
+
+    // ── Marca blanca ──
+    const branding = computed(() => store.branding)
+    const brandName = computed(() => branding.value?.panel_name || 'SVQPanel')
+    const brandLogoUrl = computed(() =>
+      `/api/branding/logo?v=${encodeURIComponent(branding.value?.version || '0')}`)
+    const footerText = computed(() => {
+      const year = new Date().getFullYear()
+      if (!branding.value) return `SVQPanel © ${year}`
+      const base = `${brandName.value} © ${year}`
+      return branding.value.hide_powered_by ? base : `${base} · powered by SVQPanel`
+    })
 
     const _storeSession = (response) => {
       localStorage.setItem('token', response.access_token)
@@ -216,6 +236,10 @@ export default {
       handleLogin,
       handleVerify2FA,
       cancelTwoFA,
+      branding,
+      brandName,
+      brandLogoUrl,
+      footerText,
     }
   }
 }
@@ -281,6 +305,34 @@ export default {
 
 .login-logo__panel {
   color: var(--svq-orange);
+}
+
+/* Marca blanca */
+.login-logo__img {
+  max-height: 56px;
+  max-width: 260px;
+  object-fit: contain;
+}
+
+.login-logo__custom {
+  color: var(--text);
+}
+
+.login-footer__support {
+  margin-top: 6px !important;
+  display: flex;
+  justify-content: center;
+  gap: 14px;
+}
+
+.login-footer__support a {
+  color: var(--ac-link);
+  text-decoration: none;
+  font-size: 12px;
+}
+
+.login-footer__support a:hover {
+  text-decoration: underline;
 }
 
 .login-title {

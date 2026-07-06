@@ -3,9 +3,15 @@
     <!-- ===== Sidebar SVQ ===== -->
     <aside class="sb" :class="{ 'sb--collapsed': sidebarCollapsed, 'sb--mobile-open': mobileMenuOpen }">
 
-      <!-- Wordmark -->
+      <!-- Wordmark / marca blanca -->
       <div class="sb-brand">
-        <span class="sb-brand__wordmark">
+        <img v-if="store.branding?.has_logo && !sidebarCollapsed"
+          class="sb-brand__logo" :src="brandLogoUrl" :alt="brandName" />
+        <span v-else-if="store.branding" class="sb-brand__wordmark sb-brand__wordmark--custom"
+          :title="brandName">
+          {{ sidebarCollapsed ? brandName.charAt(0) : brandName }}
+        </span>
+        <span v-else class="sb-brand__wordmark">
           SVQ<span class="sb-brand__accent">{{ sidebarCollapsed ? '' : 'Panel' }}</span>
         </span>
         <button class="sb-brand__toggle" @click="store.toggleSidebar()"
@@ -383,8 +389,13 @@ export default {
       const match = allItems
         .filter((it) => isActive(it.to))
         .sort((a, b) => b.to.length - a.to.length)[0]
-      return match || { label: 'Panel', group: 'SVQPanel' }
+      return match || { label: 'Panel', group: brandName.value }
     })
+
+    // ── Marca blanca ──
+    const brandName = computed(() => store.branding?.panel_name || 'SVQPanel')
+    const brandLogoUrl = computed(() =>
+      `/api/branding/logo?v=${encodeURIComponent(store.branding?.version || '0')}`)
 
     const userInitials = computed(() => (currentUser.value?.username || '?').slice(0, 2).toUpperCase())
 
@@ -439,6 +450,7 @@ export default {
       sidebarCollapsed, mobileMenuOpen, navigate, dropdownOpen, visibleGroups, isActive, currentBreadcrumb,
       isGroupCollapsed, toggleGroup,
       userInitials, toastIcon, logout, openPalette, serverHostname,
+      brandName, brandLogoUrl,
       serverLoad, cpuCount, loadLevel,
       showBetaBanner, dismissBeta, licenseBad,
     }
@@ -545,6 +557,14 @@ export default {
   color: #fff; white-space: nowrap;
 }
 .sb-brand__accent { color: var(--svq-orange); }
+/* Marca blanca: logo del cliente o su nombre en texto plano */
+.sb-brand__logo {
+  max-height: 38px; max-width: 170px; object-fit: contain; display: block;
+}
+.sb-brand__wordmark--custom {
+  overflow: hidden; text-overflow: ellipsis; max-width: 180px;
+  font-size: 17px;
+}
 .sb-brand__toggle {
   width: 28px; height: 28px; border: none; background: transparent;
   color: var(--sb-muted); border-radius: 4px; cursor: pointer;

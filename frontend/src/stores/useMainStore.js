@@ -12,6 +12,7 @@ export const useMainStore = defineStore('main', () => {
   const theme = ref(localStorage.getItem('theme') || 'light')
   const sidebarCollapsed = ref(localStorage.getItem('sidebarCollapsed') === '1')
   const mobileMenuOpen = ref(false)
+  const branding = ref(null)   // marca blanca (null = marca SVQPanel por defecto)
 
   const applyTheme = (value) => {
     theme.value = value
@@ -35,6 +36,66 @@ export const useMainStore = defineStore('main', () => {
   }
 
   const closeMobileMenu = () => { mobileMenuOpen.value = false }
+
+  // ── Marca blanca ──────────────────────────────────────────────────────
+  // Mezcla dos colores hex (t=0 → a, t=1 → b) para derivar tonos del acento
+  const _mixHex = (a, b, t) => {
+    const pa = a.match(/\w\w/g).map(x => parseInt(x, 16))
+    const pb = b.match(/\w\w/g).map(x => parseInt(x, 16))
+    return '#' + pa.map((v, i) =>
+      Math.round(v + (pb[i] - v) * t).toString(16).padStart(2, '0')).join('')
+  }
+  const _rgba = (hex, alpha) => {
+    const [r, g, b] = hex.match(/\w\w/g).map(x => parseInt(x, 16))
+    return `rgba(${r},${g},${b},${alpha})`
+  }
+
+  const applyBranding = (b) => {
+    branding.value = b && b.is_custom ? b : null
+    const root = document.documentElement
+    const accentVars = ['--svq-orange', '--ac', '--ac-soft', '--ac-link',
+      '--color-primary', '--color-primary-hover', '--shadow-focus',
+      '--brand-50', '--brand-400']
+
+    if (branding.value?.accent_color) {
+      const c = branding.value.accent_color
+      root.style.setProperty('--svq-orange', c)
+      root.style.setProperty('--ac', c)
+      root.style.setProperty('--ac-soft', _rgba(c, 0.13))
+      root.style.setProperty('--ac-link', _mixHex(c, '#000000', 0.18))
+      root.style.setProperty('--color-primary', c)
+      root.style.setProperty('--color-primary-hover', _mixHex(c, '#000000', 0.12))
+      root.style.setProperty('--shadow-focus', `0 0 0 3px ${_rgba(c, 0.28)}`)
+      root.style.setProperty('--brand-50', _mixHex(c, '#ffffff', 0.9))
+      root.style.setProperty('--brand-400', _mixHex(c, '#ffffff', 0.25))
+    } else {
+      accentVars.forEach(v => root.style.removeProperty(v))
+    }
+
+    // Título de la pestaña
+    document.title = branding.value
+      ? branding.value.panel_name
+      : 'SVQPanel - Web Server Control Panel'
+
+    // Favicon personalizado (se quita si se restaura la marca por defecto)
+    const existing = document.querySelector('link[rel="icon"][data-brand]')
+    if (branding.value?.has_favicon) {
+      const link = existing || document.createElement('link')
+      link.rel = 'icon'
+      link.dataset.brand = '1'
+      link.href = `/api/branding/favicon?v=${encodeURIComponent(branding.value.version || '0')}`
+      if (!existing) document.head.appendChild(link)
+    } else if (existing) {
+      existing.remove()
+    }
+  }
+
+  const loadBranding = async () => {
+    try {
+      const r = await fetch('/api/branding')
+      if (r.ok) applyBranding(await r.json())
+    } catch { /* sin respuesta: se queda la marca por defecto */ }
+  }
 
   let notifTimer = null
   // Duración del toast. Los errores duran mucho más (hay que poder leerlos y
@@ -105,6 +166,9 @@ export const useMainStore = defineStore('main', () => {
     theme,
     sidebarCollapsed,
     mobileMenuOpen,
+    branding,
+    applyBranding,
+    loadBranding,
     applyTheme,
     toggleTheme,
     toggleSidebar,

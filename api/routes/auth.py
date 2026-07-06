@@ -265,9 +265,10 @@ async def setup_2fa(
     user.totp_enabled = False
     db.commit()
 
-    # Recuperar info del panel para el issuer
-    panel_name  = os.getenv("PANEL_NAME", "SVQPanel")
-    issuer      = panel_name
+    # Recuperar info del panel para el issuer (con marca blanca si la hay)
+    from api.routes.branding import get_brand_name
+    from api.routes.settings import get_or_create_settings
+    issuer = get_brand_name(get_or_create_settings(db))
     account     = user.username
 
     # URI estándar otpauth://
