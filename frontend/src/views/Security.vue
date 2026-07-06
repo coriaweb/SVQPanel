@@ -76,6 +76,94 @@
       <div class="sec-counter"><div class="sec-counter-val">{{ f2bStatus?.jails?.length || 0 }}</div><div class="sec-counter-lbl">Jails fail2ban</div></div>
     </div>
 
+    <!-- Comprobador de IP bloqueada -->
+    <div class="sec-card">
+      <div class="sec-card-head">
+        <span class="sec-card-title"><i class="bi bi-search"></i> ¿Está bloqueada esta IP?</span>
+      </div>
+      <div class="sec-card-body">
+        <p class="sec-hint">
+          Consulta de una vez <strong>fail2ban</strong>, <strong>CrowdSec</strong> (bans activos, lista blanca e historial)
+          y el <strong>firewall real</strong> (nftables, incluida la blocklist comunitaria). Para cuando un cliente
+          dice que "el servidor le bloquea".
+        </p>
+        <form @submit.prevent="checkIp" style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
+          <input v-model="ipQuery" type="text" class="form-control"
+                 placeholder="p. ej. 203.0.113.7"
+                 style="max-width:260px;font-family:var(--font-mono)" />
+          <button type="submit" class="sec-btn sec-btn--success sec-btn--sm" :disabled="ipChecking || !ipQuery.trim()">
+            <span v-if="ipChecking" class="spinner-border spinner-border-sm"></span>
+            <i v-else class="bi bi-search"></i> Comprobar
+          </button>
+        </form>
+        <div v-if="ipCheckError" class="sec-hint" style="color:var(--danger);margin-top:.6rem">
+          <i class="bi bi-exclamation-triangle"></i> {{ ipCheckError }}
+        </div>
+
+        <div v-if="ipResult" style="margin-top:.9rem;display:flex;flex-direction:column;gap:.75rem">
+          <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+            <span class="sec-badge" :class="ipResult.blocked ? 'sec-badge--danger' : 'sec-badge--on'" style="font-size:.88rem">
+              <i class="bi" :class="ipResult.blocked ? 'bi-slash-circle' : 'bi-check-circle'"></i>
+              {{ ipResult.ip }} — {{ ipResult.blocked ? 'BLOQUEADA ahora mismo' : 'sin bloqueos activos' }}
+            </span>
+            <span v-if="ipResult.crowdsec.allowlisted" class="sec-badge sec-badge--blue"
+                  :title="ipResult.crowdsec.allowlisted">en allowlist de CrowdSec</span>
+            <span v-if="ipResult.whitelists.fail2ban_ignoreip" class="sec-badge sec-badge--blue">en ignoreip de fail2ban</span>
+          </div>
+
+          <div class="sec-table-wrap">
+            <table class="sec-table">
+              <thead><tr><th>Capa</th><th>Estado</th><th>Detalle</th></tr></thead>
+              <tbody>
+                <tr>
+                  <td>fail2ban</td>
+                  <td><span class="sec-badge" :class="ipResult.fail2ban.jails.length ? 'sec-badge--danger' : 'sec-badge--off'">
+                    {{ ipResult.fail2ban.jails.length ? 'baneada' : (ipResult.fail2ban.running ? 'limpia' : 'parado') }}</span></td>
+                  <td style="font-family:var(--font-mono);font-size:.8rem">{{ ipResult.fail2ban.jails.join(', ') || '—' }}</td>
+                </tr>
+                <tr>
+                  <td>CrowdSec</td>
+                  <td><span class="sec-badge" :class="ipResult.crowdsec.decisions.length ? 'sec-badge--danger' : 'sec-badge--off'">
+                    {{ ipResult.crowdsec.decisions.length ? 'baneada' : (ipResult.crowdsec.running ? 'limpia' : 'parado') }}</span></td>
+                  <td style="font-size:.8rem">
+                    <div v-for="d in ipResult.crowdsec.decisions" :key="d.id" style="font-family:var(--font-mono)">
+                      {{ d.scenario }} · {{ d.origin }} · expira en {{ d.duration }}
+                    </div>
+                    <span v-if="!ipResult.crowdsec.decisions.length">—</span>
+                  </td>
+                </tr>
+                <tr>
+                  <td>nftables (firewall real)</td>
+                  <td><span class="sec-badge" :class="ipResult.nftables.blocking_sets.length ? 'sec-badge--danger' : 'sec-badge--off'">
+                    {{ ipResult.nftables.blocking_sets.length ? 'en set de bloqueo' : 'limpia' }}</span></td>
+                  <td style="font-family:var(--font-mono);font-size:.8rem">{{ ipResult.nftables.blocking_sets.join(', ') || '—' }}</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+
+          <div v-if="ipResult.history.length">
+            <div style="font-weight:600;font-size:.85rem;margin-bottom:.35rem">
+              <i class="bi bi-clock-history"></i> Historial de alertas de esta IP (aunque el ban haya expirado)
+            </div>
+            <div class="sec-table-wrap">
+              <table class="sec-table">
+                <thead><tr><th>Fecha</th><th>Escenario</th><th>Eventos</th></tr></thead>
+                <tbody>
+                  <tr v-for="a in ipResult.history" :key="a.id">
+                    <td style="font-size:.8rem">{{ formatDateTime(a.created_at) }}</td>
+                    <td style="font-family:var(--font-mono);font-size:.8rem">{{ a.scenario }}</td>
+                    <td style="font-size:.8rem">{{ a.events_count }}</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+          <div v-else class="sec-hint">Sin alertas históricas de CrowdSec para esta IP.</div>
+        </div>
+      </div>
+    </div>
+
     <!-- Aislamiento PHP -->
     <div class="sec-card iso-card" :class="isoCardTone">
       <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:1rem;flex-wrap:wrap">
@@ -989,6 +1077,27 @@ const tab = ref('firewall')
 
 const fwStatus  = ref(null)
 const f2bStatus = ref(null)
+
+// ─── Comprobador de IP bloqueada ─────────────────────────────────────────────
+const ipQuery      = ref('')
+const ipChecking   = ref(false)
+const ipResult     = ref(null)
+const ipCheckError = ref('')
+
+async function checkIp() {
+  const ip = ipQuery.value.trim()
+  if (!ip) return
+  ipChecking.value = true
+  ipCheckError.value = ''
+  ipResult.value = null
+  try {
+    ipResult.value = await api.get(`/api/security/ip-check/${encodeURIComponent(ip)}`)
+  } catch (e) {
+    ipCheckError.value = e.message || 'Error comprobando la IP'
+  } finally {
+    ipChecking.value = false
+  }
+}
 
 // ─── Aislamiento PHP (open_basedir por dominio) ──────────────────────────────
 const isoAudit     = ref(null)

@@ -131,6 +131,23 @@ def all_banned() -> Dict[str, List[str]]:
     return result
 
 
+def banned_in_jails(ip: str) -> List[str]:
+    """Jails que tienen baneada AHORA esta IP, en una sola llamada
+    (`fail2ban-client banned <ip>`, fail2ban >= 0.11). Devuelve [] si no está
+    baneada o si fail2ban no corre."""
+    rc, out, _ = _run(["banned", ip])
+    if rc != 0 or not out.strip():
+        return []
+    try:
+        import ast
+        data = ast.literal_eval(out.strip())  # repr de Python: ['jail1', ...]
+        if isinstance(data, list):
+            return [str(j) for j in data if j]
+    except Exception:
+        pass
+    return []
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # Ban / Unban
 # ─────────────────────────────────────────────────────────────────────────────

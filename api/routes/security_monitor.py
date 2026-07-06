@@ -46,6 +46,28 @@ def _domains_for_audit(db: Session) -> List[dict]:
     return out
 
 
+# ─────────────────────────────────────────────────────────────────────────────
+# Comprobador de IP bloqueada — consulta TODAS las capas de una vez
+# ─────────────────────────────────────────────────────────────────────────────
+@router.get("/security/ip-check/{ip}")
+async def ip_check(ip: str, _: dict = Depends(require_admin)):
+    """
+    ¿Está bloqueada esta IP? Consulta fail2ban (jails), CrowdSec (decisiones
+    activas + allowlist + historial de alertas) y nftables (la verdad del
+    firewall, incluida la blocklist comunitaria). Pensado para soporte:
+    "un cliente dice que el servidor le bloquea" → una sola búsqueda.
+    """
+    from fastapi import HTTPException
+    from api.utils.ip_block_check import check_ip
+    try:
+        return check_ip(ip)
+    except ValueError:
+        raise HTTPException(status_code=422, detail=f"'{ip}' no es una IP válida")
+    except Exception as e:
+        logger.error(f"Error comprobando IP {ip}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @router.get("/security/php-isolation")
 async def audit_php_isolation(
     db: Session = Depends(get_db),

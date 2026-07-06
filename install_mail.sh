@@ -659,6 +659,21 @@ else
 fi
 echo -e "${GREEN}✓ MAIL_ENABLED=true en .env${NC}"
 
+# ── 6b. RSYSLOG: el correo SOLO a mail.log (no duplicar en syslog) ────────────
+# Debian manda las líneas de postfix/dovecot a /var/log/mail.log Y TAMBIÉN a
+# /var/log/syslog. CrowdSec lee ambos ficheros (setup.postfix/dovecot + el
+# setup.linux genérico), así que cada fallo de login contaba DOBLE y baneaba
+# con la mitad de los fallos reales. Excluimos mail del catch-all de syslog:
+# las líneas siguen íntegras en mail.log (fail2ban y CrowdSec leen de ahí).
+RSYSLOG_CONF=/etc/rsyslog.conf
+if [ -f "$RSYSLOG_CONF" ] && grep -qE '^\*\.\*;auth,authpriv\.none.*/var/log/syslog' "$RSYSLOG_CONF"; then
+    if ! grep -qE '^\*\.\*;.*mail[.,].*none.*/var/log/syslog' "$RSYSLOG_CONF"; then
+        sed -i 's|^\*\.\*;auth,authpriv\.none|*.*;mail,auth,authpriv.none|' "$RSYSLOG_CONF"
+        systemctl restart rsyslog 2>/dev/null || true
+        echo -e "${GREEN}✓ rsyslog: el correo ya no se duplica en /var/log/syslog${NC}"
+    fi
+fi
+
 # ── 7. REINICIAR SVQPANEL ─────────────────────────────────────────────────────
 echo -e "${YELLOW}→ Reiniciando SVQPanel...${NC}"
 systemctl restart svqpanel

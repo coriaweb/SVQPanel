@@ -95,9 +95,27 @@ def list_decisions() -> List[Dict[str, Any]]:
     Lista las decisiones activas (bans). Cada decisión incluye:
       id, ip, scenario, type (ban|captcha|...), duration, origin, scope, value
     """
-    rc, data, err = _run_json(["decisions", "list"])
+    # --limit 0: sin tope. El default de cscli (100) NO limita decisiones sino
+    # ALERTAS recientes: en un servidor con tráfico se generan >100 alertas en
+    # un par de horas y un ban activo más antiguo desaparecía de esta lista
+    # (y de la UI) aunque siguiera vigente en nftables.
+    rc, data, err = _run_json(["decisions", "list", "--limit", "0"], timeout=20)
     if rc != 0 or data is None:
         return []
+    return _parse_decision_sources(data)
+
+
+def decisions_for_ip(ip: str) -> List[Dict[str, Any]]:
+    """Decisiones activas que afectan a UNA IP concreta (cscli --ip: exacto o
+    contenido en un rango con --contained no; aquí exacto, que es lo que
+    necesita el buscador de soporte)."""
+    rc, data, err = _run_json(["decisions", "list", "--ip", ip, "--limit", "0"])
+    if rc != 0 or data is None:
+        return []
+    return _parse_decision_sources(data)
+
+
+def _parse_decision_sources(data: Any) -> List[Dict[str, Any]]:
     out: List[Dict[str, Any]] = []
     # cscli decisions list devuelve dos formas:
     #   - Anidada: [{ "scenario":..., "decisions":[ {...}, ... ], "events":[...] }, ...]
@@ -175,6 +193,20 @@ def delete_decision_by_id(decision_id: int) -> Tuple[bool, str]:
     return True, "deleted"
 
 
+def allowlisted(ip: str) -> Optional[str]:
+    """Si la IP está en alguna allowlist de CrowdSec (>= 1.6.8), devuelve el
+    detalle (nombre de la lista si cscli lo indica); si no, None. Una IP
+    allowlisted NUNCA recibirá decisiones nuevas aunque dispare escenarios."""
+    rc, out, err = _run(["allowlists", "check", ip], timeout=8)
+    text = (out + " " + err).strip()
+    if rc != 0 or not text:
+        return None
+    low = text.lower()
+    if "is allowlisted" in low or "allowlisted by" in low:
+        return text.splitlines()[0].strip()
+    return None
+
+
 def delete_decision_by_ip(ip: str) -> Tuple[bool, str]:
     rc, out, err = _run(["decisions", "delete", "--ip", ip], timeout=8)
     if rc != 0:
@@ -185,11 +217,16 @@ def delete_decision_by_ip(ip: str) -> Tuple[bool, str]:
 # ─────────────────────────────────────────────────────────────────────────────
 # Alertas
 # ─────────────────────────────────────────────────────────────────────────────
-def list_alerts(limit: int = 50) -> List[Dict[str, Any]]:
+def list_alerts(limit: int = 50, ip: Optional[str] = None) -> List[Dict[str, Any]]:
     """
-    Lista las alertas recientes generadas por escenarios.
+    Lista las alertas recientes generadas por escenarios. Con `ip` filtra las
+    de esa IP origen (historial: aparecen aunque el ban ya expirase, que es lo
+    que necesita soporte para responder "¿por qué se bloqueó este cliente?").
     """
-    rc, data, _ = _run_json(["alerts", "list", "--limit", str(limit)])
+    args = ["alerts", "list", "--limit", str(limit)]
+    if ip:
+        args += ["--ip", ip]
+    rc, data, _ = _run_json(args)
     if rc != 0 or data is None:
         return []
     out: List[Dict[str, Any]] = []
