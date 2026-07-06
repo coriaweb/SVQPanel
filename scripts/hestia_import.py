@@ -1553,11 +1553,18 @@ def _restore_maildirs(acc_tar: str, panel_username: str, domain: str,
         _remove_quiet(acc_tar)   # ya extraído: liberar su tamaño AHORA
         # El tar suele contener {cuenta}/{cur,new,tmp}. Movemos su contenido.
         src = tmp
-        # Si está anidado un nivel, ajustamos.
+        # Si está anidado un nivel, ajustamos. OJO: un dominio con UNA sola
+        # cuenta también produce una única carpeta ({cuenta}/), pero esa carpeta
+        # ES el buzón, no un envoltorio: descender ahí volcaría cur/new/.Sent…
+        # al nivel del dominio y el buzón quedaría "vacío" para Dovecot.
         entries = os.listdir(tmp)
         if len(entries) == 1 and os.path.isdir(os.path.join(tmp, entries[0])):
             inner = os.path.join(tmp, entries[0])
-            if any(os.path.isdir(os.path.join(inner, e)) for e in os.listdir(inner)):
+            is_maildir = any(os.path.isdir(os.path.join(inner, m))
+                             for m in ("cur", "new", "tmp"))
+            if not is_maildir and any(
+                    os.path.isdir(os.path.join(inner, e))
+                    for e in os.listdir(inner)):
                 src = inner
         # Fase legible por buzón: sin esto, tras contar los bytes extraídos el
         # porcentaje aparca en 99% "Restaurando…" mientras se colocan los
