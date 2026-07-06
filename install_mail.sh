@@ -398,6 +398,18 @@ service auth {
 }
 DOVESASLEOF
 
+# Límite de conexiones IMAP por usuario+IP: el default de Dovecot (10) se queda
+# corto en oficinas tras NAT — todos los equipos comparten la IP pública y el
+# cupo es por buzón+IP (Thunderbird abre hasta 5 conexiones por cuenta, así que
+# 3-4 PCs con el mismo buzón ya lo agotan y el resto ve "Maximum number of
+# connections from user+IP exceeded").
+cat > /etc/dovecot/conf.d/99-svqpanel-limits.conf << 'DOVELIMEOF'
+# SVQPanel: límites de conexión (oficinas con varios equipos tras la misma IP)
+protocol imap {
+  mail_max_userip_connections = 50
+}
+DOVELIMEOF
+
 # Plugin de cuota: sin esto Dovecot NI aplica las cuotas por buzón NI permite
 # consultarlas (doveadm quota get). El backend escribe quota_rule en
 # /etc/dovecot/users; aquí activamos el plugin que lo hace efectivo y expone el
