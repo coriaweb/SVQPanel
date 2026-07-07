@@ -479,14 +479,47 @@ def analyze(status: Dict[str, str], variables: Dict[str, str], ram_bytes: int,
                 "directive": "max_connections",
                 "suggested": str(propuesto),
             })
-        # Connection aborts
-        aborted = _f(status, "Aborted_connects")
-        if aborted > 100 and uptime > 3600:
-            recs.append({
-                "level": "info",
-                "title": "Conexiones abortadas",
-                "detail": f"{int(aborted)} conexiones abortadas. Suele ser timeouts o credenciales; revisa apps que no cierran conexiones.",
-            })
+        # Connection aborts. Hay dos contadores muy distintos:
+        #   - Aborted_connects: fallos ANTES de autenticar (login inválido,
+        #     handshake incompleto, reintentos durante reinicios). Suele ser
+        #     ruido: reintentos con pass caducada, el backend arrancando antes
+        #     que MariaDB, etc. Casi nunca requiere acción.
+        #   - Aborted_clients: conexiones YA autenticadas cerradas de golpe
+        #     (app PHP que muere a mitad de query o no llama a close()). Esto sí
+        #     apunta a un problema en el cliente.
+        # Además usamos TASA POR HORA, no el acumulado: si no, el aviso salta
+        # solo por tener uptime alto aunque la tasa sea despreciable.
+        connects = _f(status, "Aborted_connects")
+        clients = _f(status, "Aborted_clients")
+        horas = uptime / 3600 if uptime > 0 else 0
+        if horas >= 1:
+            connects_h = connects / horas
+            clients_h = clients / horas
+            metrics["aborted_connects"] = int(connects)
+            metrics["aborted_clients"] = int(clients)
+            metrics["aborted_connects_per_hour"] = round(connects_h, 1)
+            metrics["aborted_clients_per_hour"] = round(clients_h, 1)
+            # Post-auth: es lo preocupante. Umbral por tasa.
+            if clients_h > 5:
+                recs.append({
+                    "level": "warn",
+                    "title": "Clientes desconectados bruscamente",
+                    "detail": (f"{int(clients)} conexiones ya autenticadas se cerraron mal "
+                               f"(~{clients_h:.1f}/hora). Suele ser una app (PHP, cron…) que "
+                               f"muere a mitad de consulta o no cierra la conexión. "
+                               f"Revisa las apps que más carga hacen."),
+                })
+            # Pre-auth: solo informativo, y solo si la tasa es alta de verdad.
+            elif connects_h > 10:
+                recs.append({
+                    "level": "info",
+                    "title": "Intentos de conexión fallidos",
+                    "detail": (f"{int(connects)} intentos de conexión no llegaron a autenticar "
+                               f"(~{connects_h:.1f}/hora). Son fallos ANTES del login: "
+                               f"credenciales incorrectas o reintentos durante reinicios. "
+                               f"No afecta a las conexiones sanas; revísalo solo si sospechas "
+                               f"de una contraseña caducada o un acceso no autorizado."),
+                })
 
     # ── Tablas temporales en disco ────────────────────────────────────────────
     tmp_disk = _f(status, "Created_tmp_disk_tables")
