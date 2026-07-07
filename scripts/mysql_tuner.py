@@ -489,6 +489,13 @@ def analyze(status: Dict[str, str], variables: Dict[str, str], ram_bytes: int,
         #     apunta a un problema en el cliente.
         # Además usamos TASA POR HORA, no el acumulado: si no, el aviso salta
         # solo por tener uptime alto aunque la tasa sea despreciable.
+        # Solo generamos una recomendación cuando hay algo ACCIONABLE, es decir,
+        # cuando fallan conexiones YA autenticadas (Aborted_clients): eso apunta
+        # a una app que muere a mitad de query o no cierra la conexión.
+        # Los Aborted_connects (fallos pre-login: credenciales, reintentos en
+        # reinicios) son ruido normal y no requieren acción, así que NO se avisa
+        # de ellos: se exponen solo como métricas por si se quieren consultar.
+        # Usamos TASA POR HORA, no el acumulado (que dispara solo por uptime alto).
         connects = _f(status, "Aborted_connects")
         clients = _f(status, "Aborted_clients")
         horas = uptime / 3600 if uptime > 0 else 0
@@ -499,7 +506,6 @@ def analyze(status: Dict[str, str], variables: Dict[str, str], ram_bytes: int,
             metrics["aborted_clients"] = int(clients)
             metrics["aborted_connects_per_hour"] = round(connects_h, 1)
             metrics["aborted_clients_per_hour"] = round(clients_h, 1)
-            # Post-auth: es lo preocupante. Umbral por tasa.
             if clients_h > 5:
                 recs.append({
                     "level": "warn",
@@ -508,17 +514,6 @@ def analyze(status: Dict[str, str], variables: Dict[str, str], ram_bytes: int,
                                f"(~{clients_h:.1f}/hora). Suele ser una app (PHP, cron…) que "
                                f"muere a mitad de consulta o no cierra la conexión. "
                                f"Revisa las apps que más carga hacen."),
-                })
-            # Pre-auth: solo informativo, y solo si la tasa es alta de verdad.
-            elif connects_h > 10:
-                recs.append({
-                    "level": "info",
-                    "title": "Intentos de conexión fallidos",
-                    "detail": (f"{int(connects)} intentos de conexión no llegaron a autenticar "
-                               f"(~{connects_h:.1f}/hora). Son fallos ANTES del login: "
-                               f"credenciales incorrectas o reintentos durante reinicios. "
-                               f"No afecta a las conexiones sanas; revísalo solo si sospechas "
-                               f"de una contraseña caducada o un acceso no autorizado."),
                 })
 
     # ── Tablas temporales en disco ────────────────────────────────────────────
