@@ -478,6 +478,7 @@ def generate_nginx_config(
     is_subdomain: bool = False,
     xmlrpc_blocked: bool = False,
     wp_login_ratelimit: int = 0,
+    upload_max_mb: int = 64,
 ) -> str:
     """
     Generate Nginx vhost configuration (Hestia-style paths).
@@ -508,6 +509,19 @@ def generate_nginx_config(
     # Si el dominio tiene php.ini propio, usa su pool dedicado
     php_socket = php_socket_override or f"/run/php/php{php_version}-fpm.sock"
     backend_name = domain.replace('.', '_').replace('-', '_')
+
+    # Tamaño máx. de subida a nivel nginx. SIN esto nginx aplica su default de 1 MB
+    # y corta con 413 cualquier subida mayor (p.ej. un PDF de 1,1 MB en la
+    # biblioteca de medios de WordPress → "Respuesta inesperada del servidor",
+    # porque el 413 no es JSON). Debe ir alineado con el upload_max_filesize de PHP
+    # (o por encima); el tope real lo pone PHP. Se inyecta en cada server{}.
+    try:
+        _upload_mb = int(upload_max_mb)
+    except (TypeError, ValueError):
+        _upload_mb = 64
+    if _upload_mb < 1:
+        _upload_mb = 64
+    client_max_body = f"    client_max_body_size {_upload_mb}m;\n"
 
     skip_block  = _skip_cache_block() if fastcgi_cache_enabled else ""
     cache_block = ""  # built below after _sh is defined
@@ -740,7 +754,7 @@ def generate_nginx_config(
     {ipv6_listen_http}
     server_name {server_names};
     root {public_html};
-{sec_headers_http}
+{client_max_body}{sec_headers_http}
     index index.php index.html index.htm;
 {skip_block}
     # Pasamos el upstream al template via variable para que los location blocks
@@ -795,7 +809,7 @@ server {{
     {ipv6_listen_https}{http3_listen}
     server_name {server_names};
     root {public_html};
-
+{client_max_body}
     ssl_certificate /etc/letsencrypt/live/{domain}/fullchain.pem;
     ssl_certificate_key /etc/letsencrypt/live/{domain}/privkey.pem;
     ssl_protocols {SSL_PROTOCOLS};

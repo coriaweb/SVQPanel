@@ -275,3 +275,34 @@ def test_apache_vhost_directoryindex_php_primero():
     assert di is not None, "falta la directiva DirectoryIndex en el vhost Apache"
     assert di.index("index.php") < di.index("index.html"), \
         "index.php debe ir antes que index.html en DirectoryIndex"
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# client_max_body_size: sin él nginx aplica su default de 1 MB y corta con 413
+# las subidas mayores (p.ej. un PDF de 1,1 MB en la biblioteca de WordPress →
+# "Respuesta inesperada del servidor", porque el 413 no es JSON). Debe estar en
+# CADA server{} que sirva contenido, tanto en modo nginx-puro como Apache.
+# ─────────────────────────────────────────────────────────────────────────────
+def test_nginx_client_max_body_size_por_defecto():
+    cfg = generate_nginx_config("ejemplo.com", "user1", "8.3")
+    assert "client_max_body_size 64m;" in cfg, \
+        "el vhost debe fijar client_max_body_size (default 64m) o nginx corta a 1 MB"
+
+
+def test_nginx_client_max_body_size_en_bloque_ssl():
+    cfg = generate_nginx_config("ejemplo.com", "user1", "8.3", ssl_enabled=True)
+    # Debe aparecer en los DOS server{} (HTTP y HTTPS): al menos 2 ocurrencias.
+    assert cfg.count("client_max_body_size 64m;") >= 2, \
+        "client_max_body_size debe estar en el bloque HTTP y en el HTTPS"
+
+
+def test_nginx_client_max_body_size_personalizado():
+    cfg = generate_nginx_config("ejemplo.com", "user1", "8.3", upload_max_mb=128)
+    assert "client_max_body_size 128m;" in cfg
+    assert "client_max_body_size 64m;" not in cfg
+
+
+def test_nginx_client_max_body_size_modo_apache():
+    cfg = generate_nginx_config("ejemplo.com", "user1", "8.3", proxy_to_apache=True)
+    assert "client_max_body_size 64m;" in cfg, \
+        "en modo Apache nginx sigue siendo el front y debe fijar el límite de subida"

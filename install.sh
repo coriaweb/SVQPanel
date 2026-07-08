@@ -1519,6 +1519,20 @@ for PHP_VER in "${PHP_ARRAY[@]}"; do
             # solo lo sube quien lo necesite. 512M da margen a editores pesados como
             # Elementor (recomienda ≥256M y agota 128M al abrir el editor → error 500).
             sed -i "s|^\s*memory_limit\s*=.*|memory_limit = 512M|" "$PHP_INI_FPM"
+            # max_execution_time GLOBAL = techo (120s). El default 30s corta la carga
+            # del editor de Elementor (con packs de widgets tarda >30s) → el editor se
+            # queda "cargando" y ofrece "modo seguro". 120s le da margen. Es el cap:
+            # el panel no deja pedir por dominio más que esto. nginx (proxy_read_timeout
+            # 300) y Apache (Timeout 300) ya cubren de sobra estos 120s.
+            sed -i "s|^\s*max_execution_time\s*=.*|max_execution_time = 120|" "$PHP_INI_FPM"
+            sed -i "s|^\s*max_input_time\s*=.*|max_input_time = 120|" "$PHP_INI_FPM"
+            # upload_max_filesize/post_max_size GLOBAL = techo (64M). El default de
+            # fábrica (2M/8M) es ridículo para WordPress: subir un PDF o imagen de
+            # pocos MB a la biblioteca falla. 64M es el cap; el panel puede subirlo
+            # por dominio. OJO: además nginx pone client_max_body_size en el vhost
+            # (scripts/utils.py) o cortaría antes con 413 aunque PHP admitiera más.
+            sed -i "s|^\s*upload_max_filesize\s*=.*|upload_max_filesize = 64M|" "$PHP_INI_FPM"
+            sed -i "s|^\s*post_max_size\s*=.*|post_max_size = 64M|" "$PHP_INI_FPM"
         fi
 
         # Verificar que FPM arrancó (socket debe existir)
