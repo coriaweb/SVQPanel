@@ -1513,11 +1513,12 @@ for PHP_VER in "${PHP_ARRAY[@]}"; do
             else
                 echo "mail.add_x_header = On" >> "$PHP_INI_FPM"
             fi
-            # memory_limit GLOBAL = techo máximo (256M). Es el máximo que el panel
+            # memory_limit GLOBAL = techo máximo (512M). Es el máximo que el panel
             # permite subir via override por dominio. Cada pool nace con 128M
             # explícito (DOMAIN_DEFAULT_OVERRIDES): consumo contenido por defecto,
-            # solo lo sube quien lo necesite (p.ej. WooCommerce).
-            sed -i "s|^\s*memory_limit\s*=.*|memory_limit = 256M|" "$PHP_INI_FPM"
+            # solo lo sube quien lo necesite. 512M da margen a editores pesados como
+            # Elementor (recomienda ≥256M y agota 128M al abrir el editor → error 500).
+            sed -i "s|^\s*memory_limit\s*=.*|memory_limit = 512M|" "$PHP_INI_FPM"
         fi
 
         # Verificar que FPM arrancó (socket debe existir)
