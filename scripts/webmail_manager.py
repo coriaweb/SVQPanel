@@ -25,6 +25,28 @@ WEBMAIL_ROOT = "/var/www/webmail"
 SITES_AVAILABLE = "/etc/nginx/sites-available"
 SITES_ENABLED = "/etc/nginx/sites-enabled"
 
+# Margen sobre el message_size_limit de Postfix para las capas HTTP del webmail
+# (nginx + PHP). Al adjuntar por webmail, el fichero viaja codificado MIME/base64,
+# lo que infla su tamaño ~33 %; un adjunto de N MB reales ocupa ~1,33·N en el POST.
+# Con un 40 % de margen, un adjunto que Postfix aceptaría (N MB) no muere antes en
+# PHP/nginx por el overhead de codificación. Postfix sigue siendo el tope real.
+WEBMAIL_UPLOAD_MARGIN = 1.40
+
+
+def webmail_http_limit_mb(postfix_mb: int) -> int:
+    """MB que deben aceptar nginx y PHP del webmail para un límite de correo dado.
+
+    Aplica WEBMAIL_UPLOAD_MARGIN y redondea hacia arriba. Función pura (testeable).
+    """
+    import math
+    try:
+        base = int(postfix_mb)
+    except (ValueError, TypeError):
+        base = 25  # default de correo del panel si el valor es ilegible
+    if base < 1:
+        base = 1
+    return max(1, math.ceil(base * WEBMAIL_UPLOAD_MARGIN))
+
 
 def vhost_name(domain: str) -> str:
     return f"svqpanel-webmail-{domain}"
@@ -78,9 +100,25 @@ class WebmailManager(SystemManager):
         super().__init__(require_root=True)
 
     # ── Generación del vhost ──────────────────────────────────────────────────
+    def _postfix_message_size_mb(self) -> int:
+        """Lee message_size_limit de Postfix en MB (25 si no se puede leer)."""
+        import subprocess
+        try:
+            r = subprocess.run(["postconf", "-h", "message_size_limit"],
+                               capture_output=True, text=True, timeout=5)
+            bytes_ = int((r.stdout or "").strip())
+            mb = round(bytes_ / (1024 * 1024))
+            return mb if mb >= 1 else 25
+        except Exception:
+            return 25
+
     def _vhost_content(self, domain: str, ssl: bool) -> str:
         host = webmail_host(domain)
         sock = _find_php_sock()
+        # Límite de subida HTTP del webmail = message_size_limit de Postfix + margen
+        # (base64). Sin esto nginx aplica su default de 1 MB y el adjunto muere antes
+        # de llegar a PHP/Postfix.
+        upload_mb = webmail_http_limit_mb(self._postfix_message_size_mb())
 
         # Roundcube 1.7+ sirve desde public_html/ como docroot público.
         # Los directorios internos (config, logs, etc.) quedan fuera del docroot.
@@ -168,6 +206,9 @@ server {{
     http2 on;
     server_name {host};
 
+    # Adjuntos: aceptar hasta el límite de correo de Postfix + margen base64.
+    client_max_body_size {upload_mb}m;
+
     ssl_certificate {ssl_cert};
     ssl_certificate_key {ssl_key};
     ssl_protocols {SSL_PROTOCOLS};
@@ -186,6 +227,9 @@ server {{
 """
         else:
             out += f"""
+    # Adjuntos: aceptar hasta el límite de correo de Postfix + margen base64.
+    client_max_body_size {upload_mb}m;
+
 {rc_locations}
     error_log /var/log/nginx/webmail-{domain}.error.log;
     access_log /var/log/nginx/webmail-{domain}.access.log;
@@ -336,3 +380,141 @@ server {{
             self.execute_command(["systemctl", "reload", "nginx"], check=False)
             logger.info(f"Webmail vhost eliminado por completo: {webmail_host(domain)}")
         return True, "Webmail eliminado"
+
+    # ── Límite de subida (adjuntos): PHP + Roundcube + vhosts ─────────────────
+    # El webmail es UNO SOLO compartido por todos los dominios; su límite de
+    # subida es, por tanto, global y acompaña al message_size_limit de Postfix.
+    # Se propaga a las tres capas que intervienen al adjuntar por HTTP:
+    #   1) nginx  → client_max_body_size en cada vhost webmail.{dominio}
+    #   2) PHP    → upload_max_filesize / post_max_size del PHP que sirve Roundcube
+    #   3) Roundcube → $config['max_message_size']
+    # Sin esto, el adjunto muere en PHP (default 2 MB) mucho antes de llegar a
+    # Postfix, aunque el panel diga que el correo admite 25 MB.
+
+    # Drop-in de PHP-FPM para el webmail (afecta al pool que sirve Roundcube).
+    PHP_INI_NAME = "zz-svqpanel-webmail.ini"
+
+    def _php_fpm_ini_paths(self):
+        """Rutas de drop-in a escribir: un .ini en conf.d de cada versión de
+        PHP-FPM instalada. Devuelve [(ini_path, service_name), ...].
+
+        Roundcube se sirve por el socket PHP-FPM más nuevo (_find_php_sock), pero
+        escribimos en TODAS las versiones instaladas para que el límite valga sin
+        importar cuál acabe sirviendo el webmail (idempotente y barato)."""
+        import glob
+        out = []
+        for confd in sorted(glob.glob("/etc/php/*/fpm/conf.d")):
+            ver = confd.split("/")[3]  # /etc/php/<ver>/fpm/conf.d
+            out.append((os.path.join(confd, self.PHP_INI_NAME), f"php{ver}-fpm"))
+        return out
+
+    def _write_php_ini(self, upload_mb: int) -> list:
+        """Escribe el drop-in PHP con los límites de subida. Devuelve la lista de
+        servicios PHP-FPM a recargar."""
+        content = (
+            "; SVQPanel — límite de subida del webmail (Roundcube).\n"
+            "; Gestionado automáticamente: acompaña al message_size_limit de\n"
+            "; Postfix (Configuración → Email → Tamaño máximo de mensaje) + margen\n"
+            "; base64. No editar a mano.\n"
+            f"upload_max_filesize = {upload_mb}M\n"
+            f"post_max_size = {upload_mb}M\n"
+        )
+        services = []
+        for ini_path, service in self._php_fpm_ini_paths():
+            try:
+                with open(ini_path, "w") as f:
+                    f.write(content)
+                services.append(service)
+            except OSError as e:
+                logger.warning(f"No se pudo escribir {ini_path}: {e}")
+        return services
+
+    def _patch_roundcube_max_message_size(self, upload_mb: int) -> bool:
+        """Fija $config['max_message_size'] en el config de Roundcube.
+
+        Roundcube usa max_message_size para su propio control de tamaño del
+        adjunto (además de PHP). Lo mantenemos alineado con el resto."""
+        cfg = os.path.join(WEBMAIL_ROOT, "config", "config.inc.php")
+        if not os.path.exists(cfg):
+            return False
+        try:
+            import re
+            with open(cfg, "r") as f:
+                content = f.read()
+            bytes_ = upload_mb * 1024 * 1024
+            line = f"$config['max_message_size'] = {bytes_}; // SVQPanel: = límite de correo + margen\n"
+            pattern = r"\$config\['max_message_size'\]\s*=.*?;.*\n?"
+            if re.search(pattern, content):
+                content = re.sub(pattern, line, content, count=1)
+            else:
+                # Insertar antes del cierre PHP si existe, o al final.
+                if content.rstrip().endswith("?>"):
+                    idx = content.rstrip().rfind("?>")
+                    content = content[:idx] + line + content[idx:]
+                else:
+                    content = content.rstrip() + "\n" + line
+            with open(cfg, "w") as f:
+                f.write(content)
+            return True
+        except OSError as e:
+            logger.warning(f"No se pudo parchear config de Roundcube: {e}")
+            return False
+
+    def regenerate_all_vhosts(self) -> int:
+        """Regenera todos los vhosts webmail.{dominio} existentes (para que
+        recojan el client_max_body_size nuevo). Devuelve cuántos se tocaron.
+
+        Solo reescribe los que están ACTIVOS (no los desactivados con 503)."""
+        import glob
+        n = 0
+        prefix = "svqpanel-webmail-"
+        for avail in glob.glob(os.path.join(SITES_AVAILABLE, prefix + "*")):
+            name = os.path.basename(avail)
+            domain = name[len(prefix):]
+            if not domain:
+                continue
+            if not self.is_enabled(domain):
+                continue  # vhost desactivado (503): no lo tocamos
+            ssl = cert_includes_webmail(domain)
+            try:
+                with open(avail, "w") as f:
+                    f.write(self._vhost_content(domain, ssl))
+                n += 1
+            except OSError as e:
+                logger.warning(f"No se pudo regenerar vhost webmail {domain}: {e}")
+        return n
+
+    def sync_upload_limit(self, postfix_mb: int = None) -> dict:
+        """Alinea el límite de subida del webmail con el de Postfix.
+
+        postfix_mb=None → lee el message_size_limit actual de Postfix. Regenera
+        las tres capas (nginx, PHP, Roundcube) y recarga los servicios. Es
+        idempotente: seguro de llamar tras cada cambio del tamaño de mensaje.
+        """
+        if postfix_mb is None:
+            postfix_mb = self._postfix_message_size_mb()
+        upload_mb = webmail_http_limit_mb(postfix_mb)
+
+        # 1) nginx: regenerar vhosts + recargar (solo si Roundcube está montado)
+        vhosts = 0
+        if os.path.exists(WEBMAIL_ROOT):
+            vhosts = self.regenerate_all_vhosts()
+            if vhosts:
+                rc, _, err = self.execute_command(["nginx", "-t"], check=False)
+                if rc == 0:
+                    self.execute_command(["systemctl", "reload", "nginx"], check=False)
+                else:
+                    logger.warning(f"nginx -t falló tras sync_upload_limit: {err[:200]}")
+
+        # 2) PHP: drop-in + reload de los PHP-FPM
+        services = self._write_php_ini(upload_mb)
+        for svc in services:
+            self.execute_command(["systemctl", "reload", svc], check=False)
+
+        # 3) Roundcube config
+        rc_patched = self._patch_roundcube_max_message_size(upload_mb)
+
+        logger.info(f"sync_upload_limit: correo={postfix_mb}MB → webmail={upload_mb}MB "
+                    f"(vhosts={vhosts}, php={len(services)}, roundcube={rc_patched})")
+        return {"success": True, "postfix_mb": postfix_mb, "upload_mb": upload_mb,
+                "vhosts": vhosts, "php_services": services, "roundcube": rc_patched}

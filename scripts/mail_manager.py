@@ -1022,6 +1022,18 @@ vacation
         self.execute_command(["postconf", "-e", f"message_size_limit = {bytes_}"])
         self._reload_postfix()
         logger.info(f"set_message_size_limit: {mb} MB ({bytes_} bytes)")
+
+        # Propagar al webmail: el adjunto por webmail (Roundcube) pasa por nginx +
+        # PHP antes de llegar a Postfix; si esas capas se quedan en su default
+        # bajo (~2 MB de PHP, 1 MB de nginx), el cliente no puede adjuntar aunque
+        # el correo admita 25 MB. sync_upload_limit las alinea con este valor.
+        try:
+            from scripts.webmail_manager import WebmailManager
+            WebmailManager().sync_upload_limit(mb)
+        except Exception as e:
+            # No es fatal para el ajuste de Postfix; solo lo registramos.
+            logger.warning(f"No se pudo sincronizar el límite del webmail: {e}")
+
         return {"success": True, "bytes": bytes_, "mb": mb}
 
     # ─────────────────────────────────────────────────────────────────────

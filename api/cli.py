@@ -1296,6 +1296,22 @@ def cmd_sync_srs_excludes() -> int:
         return 0
 
 
+def cmd_sync_webmail_upload_limit() -> int:
+    """Alinea el límite de subida del webmail (Roundcube) con el message_size_limit
+    de Postfix + margen base64. Regenera vhosts webmail, el drop-in PHP y el config
+    de Roundcube, y recarga los servicios. Idempotente."""
+    from scripts.webmail_manager import WebmailManager
+    try:
+        res = WebmailManager().sync_upload_limit()
+        logger.info(f"sync_webmail_upload_limit: correo={res.get('postfix_mb')}MB → "
+                    f"webmail={res.get('upload_mb')}MB (vhosts={res.get('vhosts')}, "
+                    f"php={len(res.get('php_services', []))}, roundcube={res.get('roundcube')})")
+        return 0
+    except Exception as e:
+        logger.exception(f"sync_webmail_upload_limit falló: {e}")
+        return 0
+
+
 def cmd_backfill_caa(dry_run: bool = False) -> int:
     """Añade registros CAA (issue+issuewild Let's Encrypt) a las zonas DNS
     existentes que no los tengan. Idempotente: no duplica si ya hay CAA.
@@ -2071,6 +2087,9 @@ def main():
     sub.add_parser("sync_srs_excludes",
         help="Sincroniza SRS_EXCLUDE_DOMAINS (dominios locales) para que SRS solo reescriba reenvíos")
 
+    sub.add_parser("sync_webmail_upload_limit",
+        help="Alinea el límite de subida del webmail (nginx+PHP+Roundcube) con el tamaño de mensaje de Postfix")
+
     p_caa = sub.add_parser("backfill_caa",
         help="Añade CAA (issue+issuewild Let's Encrypt) a las zonas DNS que no lo tengan")
     p_caa.add_argument("--dry-run", action="store_true", help="Solo muestra qué haría")
@@ -2266,6 +2285,9 @@ def main():
         sys.exit(cmd_migrate_mail_out_ip(dry_run=args.dry_run))
     if args.cmd == "sync_srs_excludes":
         sys.exit(cmd_sync_srs_excludes())
+
+    if args.cmd == "sync_webmail_upload_limit":
+        sys.exit(cmd_sync_webmail_upload_limit())
 
 
 if __name__ == "__main__":

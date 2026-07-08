@@ -1366,6 +1366,11 @@ PYEOF
 \$config['markasjunk_ham_mbox']        = 'INBOX';
 // archive: carpeta destino del botón Archivar
 \$config['archive_mbox'] = 'Archive';
+
+// Tamaño máx. de adjunto por webmail. Acompaña al message_size_limit de Postfix
+// (25 MB por defecto) + margen base64 (~40%). Lo mantiene sincronizado el panel
+// (Configuración → Email → Tamaño máximo de mensaje → WebmailManager.sync_upload_limit).
+\$config['max_message_size'] = 36700160; // 35 MB
 RCCONFEOF
 
     # Enlace /etc/roundcube → config en RC_APP_DIR (compatibilidad)
@@ -1408,6 +1413,24 @@ RCCONFEOF
     chown -R www-data:www-data "${RC_APP_DIR}/config" \
                                "${RC_APP_DIR}/temp" \
                                "${RC_APP_DIR}/logs"
+
+    # ── 8b. Límite de subida del webmail en PHP ─────────────────────────────
+    # El webmail (Roundcube) sube los adjuntos por HTTP→PHP antes de que lleguen
+    # a Postfix; el PHP de fábrica trae upload_max_filesize=2M, así que el cliente
+    # no puede adjuntar aunque el correo admita 25 MB. Subimos el límite de PHP
+    # (con margen base64) para que acompañe al message_size_limit de Postfix.
+    # Drop-in en cada versión de PHP-FPM instalada (idempotente).
+    for _confd in /etc/php/*/fpm/conf.d; do
+        [[ -d "$_confd" ]] || continue
+        cat > "${_confd}/zz-svqpanel-webmail.ini" << 'RCPHPEOF'
+; SVQPanel — límite de subida del webmail (Roundcube).
+; Acompaña al message_size_limit de Postfix + margen base64. Gestionado por el
+; panel (Configuración → Email → Tamaño máximo de mensaje). No editar a mano.
+upload_max_filesize = 35M
+post_max_size = 35M
+RCPHPEOF
+    done
+    echo -e "  ${GREEN}✓ Límite de subida del webmail (PHP) → 35 MB${NC}"
 
     # ── 9. Guardar credenciales ────────────────────────────────────────────
     mkdir -p /opt/svqpanel/.credentials
