@@ -2992,6 +2992,26 @@ CSWLEOF
             echo -e "  ${GREEN}✓ IP ${INSTALLER_IP} añadida a whitelist CrowdSec${NC}"
         fi
 
+        # ── 4b. Whitelist REST API de WordPress (/wp-json/) ───────────────────
+        # Elementor y otros plugins de WP disparan ráfagas de GET a /wp-json/...
+        # que devuelven 404 cuando el endpoint no existe (típico: Elementor Pro
+        # pidiendo rutas de licencia que solo existen con la versión de pago). El
+        # escenario genérico http-probing cuenta esos 404 como sondeo de rutas y
+        # banea al ADMINISTRADOR legítimo del sitio mientras edita/actualiza.
+        # /wp-json/ es la API REST estándar de WordPress; un 404 ahí es normal, no
+        # un ataque. Los probes reales (.env, .git, /vendor, /wp-admin/xxx) NO
+        # empiezan por /wp-json/ y siguen baneándose (comprobado con cscli explain).
+        mkdir -p /etc/crowdsec/parsers/s02-enrich
+        cat > /etc/crowdsec/parsers/s02-enrich/svqpanel-wp-rest-whitelist.yaml << 'CSWPWLEOF'
+name: svqpanel/wp-rest-whitelist
+description: "No contar como http-probing los 404 de la REST API de WordPress (/wp-json/). Elementor y otros plugins piden rutas /wp-json/ que devuelven 404 cuando el endpoint no existe (p.ej. Elementor Pro sin licencia); son peticiones legitimas del admin del sitio, no un escaneo. Los probes reales (.env, .git, /vendor, /wp-admin/xxx) NO empiezan por /wp-json/ y siguen baneandose."
+whitelist:
+  reason: "WordPress REST API (/wp-json/) — 404 normales de plugins, no probing"
+  expression:
+    - "evt.Meta.http_path startsWith '/wp-json/'"
+CSWPWLEOF
+        echo -e "  ${GREEN}✓ Whitelist REST API de WordPress (/wp-json/) para CrowdSec${NC}"
+
         # ── 5. Acquis extra: log de auth del propio panel ─────────────────────
         # CrowdSec lee /opt/svqpanel/logs/auth.log (mismo log que fail2ban) y
         # podemos reutilizar el filtro 'sshd' si las líneas se parecen, o más
