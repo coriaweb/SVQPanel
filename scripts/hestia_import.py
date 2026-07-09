@@ -1767,6 +1767,11 @@ def import_dns(backup: "HestiaBackup", zoneinfo: Dict, owner, db, report: Import
             if d:
                 d.is_subdomain = True
                 d.parent_domain = parent.domain_name
+                # apply_subdomain_dns publica el AAAA con server_ipv6: hay que
+                # reflejarlo en el Domain o el panel creerá que el subdominio no
+                # tiene IPv6 y no actualizará ese registro si la IPv6 cambia.
+                if server_ipv6 and not d.ipv6:
+                    d.ipv6 = server_ipv6
                 db.commit()
             report.ok("dns", domain,
                       f"subdominio de {parent.domain_name}: A en la zona padre "
@@ -2264,8 +2269,13 @@ def _ensure_default_zone(domain: str, owner, db, report, server_ipv4, server_ipv
             if d:
                 d.is_subdomain = True
                 d.parent_domain = parent.domain_name
+                # apply_subdomain_dns publica el AAAA con server_ipv6: hay que
+                # reflejarlo en el Domain o el panel creerá que el subdominio no
+                # tiene IPv6 y no actualizará ese registro si la IPv6 cambia.
+                if server_ipv6 and not d.ipv6:
+                    d.ipv6 = server_ipv6
                 db.commit()
-            report.ok("dns", domain, f"subdominio de {parent.domain_name} (A en la zona padre)")
+            report.ok("dns", domain, f"subdominio de {parent.domain_name} (A/AAAA en la zona padre)")
             return
 
     mgr = DNSManager()
