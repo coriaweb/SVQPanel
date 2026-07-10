@@ -2,7 +2,7 @@
 
 ###############################################################################
 # SVQPanel - Installation Script
-# Instala SVQPanel en un servidor Debian 12/13 limpio
+# Instala SVQPanel en un servidor Debian 13 (trixie) o superior, limpio
 # Uso: curl https://raw.githubusercontent.com/coriaweb/SVQPanel/main/install.sh | bash
 ###############################################################################
 
@@ -25,25 +25,26 @@ fi
 OS_VERSION=$(grep -oP '(?<=^VERSION_ID=")[^"]+' /etc/os-release)
 OS_NAME=$(grep -oP '(?<=^ID=)[^\n]+' /etc/os-release | tr -d '"')
 
-# Validar que sea Debian 12 o 13
+# Validar que sea Debian 13 o superior
 if [[ "$OS_NAME" != "debian" ]]; then
     echo -e "${RED}Error: Este panel solo es compatible con Debian. Detectado: $OS_NAME${NC}"
     exit 1
 fi
 
-if [[ "$OS_VERSION" != "12" && "$OS_VERSION" != "13" ]]; then
-    echo -e "${RED}Error: Necesitas Debian 12 o 13. Tienes: $OS_VERSION${NC}"
+# Exigimos Debian 13 (trixie) o superior. Debian 12 (bookworm) ya NO se soporta
+# para instalaciones nuevas: si tienes un Debian 12, actualízalo antes con
+# scripts/dist_upgrade_debian13.sh (ver docs/UPGRADE_DEBIAN_12_A_13.md).
+# Comparación numérica (>=13) para no bloquear futuras versiones de Debian.
+if ! [[ "$OS_VERSION" =~ ^[0-9]+$ ]] || (( OS_VERSION < 13 )); then
+    echo -e "${RED}Error: Necesitas Debian 13 o superior. Tienes: $OS_VERSION${NC}"
+    if [[ "$OS_VERSION" == "12" ]]; then
+        echo -e "${YELLOW}  Debian 12 ya no se soporta. Actualiza primero a Debian 13 con:${NC}"
+        echo -e "${YELLOW}    scripts/dist_upgrade_debian13.sh  (ver docs/UPGRADE_DEBIAN_12_A_13.md)${NC}"
+    fi
     exit 1
 fi
 
 echo -e "${GREEN}✓ Debian $OS_VERSION detectado${NC}\n"
-
-# Recomendación: para instalaciones nuevas se prefiere Debian 13 (trixie).
-# Debian 12 sigue soportado, pero conviene actualizarlo con
-# scripts/dist_upgrade_debian13.sh (ver docs/UPGRADE_DEBIAN_12_A_13.md).
-if [[ "$OS_VERSION" == "12" ]]; then
-    echo -e "${YELLOW}⚠ Recomendado: Debian 13 para instalaciones nuevas. Debian 12 está soportado pero se aconseja actualizar.${NC}\n"
-fi
 
 ###############################################################################
 # 0. MODO DESATENDIDO (opcional) — instalación tipo Hestia por variables de entorno

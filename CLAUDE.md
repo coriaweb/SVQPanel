@@ -216,7 +216,7 @@ subtítulo), usar componentes de `components/ui/`, estilos con variables de toke
 - **Backend**: Python 3.14.5 + FastAPI
 - **BD**: PostgreSQL
 - **ORM**: SQLAlchemy
-- **SO Soportado**: Debian 12, 13
+- **SO Soportado**: Debian 13 (trixie) o superior (Debian 12 ya no se soporta; actualizar con `scripts/dist_upgrade_debian13.sh`)
 - **Webservers**: Nginx y/o Apache
 - **PHP**: 7.4, 8.0, 8.1, 8.2, 8.3
 
