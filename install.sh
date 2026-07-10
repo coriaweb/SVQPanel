@@ -1102,10 +1102,15 @@ DOVESASLEOF
     echo -e "  ${YELLOW}→ Instalando Rspamd desde repositorio oficial...${NC}"
 
     RSPAMD_CODENAME="$(lsb_release -cs)"
-    # Rspamd stable puede no tener trixie todavía → fallback a bookworm
-    if [[ "$RSPAMD_CODENAME" == "trixie" ]]; then
+    # Usamos el repo de Rspamd del MISMO codename del SO. Antes forzábamos
+    # bookworm en trixie (Rspamd tardó en publicar trixie), pero el paquete
+    # bookworm depende de libbinutils < 2.40.1 y en trixie es más nuevo → el
+    # apt-get install rompía con "held broken packages". Ahora que Rspamd ya
+    # publica trixie, usamos ese. Solo caemos a bookworm si el repo del codename
+    # real NO tiene fichero Release (comprobado, no a ciegas).
+    if ! curl -fsSL -o /dev/null "https://rspamd.com/apt-stable/dists/${RSPAMD_CODENAME}/Release" 2>/dev/null; then
+        echo -e "  ${YELLOW}  (Rspamd no publica repo para ${RSPAMD_CODENAME}; usando bookworm)${NC}"
         RSPAMD_CODENAME="bookworm"
-        echo -e "  ${YELLOW}  (usando repositorio bookworm para Rspamd en Debian 13)${NC}"
     fi
 
     curl -fsSL https://rspamd.com/apt-stable/gpg.key 2>/dev/null \
