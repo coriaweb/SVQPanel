@@ -816,6 +816,67 @@ systemctl restart named
 echo -e "${GREEN}✓ BIND9 instalado y configurado${NC}\n"
 
 ###############################################################################
+# Migración de la config de Dovecot 2.3 (bookworm) → 2.4 (trixie)
+# ─────────────────────────────────────────────────────────────────────────────
+# La config de correo de más abajo se escribe en sintaxis Dovecot 2.3 (Debian
+# 12). En Debian 13 el paquete es Dovecot 2.4, que renombró/eliminó ajustes; sin
+# traducirlos el arranque ABORTA. Esta función migra SOLO si Dovecot es ≥ 2.4.
+# Es la MISMA traducción que scripts/dist_upgrade_debian13.sh (mantener sincronía
+# si cambia una: son la única fuente de verdad de la conversión 2.3→2.4).
+# Idempotente.
+_migrate_dovecot_24_if_needed() {
+    command -v doveconf >/dev/null 2>&1 || return 0
+    # Versión mayor.menor de Dovecot (p.ej. "2.4"). Si <2.4, no tocar nada.
+    local ver
+    ver="$(doveconf --version 2>/dev/null | grep -oE '^[0-9]+\.[0-9]+' | head -1)"
+    [[ -z "$ver" ]] && return 0
+    local major="${ver%%.*}" minor="${ver##*.}"
+    if (( major < 2 || (major == 2 && minor < 4) )); then
+        return 0   # Dovecot 2.3 o anterior: la sintaxis 2.3 ya es correcta.
+    fi
+
+    echo -e "  ${YELLOW}→ Dovecot $ver detectado: migrando config a sintaxis 2.4...${NC}"
+    local D=/etc/dovecot/conf.d
+
+    # 1) disable_plaintext_auth = no  →  auth_allow_cleartext = yes
+    [[ -f "$D/10-auth.conf" ]] && \
+        sed -i 's/^[[:space:]]*disable_plaintext_auth[[:space:]]*=[[:space:]]*no/auth_allow_cleartext = yes/' "$D/10-auth.conf"
+
+    # 2) passdb/userdb passwd-file: 2.4 usa el nombre del driver en la sección
+    if [[ -f "$D/auth-passwdfile.conf.ext" ]] && grep -q '^passdb {' "$D/auth-passwdfile.conf.ext"; then
+        cat > "$D/auth-passwdfile.conf.ext" <<'EOF'
+# Dovecot 2.4 — passwd-file passdb/userdb (SVQPanel)
+passdb passwd-file {
+  passwd_file_path = /etc/dovecot/users
+  default_password_scheme = SHA512-CRYPT
+}
+userdb passwd-file {
+  passwd_file_path = /etc/dovecot/users
+}
+EOF
+    fi
+
+    # 3) mail_location = maildir:~/  →  mail_driver = maildir + mail_path = ~/
+    if [[ -f "$D/10-mail.conf" ]]; then
+        sed -i 's|^[[:space:]]*mail_location[[:space:]]*=[[:space:]]*maildir:~/[[:space:]]*$|mail_driver = maildir\nmail_path = ~/|' "$D/10-mail.conf"
+        # Cualquier otra mail_location (p.ej. el default mbox de Debian) → comentar
+        sed -i 's|^[[:space:]]*mail_location[[:space:]]*=.*|# (migrado a mail_driver/mail_path)|' "$D/10-mail.conf"
+    fi
+
+    # 4) SNI por dominio: ssl_cert/ssl_key  →  ssl_server_cert_file/ssl_server_key_file
+    if [[ -f "$D/99-svqpanel-sni.conf" ]]; then
+        sed -i 's|ssl_cert[[:space:]]*=[[:space:]]*<|ssl_server_cert_file = |g; s|ssl_key[[:space:]]*=[[:space:]]*<|ssl_server_key_file = |g' "$D/99-svqpanel-sni.conf"
+    fi
+
+    if doveconf -n >/dev/null 2>/tmp/svq-doveconf.err; then
+        echo -e "  ${GREEN}✓ Config Dovecot migrada a 2.4 (validada).${NC}"
+    else
+        echo -e "  ${YELLOW}⚠ doveconf aún reporta avisos tras migrar (revisa /tmp/svq-doveconf.err).${NC}"
+        head -3 /tmp/svq-doveconf.err 2>/dev/null
+    fi
+}
+
+###############################################################################
 # 6c. SERVIDOR DE CORREO — Postfix + Dovecot + Rspamd + Redis
 ###############################################################################
 if [[ "$INSTALL_MAIL" == true ]]; then
@@ -1014,6 +1075,13 @@ DOVESASLEOF
     : > /etc/postfix/svqpanel_sni
     postmap -F hash:/etc/postfix/svqpanel_sni 2>/dev/null || true
     postconf -e "tls_server_sni_maps = hash:/etc/postfix/svqpanel_sni"
+
+    # Dovecot 2.4 (Debian 13/trixie) cambió la sintaxis de varios ajustes que la
+    # config de arriba escribe en formato 2.3 (Debian 12). Sin traducirlos, el
+    # arranque de Dovecot ABORTA (p.ej. "mail_location: Unknown setting") y con él
+    # toda la instalación. Migramos SOLO si Dovecot es ≥ 2.4. Misma traducción que
+    # scripts/dist_upgrade_debian13.sh (única fuente de verdad de la conversión).
+    _migrate_dovecot_24_if_needed
 
     systemctl enable dovecot
     systemctl restart dovecot
