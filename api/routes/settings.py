@@ -904,10 +904,26 @@ async def set_timezone(
 
     # Los servicios que ya estaban corriendo cachean la zona horaria al arrancar,
     # así que tras cambiarla siguen escribiendo sus logs en la zona ANTERIOR
-    # (típicamente UTC) hasta que se reinicien. Reiniciamos los de logging para
-    # que los timestamps de los logs reflejen ya la nueva zona.
+    # (típicamente UTC) hasta que recarguen. Los recargamos para que los
+    # timestamps de los logs reflejen ya la nueva zona.
+    #
+    # IMPORTANTE: nginx se RECARGA (reload), NO se reinicia. Un 'restart' de nginx
+    # tira el proceso un instante y corta la conexión HTTP del propio admin que
+    # está haciendo este cambio → el navegador muestra "Failed to fetch" aunque el
+    # cambio ya se guardó. El 'reload' arranca workers nuevos (que toman la nueva
+    # zona) sin cortar ninguna conexión. El resto de servicios no sirven la UI del
+    # panel, así que un try-restart de ellos no afecta a esta petición.
     restarted = []
-    for svc in ("rsyslog", "nginx", "postfix", "dovecot", "cron"):
+    # nginx: reload (no corta la conexión del admin)
+    try:
+        r = subprocess.run(["systemctl", "reload", "nginx"],
+                           capture_output=True, text=True, timeout=20)
+        if r.returncode == 0:
+            restarted.append("nginx")
+    except Exception:
+        pass
+    # Resto de servicios de logging: try-restart (no afectan a la conexión del panel)
+    for svc in ("rsyslog", "postfix", "dovecot", "cron"):
         try:
             r = subprocess.run(["systemctl", "try-restart", svc],
                                capture_output=True, text=True, timeout=20)
