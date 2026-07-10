@@ -2974,6 +2974,32 @@ if [[ "$INSTALL_CROWDSEC" == true ]]; then
             && echo -e "    ${GREEN}✓ crowdsecurity/http-bf-wordpress_bf_xmlrpc${NC}" \
             || echo -e "    ${YELLOW}⚠ http-bf-wordpress_bf_xmlrpc (no disponible)${NC}"
 
+        # Escenario propio: banear IPs que insisten tras un 444. El catálogo de
+        # bad-bots de nginx corta a los bots conocidos con 444 (cierra sin
+        # responder, no llega a PHP), pero los escenarios http-* de CrowdSec miran
+        # 200/403/404, NO el 444, así que un bot cortado reconecta ~1/seg sin fin.
+        # Este escenario cuenta los 444 por IP y escala al firewall-bouncer.
+        mkdir -p /etc/crowdsec/scenarios
+        cat > /etc/crowdsec/scenarios/svqpanel-http-444-flood.yaml << 'CS444EOF'
+# SVQPanel — banear IPs que insisten tras ser cortadas con 444 por nginx.
+type: leaky
+name: svqpanel/http-444-flood
+description: "IP que recibe muchos 444 (cortada por bad-bots de nginx) y sigue reconectando"
+filter: "evt.Meta.log_type in ['http_access-log'] && evt.Meta.http_status == '444'"
+groupby: "evt.Meta.source_ip"
+capacity: 30
+leakspeed: "2s"
+blackhole: 5m
+labels:
+  confidence: 2
+  spoofable: 0
+  service: http
+  behavior: "http:bruteforce"
+  label: "Bot insistente cortado con 444"
+  remediation: true
+CS444EOF
+        echo -e "    ${GREEN}✓ svqpanel/http-444-flood (banear bots que insisten tras 444)${NC}"
+
         # NOTA (Laravel / apps PHP a medida): NO existe colección específica de
         # Laravel (su login no es una ruta fija). Quedan cubiertas por los
         # escenarios genéricos que ya trae base-http-scenarios + http-cve:
