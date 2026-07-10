@@ -825,10 +825,13 @@ echo -e "${GREEN}✓ BIND9 instalado y configurado${NC}\n"
 # si cambia una: son la única fuente de verdad de la conversión 2.3→2.4).
 # Idempotente.
 _migrate_dovecot_24_if_needed() {
-    command -v doveconf >/dev/null 2>&1 || return 0
-    # Versión mayor.menor de Dovecot (p.ej. "2.4"). Si <2.4, no tocar nada.
+    command -v dovecot >/dev/null 2>&1 || return 0
+    # Versión mayor.menor de Dovecot (p.ej. "2.4"). Usamos 'dovecot --version'
+    # (lee el binario) y NO 'doveconf --version' (que intenta leer la config y
+    # devuelve vacío/error si esta aún está en sintaxis 2.3 — justo el caso que
+    # queremos migrar). Si no se puede determinar, no tocar nada.
     local ver
-    ver="$(doveconf --version 2>/dev/null | grep -oE '^[0-9]+\.[0-9]+' | head -1)"
+    ver="$(dovecot --version 2>/dev/null | grep -oE '^[0-9]+\.[0-9]+' | head -1)"
     [[ -z "$ver" ]] && return 0
     local major="${ver%%.*}" minor="${ver##*.}"
     if (( major < 2 || (major == 2 && minor < 4) )); then
