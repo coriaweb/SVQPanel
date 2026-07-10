@@ -65,15 +65,10 @@ def cmd_refresh_ip_lists(force: bool = False) -> int:
             v4, v6, err = ip_list_fetcher.refresh_one(il)
             db.commit()
 
+            # refresh_one ya devuelve los CIDRs parseados aunque el sha no cambie
+            # ("unchanged"); no hace falta re-descargar. Solo saltamos ante error real.
             if err == "unchanged":
-                logger.info(f"      sha256 sin cambios → refetch para incluir en regeneración")
-                # Necesitamos las entradas igualmente; refetch puro sin tocar estado:
-                try:
-                    text, _ = ip_list_fetcher.fetch_url(il.url)
-                    v4, v6, _ = ip_list_fetcher.parse_list_content(text, il.max_entries)
-                except Exception as e:
-                    logger.warning(f"      refetch falló: {e}; omitiendo de regen esta vuelta")
-                    continue
+                logger.info(f"      sha256 sin cambios → usando CIDRs ya parseados")
             elif err:
                 logger.warning(f"      ERROR: {err}")
                 continue

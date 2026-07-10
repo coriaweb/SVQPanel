@@ -61,14 +61,10 @@ def _do_background_apply():
         for il in enabled:
             v4, v6, err = ip_list_fetcher.refresh_one(il)
             db.commit()
-            if err == "unchanged":
-                try:
-                    text, _ = ip_list_fetcher.fetch_url(il.url)
-                    v4, v6, _ = ip_list_fetcher.parse_list_content(text, il.max_entries)
-                except Exception as e:
-                    logger.warning(f"iplist {il.name}: refetch unchanged falló: {e}")
-                    continue
-            elif err:
+            # refresh_one ya devuelve los CIDRs parseados tanto si la lista cambió
+            # como si está "unchanged" (antes había que re-descargar aquí; se
+            # eliminó la doble descarga). Solo saltamos si hubo un error real.
+            if err and err != "unchanged":
                 logger.warning(f"iplist {il.name}: refresh falló: {err}")
                 continue
             active_tuples.append((il, v4, v6))
@@ -276,14 +272,9 @@ def _refresh_and_apply(db: Session, request: Request, user) -> None:
     for il in enabled:
         v4, v6, err = ip_list_fetcher.refresh_one(il)
         db.commit()
-        if err == "unchanged":
-            try:
-                text, _ = ip_list_fetcher.fetch_url(il.url)
-                v4, v6, _ = ip_list_fetcher.parse_list_content(text, il.max_entries)
-            except Exception as e:
-                logger.warning(f"iplist {il.name}: refetch unchanged falló: {e}")
-                continue
-        elif err:
+        # refresh_one devuelve los CIDRs tanto si cambió como si está "unchanged"
+        # (ya no re-descargamos aquí). Solo saltamos ante un error real.
+        if err and err != "unchanged":
             logger.warning(f"iplist {il.name}: refresh falló: {err}")
             continue
         active_tuples.append((il, v4, v6))

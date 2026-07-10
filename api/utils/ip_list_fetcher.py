@@ -28,7 +28,12 @@ logger = logging.getLogger(__name__)
 NFT_IPLISTS_FILE = "/etc/nftables/svqpanel-iplists.nft"
 USER_AGENT       = "SVQPanel/0.1 (+https://github.com/coriaweb/SVQPanel)"
 MAX_BYTES        = 10 * 1024 * 1024   # 10 MB
-REQUEST_TIMEOUT  = 30                  # segundos
+# Timeout por descarga. Bajo a propósito: al aplicar geo-bloqueo se descargan
+# muchas listas en serie (varios países × IPv4+IPv6) en un hilo de fondo. Con un
+# timeout alto, una sola fuente lenta cuelga TODO el apply y —con un solo worker
+# de uvicorn— congela el panel. 15s es de sobra para fuentes normales (ipdeny
+# responde en <1s) y corta rápido las que van mal.
+REQUEST_TIMEOUT  = 15                  # segundos (por descarga)
 
 # IPs/CIDRs privados que NO permitimos como destino del fetch (SSRF)
 _PRIVATE_RANGES_V4 = [
@@ -151,6 +156,11 @@ def _fetch_one(url: str) -> bytes:
             data = resp.read(MAX_BYTES + 1)
     except (URLError, HTTPError, socket.timeout, TimeoutError) as e:
         raise ValueError(f"Error de red: {e}")
+    except Exception as e:
+        # Cualquier otro fallo (SSL, DNS, socket a medias…) NO debe propagarse tal
+        # cual y atascar el hilo de fondo: lo convertimos en un error controlado
+        # para que el apply salte esta lista y siga con las demás.
+        raise ValueError(f"Error inesperado descargando la lista: {e}")
 
     if len(data) > MAX_BYTES:
         raise ValueError(f"Respuesta supera {MAX_BYTES} bytes")
@@ -308,12 +318,17 @@ def refresh_one(iplist: IpList) -> Tuple[List[str], List[str], Optional[str]]:
         iplist.last_error = str(e)[:8000]
         return [], [], str(e)
 
+    # Siempre parseamos y devolvemos los CIDRs, cambie o no la lista. Antes, si el
+    # sha coincidía, devolvíamos [] con "unchanged" y el caller RE-DESCARGABA la
+    # misma URL para reparsear (doble descarga por lista). Al bloquear varios
+    # países a la vez eso multiplicaba las descargas y podía colgar el hilo de
+    # fondo. Ya tenemos el texto descargado aquí: parseamos una sola vez.
+    v4, v6, parse_errors = parse_list_content(text, max_entries=iplist.max_entries)
+
     if iplist.sha256_last == sha:
         iplist.last_success_at = datetime.utcnow()
         iplist.last_error = None
-        return [], [], "unchanged"   # Caller decide saltar regeneración
-
-    v4, v6, parse_errors = parse_list_content(text, max_entries=iplist.max_entries)
+        return v4, v6, "unchanged"   # sin cambios, pero devolvemos los CIDRs ya parseados
 
     iplist.sha256_last     = sha
     iplist.last_success_at = datetime.utcnow()
