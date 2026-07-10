@@ -603,6 +603,26 @@
             </span>
           </div>
           <div class="card-body">
+            <!-- Aviso: acceso por HTTP. Emitir SSL desde HTTP falla con "Failed
+                 to fetch"; hay que entrar por HTTPS para gestionar el certificado. -->
+            <div
+              v-if="isHttpAccess && !settings?.ssl_panel_enabled"
+              class="alert alert-warning d-flex align-items-start gap-2 mb-3"
+              role="alert"
+            >
+              <i class="bi bi-exclamation-triangle-fill fs-5"></i>
+              <div>
+                <strong>Estás accediendo por HTTP (sin cifrar).</strong>
+                Para emitir o gestionar el certificado SSL del panel debes entrar por HTTPS,
+                o el navegador bloqueará la operación (verás un error «Failed to fetch»).
+                <div class="mt-2">
+                  <a :href="httpsUrl" class="btn btn-sm btn-warning">
+                    <i class="bi bi-shield-lock me-1"></i> Ir a la versión HTTPS
+                  </a>
+                </div>
+              </div>
+            </div>
+
             <div class="row g-3">
               <div class="sv-half">
                 <label class="form-label fw-bold">Hostname del panel</label>
@@ -1446,6 +1466,18 @@ export default {
       return list
     })
 
+    // ¿Estamos accediendo al panel por HTTP plano? La emisión de SSL (petición
+    // fetch al backend) falla con un críptico "Failed to fetch" si la página se
+    // sirve por HTTP y nginx redirige a HTTPS con un cert que el navegador aún
+    // no acepta. Detectarlo para avisar al usuario de que entre por HTTPS.
+    const isHttpAccess = computed(() => window.location.protocol === 'http:')
+    // URL HTTPS sugerida: mismo host y puerto, cambiando el esquema a https.
+    const httpsUrl = computed(() => {
+      const host = settings.value?.panel_hostname || window.location.hostname
+      const port = window.location.port ? `:${window.location.port}` : ''
+      return `https://${host}${port}${window.location.pathname}`
+    })
+
     const loadWhitelist = async () => {
       try {
         const r = await api.get('/api/settings/panel-whitelist')
@@ -1959,6 +1991,16 @@ export default {
 
     const issueSSL = async () => {
       if (!sslForm.hostname || !sslForm.email) return
+      // Si estamos en HTTP, la petición fallaría con "Failed to fetch" (nginx
+      // redirige a HTTPS y el navegador corta). Avisamos con una acción clara
+      // en vez de dejar que reviente con un error incomprensible.
+      if (isHttpAccess.value) {
+        store.showNotification(
+          'Estás en HTTP: para emitir el SSL entra primero por HTTPS (' + httpsUrl.value + ').',
+          'warning'
+        )
+        return
+      }
       sslLoading.value = true
       try {
         await api.issuePanelSSL({
@@ -2009,6 +2051,7 @@ export default {
       showSmtpTest, smtpTestTo, saveSmtp, openSmtpTest, sendSmtpTest,
       msgSize, msgSizeSaving, saveMsgSize,
       wl, wlSaving, showWlConfirm, previewIps, confirmSaveWhitelist, saveWhitelist,
+      isHttpAccess, httpsUrl,
       panelBackups, pbRunning, runPanelBackup, downloadUrl, fmtBytes, formatBackupDate,
       pbRetention, pbSavingRet, savePbRetention,
       pbRestoreTarget, pbRestoreConfirm, pbRestoring, askRestore, cancelRestore, doRestore,

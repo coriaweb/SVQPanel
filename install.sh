@@ -3740,6 +3740,20 @@ echo ""
 ###############################################################################
 # 14b. SSL AUTOMÁTICO DEL PANEL (si el hostname apunta a este servidor)
 ###############################################################################
+# Re-comprobar el DNS AQUÍ (no solo al principio): la instalación dura 15-20 min
+# y es habitual crear el registro A del hostname mientras corre. Si al inicio no
+# resolvía pero ahora sí apunta a este servidor, marcamos SSL_READY y emitimos.
+# Sin esto, un DNS que propaga a mitad dejaba el panel en HTTP para siempre pese
+# a tener ya el registro correcto.
+if [[ "$PANEL_SSL_READY" != true && -n "$PANEL_HOSTNAME" && -n "$_INSTALL_SERVER_IP" ]]; then
+    _RECHECK_IPS="$(getent ahostsv4 "$PANEL_HOSTNAME" 2>/dev/null | awk '{print $1}' | sort -u)"
+    [[ -z "$_RECHECK_IPS" ]] && _RECHECK_IPS="$(dig +short A "$PANEL_HOSTNAME" 2>/dev/null | grep -E '^[0-9.]+$')"
+    if echo "$_RECHECK_IPS" | grep -qx "$_INSTALL_SERVER_IP"; then
+        PANEL_SSL_READY=true
+        echo -e "${GREEN}✓ $PANEL_HOSTNAME ya resuelve a este servidor ($_INSTALL_SERVER_IP); se emitirá SSL.${NC}"
+    fi
+fi
+
 if [[ "$PANEL_SSL_READY" == true && -n "$PANEL_HOSTNAME" ]]; then
     echo -e "${YELLOW}Emitiendo certificado SSL del panel para $PANEL_HOSTNAME...${NC}"
     # El backend debe estar arrancado para que nginx sirva el ACME challenge.
