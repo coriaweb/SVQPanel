@@ -560,6 +560,7 @@ async def create_mail_domain(
     # Seguridad: el dominio de correo pertenece SIEMPRE a un cliente, no al admin.
     # Admin/reseller debe elegir el propietario (igual que en dominios/BD).
     from api.utils.validators import validate_owner_assignment, OwnerAssignmentError
+    from api.models.models_user import User
     owner_user = None
     if data.user_id:
         owner_user = db.query(User).filter(User.id == data.user_id).first()
