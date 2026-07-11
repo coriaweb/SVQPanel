@@ -1699,6 +1699,31 @@ for PHP_VER in "${PHP_ARRAY[@]}"; do
             echo "apc.enable_cli = 1" > "/etc/php/${PHP_VER}/cli/conf.d/99-apcu-cli.ini"
         fi
 
+        # OPcache: los defaults de Debian se quedan cortos para cualquier app PHP
+        # seria (Nextcloud avisa explícitamente de interned_strings_buffer; WordPress
+        # con muchos plugins desborda max_accelerated_files y deja de cachear en
+        # silencio, con lo que el OPcache pierde su razón de ser).
+        #   memory_consumption      128 → 256  (WP+plugins / Nextcloud no caben en 128M)
+        #   interned_strings_buffer   8 →  16  (el aviso de Nextcloud pide > 8)
+        #   max_accelerated_files 10000 → 20000 (Nextcloud solo trae ~15k ficheros PHP)
+        #   revalidate_freq           2 →   2  (se mantiene: los clientes suben código
+        #                                       por FTP/git y esperan verlo al momento)
+        # save_comments = 1 obligatorio: las anotaciones de Doctrine (Nextcloud) y de
+        # varios frameworks las leen en runtime; ponerlo a 0 los rompe.
+        if [[ -d "/etc/php/${PHP_VER}/fpm/conf.d" ]]; then
+            cat > "/etc/php/${PHP_VER}/fpm/conf.d/99-svqpanel-opcache.ini" << 'OPCACHEEOF'
+; SVQPanel: OPcache dimensionado para apps reales (Nextcloud, WordPress, Laravel).
+; Los defaults de Debian (128M / 8 / 10000) se quedan cortos y el OPcache empieza
+; a desalojar clases en caliente, o directamente deja de cachear.
+opcache.enable = 1
+opcache.memory_consumption = 256
+opcache.interned_strings_buffer = 16
+opcache.max_accelerated_files = 20000
+opcache.revalidate_freq = 2
+opcache.save_comments = 1
+OPCACHEEOF
+        fi
+
         # Verificar que FPM arrancó (socket debe existir)
         systemctl restart "php${PHP_VER}-fpm" 2>/dev/null
         sleep 1
