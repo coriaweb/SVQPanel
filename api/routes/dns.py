@@ -556,7 +556,6 @@ async def list_records(
     return db.query(DnsRecord).filter(DnsRecord.zone_id == zone_id).all()
 
 
-@router.post("/dns/{zone_id}/records", response_model=DnsRecordResponse, status_code=status.HTTP_201_CREATED)
 def normalize_hostname_content(record_type: str, content: str) -> str:
     """Añade el punto final a los contenidos que son un FQDN (MX/CNAME/NS y el
     target de SRV). Función PURA.
@@ -593,6 +592,7 @@ def normalize_hostname_content(record_type: str, content: str) -> str:
     return c
 
 
+@router.post("/dns/{zone_id}/records", response_model=DnsRecordResponse, status_code=status.HTTP_201_CREATED)
 async def add_record(
     zone_id: int,
     data: DnsRecordCreate,
