@@ -946,15 +946,6 @@ if [[ "$INSTALL_MAIL" == true ]]; then
     postconf -e "smtp_tls_security_level = may"
     postconf -e "smtpd_tls_protocols = !SSLv2,!SSLv3"
 
-    # Preferir IPv4 en el correo SALIENTE. Por defecto Postfix usa
-    # smtp_address_preference=any → si el servidor tiene IPv6, sale por IPv6.
-    # Pero la IPv6 del servidor casi nunca tiene PTR (rDNS), y su SPF a menudo no
-    # cubre la IPv6 concreta que elige el SO del /64 → SPF FAIL + posible rechazo
-    # de Gmail/Outlook (550). La IPv4 dedicada SÍ tiene PTR y SPF. Un dominio puede
-    # optar por su IPv6 dedicada explícitamente (mail_manager pone el bind6 por
-    # dominio); mientras tanto, el default seguro es IPv4.
-    postconf -e "smtp_address_preference = ipv4"
-
     # Rspamd milter
     postconf -e "smtpd_milters = inet:localhost:11332"
     postconf -e "non_smtpd_milters = inet:localhost:11332"
