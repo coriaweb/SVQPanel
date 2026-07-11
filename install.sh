@@ -881,6 +881,18 @@ EOF
         sed -i 's|ssl_cert[[:space:]]*=[[:space:]]*<|ssl_server_cert_file = |g; s|ssl_key[[:space:]]*=[[:space:]]*<|ssl_server_key_file = |g' "$D/99-svqpanel-sni.conf"
     fi
 
+    # 5) LMTP: BUG CRÍTICO de Dovecot 2.4 en Debian — el 20-lmtp.conf del paquete
+    # trae auth_username_format con '| username', que RECORTA el @dominio. Como los
+    # buzones se indexan por email completo (passwd-file), la entrega LMTP del correo
+    # ENTRANTE rebota con "550 User doesn't exist" → el servidor NO recibe correo de
+    # fuera. Forzamos %{user} (email completo) con un drop-in. (Igual que update 0062.)
+    cat > "$D/99-svqpanel-lmtp.conf" <<'EOF'
+# SVQPanel: LMTP busca el buzon por EMAIL COMPLETO (no recortar el dominio).
+protocol lmtp {
+  auth_username_format = %{user}
+}
+EOF
+
     if doveconf -n >/dev/null 2>/tmp/svq-doveconf.err; then
         echo -e "  ${GREEN}✓ Config Dovecot migrada a 2.4 (validada).${NC}"
     else
