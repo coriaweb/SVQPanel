@@ -1637,6 +1637,17 @@ for PHP_VER in "${PHP_ARRAY[@]}"; do
                 echo "    ⚠ php${PHP_VER}-${EXT} no disponible (ignorado)"
         done
 
+        # Codecs extra de ImageMagick: sin ellos imagick NO soporta SVG y Nextcloud
+        # avisa ("El módulo PHP imagick de esta instancia no tiene soporte para SVG").
+        # El nombre del paquete depende de la versión de ImageMagick del SO (Debian 13
+        # trae la 7): lo resolvemos por búsqueda en vez de hardcodear la versión.
+        IMAGICK_EXTRA="$(apt-cache search --names-only '^libmagickcore-[0-9].*-extra$' 2>/dev/null \
+            | awk '{print $1}' | grep -v hdri | head -1)"
+        if [[ -n "$IMAGICK_EXTRA" ]]; then
+            apt-get install -y -q "$IMAGICK_EXTRA" 2>/dev/null && \
+                echo "    ✓ $IMAGICK_EXTRA (soporte SVG en imagick)" || true
+        fi
+
         # Habilitar y arrancar FPM
         systemctl enable "php${PHP_VER}-fpm" 2>/dev/null && \
         systemctl start  "php${PHP_VER}-fpm" 2>/dev/null
