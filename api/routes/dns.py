@@ -18,6 +18,7 @@ from api.schemas.dns_schemas import (
 )
 from api.dependencies import require_auth, require_admin
 from scripts.dns_manager import DNSManager
+from scripts.dns_validator import validate_record
 
 router = APIRouter()
 
@@ -97,6 +98,53 @@ def _get_server_ipv6(db: Session) -> str:
     return (getattr(s, "panel_ipv6", None) or "") if s else ""
 
 
+def _checkzone(domain: str, zone_text: str) -> None:
+    """
+    CINTURÓN DE SEGURIDAD: comprueba que BIND aceptaría esta zona ANTES de
+    publicarla.
+
+    Un solo registro mal formado (una comilla sin cerrar en un CAA, p.ej.) no
+    hace que BIND rechace ese registro: hace que rechace la ZONA ENTERA
+    ("not loaded due to errors") y el dominio deja de resolver. Pasó en
+    producción: dos dominios estuvieron horas sin DNS en el master, y el panel
+    lo mostraba como "ns1 caído".
+
+    scripts/dns_validator.py valida cada registro al guardarlo; esto es la red
+    por si algún caso se le escapa. Si named-checkzone no está (entorno dev), no
+    bloquea nada.
+    """
+    import shutil, subprocess, tempfile, os
+    checkzone = shutil.which("named-checkzone")
+    if not checkzone:
+        return  # sin BIND instalado (dev): el validador por registro ya actuó
+
+    tmp = None
+    try:
+        with tempfile.NamedTemporaryFile("w", suffix=".zone", delete=False,
+                                         encoding="utf-8") as f:
+            f.write(zone_text)
+            tmp = f.name
+        r = subprocess.run([checkzone, domain, tmp],
+                           capture_output=True, text=True, timeout=15)
+        if r.returncode != 0:
+            detail = (r.stdout or r.stderr or "").strip().splitlines()
+            # Quedarse con la línea del error real, no con el "zone not loaded"
+            msg = next((l for l in detail if "zone" not in l.lower()), "")
+            raise HTTPException(
+                status_code=422,
+                detail=(
+                    f"La zona no es válida y NO se ha publicado (el dominio "
+                    f"sigue resolviendo con la versión anterior). "
+                    f"BIND dice: {msg or (detail[0] if detail else 'error desconocido')}"
+                ),
+            )
+    except subprocess.TimeoutExpired:
+        pass  # no bloquear una publicación por un checkzone lento
+    finally:
+        if tmp and os.path.exists(tmp):
+            os.unlink(tmp)
+
+
 def _sync_zone_to_bind(zone: DnsZone, db: Session):
     """
     Sincroniza la zona. Si hay cluster DNS configurado, empuja la zona al master
@@ -120,6 +168,8 @@ def _sync_zone_to_bind(zone: DnsZone, db: Session):
         zone_text = DNSManager.render_zone(
             zone.domain_name, zone.serial, record_dicts, soa_ns=soa_ns, ttl=ttl,
         )
+        # Antes de publicar: ¿la aceptaría BIND? Si no, 422 y no se toca el cluster.
+        _checkzone(zone.domain_name, zone_text)
         if push_zone_to_cluster(db, zone.domain_name, zone_text,
                                 dnssec=bool(zone.dnssec_enabled)):
             return  # empujada al cluster; el panel no sirve DNS en este modo
@@ -130,7 +180,9 @@ def _sync_zone_to_bind(zone: DnsZone, db: Session):
         logging.getLogger(__name__).error(f"push al cluster DNS falló: {e}")
         raise
 
-    # 2) Sin cluster → BIND local del panel
+    # 2) Sin cluster → BIND local del panel (mismo cinturón: si la zona no
+    #    compila, no la escribimos y el dominio sigue con la versión anterior)
+    _checkzone(zone.domain_name, zone_text)
     try:
         manager = DNSManager()
         manager.write_zone_from_records(
@@ -610,17 +662,32 @@ async def add_record(
 
     _require_zone_access(zone, current_user, db)
 
+    # Validar ANTES de tocar la BD: un registro mal formado (una comilla sin
+    # cerrar en un CAA, p.ej.) no rompe solo ese registro — hace que BIND
+    # rechace la ZONA ENTERA y el dominio deje de resolver.
+    try:
+        content = validate_record(data.record_type, data.content, data.priority)
+    except ValueError as e:
+        raise HTTPException(status_code=422, detail=str(e))
+
     record = DnsRecord(
         zone_id=zone_id, record_type=data.record_type,
         name=data.name,
-        content=normalize_hostname_content(data.record_type, data.content),
+        content=normalize_hostname_content(data.record_type, content),
         ttl=data.ttl, priority=data.priority,
     )
     db.add(record)
     zone.serial = _bump_serial(zone.serial)
     db.commit()
     db.refresh(record)
-    _sync_zone_to_bind(zone, db)
+    try:
+        _sync_zone_to_bind(zone, db)
+    except HTTPException:
+        # La zona no compila (el cinturón named-checkzone la paró): deshacer el
+        # registro para que la BD no quede con algo que BIND nunca aceptará.
+        db.delete(record)
+        db.commit()
+        raise
     return record
 
 
@@ -645,15 +712,30 @@ async def update_record(
     if not record:
         raise HTTPException(status_code=404, detail="Registro no encontrado")
 
-    if data.content  is not None:
-        record.content = normalize_hostname_content(record.record_type, data.content)
+    # Guardar el estado previo: si la zona resultante no compila, revertimos y
+    # el dominio se queda como estaba (nunca a medias).
+    prev = {"content": record.content, "ttl": record.ttl, "priority": record.priority}
+
+    if data.content is not None:
+        try:
+            content = validate_record(record.record_type, data.content, data.priority)
+        except ValueError as e:
+            raise HTTPException(status_code=422, detail=str(e))
+        record.content = normalize_hostname_content(record.record_type, content)
     if data.ttl      is not None: record.ttl      = data.ttl
     if data.priority is not None: record.priority = data.priority
 
     zone.serial = _bump_serial(zone.serial)
     db.commit()
     db.refresh(record)
-    _sync_zone_to_bind(zone, db)
+    try:
+        _sync_zone_to_bind(zone, db)
+    except HTTPException:
+        record.content  = prev["content"]
+        record.ttl      = prev["ttl"]
+        record.priority = prev["priority"]
+        db.commit()
+        raise
     return record
 
 
