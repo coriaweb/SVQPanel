@@ -865,6 +865,15 @@ EOF
         sed -i 's|^[[:space:]]*mail_location[[:space:]]*=[[:space:]]*maildir:~/[[:space:]]*$|mail_driver = maildir\nmail_path = ~/|' "$D/10-mail.conf"
         # Cualquier otra mail_location (p.ej. el default mbox de Debian) → comentar
         sed -i 's|^[[:space:]]*mail_location[[:space:]]*=.*|# (migrado a mail_driver/mail_path)|' "$D/10-mail.conf"
+        # Debian 13 trae Dovecot 2.4 con la config MBOX por defecto activa:
+        #   mail_driver = mbox / mail_inbox_path = /var/mail/%{user}
+        # Esa config CONVIVE con la de SVQPanel (maildir) y descuadra el INBOX: las
+        # subcarpetas (Sent, Archive…) se leen bien de ~/, pero el INBOX se busca en
+        # /var/mail/ → "Failed to autocreate mailbox: Permission denied" y el webmail
+        # da error SOLO en la bandeja de entrada. Comentamos la config mbox de Debian.
+        sed -i 's|^[[:space:]]*mail_driver[[:space:]]*=[[:space:]]*mbox|# (mbox de Debian desactivado — SVQPanel usa maildir)|' "$D/10-mail.conf"
+        sed -i 's|^[[:space:]]*mail_inbox_path[[:space:]]*=[[:space:]]*/var/mail|# mail_inbox_path (mbox de Debian desactivado)|' "$D/10-mail.conf"
+        sed -i 's|^[[:space:]]*mail_path[[:space:]]*=[[:space:]]*%{home}/mail|# mail_path (mbox de Debian desactivado)|' "$D/10-mail.conf"
     fi
 
     # 4) SNI por dominio: ssl_cert/ssl_key  →  ssl_server_cert_file/ssl_server_key_file
@@ -1247,6 +1256,25 @@ RSPAMDRLCONFEOF
     systemctl enable rspamd
     systemctl restart rspamd
     echo -e "  ${GREEN}✓ Rspamd configurado (antispam + DKIM + greylisting + Bayes/Redis)${NC}"
+
+    # ── 4b. CLAMAV (antivirus de correo) ──────────────────────────────────
+    # El panel gestiona el antivirus de correo (scripts/antivirus_manager.py:
+    # clamd + clamav-milter conectado a Postfix, o vía Rspamd si hay SSSE3), pero
+    # NECESITA el paquete instalado. Sin esto, la tarjeta "Antivirus de correo"
+    # del panel sale como "ClamAV no está disponible en el servidor".
+    echo -e "  ${YELLOW}→ Instalando ClamAV (antivirus de correo)...${NC}"
+    apt-get install -y -qq clamav clamav-daemon clamav-milter clamav-freshclam 2>&1 | tail -2 || \
+        echo -e "  ${YELLOW}  ⚠ No se pudo instalar ClamAV; actívalo luego desde el panel.${NC}"
+    # Primera descarga de firmas (freshclam) — el servicio las mantiene al día 24×/día.
+    systemctl stop clamav-freshclam 2>/dev/null || true
+    freshclam 2>&1 | tail -1 || echo -e "  ${YELLOW}  (freshclam se reintentará por el servicio)${NC}"
+    systemctl enable --now clamav-freshclam 2>/dev/null || true
+    systemctl enable --now clamav-daemon 2>/dev/null || true
+    if systemctl is-active --quiet clamav-daemon; then
+        echo -e "  ${GREEN}✓ ClamAV instalado (clamav-daemon activo)${NC}"
+    else
+        echo -e "  ${YELLOW}  ⚠ clamav-daemon aún no activo (las firmas pueden tardar en descargar).${NC}"
+    fi
 
     # ── 5. VERIFICACIÓN FINAL ─────────────────────────────────────────────
     echo ""
