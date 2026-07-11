@@ -627,6 +627,19 @@ class AppInstaller:
             _run([php_bin, occ, "config:system:set", "enabledPreviewProviders",
                   str(_i), "--value", _prov], cwd=docroot, as_user=owner)
 
+        # 5) La app Fotos SOLO busca dentro de la carpeta `photosLocation` (default:
+        #    "Photos", que Nextcloud crea VACÍA). Si el usuario guarda sus fotos en
+        #    cualquier otra carpeta —lo normal: "Fotos", "Cámara", "Móvil"…— la
+        #    galería sale VACÍA ("No hay fotos ni videos aquí") aunque Archivos las
+        #    vea todas. Es de las cosas que más desconciertan al cliente.
+        #    Apuntándola a la raíz, la galería muestra todo lo que haya en la cuenta.
+        #    Es preferencia de USUARIO (getUserConfig), no config global: un
+        #    `config:system:set photosLocation` NO tiene ningún efecto.
+        _run([php_bin, occ, "user:setting", admin_user, "photos",
+              "photosLocation", "/"], cwd=docroot, as_user=owner)
+        _run([php_bin, occ, "user:setting", admin_user, "photos",
+              "photosSourceFolders", '["/"]'], cwd=docroot, as_user=owner)
+
         _chown_tree(docroot, owner)
         return {
             "app": "nextcloud",
