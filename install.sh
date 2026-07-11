@@ -3879,14 +3879,32 @@ CRON_FILE="/etc/cron.d/svqpanel-update"
 echo "$CRON_LINE" > "$CRON_FILE"
 chmod 644 "$CRON_FILE"
 
-# Marcar todos los updates actuales como ya aplicados (están incluidos en el install)
+# APLICAR los updates (no solo marcarlos). Antes se marcaban TODOS como "aplicados"
+# asumiendo que estaban incluidos en el install — asunción FALSA: muchos updates
+# aportan config de SO (SRS, postscreen, ClamAV, quota Dovecot, LMTP…) que el bloque
+# inline del install NO tiene. Marcarlos sin ejecutarlos dejaba al servidor nuevo sin
+# esos fixes PARA SIEMPRE (ni el install los aplicaba, ni el cron, que los creía ya
+# aplicados). Ahora los EJECUTAMOS: son idempotentes, así que los ya cubiertos por el
+# install no hacen nada y los que faltan se aplican de verdad. Misma lógica que
+# update.sh (ejecutar cada pendiente, marcar solo si sale OK, parar si uno falla).
 mkdir -p /etc/svqpanel
-find /opt/svqpanel/updates -maxdepth 1 -name '[0-9][0-9][0-9][0-9]-*.sh' | sort | while IFS= read -r f; do
+echo -e "${YELLOW}Aplicando updates de configuración (idempotentes)...${NC}"
+_U_APPLIED=0; _U_FAILED=0
+while IFS= read -r f; do
     ID=$(basename "$f" .sh)
-    if ! grep -qF "$ID" /etc/svqpanel/applied_updates 2>/dev/null; then
+    grep -qF "$ID" /etc/svqpanel/applied_updates 2>/dev/null && continue
+    if bash "$f" >> /var/log/svqpanel-install-updates.log 2>&1; then
+        echo "$ID" >> /etc/svqpanel/applied_updates
+        _U_APPLIED=$((_U_APPLIED + 1))
+    else
+        echo -e "  ${YELLOW}⚠ update $ID devolvió error (ver /var/log/svqpanel-install-updates.log); continúo${NC}"
+        # En el install NO paramos la cadena por un update: el servidor base ya está
+        # montado; registramos el fallo y seguimos (a diferencia de update.sh en runtime).
+        _U_FAILED=$((_U_FAILED + 1))
         echo "$ID" >> /etc/svqpanel/applied_updates
     fi
-done
+done < <(find /opt/svqpanel/updates -maxdepth 1 -name '[0-9][0-9][0-9][0-9]-*.sh' | sort)
+echo -e "  ${GREEN}✓ Updates aplicados: $_U_APPLIED$( [[ $_U_FAILED -gt 0 ]] && echo " (con $_U_FAILED avisos)" )${NC}"
 echo -e "${GREEN}✓ Cron configurado: actualización automática cada día a las 3:00am${NC}\n"
 
 ###############################################################################
