@@ -627,6 +627,16 @@ class AppInstaller:
             _run([php_bin, occ, "config:system:set", "enabledPreviewProviders",
                   str(_i), "--value", _prov], cwd=docroot, as_user=owner)
 
+        # 4b) Ruta explícita de ffmpeg. Nextcloud lo busca en el $PATH, que bajo
+        #     PHP-FPM viene recortado → no lo encuentra y el proveedor de vídeo falla
+        #     EN SILENCIO: `occ preview:generate` responde "preview generated" pero no
+        #     crea nada, y la galería devuelve 404 para cada MP4 (vídeos en gris).
+        #     Costó dar con ello justamente porque no registra ningún error.
+        _ffmpeg = shutil.which("ffmpeg")
+        if _ffmpeg:
+            _run([php_bin, occ, "config:system:set", "preview_ffmpeg_path",
+                  "--value", _ffmpeg], cwd=docroot, as_user=owner)
+
         # 5) La app Fotos SOLO busca dentro de la carpeta `photosLocation` (default:
         #    "Photos", que Nextcloud crea VACÍA). Si el usuario guarda sus fotos en
         #    cualquier otra carpeta —lo normal: "Fotos", "Cámara", "Móvil"…— la
