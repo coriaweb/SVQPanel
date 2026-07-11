@@ -655,6 +655,21 @@ def generate_nginx_config(
     cache_block     = _fastcgi_cache_block(domain, fastcgi_cache_ttl_minutes, sec_headers=_sh) if fastcgi_cache_enabled else ""
     cache_block_ssl = _fastcgi_cache_block(domain, fastcgi_cache_ttl_minutes, sec_headers=_sh_https) if fastcgi_cache_enabled else ""
 
+    # ── Service discovery .well-known (CalDAV/CardDAV/webfinger/nodeinfo) ──
+    # Nextcloud (y otras apps DAV) avisan de "El servidor no está configurado
+    # correctamente para resolver /.well-known/caldav" si estos redirects faltan:
+    # los clientes de calendario/contactos los usan para autodescubrir la ruta DAV.
+    # Son inofensivos en un dominio SIN Nextcloud (esas rutas no se usarían), así
+    # que los ponemos siempre y cualquier dominio que instale Nextcloud ya los tiene.
+    # Ref: docs.nextcloud.com — "Service discovery".
+    wellknown_block = (
+        "    # Service discovery (CalDAV/CardDAV) — necesario para Nextcloud/DAV\n"
+        "    location = /.well-known/carddav { return 301 /remote.php/dav; }\n"
+        "    location = /.well-known/caldav  { return 301 /remote.php/dav; }\n"
+        "    location = /.well-known/webfinger { return 301 /index.php/.well-known/webfinger; }\n"
+        "    location = /.well-known/nodeinfo  { return 301 /index.php/.well-known/nodeinfo; }\n"
+    )
+
     # ── Bloque que ejecuta la aplicación (location / + PHP) ──
     # Modo nginx puro: try_files + fastcgi_pass a PHP-FPM.
     # Modo apache (proxy_to_apache): proxy_pass a Apache backend (:8181), que
@@ -760,7 +775,7 @@ def generate_nginx_config(
     # Pasamos el upstream al template via variable para que los location blocks
     # de la plantilla puedan usar $phpfpm_backend en lugar del nombre hardcodeado
     set $phpfpm_backend php_{backend_name};
-{canonical_block}{tpl_extra}{bots_block}{wp_protect_http}{app_block_http}
+{canonical_block}{tpl_extra}{bots_block}{wp_protect_http}{wellknown_block}{app_block_http}
     location ~ /\\.ht {{
         deny all;
     }}
@@ -819,7 +834,7 @@ server {{
 
     index index.php index.html index.htm;
 {skip_block}    set $phpfpm_backend php_{backend_name};
-{canonical_block}{tpl_extra}{bots_block}{wp_protect_ssl}{app_block_ssl}
+{canonical_block}{tpl_extra}{bots_block}{wp_protect_ssl}{wellknown_block}{app_block_ssl}
     location ~ /\\.ht {{
         deny all;
     }}

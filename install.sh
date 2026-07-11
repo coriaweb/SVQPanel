@@ -1680,6 +1680,14 @@ for PHP_VER in "${PHP_ARRAY[@]}"; do
             sed -i "s|^\s*post_max_size\s*=.*|post_max_size = 64M|" "$PHP_INI_FPM"
         fi
 
+        # APCu en CLI: Nextcloud usa APCu como caché local (memcache.local) y su
+        # 'occ' / cron.php son CLI. Con el default apc.enable_cli=0, occ ARRANCA CON
+        # ERROR ("Memcache OC\Memcache\APCu not available for local cache") y deja el
+        # Nextcloud inmanejable por consola/cron. Activarlo en CLI lo arregla.
+        if [[ -d "/etc/php/${PHP_VER}/cli/conf.d" ]]; then
+            echo "apc.enable_cli = 1" > "/etc/php/${PHP_VER}/cli/conf.d/99-apcu-cli.ini"
+        fi
+
         # Verificar que FPM arrancó (socket debe existir)
         systemctl restart "php${PHP_VER}-fpm" 2>/dev/null
         sleep 1

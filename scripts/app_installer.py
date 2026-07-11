@@ -554,6 +554,51 @@ class AppInstaller:
         _run([php_bin, occ, "config:system:set", "overwriteprotocol",
               "--value", "https"], cwd=docroot, as_user=owner)
 
+        # ── Post-configuración: quitar los avisos que Nextcloud da de serie ────
+        # Sin esto, "Avisos de seguridad y configuración" sale lleno en cuanto el
+        # cliente entra: sin caché en memoria, bloqueo transaccional en la BD,
+        # cabecera de proxy inverso mal, sin región de teléfono, sin ventana de
+        # mantenimiento… Todo son ajustes que el panel PUEDE dejar bien de salida.
+
+        # 1) Proxy inverso: nginx (y Apache en modo dual) va delante. Sin
+        #    trusted_proxies, Nextcloud avisa de que un atacante podría falsear la
+        #    IP del visitante (y registra la del proxy en vez de la real).
+        _run([php_bin, occ, "config:system:set", "trusted_proxies", "0",
+              "--value", "127.0.0.1"], cwd=docroot, as_user=owner)
+        _run([php_bin, occ, "config:system:set", "trusted_proxies", "1",
+              "--value", "::1"], cwd=docroot, as_user=owner)
+
+        # 2) Caché en memoria + bloqueo de ficheros con Redis. El panel ya da un
+        #    Redis por dominio (socket unix aislado en private/redis.sock); si está
+        #    activo, lo enchufamos. APCu para la caché local (la recomienda NC) y
+        #    Redis para la distribuida y el file locking (evita el aviso "la base de
+        #    datos está siendo utilizada para bloqueo de ficheros transaccional").
+        try:
+            from scripts import redis_manager
+            sock = redis_manager.socket_path(owner, domain)
+            if not os.path.exists(sock):
+                redis_manager.enable_instance(owner, domain)
+            if os.path.exists(sock):
+                _run([php_bin, occ, "config:system:set", "redis", "host",
+                      "--value", sock], cwd=docroot, as_user=owner)
+                _run([php_bin, occ, "config:system:set", "redis", "port",
+                      "--value", "0", "--type", "integer"], cwd=docroot, as_user=owner)
+                _run([php_bin, occ, "config:system:set", "memcache.local",
+                      "--value", "\\OC\\Memcache\\APCu"], cwd=docroot, as_user=owner)
+                _run([php_bin, occ, "config:system:set", "memcache.distributed",
+                      "--value", "\\OC\\Memcache\\Redis"], cwd=docroot, as_user=owner)
+                _run([php_bin, occ, "config:system:set", "memcache.locking",
+                      "--value", "\\OC\\Memcache\\Redis"], cwd=docroot, as_user=owner)
+        except Exception as e:
+            logger.warning(f"Nextcloud: no se pudo enchufar Redis en {domain}: {e}")
+
+        # 3) Región de teléfono (validación de números sin prefijo) y ventana de
+        #    mantenimiento a las 01:00 UTC (los trabajos pesados fuera de horas punta).
+        _run([php_bin, occ, "config:system:set", "default_phone_region",
+              "--value", "ES"], cwd=docroot, as_user=owner)
+        _run([php_bin, occ, "config:system:set", "maintenance_window_start",
+              "--value", "1", "--type", "integer"], cwd=docroot, as_user=owner)
+
         _chown_tree(docroot, owner)
         return {
             "app": "nextcloud",
