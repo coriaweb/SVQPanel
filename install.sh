@@ -429,6 +429,7 @@ apt-get install -y -qq -o Dpkg::Options::="--force-confold" \
     cron \
     sshpass \
     dnsutils \
+    ffmpeg \
     openssl \
     libssl-dev \
     python3 \

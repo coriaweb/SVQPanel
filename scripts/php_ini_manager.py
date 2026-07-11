@@ -375,14 +375,21 @@ def write_pool(domain: str, version: str, owner: str, overrides: Dict[str, str],
     fpm_tuning: dict {"preset": ..., "manual": {...}} para los pm.* del pool.
                 Si None, se usa el preset por defecto (medium).
     """
+    # VALIDAR ANTES DE DESTRUIR. Si la versión destino no está instalada y ya
+    # hubiéramos borrado el pool actual, el dominio se quedaría SIN NINGÚN pool
+    # → el socket desaparece → 503 en todo el sitio. (Pasó de verdad al mover un
+    # dominio a un PHP recién instalado cuyo pool.d aún no existía.)
+    path = get_pool_path(version, domain)
+    if not os.path.isdir(os.path.dirname(path)):
+        return False, f"PHP {version} no está instalado ({os.path.dirname(path)} no existe)"
+
+    # Ahora sí: quitar el pool de las demás versiones (el dominio solo puede
+    # tener uno; todos comparten el mismo socket).
     remove_pool(domain, except_version=version, reload_fpm=True)
 
     # Asegurar el tmp aislado del dominio (sesiones/uploads, owner www-data)
     ensure_domain_tmp(owner, domain)
 
-    path = get_pool_path(version, domain)
-    if not os.path.isdir(os.path.dirname(path)):
-        return False, f"PHP {version} no está instalado ({os.path.dirname(path)} no existe)"
     try:
         with open(path, "w") as f:
             f.write(_pool_content(domain, owner, overrides, relax_hardening, fpm_tuning))

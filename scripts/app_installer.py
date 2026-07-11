@@ -599,6 +599,34 @@ class AppInstaller:
         _run([php_bin, occ, "config:system:set", "maintenance_window_start",
               "--value", "1", "--type", "integer"], cwd=docroot, as_user=owner)
 
+        # 4) Previews (miniaturas). Si enabledPreviewProviders NO está definido,
+        #    Nextcloud cae a un default corto y el visor avisa en consola con
+        #    "Some mimes were ignored because they are not enabled in the server
+        #    previews config": sin miniaturas de vídeo ni de HEIC (los móviles
+        #    fotografían en HEIC). Lo dejamos explícito.
+        #
+        #    OJO con el vídeo: OC\Preview\Movie invoca ffmpeg por exec(), y el pool
+        #    del panel bloquea exec/system (disable_functions). En un dominio con el
+        #    hardening COMPLETO no habrá miniatura de vídeo aunque ffmpeg esté
+        #    instalado — hay que relajar el hardening de ese dominio (Domain.
+        #    php_hardening_relaxed). Los proveedores de imagen (Image/HEIC/TIFF) sí
+        #    funcionan siempre: los resuelve imagick/GD dentro de PHP, sin exec.
+        for _i, _prov in enumerate([
+            "OC\\Preview\\Image",     # jpeg, png, gif, bmp
+            "OC\\Preview\\HEIC",      # fotos de iPhone/Android modernos
+            "OC\\Preview\\TIFF",
+            "OC\\Preview\\Movie",     # vídeo genérico (ffmpeg)
+            "OC\\Preview\\MP4",
+            "OC\\Preview\\MKV",
+            "OC\\Preview\\AVI",
+            "OC\\Preview\\MOV",
+            "OC\\Preview\\PDF",
+            "OC\\Preview\\MarkDown",
+            "OC\\Preview\\TXT",
+        ]):
+            _run([php_bin, occ, "config:system:set", "enabledPreviewProviders",
+                  str(_i), "--value", _prov], cwd=docroot, as_user=owner)
+
         _chown_tree(docroot, owner)
         return {
             "app": "nextcloud",
