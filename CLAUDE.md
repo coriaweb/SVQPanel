@@ -66,7 +66,15 @@ quedarán con el código nuevo pero **sin** el cambio de sistema aplicado.
    sin terminal: nada de `read`/prompts).
 3. `exit 0` si todo fue bien; cualquier otro código detiene la cadena.
 4. Registra la fila en la tabla de `updates/README.md`.
-5. Commit + push: los servidores lo aplican en la siguiente ejecución (cron o botón).
+5. **⚠️ REGLA DE ORO: si el update aplica un cambio de CONFIG DEL SO** (postconf,
+   drop-ins de Dovecot/nginx/Apache, `apt install`, sysctl, fail2ban, nftables,
+   CrowdSec, Rspamd, unbound, permisos…), **REFLÉJALO TAMBIÉN en `install.sh`** para
+   que un servidor NUEVO nazca ya con ese cambio. Un update SIN su equivalente en
+   install deja a los servidores nuevos incompletos (nos ha pasado con ClamAV, las
+   carpetas de correo Junk/Sent, el INBOX de Dovecot 2.4…). NO hace falta duplicar
+   los updates que solo invocan código del panel (lo trae el `git clone`), hilos
+   internos, o backfills de datos de servidores viejos.
+6. Commit + push: los servidores lo aplican en la siguiente ejecución (cron o botón).
 
 Patrón recomendado (igual que install): el `updates/NNNN.sh` **invoca el código
 del panel** en vez de reimplementar la lógica. Ej. `0003-terminal-jail.sh` llama
@@ -78,6 +86,10 @@ a `terminal_manager.install()` (idempotente) en vez de recrear el launcher a man
 - Cambio en **servidores ya instalados** → un `updates/NNNN-*.sh`.
 - Cambio de **esquema de BD** → `ALTER TABLE ... IF NOT EXISTS` en `api/main.py`
   (se aplica al arrancar).
+
+**⚠️ Un cambio de config del SO normalmente necesita DOS de estas fuentes a la vez:
+el `updates/NNNN.sh` (servidores existentes) Y el `install.sh` (servidores nuevos).
+Poner solo el update es el error más común: los servidores nuevos nacen sin el fix.**
 
 ## 🌐 Soporte Dual Apache + Nginx (Fase 15)
 
