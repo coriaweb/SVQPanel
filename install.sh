@@ -1089,6 +1089,34 @@ DOVESASLEOF
     postmap -F hash:/etc/postfix/svqpanel_sni 2>/dev/null || true
     postconf -e "tls_server_sni_maps = hash:/etc/postfix/svqpanel_sni"
 
+    # Carpetas especiales AUTO-creadas y AUTO-suscritas (Drafts/Sent/Junk/Trash).
+    # Sin esto, el 15-mailboxes.conf de Debian las declara con special_use pero SIN
+    # 'auto = subscribe', así que Thunderbird/Apple Mail NO muestran la carpeta de
+    # spam ("Correo no deseado" = Junk) ni Enviados/Borradores hasta suscribirlas a
+    # mano. Con auto=subscribe, Dovecot las crea y suscribe en los buzones nuevos.
+    # (Mismo drop-in que updates/0038-mail-folders-subscribe.sh.)
+    cat > /etc/dovecot/conf.d/99-svqpanel-mailboxes.conf << 'DOVEMBOXEOF'
+# SVQPanel: carpetas especiales auto-creadas y auto-suscritas (Thunderbird et al)
+namespace inbox {
+  mailbox Drafts {
+    auto = subscribe
+    special_use = \Drafts
+  }
+  mailbox Sent {
+    auto = subscribe
+    special_use = \Sent
+  }
+  mailbox Junk {
+    auto = subscribe
+    special_use = \Junk
+  }
+  mailbox Trash {
+    auto = subscribe
+    special_use = \Trash
+  }
+}
+DOVEMBOXEOF
+
     # Dovecot 2.4 (Debian 13/trixie) cambió la sintaxis de varios ajustes que la
     # config de arriba escribe en formato 2.3 (Debian 12). Sin traducirlos, el
     # arranque de Dovecot ABORTA (p.ej. "mail_location: Unknown setting") y con él
