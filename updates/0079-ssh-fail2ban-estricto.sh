@@ -34,6 +34,15 @@ p = sys.argv[1]
 s = open(p).read()
 orig = s
 
+# --- Limpieza defensiva: eliminar bloques '[DEFAULT].' MAL FORMADOS (con punto u
+# otra basura tras el corchete) que ediciones previas pudieran haber dejado. Un
+# '[DEFAULT].' seguido de opciones DUPLICA maxretry/findtime/bantime en el DEFAULT
+# real y hace que fail2ban NO ARRANQUE ("option 'maxretry' ... already exists").
+# Quitamos la etiqueta mal formada y sus líneas de opciones inmediatas. Idempotente.
+s = re.sub(
+    r"\n\[DEFAULT\]\.[^\n]*\n(?:\s*(?:maxretry|findtime|bantime)\s*=.*\n)+",
+    "\n", s)
+
 # --- [DEFAULT]: asegurar las directivas bantime.* (añadir o actualizar) ---
 def ensure_in_default(text, key, value):
     """Pone 'key = value' dentro del bloque [DEFAULT]. Si la clave ya existe la
