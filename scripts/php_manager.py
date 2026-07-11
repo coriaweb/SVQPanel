@@ -34,6 +34,20 @@ PROTECTED_EXTENSIONS = set(BASE_EXTENSIONS) | {"common", "opcache", "redis"}
 # \Z y no $: $ aceptaría un \n final ("ldap\n" pasaría la validación).
 _EXT_NAME_RE = re.compile(r"^[a-z0-9][a-z0-9+.-]{0,40}\Z")
 
+# ─────────────────────────────────────────────────────────────────────────────
+# ionCube Loader — extensión ESPECIAL (no es un paquete apt)
+# ─────────────────────────────────────────────────────────────────────────────
+# WHMCS y otro software comercial vienen cifrados con ionCube y NO arrancan sin su
+# loader ("Script error: the ionCube Loader for PHP needs to be installed"). Pero
+# ionCube no está en apt ni en Sury: es un .so propietario que se descarga de
+# ioncube.com y se carga con `zend_extension` (no con `extension`). Por eso el
+# buscador de extensiones del panel —que lista php{ver}-* de apt— nunca lo mostraba.
+# Lo tratamos como extensión especial: aparece en la lista y se instala/quita con
+# esta lógica propia en vez de con apt.
+IONCUBE_EXT      = "ioncube"
+IONCUBE_URL      = "https://downloads.ioncube.com/loader_downloads/ioncube_loaders_lin_x86-64.tar.gz"
+IONCUBE_INI_NAME = "00-ioncube.ini"   # 00- para cargarse ANTES que el resto
+
 
 class PHPManager(SystemManager):
     """Manage PHP versions and FPM services on Debian/Ubuntu systems"""
@@ -286,11 +300,108 @@ class PHPManager(SystemManager):
                 "installed":   name in installed,
                 "protected":   name in PROTECTED_EXTENSIONS,
             })
+
+        # ionCube: no está en apt (es un .so de ioncube.com), pero lo ofrecemos en
+        # la lista como una extensión más — WHMCS y otro software comercial cifrado
+        # no arrancan sin él y el usuario no tenía forma de activarlo desde el panel.
+        exts.append({
+            "name":        IONCUBE_EXT,
+            "package":     "ionCube Loader (ioncube.com)",
+            "description": "Loader para código PHP cifrado con ionCube (WHMCS y otro "
+                           "software comercial). No es un paquete apt: el panel descarga "
+                           "el loader oficial y lo activa como zend_extension.",
+            "installed":   self.ioncube_installed(version),
+            "protected":   False,
+        })
+        exts.sort(key=lambda e: e["name"])
         return exts
 
+    # ── ionCube (extensión especial: .so de ioncube.com, no paquete apt) ──────
+    def _ioncube_ini_path(self, version: str) -> str:
+        return f"/etc/php/{version}/mods-available/ioncube.ini"
+
+    def ioncube_installed(self, version: str) -> bool:
+        """True si el loader de ionCube está activo para esta versión de PHP."""
+        return os.path.exists(f"/etc/php/{version}/fpm/conf.d/{IONCUBE_INI_NAME}")
+
+    def install_ioncube(self, version: str) -> None:
+        """
+        Instala el ionCube Loader para una versión de PHP: descarga el tarball
+        oficial, copia el .so al extension_dir de esa versión y lo carga como
+        zend_extension en FPM y CLI. Idempotente.
+        """
+        import tempfile, glob
+        # extension_dir real de esa versión (varía por API de PHP: 20210902…)
+        rc, out, _ = self.execute_command(
+            [f"php{version}", "-r", "echo ini_get('extension_dir');"], check=False)
+        ext_dir = (out or "").strip()
+        if rc != 0 or not ext_dir or not os.path.isdir(ext_dir):
+            raise RuntimeError(f"No se pudo determinar el extension_dir de PHP {version}")
+
+        with tempfile.TemporaryDirectory() as tmp:
+            tgz = os.path.join(tmp, "ioncube.tar.gz")
+            rc, _, err = self.execute_command(
+                ["curl", "-sSL", "--max-time", "180", "-o", tgz, IONCUBE_URL], check=False)
+            if rc != 0 or not os.path.exists(tgz):
+                raise RuntimeError(f"No se pudo descargar ionCube: {err.strip()[-200:]}")
+            rc, _, err = self.execute_command(["tar", "xzf", tgz, "-C", tmp], check=False)
+            if rc != 0:
+                raise RuntimeError(f"No se pudo extraer ionCube: {err.strip()[-200:]}")
+
+            so_src = os.path.join(tmp, "ioncube", f"ioncube_loader_lin_{version}.so")
+            if not os.path.exists(so_src):
+                # ionCube tarda en publicar loader para las versiones más nuevas.
+                have = sorted(os.path.basename(p).replace("ioncube_loader_lin_", "").replace(".so", "")
+                              for p in glob.glob(os.path.join(tmp, "ioncube", "ioncube_loader_lin_*.so"))
+                              if "_ts" not in p)
+                raise ValueError(
+                    f"ionCube aún no publica loader para PHP {version}. "
+                    f"Versiones con loader disponible: {', '.join(have) or '—'}")
+
+            so_dst = os.path.join(ext_dir, f"ioncube_loader_lin_{version}.so")
+            self.execute_command(["cp", "-f", so_src, so_dst], check=False)
+            self.execute_command(["chmod", "644", so_dst], check=False)
+
+        # ionCube se carga con zend_extension (NO 'extension') y debe ir el primero.
+        ini = self._ioncube_ini_path(version)
+        with open(ini, "w") as f:
+            f.write(
+                "; ionCube Loader — necesario para codigo cifrado con ionCube (WHMCS…).\n"
+                "; No es un paquete apt: el .so viene de ioncube.com y se carga como\n"
+                "; zend_extension. Lo gestiona el panel (PHP → Extensiones).\n"
+                f"zend_extension = {so_dst}\n"
+            )
+        for sapi in ("fpm", "cli"):
+            d = f"/etc/php/{version}/{sapi}/conf.d"
+            if os.path.isdir(d):
+                link = os.path.join(d, IONCUBE_INI_NAME)
+                if os.path.islink(link) or os.path.exists(link):
+                    os.remove(link)
+                os.symlink(ini, link)
+
+        self._reload_fpm(version)
+        logger.info(f"ionCube Loader instalado para PHP {version}")
+
+    def remove_ioncube(self, version: str) -> None:
+        """Desactiva el ionCube Loader de una versión (quita los symlinks + ini)."""
+        for sapi in ("fpm", "cli"):
+            link = f"/etc/php/{version}/{sapi}/conf.d/{IONCUBE_INI_NAME}"
+            if os.path.islink(link) or os.path.exists(link):
+                os.remove(link)
+        ini = self._ioncube_ini_path(version)
+        if os.path.exists(ini):
+            os.remove(ini)
+        self._reload_fpm(version)
+        logger.info(f"ionCube Loader desactivado en PHP {version}")
+
     def install_extension(self, version: str, ext: str) -> None:
-        """Instala un paquete php{ver}-{ext} del repo y recarga FPM."""
+        """Instala un paquete php{ver}-{ext} del repo y recarga FPM.
+
+        ionCube es un caso especial (no es apt): se delega en install_ioncube().
+        """
         self._validate_ext(version, ext)
+        if ext == IONCUBE_EXT:
+            return self.install_ioncube(version)
         pkg = f"php{version}-{ext}"
         rc, _, _ = self.execute_command(["apt-cache", "show", pkg], check=False)
         if rc != 0:
@@ -303,8 +414,13 @@ class PHPManager(SystemManager):
         logger.info(f"Extensión {pkg} instalada")
 
     def remove_extension(self, version: str, ext: str) -> None:
-        """Desinstala un paquete php{ver}-{ext} (nunca los protegidos) y recarga FPM."""
+        """Desinstala un paquete php{ver}-{ext} (nunca los protegidos) y recarga FPM.
+
+        ionCube es un caso especial (no es apt): se delega en remove_ioncube().
+        """
         self._validate_ext(version, ext)
+        if ext == IONCUBE_EXT:
+            return self.remove_ioncube(version)
         if ext in PROTECTED_EXTENSIONS:
             raise ValueError(
                 f"'{ext}' es un paquete protegido: sin él la versión o una "
