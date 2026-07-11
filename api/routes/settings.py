@@ -272,6 +272,24 @@ async def assign_panel_ipv6(
     settings.panel_ipv6 = panel_ip
     db.commit()
 
+    # IPv6 de salida del CORREO = la misma IPv6 del panel (la ::1 del rango). Un
+    # solo cálculo, una sola fuente de verdad. Fijamos smtp_bind_address6 en Postfix
+    # para que el correo saliente por IPv6 use SIEMPRE esta IP estable (con PTR y en
+    # el SPF), y no una SLAAC aleatoria del /64 sin PTR que Gmail rechazaría. Así
+    # IPv6 sigue activa (no la apagamos), pero es predecible y verificable. La vista
+    # de Salud de correo avisa si a esta IP le falta el PTR.
+    smtp_bind_updated = False
+    try:
+        import subprocess as _sp
+        if _sp.run(["which", "postconf"], capture_output=True).returncode == 0:
+            _sp.run(["postconf", "-e", f"smtp_bind_address6 = {panel_ip}"],
+                    check=True, capture_output=True, timeout=10)
+            _sp.run(["systemctl", "reload", "postfix"], capture_output=True, timeout=10)
+            smtp_bind_updated = True
+    except Exception:
+        # No abortar: la IPv6 del panel ya está asignada aunque Postfix no se toque.
+        pass
+
     # Regenerar el vhost nginx si hay SSL activo para que el panel escuche
     # también en la IPv6 dedicada (además de [::]:puerto)
     nginx_updated = False
@@ -293,7 +311,9 @@ async def assign_panel_ipv6(
         "interface": iface,
         "prefix": prefix,
         "nginx_updated": nginx_updated,
+        "smtp_bind_updated": smtp_bind_updated,
         "message": f"IPv6 {panel_ip} asignada al panel en {iface}"
+                   + (" y fijada como IPv6 de salida del correo" if smtp_bind_updated else "")
     }
 
 

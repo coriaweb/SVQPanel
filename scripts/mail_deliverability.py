@@ -194,17 +194,53 @@ def diagnose(server_ipv4=None, server_ipv6=None):
         help_text="Recomendado. Indica a los destinatarios qué hacer con el correo "
                   "que no pase SPF/DKIM."))
 
-    # ── PTR / rDNS ──────────────────────────────────────────────────────────────
+    # ── PTR / rDNS (IPv4) ────────────────────────────────────────────────────────
     # FQDN esperado: el hostname del propio servidor. socket.getfqdn() a veces da
     # solo el nombre corto, así que lo componemos con `postconf -h myhostname`.
     expected_ptr = (_run(["postconf", "-h", "myhostname"]) or socket.getfqdn()).rstrip(".")
     ptr_found = _dig_ptr(ipv4) if ipv4 else ""
     ptr_ok = bool(ptr_found) and ptr_found.lower() == expected_ptr.lower()
     records.append(_check(
-        "PTR (rDNS)", ptr_ok, expected_ptr, ptr_found,
+        "PTR (rDNS) IPv4", ptr_ok, expected_ptr, ptr_found,
         severity="warn",
-        help_text="El reverso de la IP debe apuntar al hostname del servidor. "
+        help_text="El reverso de la IPv4 debe apuntar al hostname del servidor. "
                   "Esto se configura en el panel del proveedor del VPS, no en el DNS."))
+
+    # ── PTR / rDNS + SPF (IPv6) ──────────────────────────────────────────────────
+    # Si el servidor tiene IPv6, el correo PUEDE salir por ella (smtp_bind_address6).
+    # NO la ignoramos ni forzamos IPv4: IPv6 es de primera clase. Pero avisamos de
+    # las DOS cosas que la hacen funcionar y que el proveedor/admin debe garantizar:
+    #   1) que esa IPv6 tenga PTR (rDNS) — si no, Gmail/Outlook la rechazan.
+    #   2) que esa IPv6 esté declarada en el SPF del dominio.
+    # La IPv6 de salida es la del panel (panel_ipv6 = ::1 del rango), fijada como
+    # smtp_bind_address6 para que NO se use una SLAAC aleatoria del /64 sin PTR.
+    ipv6 = (server_ipv6 or "").strip()
+    if not ipv6:
+        # Fallback: leer el bind6 real de Postfix (lo que de verdad se usa al enviar).
+        ipv6 = _run(["postconf", "-h", "smtp_bind_address6"]).strip()
+    if ipv6:
+        # PTR de la IPv6 de salida
+        ptr6_found = _dig_ptr(ipv6)
+        ptr6_ok = bool(ptr6_found) and ptr6_found.lower() == expected_ptr.lower()
+        records.append(_check(
+            "PTR (rDNS) IPv6", ptr6_ok, expected_ptr, ptr6_found,
+            severity="warn",
+            help_text=(f"El correo puede salir por IPv6 ({ipv6}). Su rDNS debe apuntar "
+                       f"al hostname del servidor o Gmail/Outlook la rechazan. Configura "
+                       f"el PTR de {ipv6} en el panel de tu proveedor del VPS.")))
+        # ¿La IPv6 de salida está declarada en el SPF?
+        spf6_ok = False
+        if spf_published:
+            toks = spf_published[0].lower().split()
+            spf6_ok = (f"ip6:{ipv6.lower()}" in toks
+                       or "a" in toks or "mx" in toks
+                       or any(t.startswith(("a:", "mx:", "include:", "ip6:")) for t in toks))
+        records.append(_check(
+            "SPF cubre IPv6", spf6_ok, f"...ip6:{ipv6}...", spf_found,
+            severity="warn",
+            help_text=(f"El SPF del dominio debe autorizar la IPv6 de salida ({ipv6}), "
+                       f"o el correo enviado por IPv6 da SPF FAIL. Añade "
+                       f"'ip6:{ipv6}' al registro SPF.")))
 
     # ── ¿El DNS del dominio del servidor lo gestiona este panel? ───────────────
     dns_external = not _domain_zone_local(domain)
