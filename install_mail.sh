@@ -220,10 +220,16 @@ fi
 echo -e "${GREEN}✓ Salida de correo del servidor fijada (v4:${MAIL_OUT_V4:-none} v6:${MAIL_OUT_V6:-none})${NC}"
 
 # ── DKIM del dominio del servidor ──────────────────────────────────────────────
-# El dominio del servidor (mydomain) necesita su propia clave DKIM para autenticar
-# los reenvíos SRS. La generamos vía el código del panel (idempotente). El TXT a
-# publicar lo muestra la vista "Salud de correo del servidor" del panel.
-SRV_DOM="$(postconf -h mydomain 2>/dev/null)"
+# El dominio con el que el servidor reescribe los reenvíos (SRS) necesita su propia
+# clave DKIM. La generamos vía el código del panel (idempotente). El TXT a publicar
+# lo muestra la vista "Salud de correo del servidor".
+#
+# Tiene que ser el MISMO dominio que SRS_DOMAIN (el hostname completo), porque
+# Rspamd busca la clave en /etc/rspamd/dkim/$domain.$selector.key: si la generamos
+# con el dominio raíz, el panel no la encuentra y dice "aún no hay clave DKIM"
+# aunque exista. Antes se usaba `postconf -h mydomain` (dominio raíz) y ahí estaba
+# el desajuste.
+SRV_DOM="$(postconf -h myhostname 2>/dev/null || hostname -f)"
 if [ -n "$SRV_DOM" ] && [ -x /opt/svqpanel/venv/bin/python ]; then
     /opt/svqpanel/venv/bin/python - "$SRV_DOM" <<'PYEOF' 2>/dev/null || true
 import sys

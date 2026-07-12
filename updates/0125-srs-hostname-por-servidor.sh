@@ -39,8 +39,53 @@ HOSTNAME_FQDN="$(postconf -h myhostname 2>/dev/null || hostname -f)"
 
 [ -z "$SRS_ACTUAL" ] && { echo "  . SRS_DOMAIN no configurado; nada que revisar."; exit 0; }
 
+# ── La clave DKIM debe llamarse como el dominio SRS ───────────────────────────
+# Rspamd busca la clave en /etc/rspamd/dkim/$domain.$selector.key. Si el SRS pasa a
+# usar el hostname, la clave del dominio raiz (svqhost.red.mail.key) deja de
+# encontrarse y el panel dice "aun no hay clave DKIM generada" aunque SI la haya.
+#
+# REUTILIZAMOS la clave existente en vez de generar una nueva: si el admin ya
+# publico el TXT con esa clave publica, generar otra lo invalidaria y tendria que
+# volver a tocar el DNS externo. Copiarla mantiene el TXT publicado valido.
+_fix_dkim_key() {
+    local dom="$1"
+    local D=/etc/rspamd/dkim
+    [ -d "$D" ] || return 0
+    [ -f "$D/$dom.mail.key" ] && return 0          # ya existe con el nombre bueno
+
+    # ¿Hay una clave del dominio raiz que podamos reutilizar?
+    local raiz="${dom#*.}"                          # svq1.svqhost.red -> svqhost.red
+    if [ -n "$raiz" ] && [ "$raiz" != "$dom" ] && [ -f "$D/$raiz.mail.key" ]; then
+        cp -a "$D/$raiz.mail.key" "$D/$dom.mail.key"
+        chown _rspamd:_rspamd "$D/$dom.mail.key" 2>/dev/null || \
+            chown rspamd:rspamd "$D/$dom.mail.key" 2>/dev/null || true
+        chmod 600 "$D/$dom.mail.key"
+        echo "  . clave DKIM reutilizada para $dom (el TXT ya publicado sigue valido)"
+    elif [ -x /opt/svqpanel/venv/bin/python ]; then
+        # No hay ninguna: generar una nueva (el admin tendra que publicar su TXT)
+        cd /opt/svqpanel && /opt/svqpanel/venv/bin/python - "$dom" <<'PYEOF' 2>/dev/null || true
+import sys
+from scripts.dkim_manager import DkimManager
+dk = DkimManager()
+if dk.dkim_available() and not dk.key_exists(sys.argv[1], "mail"):
+    dk.generate_key(sys.argv[1], "mail")
+    print(f"  . clave DKIM NUEVA generada para {sys.argv[1]} (publica su TXT)")
+PYEOF
+    fi
+
+    # Declararla en el selectors.map o rspamd no la usara.
+    # -F (cadena literal): los puntos del dominio son comodines en una regex y
+    # "svq1.svqhost.red" haria match con "svq1xsvqhost.red".
+    if [ -f "$D/selectors.map" ] && ! grep -qF "$dom	" "$D/selectors.map"; then
+        printf '%s\tmail\n' "$dom" >> "$D/selectors.map"
+        echo "  . $dom añadido a selectors.map"
+    fi
+    systemctl reload rspamd >/dev/null 2>&1 || true
+}
+
 if [ "$SRS_ACTUAL" = "$HOSTNAME_FQDN" ]; then
     echo "  . SRS_DOMAIN ya es el hostname del servidor ($SRS_ACTUAL). Correcto."
+    _fix_dkim_key "$SRS_ACTUAL"     # asegurar que la clave DKIM lleva ese nombre
     exit 0
 fi
 
