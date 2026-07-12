@@ -1,8 +1,22 @@
 import { createApp } from 'vue'
 import { createPinia } from 'pinia'
 import './assets/tokens.css'
-// bootstrap-compat.css existe para una futura retirada total de Bootstrap (Fase 7),
-// pero por ahora Bootstrap se carga por CDN y aporta el grid/utilidades.
+// Bootstrap ya NO se carga: ni su CSS ni su JS. Del CDN solo vienen los iconos
+// (bi-*). El estilo del panel lo dan estos tres ficheros, y el ORDEN importa:
+//
+//   tokens  → variables (color, tipografía, espaciado, radios, sombras)
+//   compat  → las utilidades que aportaba Bootstrap, reescritas: grid (row/col),
+//             flex, spacing (mb-3, me-1…), display, tipografía, spinner…
+//   bridge  → reestiliza con los tokens los componentes tipo Bootstrap que aún
+//             usan las vistas (.card, .btn, .table, .badge, .form-control…).
+//             Va DESPUÉS de compat a propósito: en las 14 clases que ambos
+//             tocan, gana el bridge (es quien las adapta al diseño del panel).
+//
+// OJO: compat llevaba sin importarse desde que se retiró Bootstrap, así que 84
+// clases (row, col-md-6, d-flex, justify-content-between, mb-3, me-1, text-center,
+// fw-bold, spinner-border…) NO tenían definición: el grid y las utilidades del
+// panel estaban rotos en producción y nadie lo había atado al síntoma.
+import './assets/bootstrap-compat.css'
 import './assets/bootstrap-bridge.css'
 import App from './App.vue'
 import router from './router'

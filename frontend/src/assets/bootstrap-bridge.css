@@ -327,30 +327,11 @@ code { font-family: var(--font-mono); color: var(--danger); background: var(--su
 .dropdown-divider { margin: 4px 0; border-top: 1px solid var(--border); }
 
 /* ── Spinners ────────────────────────────────────────────────────────────────
-   OJO: .spinner-border NO tenía definición base en ninguna parte. Está en
-   bootstrap-compat.css, pero ese fichero NO se importa (main.js solo carga
-   tokens + este bridge), y Bootstrap ya no se sirve por CDN — del CDN solo
-   vienen los iconos bi-*. Resultado: los 163 spinners de las 23 vistas del panel
-   eran un <span> sin borde, sin forma y sin animación: INVISIBLES.
+   La definición base (border, radius, animación) la aporta bootstrap-compat.css,
+   que se importa ANTES que este fichero. Aquí solo va lo específico del panel.
 
-   Se veía al guardar un registro DNS: el botón ✓ perdía el icono (v-else) y no
-   pintaba nada en su lugar → botón vacío, y parecía que el panel se había colgado.
-
-   Definimos aquí el spinner completo (no importamos compat entero: metería el
-   grid y las utilidades de Bootstrap en el bundle y podrían pisar estilos que
-   llevan meses funcionando).                                                    */
-.spinner-border {
-  display: inline-block;
-  width: 2rem; height: 2rem;
-  vertical-align: -.125em;
-  border: .25em solid currentColor;
-  border-right-color: transparent;
-  border-radius: 50%;
-  animation: svq-spin .75s linear infinite;
-  color: var(--ac);
-}
-.spinner-border-sm { width: 1rem; height: 1rem; border-width: .2em; }
-@keyframes svq-spin { to { transform: rotate(360deg); } }
+   Un spinner suelto (cargando una vista) va del color de acento.                */
+.spinner-border { color: var(--ac); }
 
 /* Dentro de un botón, el spinner hereda el color del botón (si le forzáramos el
    acento, en un botón verde/rojo se perdería) y toma el tamaño del icono al que
