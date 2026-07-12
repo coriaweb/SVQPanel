@@ -326,8 +326,41 @@ code { font-family: var(--font-mono); color: var(--danger); background: var(--su
 .dropdown-item:hover { background: var(--surface-inset); color: var(--text) !important; }
 .dropdown-divider { margin: 4px 0; border-top: 1px solid var(--border); }
 
-/* ── Misc ── */
+/* ── Spinners ────────────────────────────────────────────────────────────────
+   Un spinner suelto (cargando una vista) va del color de acento. Pero DENTRO de
+   un botón debe heredar el color del botón: forzarle el acento lo hacía
+   invisible en los botones de color.
+
+   El caso que lo destapó: el botón ✓ de guardar un registro DNS (.dns-btn--success:
+   verde claro sobre fondo verde claro). Al guardar, el botón se pone :disabled →
+   opacity .5 → el spinner desaparecía y el botón se veía VACÍO, como si la app
+   se hubiera colgado. Pasaba en los 163 spinners-en-botón de todo el panel.
+
+   Tres arreglos:
+     · color: heredado del botón (currentColor), no el acento.
+     · tamaño: acorde al icono que sustituye, para que el botón no dé un salto.
+     · opacidad: el :disabled atenúa el botón, pero el spinner tiene que verse —
+       es justo la señal de que algo está pasando.                              */
 .spinner-border { color: var(--ac); }
+
+.btn .spinner-border,
+.dns-btn .spinner-border,
+button .spinner-border {
+  color: currentColor;
+  width: .9em; height: .9em;
+  border-width: 2px;
+  vertical-align: -.1em;
+}
+
+/* Un botón "ocupado" (con spinner dentro) NO debe atenuarse con opacity: la
+   opacidad del padre se compone sobre los hijos, así que el spinner heredaría
+   el 50% y volveríamos al botón invisible. Se marca con el cursor y basta: el
+   spinner girando ya comunica que está deshabilitado. */
+.btn:disabled:has(.spinner-border),
+.dns-btn:disabled:has(.spinner-border),
+button:disabled:has(.spinner-border) { opacity: 1; cursor: wait; }
+
+/* ── Misc ── */
 hr { border: 0; border-top: 1px solid var(--border); margin: var(--sp-4) 0; }
 .rounded-circle { border-radius: 50% !important; }
 .font-monospace, .mono { font-family: var(--font-mono) !important; }
