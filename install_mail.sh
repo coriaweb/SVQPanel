@@ -156,8 +156,19 @@ postconf -e "message_size_limit = 26214400"
 echo -e "${YELLOW}→ Instalando SRS (postsrsd) para reenvíos seguros...${NC}"
 DEBIAN_FRONTEND=noninteractive apt-get install -y -qq postsrsd 2>/dev/null || true
 if command -v postsrsd >/dev/null 2>&1 || dpkg -l postsrsd 2>/dev/null | grep -q '^ii'; then
-    # Dominio de reescritura: el dominio del servidor (su SPF incluye esta IP).
-    SRS_DOM="$(postconf -h mydomain 2>/dev/null || hostname -d)"
+    # Dominio de reescritura: el HOSTNAME COMPLETO del servidor, no su dominio raíz.
+    #
+    # Antes se usaba `postconf -h mydomain`, que devuelve el dominio RAÍZ
+    # (svqhost.red para un servidor svq1.svqhost.red). Con un solo servidor
+    # funciona, pero es lo habitual tener varios servidores como subdominios de un
+    # mismo dominio (svq1.svqhost.red, svq2.svqhost.red…): TODOS reescribían el SRS
+    # al mismo svqhost.red y competían por su SPF, que solo puede listar las IPs de
+    # uno. El segundo servidor sale con spf=fail y Gmail/Outlook rechazan o marcan
+    # como spam sus reenvíos de alias. (Visto en producción.)
+    #
+    # Con el hostname completo, cada servidor reescribe a SU subdominio y publica su
+    # propio SPF: son autónomos y montar el siguiente no obliga a tocar los demás.
+    SRS_DOM="$(postconf -h myhostname 2>/dev/null || hostname -f)"
     # postsrsd 1.x (Debian 12/13) usa /etc/default/postsrsd (formato shell).
     if [ -f /etc/default/postsrsd ]; then
         sed -i "s/^#*SRS_DOMAIN=.*/SRS_DOMAIN=${SRS_DOM}/" /etc/default/postsrsd

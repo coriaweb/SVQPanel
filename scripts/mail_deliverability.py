@@ -39,18 +39,37 @@ def _run(cmd, timeout=6):
 
 
 def get_server_mail_domain():
-    """Dominio con el que el servidor firma/reescribe el correo (mydomain de Postfix).
+    """Dominio con el que el servidor reescribe (SRS) el envelope-from al reenviar.
 
-    Fuente de verdad: `postconf -h mydomain`; fallback a la parte de dominio del
-    FQDN del host.
+    Fuente de verdad: el SRS_DOMAIN real de postsrsd — es LITERALMENTE el dominio
+    que aparece en el envelope-from de los reenvíos, así que es el que tiene que
+    estar autenticado (SPF/DKIM/DMARC). Si diagnosticáramos otro, el panel diría
+    "todo OK" mientras Gmail rechaza los reenvíos.
+
+    Antes se usaba `postconf -h mydomain`, que da el dominio RAÍZ (svqhost.red para
+    un servidor svq1.svqhost.red). Es lo mismo mientras haya UN servidor, pero lo
+    normal es tener varios como subdominios del mismo dominio: todos reescribían al
+    mismo svqhost.red y competían por su SPF, que solo lista las IPs de uno. El
+    segundo servidor salía con spf=fail. Ahora cada uno usa su hostname completo.
     """
-    dom = _run(["postconf", "-h", "mydomain"])
-    if dom:
-        return dom.strip().rstrip(".").lower()
-    fqdn = socket.getfqdn()
-    if "." in fqdn:
-        return fqdn.split(".", 1)[1].lower()
-    return fqdn.lower()
+    # 1) El SRS_DOMAIN configurado (lo que de verdad se pone en el envelope-from)
+    try:
+        with open("/etc/default/postsrsd") as f:
+            for line in f:
+                line = line.strip()
+                if line.startswith("SRS_DOMAIN=") and not line.startswith("#"):
+                    dom = line.split("=", 1)[1].strip().strip('"').strip("'")
+                    if dom:
+                        return dom.rstrip(".").lower()
+    except OSError:
+        pass
+
+    # 2) El hostname completo del servidor (lo que postsrsd usará a partir de ahora)
+    host = _run(["postconf", "-h", "myhostname"])
+    if host:
+        return host.strip().rstrip(".").lower()
+
+    return socket.getfqdn().lower()
 
 
 # Resolvers públicos fiables. NO usamos el resolver del sistema: en estos
