@@ -1310,9 +1310,48 @@ RSPAMDRLCONFEOF
     systemctl stop clamav-freshclam 2>/dev/null || true
     freshclam 2>&1 | tail -1 || echo -e "  ${YELLOW}  (freshclam se reintentará por el servicio)${NC}"
     systemctl enable --now clamav-freshclam 2>/dev/null || true
+
+    # Contener el consumo de RAM: clamd carga sus firmas en memoria y llega a ~1 GB.
+    # En un servidor de 4 GB el OOM killer acaba matándolo, y la unit de Debian trae
+    # Restart=no → se queda MUERTO sin avisar y el correo deja de escanearse en
+    # silencio. (Visto en producción: 6 h sin antivirus sin que saltara ninguna alarma.)
+    if [[ -f /etc/clamav/clamd.conf ]]; then
+        # MaxThreads 12 (default Debian) multiplica la RAM en una máquina de 2 CPUs.
+        sed -i 's/^MaxThreads .*/MaxThreads 2/' /etc/clamav/clamd.conf 2>/dev/null || \
+            echo "MaxThreads 2" >> /etc/clamav/clamd.conf
+        # Al recargar firmas mantiene la base vieja y la nueva en RAM a la vez: pico ×2.
+        grep -q '^ConcurrentDatabaseReload' /etc/clamav/clamd.conf \
+            && sed -i 's/^ConcurrentDatabaseReload.*/ConcurrentDatabaseReload false/' /etc/clamav/clamd.conf \
+            || echo "ConcurrentDatabaseReload false" >> /etc/clamav/clamd.conf
+    fi
+    mkdir -p /etc/systemd/system/clamav-daemon.service.d
+    cat > /etc/systemd/system/clamav-daemon.service.d/99-svqpanel-memory.conf << 'CLAMMEMEOF'
+# SVQPanel: techo de RAM y reinicio automático (ver install.sh).
+[Service]
+MemoryMax=900M
+MemoryHigh=700M
+Restart=on-failure
+RestartSec=30s
+CLAMMEMEOF
+    systemctl daemon-reload
     systemctl enable --now clamav-daemon 2>/dev/null || true
+
+    # ⚠️ Enchufar el milter a Postfix. Sin esto el antivirus corre pero Postfix no le
+    # pasa NI UN CORREO: `smtpd_milters` solo tendría el de Rspamd y ClamAV quedaría
+    # de adorno. Lo hace el código del panel, que preserva el milter de Rspamd.
+    if [[ -x /opt/svqpanel/venv/bin/python ]]; then
+        (cd /opt/svqpanel && /opt/svqpanel/venv/bin/python - << 'CLAMMILTEREOF' 2>/dev/null || true
+import sys
+sys.path.insert(0, "/opt/svqpanel")
+import scripts.antivirus_manager as am
+if am.clamav_available() and not am.milter_enabled():
+    am.enable_milter()
+CLAMMILTEREOF
+        )
+    fi
+
     if systemctl is-active --quiet clamav-daemon; then
-        echo -e "  ${GREEN}✓ ClamAV instalado (clamav-daemon activo)${NC}"
+        echo -e "  ${GREEN}✓ ClamAV instalado (daemon activo, milter enchufado a Postfix)${NC}"
     else
         echo -e "  ${YELLOW}  ⚠ clamav-daemon aún no activo (las firmas pueden tardar en descargar).${NC}"
     fi
