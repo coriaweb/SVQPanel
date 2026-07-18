@@ -22,6 +22,18 @@ def _validate_cron_field(value: str, field_name: str) -> str:
     return value
 
 
+def _reject_newlines(value: str, field_name: str) -> str:
+    """Rechaza saltos de línea en un campo que se escribe en el crontab.
+
+    Sin esto, un \\n en command/comment partiría la línea del crontab e
+    inyectaría entradas arbitrarias (que el panel ni controla ni muestra),
+    saltándose el wrapper de historial. El .strip() de los validadores solo
+    quita saltos en los extremos, no en medio."""
+    if "\n" in value or "\r" in value:
+        raise ValueError(f"El campo {field_name} no puede contener saltos de línea")
+    return value
+
+
 class CronJobCreate(BaseModel):
     # Propietario del cron. Para admin/reseller, opcional: si se indica un cliente,
     # el cron se ejecuta BAJO ese usuario del sistema (aislado), no como root.
@@ -67,6 +79,7 @@ class CronJobCreate(BaseModel):
         v = v.strip()
         if not v:
             raise ValueError("El comando no puede estar vacío")
+        _reject_newlines(v, "command")
         # Bloquear caracteres peligrosos de shell
         dangerous = [";", "&&", "||", "|", "`", "$(",  ">{",  ">>", ">|", "2>&1", "&"]
         # Excepción: el pipe solo en contexto específico; aquí bloqueamos todo redirección
@@ -79,6 +92,11 @@ class CronJobCreate(BaseModel):
             if op in v:
                 raise ValueError(f"El comando contiene operador no permitido: '{op}'")
         return v
+
+    @field_validator("comment")
+    @classmethod
+    def val_comment(cls, v):
+        return _reject_newlines(v, "comment") if v is not None else v
 
 
 class CronJobUpdate(BaseModel):
@@ -125,6 +143,7 @@ class CronJobUpdate(BaseModel):
         v = v.strip()
         if not v:
             raise ValueError("El comando no puede estar vacío")
+        _reject_newlines(v, "command")
         forbidden_chars = set(";`")
         for char in forbidden_chars:
             if char in v:
@@ -133,6 +152,11 @@ class CronJobUpdate(BaseModel):
             if op in v:
                 raise ValueError(f"El comando contiene operador no permitido: '{op}'")
         return v
+
+    @field_validator("comment", mode="before")
+    @classmethod
+    def val_comment(cls, v):
+        return _reject_newlines(v, "comment") if v is not None else v
 
 
 class CronJobResponse(BaseModel):
