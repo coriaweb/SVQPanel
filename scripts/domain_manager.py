@@ -45,6 +45,20 @@ class DomainManager(SystemManager):
         except Exception as e:
             logger.debug(f"restart crowdsec omitido: {e}")
 
+    def _reload_fail2ban(self) -> None:
+        """Recarga fail2ban (best-effort) para que sus jails con glob en logpath
+        (/home/*/web/*/logs/nginx.*.log: nginx-limit-req, svqpanel-scanner)
+        empiecen a vigilar los logs del dominio recién creado. Igual que
+        CrowdSec, fail2ban expande los globos SOLO al arrancar/recargar: sin
+        esto, un sitio creado después del arranque queda fuera de esas jails
+        indefinidamente (medido: 21 de 69 sitios sin vigilar). A diferencia de
+        CrowdSec aquí basta `reload` (NO restart), que conserva los baneos
+        activos. No es crítico: si fail2ban no está o falla, se ignora."""
+        try:
+            self.execute_command(["fail2ban-client", "reload"], check=False)
+        except Exception as e:
+            logger.debug(f"reload fail2ban omitido: {e}")
+
     def create_domain(
         self,
         username: str,
@@ -257,9 +271,10 @@ class DomainManager(SystemManager):
                 # Test y reload Nginx (con diagnóstico de vhost ajeno/huérfano)
                 reload_nginx_or_diagnose(domain_name)
 
-            # Que CrowdSec empiece a vigilar el log de este dominio ya (si no,
-            # solo lo haría tras el próximo reinicio del servicio).
+            # Que CrowdSec y fail2ban empiecen a vigilar los logs de este
+            # dominio ya (si no, solo lo harían tras reiniciar el servicio).
             self._reload_crowdsec()
+            self._reload_fail2ban()
 
             logger.info(f"Domain created: {domain_name}")
             return {

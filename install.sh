@@ -2896,16 +2896,18 @@ maxretry = 3
 # crowdsecurity/postfix-relay-denied), que banea por reputación y comparte
 # inteligencia. Además, el servidor ya rechaza todo el relay (cero riesgo).
 
-# Banea a quien acumula muchos 429 (rate-limit de nginx disparado): es justo el
+# Banea a quien dispara el rate-limit de nginx repetidamente: es justo el
 # patrón del flood a wp-login.php de WordPress. El rate-limit SOLO frena (429);
-# esta jail además BANEA al que insiste. Lee los access logs de los dominios y el
-# global. Va de la mano con la protección wp-bruteforce (limit_req en el vhost).
+# esta jail además BANEA al que insiste. OJO: el filtro nginx-limit-req casa con
+# "limiting requests, excess: ... client: <HOST>", que nginx escribe en el
+# ERROR log (no en el access log). Apuntarla al access log = 0 baneos siempre.
+# Va de la mano con la protección wp-bruteforce (limit_req en el vhost).
 [nginx-limit-req]
 enabled  = true
 port     = http,https
 filter   = nginx-limit-req
-logpath  = /home/*/web/*/logs/nginx.access.log
-           /var/log/nginx/access.log
+logpath  = /home/*/web/*/logs/nginx.error.log
+           /var/log/nginx/error.log
 backend  = auto
 maxretry = 10
 findtime = 120
