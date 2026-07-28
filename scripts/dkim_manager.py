@@ -133,6 +133,19 @@ class DkimManager(SystemManager):
             "dns_record_value": dns_value,
         }
 
+    def ensure_selector(self, domain, selector="mail"):
+        """
+        Garantiza que selectors.map declara el dominio (sin la entrada, Rspamd
+        NO firma aunque la clave exista en disco). Recarga Rspamd solo si faltaba.
+        Devuelve True si hubo que añadirla.
+        """
+        entries = self._read_selector_map()
+        if entries.get(domain) == selector:
+            return False
+        self._update_selector_map(domain, selector, remove=False)
+        self._reload_rspamd()
+        return True
+
     def key_exists(self, domain, selector="mail"):
         """Comprueba si existe la clave privada para un dominio"""
         return os.path.exists(self._key_path(domain, selector))

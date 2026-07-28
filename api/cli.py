@@ -1340,6 +1340,40 @@ def cmd_backfill_caa(dry_run: bool = False) -> int:
         db.close()
 
 
+def cmd_backfill_dkim(dry_run: bool = False) -> int:
+    """Genera y publica la clave DKIM de los dominios de correo que no la tienen
+    (dkim_enabled=false). Desde v0.214.0 el alta de correo la genera sola; esto
+    cubre los dominios creados antes. Outlook/Gmail exigen SPF+DKIM+DMARC desde
+    mayo 2025. Idempotente: los dominios con DKIM no se tocan, y si la clave ya
+    existe en disco se reutiliza (no invalida un TXT ya publicado fuera).
+    """
+    from api.models.models_mail import MailDomain
+    from api.routes.mail import _auto_generate_dkim
+
+    db = SessionLocal()
+    try:
+        pendientes = db.query(MailDomain).filter(
+            MailDomain.dkim_enabled.is_(False)
+        ).order_by(MailDomain.domain_name).all()
+        if not pendientes:
+            logger.info("backfill DKIM: todos los dominios de correo ya firman")
+            return 0
+        ok = 0
+        for md in pendientes:
+            if dry_run:
+                logger.info(f"  {md.domain_name}: generaría DKIM")
+                continue
+            if _auto_generate_dkim(md, db):
+                logger.info(f"  {md.domain_name}: DKIM activado")
+                ok += 1
+            else:
+                logger.warning(f"  {md.domain_name}: no se pudo activar DKIM")
+        logger.info(f"backfill DKIM: pendientes={len(pendientes)} activados={ok}")
+        return 0
+    finally:
+        db.close()
+
+
 def cmd_setup_spam_learning() -> int:
     """Configura el aprendizaje de spam de Rspamd: IMAPSieve (learn al mover a/
     desde Junk) + autolearn + Bayes global. Idempotente. Requiere dovecot-sieve.
@@ -2089,6 +2123,10 @@ def main():
         help="Añade CAA (issue+issuewild Let's Encrypt) a las zonas DNS que no lo tengan")
     p_caa.add_argument("--dry-run", action="store_true", help="Solo muestra qué haría")
 
+    p_dkim = sub.add_parser("backfill_dkim",
+        help="Genera y publica DKIM en los dominios de correo que no lo tienen (Outlook/Gmail lo exigen)")
+    p_dkim.add_argument("--dry-run", action="store_true", help="Solo muestra qué haría")
+
     sub.add_parser("rebuild_mail_ratelimit",
         help="Regenera rate-limit Rspamd (incl. límite del correo no autenticado de PHP/web)")
     sub.add_parser("setup_spam_learning",
@@ -2276,6 +2314,8 @@ def main():
         sys.exit(cmd_fix_mail_folders())
     if args.cmd == "backfill_caa":
         sys.exit(cmd_backfill_caa(dry_run=args.dry_run))
+    if args.cmd == "backfill_dkim":
+        sys.exit(cmd_backfill_dkim(dry_run=args.dry_run))
     if args.cmd == "migrate_mail_out_ip":
         sys.exit(cmd_migrate_mail_out_ip(dry_run=args.dry_run))
     if args.cmd == "sync_srs_excludes":

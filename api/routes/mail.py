@@ -287,6 +287,50 @@ def _dns_remove_dkim_record(domain_name: str, selector: str, db: Session):
     db.commit()
 
 
+def _auto_generate_dkim(md: MailDomain, db: Session, selector: str = "mail") -> bool:
+    """
+    Genera y publica la clave DKIM de un dominio de correo sin intervención del
+    usuario (mismo efecto que el botón de la pestaña DKIM). Outlook/Gmail exigen
+    SPF+DKIM+DMARC desde mayo 2025: un dominio sin firma acaba en spam, así que
+    el alta de correo lo activa solo; `api.cli backfill_dkim` cubre los dominios
+    creados antes.
+
+    Si la clave privada ya existe en disco se REUTILIZA (regenerarla invalidaría
+    un TXT ya publicado en un DNS externo); solo se garantiza que esté declarada
+    en selectors.map. Tolerante a fallos: sin root (dev) o sin Rspamd devuelve
+    False sin romper el alta del dominio.
+    """
+    try:
+        from scripts.dkim_manager import DkimManager
+        dk = DkimManager()
+        if not dk.dkim_available():
+            return False
+        if dk.key_exists(md.domain_name, selector):
+            result = dk.get_key_info(md.domain_name, selector)
+            dk.ensure_selector(md.domain_name, selector)
+        else:
+            result = dk.generate_key(md.domain_name, selector)
+    except PermissionError:
+        logger.warning(f"Sin permisos root para generar DKIM de {md.domain_name} (¿entorno dev?)")
+        return False
+    except Exception as e:
+        logger.warning(f"No se pudo generar la clave DKIM de {md.domain_name}: {e}")
+        return False
+    if not result:
+        return False
+
+    md.dkim_enabled    = True
+    md.dkim_selector   = selector
+    md.dkim_public_key = result["public_key_b64"]
+    db.commit()
+
+    try:
+        _dns_add_dkim_record(md.domain_name, selector, result["dns_record_value"], db)
+    except Exception as e:
+        logger.warning(f"DKIM de {md.domain_name} generado pero sin TXT en la zona: {e}")
+    return True
+
+
 def _rebuild_rspamd(db: Session):
     """
     Regenera TODA la config de Rspamd derivada de la BD: umbrales/listas
@@ -609,6 +653,14 @@ async def create_mail_domain(
         _dns_add_spf_dmarc(data.domain_name, db)
     except Exception as e:
         logger.warning(f"No se pudieron añadir SPF/DMARC para {data.domain_name}: {e}")
+
+    # DKIM automático (misma clave y flujo que el botón de la pestaña DKIM).
+    # Outlook/Gmail exigen SPF+DKIM+DMARC desde mayo 2025: sin esto, cada
+    # dominio nuevo dependía de que alguien pulsara "Generar DKIM" a mano.
+    try:
+        _auto_generate_dkim(md, db)
+    except Exception as e:
+        logger.warning(f"No se pudo activar DKIM automático para {data.domain_name}: {e}")
 
     # Rate-limit de envío (el dominio entra con su send_limit_hour por defecto)
     _rebuild_rspamd(db)
