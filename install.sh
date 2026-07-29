@@ -1436,6 +1436,14 @@ RCDBEOF
 
     echo -e "  ${GREEN}✓ Roundcube ${RC_VERSION} descargado en ${RC_APP_DIR}${NC}"
 
+    # NOTA: un servidor nuevo nace en la última versión porque descargamos la
+    # release más reciente, pero Roundcube NO viene de apt: a partir de aquí
+    # nadie lo actualizaría solo (ni apt, ni unattended-upgrades, ni update.sh).
+    # De su mantenimiento se encarga scripts/roundcube_updater.py, expuesto en
+    # el panel (Sistema → Actualizaciones → Componentes gestionados) y aplicado
+    # a los servidores ya instalados por updates/0129. No añadir aquí otra vía
+    # de actualización: ese módulo es el único camino.
+
     # ── 3. Parche PHP 8.4/8.5 — array_first / array_last ──────────────────
     # bootstrap.php define funciones que PHP 8.4+ ya trae nativas → conflicto
     BOOTSTRAP="${RC_APP_DIR}/program/lib/Roundcube/bootstrap.php"

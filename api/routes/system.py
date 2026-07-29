@@ -557,6 +557,22 @@ async def get_system_versions(current_user=Depends(require_admin)):
     except:
         pass
 
+    # Roundcube: no viene de apt (lo instala el panel desde GitHub), así que no
+    # aparecería en ninguna parte si no lo añadimos a mano aquí. Se lee del
+    # iniset.php real, no del fichero de credenciales del install (que no se
+    # actualizaba y acababa mintiendo).
+    try:
+        from scripts import roundcube_updater
+        if roundcube_updater.is_installed():
+            rc_ver = roundcube_updater.installed_version()
+            versions["components"]["Roundcube"] = {
+                "name": "Roundcube (webmail)",
+                "version": rc_ver or "desconocida",
+                "docs": "https://roundcube.net/news/",
+            }
+    except Exception:
+        pass
+
     return versions
 
 
@@ -650,3 +666,36 @@ async def panel_update_auto(enabled: bool = True, hour: int = 4, current_user: U
     from scripts import panel_updater
     state = panel_updater.set_autoupdate(enabled, hour)
     return {"status": "success", "auto_update": state}
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Componentes gestionados por el panel (los que NO vienen de apt)
+#
+# Roundcube, ttyd… se instalan a mano (tarball/binario), así que ni `apt
+# upgrade` ni el update.sh del panel los tocan: sin esto se quedan clavados en
+# la versión del día de la instalación acumulando CVEs, y además invisibles.
+# Los de apt (nginx, PHP, MariaDB…) NO están aquí a propósito: se gestionan en
+# la pestaña de Actualizaciones (apt). Ver scripts/component_updater.py.
+# ─────────────────────────────────────────────────────────────────────────────
+@router.get("/system/components")
+async def system_components(current_user: User = Depends(require_admin)):
+    """Versión instalada vs. disponible de los componentes gestionados."""
+    from scripts import component_updater
+    return component_updater.check_all()
+
+
+@router.post("/system/components/{key}/upgrade")
+async def system_component_upgrade(key: str, current_user: User = Depends(require_admin)):
+    """Actualiza un componente gestionado (Roundcube, ttyd…).
+
+    Puede tardar (descarga + migración), así que el cliente debe usar un
+    timeout generoso. El propio actualizador revierte si algo sale mal.
+    """
+    from scripts import component_updater
+    res = component_updater.upgrade(key)
+    if not res.get("ok"):
+        raise HTTPException(
+            500,
+            detail="\n".join(res.get("log", [])) or f"No se pudo actualizar {key}",
+        )
+    return {"status": "success", **res}

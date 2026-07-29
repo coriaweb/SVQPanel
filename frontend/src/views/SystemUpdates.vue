@@ -44,6 +44,74 @@
       </p>
     </BaseCard>
 
+    <!-- Componentes gestionados por el panel (los que NO vienen de apt) -->
+    <BaseCard title="Componentes gestionados" icon="puzzle" style="margin-bottom:16px">
+      <template #actions>
+        <BaseButton variant="ghost" size="sm" :loading="compsLoading" @click="loadComponents">
+          <i class="bi bi-arrow-repeat"></i> Comprobar
+        </BaseButton>
+      </template>
+
+      <p class="su-muted" style="margin:0 0 .75rem">
+        Software que el panel instala por su cuenta (fuera de <code class="su-code">apt</code>).
+        No se actualiza con los paquetes del sistema: solo desde aquí.
+      </p>
+
+      <div v-if="compsLoading && !components.length" class="svq-skeleton" style="height:110px"></div>
+
+      <div v-else-if="components.length" class="su-table-wrap">
+        <table class="su-table">
+          <thead>
+            <tr>
+              <th>Componente</th>
+              <th>Instalada</th>
+              <th>Disponible</th>
+              <th>Estado</th>
+              <th class="su-right">Acción</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr v-for="c in components" :key="c.key">
+              <td>
+                <strong>{{ c.name }}</strong>
+                <div class="su-muted" style="font-size:.78rem">{{ c.description }}</div>
+              </td>
+              <td><code class="su-code">{{ c.current || '—' }}</code></td>
+              <td><code class="su-code">{{ c.latest || '—' }}</code></td>
+              <td>
+                <span v-if="!c.installed" class="su-badge">No instalado</span>
+                <span v-else-if="c.error" class="su-badge su-badge--warn" :title="c.error">
+                  <i class="bi bi-exclamation-triangle"></i> Sin comprobar
+                </span>
+                <span v-else-if="c.update_available" class="su-badge su-badge--warn">
+                  <i class="bi bi-arrow-up-circle"></i> Actualización disponible
+                </span>
+                <span v-else class="su-badge su-badge--ok"><i class="bi bi-check-circle"></i> Al día</span>
+              </td>
+              <td class="su-right">
+                <BaseButton v-if="c.installed && c.update_available" variant="primary" size="sm"
+                            :loading="compUpgrading === c.key" :disabled="!!compUpgrading"
+                            @click="upgradeComponent(c)">
+                  <i class="bi bi-download"></i> Actualizar
+                </BaseButton>
+                <BaseButton v-else-if="c.docs" tag="a" :href="c.docs" target="_blank" variant="ghost" size="sm">
+                  <i class="bi bi-box-arrow-up-right"></i> Ver
+                </BaseButton>
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      <p v-if="compsMsg" :style="{color: compsError ? 'var(--danger)' : 'var(--success)', fontSize:'.85rem', marginTop:'.5rem'}">
+        {{ compsMsg }}
+      </p>
+      <div v-if="compLog" class="su-log-wrap">
+        <h6 class="su-log-title">Salida del proceso</h6>
+        <pre class="su-log">{{ compLog }}</pre>
+      </div>
+    </BaseCard>
+
     <BaseTabs v-model="activeTab" :tabs="tabs" class="su-tabs" />
 
     <!-- ===== TAB: Versiones ===== -->
@@ -267,7 +335,52 @@ export default {
       }
     }
 
-    onMounted(() => { loadVersions(); loadPanelUpdate() })
+    // ── Componentes gestionados (Roundcube, ttyd…) ──
+    const components   = ref([])
+    const compsLoading = ref(false)
+    const compUpgrading = ref('')
+    const compsMsg     = ref('')
+    const compsError   = ref(false)
+    const compLog      = ref('')
+
+    const loadComponents = async () => {
+      compsLoading.value = true
+      compsMsg.value = ''
+      try {
+        const data = await api.getSystemComponents()
+        components.value = data.components || []
+      } catch (e) {
+        compsError.value = true
+        compsMsg.value = 'Error comprobando componentes: ' + (e.message || e)
+      } finally {
+        compsLoading.value = false
+      }
+    }
+
+    const upgradeComponent = async (c) => {
+      if (!confirm(`Se actualizará ${c.name} de ${c.current || '?'} a ${c.latest || '?'}.\n\n` +
+                   'Se hace copia de seguridad antes y se revierte automáticamente si el ' +
+                   'servicio deja de responder. Puede tardar un par de minutos. ¿Continuar?')) return
+      compUpgrading.value = c.key
+      compsMsg.value = ''
+      compsError.value = false
+      compLog.value = ''
+      try {
+        const res = await api.upgradeSystemComponent(c.key)
+        compLog.value = (res.log || []).join('\n')
+        compsMsg.value = `${c.name} actualizado a ${res.current || '?'}.`
+        compsError.value = false
+        await loadComponents()
+      } catch (e) {
+        compsError.value = true
+        compsMsg.value = `No se pudo actualizar ${c.name}. Se restauró la versión anterior.`
+        compLog.value = e.message || String(e)
+      } finally {
+        compUpgrading.value = ''
+      }
+    }
+
+    onMounted(() => { loadVersions(); loadPanelUpdate(); loadComponents() })
 
     const checkUpdates = async () => {
       checking.value  = true
@@ -353,6 +466,8 @@ export default {
       checkUpdates, upgradeAll, upgradePkg, repairDpkg,
       panel, panelChecking, panelUpdating, panelAutoSaving, panelMsg, panelError,
       loadPanelUpdate, applyPanelUpdate, togglePanelAuto,
+      components, compsLoading, compUpgrading, compsMsg, compsError, compLog,
+      loadComponents, upgradeComponent,
     }
   }
 }

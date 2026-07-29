@@ -1231,6 +1231,15 @@ class APIClient {
     return this.post(`/api/system/panel-update/auto?enabled=${enabled ? 'true' : 'false'}&hour=${hour}`, {})
   }
 
+  // Componentes gestionados por el panel (Roundcube, ttyd…): los que NO vienen
+  // de apt y por tanto solo se pueden actualizar desde aquí.
+  getSystemComponents() {
+    return this.get('/api/system/components')
+  }
+  upgradeSystemComponent(key) {
+    return this.post(`/api/system/components/${encodeURIComponent(key)}/upgrade`, {})
+  }
+
   // Visor de logs del servidor
   getLogsCatalog() {
     return this.get('/api/system/logs/catalog')
