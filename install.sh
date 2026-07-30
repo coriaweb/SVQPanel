@@ -1244,16 +1244,39 @@ server:
     cache-max-ttl: 86400
     hide-identity: yes
     hide-version: yes
+    # ── Capacidad ─────────────────────────────────────────────────────────
+    # Con los valores por defecto (1 hilo, cola de 64) una ráfaga de spam
+    # satura la cola: unbound descarta consultas, Rspamd se queda SIN las
+    # respuestas de SPF/DMARC/RBL y puntúa el correo como si no existieran.
+    # Efecto real observado: un correo con el remitente FALSIFICADO del propio
+    # dominio (SPF -all + DMARC quarantine) se entregó con 6.15 en vez de ser
+    # rechazado con 23.50, porque solo pudo hacer 2 consultas DNS en 8 s.
+    # Síntoma a vigilar: `unbound-control stats | grep requestlist.exceeded`.
+    num-threads: 2
+    msg-cache-size: 64m
+    rrset-cache-size: 128m
+    key-cache-size: 32m
+    num-queries-per-thread: 2048
+    outgoing-range: 4096
+    so-rcvbuf: 4m
+    so-sndbuf: 4m
+    # Servir del cache mientras se refresca (evita esperas en picos)
+    serve-expired: yes
+    serve-expired-ttl: 60
+    infra-cache-numhosts: 100000
 UNBOUNDEOF
     systemctl enable unbound 2>/dev/null || true
     systemctl restart unbound 2>/dev/null || true
     # Apuntar Rspamd a unbound (en vez del 127.0.0.1:53 de named).
+    # timeout 1s + 5 reintentos era demasiado justo: si unbound tarda (cache
+    # fría o dominio lento), Rspamd abandona y evalúa SIN SPF/DMARC/RBL, que es
+    # exactamente lo que deja pasar el spam con remitente falsificado.
     cat > /etc/rspamd/local.d/options.inc << 'RSPAMDDNSEOF'
 dns {
   nameserver = ["127.0.0.1:5353"];
-  timeout = 1s;
-  sockets = 16;
-  retransmits = 5;
+  timeout = 3s;
+  sockets = 64;
+  retransmits = 2;
 }
 RSPAMDDNSEOF
 
