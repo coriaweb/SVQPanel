@@ -157,10 +157,12 @@
                       <i class="bi bi-download"></i>
                     </button>
                     <button
-                      v-if="entry.type === 'file' && isArchive(entry)"
+                      v-if="entry.type === 'file' && (isArchive(entry) || isUnsupportedArchive(entry))"
                       class="btn btn-outline-warning"
-                      title="Extraer aquí"
-                      :disabled="extracting === entry.path"
+                      :title="isUnsupportedArchive(entry)
+                        ? 'Formato no soportado: descomprime en tu equipo y sube el contenido, o usa .zip / .tar.gz'
+                        : 'Extraer aquí'"
+                      :disabled="extracting === entry.path || isUnsupportedArchive(entry)"
                       @click="extractZip(entry)"
                     >
                       <span v-if="extracting === entry.path" class="spinner-border spinner-border-sm"></span>
@@ -614,11 +616,21 @@ export default {
       if (editableNames.includes(name)) return true
       return editableExtensions.includes(name.split('.').pop())
     }
+    // Formatos que el backend SÍ sabe extraer (ver api/routes/file_manager.py:
+    // extract). Mantener en sync: si aquí sobra un formato, el botón devuelve 400.
     const isArchive = (entry) => {
       const n = entry.name.toLowerCase()
       return n.endsWith('.zip') || n.endsWith('.tar') || n.endsWith('.tar.gz') ||
              n.endsWith('.tgz') || n.endsWith('.tar.bz2') || n.endsWith('.tbz2') ||
              n.endsWith('.tar.xz') || n.endsWith('.txz')
+    }
+    // Comprimidos que NO se pueden extraer (requieren unrar/7z, no instalados).
+    // Se les muestra el botón desactivado con el motivo en el tooltip: llevan
+    // icono de comprimido, así que sin esto el usuario busca un botón que no
+    // existe y no entiende por qué.
+    const isUnsupportedArchive = (entry) => {
+      const n = entry.name.toLowerCase()
+      return n.endsWith('.rar') || n.endsWith('.7z')
     }
 
     const fileIcon = (entry) => {
@@ -649,7 +661,7 @@ export default {
       showChmod, savingChmod, chmodEntry, chmodBits, chmodOctal, openChmod, applyChmod,
       selected, bulkDeleting, allSelected, someSelected,
       toggleSelect, toggleAll, clearSelection, deleteSelected,
-      formatSize, formatDate, isEditable, isArchive, fileIcon,
+      formatSize, formatDate, isEditable, isArchive, isUnsupportedArchive, fileIcon,
     }
   },
 }
