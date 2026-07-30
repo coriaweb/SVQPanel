@@ -34,6 +34,46 @@ def _reject_newlines(value: str, field_name: str) -> str:
     return value
 
 
+# Metacaracteres de shell no permitidos en el comando de un cron.
+# El comando acaba pasando por un shell, así que estos constructos permiten
+# encadenar órdenes, sustituir comandos o redirigir a ficheros arbitrarios.
+# El quoting de cron_manager evita que la línea del crontab se parta, pero esto
+# es la capa que impide que el propio comando haga algo distinto de lo que dice.
+# Un cron corre como el usuario del dominio (no root), así que esto es defensa
+# en profundidad, no la única barrera.
+_DANGEROUS_OPERATORS = (
+    ";",      # encadenar comandos
+    "&&",     # AND lógico
+    "||",     # OR lógico
+    "|",      # tubería (wget ... | sh)
+    "`",      # sustitución de comandos (backticks)
+    "$(",     # sustitución de comandos POSIX
+    "${",     # expansión de variables (${IFS} para evadir filtros)
+    "2>&1",   # redirección de descriptores
+    ">",      # redirección de salida (cubre >, >>, >| y >{)
+    "<",      # redirección de entrada
+    "&",      # segundo plano
+    "\n", "\r",  # ya cubiertos por _reject_newlines; aquí por si acaso
+)
+
+
+def _validate_cron_command(value: str) -> str:
+    """Valida el comando de un cron: no vacío, sin saltos de línea y sin
+    metacaracteres de shell. Único punto de verdad para Create y Update."""
+    value = value.strip()
+    if not value:
+        raise ValueError("El comando no puede estar vacío")
+    _reject_newlines(value, "command")
+    for op in _DANGEROUS_OPERATORS:
+        if op in value:
+            raise ValueError(
+                f"El comando contiene un operador de shell no permitido: '{op}'. "
+                "Si necesitas encadenar órdenes o redirigir la salida, pon los "
+                "comandos en un script y programa el script."
+            )
+    return value
+
+
 class CronJobCreate(BaseModel):
     # Propietario del cron. Para admin/reseller, opcional: si se indica un cliente,
     # el cron se ejecuta BAJO ese usuario del sistema (aislado), no como root.
@@ -76,22 +116,7 @@ class CronJobCreate(BaseModel):
     @field_validator("command")
     @classmethod
     def val_command(cls, v):
-        v = v.strip()
-        if not v:
-            raise ValueError("El comando no puede estar vacío")
-        _reject_newlines(v, "command")
-        # Bloquear caracteres peligrosos de shell
-        dangerous = [";", "&&", "||", "|", "`", "$(",  ">{",  ">>", ">|", "2>&1", "&"]
-        # Excepción: el pipe solo en contexto específico; aquí bloqueamos todo redirección
-        forbidden_chars = set(";`")
-        for char in forbidden_chars:
-            if char in v:
-                raise ValueError(f"El comando contiene caracteres no permitidos: '{char}'")
-        # Bloquear operadores de redirección y combinación de comandos
-        for op in ["&&", "||", "2>&1"]:
-            if op in v:
-                raise ValueError(f"El comando contiene operador no permitido: '{op}'")
-        return v
+        return _validate_cron_command(v)
 
     @field_validator("comment")
     @classmethod
@@ -138,20 +163,7 @@ class CronJobUpdate(BaseModel):
     @field_validator("command", mode="before")
     @classmethod
     def val_command(cls, v):
-        if v is None:
-            return v
-        v = v.strip()
-        if not v:
-            raise ValueError("El comando no puede estar vacío")
-        _reject_newlines(v, "command")
-        forbidden_chars = set(";`")
-        for char in forbidden_chars:
-            if char in v:
-                raise ValueError(f"El comando contiene caracteres no permitidos: '{char}'")
-        for op in ["&&", "||", "2>&1"]:
-            if op in v:
-                raise ValueError(f"El comando contiene operador no permitido: '{op}'")
-        return v
+        return _validate_cron_command(v) if v is not None else v
 
     @field_validator("comment", mode="before")
     @classmethod

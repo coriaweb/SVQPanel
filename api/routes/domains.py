@@ -233,7 +233,8 @@ async def create_domain(
                         dns_mgr = DNSManager()
                         serial = dns_mgr.create_zone(domain.domain_name, ipv4=ipv4)
                     except PermissionError:
-                        serial = 2026052501
+                        from scripts.dns_manager import next_serial
+                        serial = next_serial()
 
                     # ip_address: necesario para que la lista de zonas muestre la
                     # IP (si no, sale "—"). Coherente con el endpoint create_zone.

@@ -318,7 +318,10 @@ async def create_zone(
         manager = DNSManager()
         serial = manager.create_zone(data.domain_name, ipv4=ipv4, ipv6=ipv6, ns1=soa_ns, ttl=ttl)
     except PermissionError:
-        serial = 2026052501
+        # Serial del día, NUNCA una fecha fija: un serial del pasado hace que el
+        # esclavo ignore la zona por anti-rollback (ver dns_manager.next_serial).
+        from scripts.dns_manager import next_serial
+        serial = next_serial()
 
     zone = DnsZone(
         domain_name=data.domain_name, serial=serial,
@@ -856,9 +859,9 @@ async def set_dnssec(
 # ──────────────────────── helpers privados ───────────────────────────────────
 
 def _bump_serial(current: int) -> int:
-    from datetime import datetime
-    today = int(datetime.utcnow().strftime("%Y%m%d")) * 100
-    return max(current + 1, today + 1)
+    """Incrementa el serial SOA de una zona (ver dns_manager.next_serial)."""
+    from scripts.dns_manager import next_serial
+    return next_serial(current)
 
 
 def find_parent_zone(db: Session, fqdn: str):

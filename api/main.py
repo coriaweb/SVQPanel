@@ -311,10 +311,14 @@ def _run_migrations():
         # Fase 6: interfaz de red en settings
         "ALTER TABLE settings ADD COLUMN IF NOT EXISTS network_interface VARCHAR(20) DEFAULT 'eth0'",
         # Fase 7: DNS — tablas dns_zones y dns_records (ya las crea create_all, pero por si acaso)
+        # El DEFAULT del serial se CALCULA (YYYYMMDD01 de hoy), no es una
+        # constante: un literal se congela en la fecha en que se escribió y una
+        # zona nueva nacería con un serial del pasado, que el esclavo ignoraría
+        # por anti-rollback (ver scripts/dns_manager.next_serial).
         """CREATE TABLE IF NOT EXISTS dns_zones (
             id SERIAL PRIMARY KEY,
             domain_name VARCHAR(255) UNIQUE NOT NULL,
-            serial INTEGER DEFAULT 2026052501,
+            serial INTEGER DEFAULT (to_char(NOW(), 'YYYYMMDD')::bigint * 100 + 1),
             is_active BOOLEAN DEFAULT TRUE,
             created_at TIMESTAMP DEFAULT NOW(),
             updated_at TIMESTAMP DEFAULT NOW()

@@ -20,6 +20,31 @@ DEFAULT_NS1 = "ns1.svqpanel.local"
 DEFAULT_NS2 = "ns2.svqpanel.local"
 
 
+def next_serial(current_serial: Optional[int] = None) -> int:
+    """Serial SOA en formato YYYYMMDDNN, ESTRICTAMENTE monótono.
+
+    Fuente única de verdad del serial: la usan DNSManager._next_serial(),
+    api.routes.dns._bump_serial() y los fallbacks de create_zone().
+
+    Nunca devuelve un valor <= current_serial. Esto es crítico: un esclavo
+    aplica la aritmética de seriales de la RFC 1982, así que un serial igual o
+    menor que el que ya sirve significa "nada nuevo" y NO transfiere la zona
+    (anti-rollback). La zona se queda congelada en ns2 mientras el master sí
+    muestra los cambios — un fallo asimétrico muy difícil de diagnosticar.
+    Por eso NO se debe hardcodear ninguna fecha como serial de partida: una
+    constante escrita a mano envejece y acaba siendo menor que la del día.
+
+    Con >99 cambios en un día el contador invade valores de fechas futuras
+    (2026072999 → 2026073000). Es aceptable: el formato pierde su semántica de
+    fecha, pero el serial sigue siendo válido, creciente y por debajo del
+    límite uint32 de BIND.
+    """
+    base = int(datetime.utcnow().strftime("%Y%m%d")) * 100   # p.ej. 2026073000
+    if current_serial:
+        return max(int(current_serial) + 1, base + 1)
+    return base + 1
+
+
 def get_panel_nameservers(db) -> tuple:
     """
     Devuelve (ns1, ns2): los nameservers del panel, fuente única de verdad para
@@ -71,13 +96,7 @@ class DNSManager(SystemManager):
 
     def _next_serial(self, current_serial: Optional[int] = None) -> int:
         """Genera serial YYYYMMDDNN incrementando si ya existía uno hoy"""
-        today = datetime.utcnow().strftime("%Y%m%d")
-        base  = int(today) * 100    # p.ej. 2026052500
-
-        if current_serial and current_serial >= base:
-            # Mismo día: incrementar contador (NN)
-            return current_serial + 1
-        return base + 1
+        return next_serial(current_serial)
 
     def _write_named_conf_zones(self, domains: List[str]):
         """Regenera /etc/bind/named.conf.zones con todas las zonas activas"""

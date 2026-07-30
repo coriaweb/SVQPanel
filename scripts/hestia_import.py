@@ -1784,7 +1784,8 @@ def import_dns(backup: "HestiaBackup", zoneinfo: Dict, owner, db, report: Import
     try:
         serial = mgr.create_zone(domain, ipv4=server_ipv4 or old_ip)
     except PermissionError:
-        serial = 2026052501
+        from scripts.dns_manager import next_serial
+        serial = next_serial()
 
     zone = DnsZone(domain_name=domain, serial=serial,
                    ip_address=server_ipv4 or old_ip, ttl=int(zoneinfo.get("ttl") or 14400))
@@ -2286,7 +2287,8 @@ def _ensure_default_zone(domain: str, owner, db, report, server_ipv4, server_ipv
     try:
         serial = mgr.create_zone(domain, ipv4=server_ipv4, ipv6=server_ipv6, ns1=ns1)
     except PermissionError:
-        serial = 2026052501
+        from scripts.dns_manager import next_serial
+        serial = next_serial()
     zone = DnsZone(domain_name=domain, serial=serial,
                    ip_address=server_ipv4, soa_ns=ns1 or None, ttl=14400)
     db.add(zone)

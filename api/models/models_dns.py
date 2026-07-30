@@ -7,12 +7,20 @@ from datetime import datetime
 from api.models.database import Base
 
 
+def _default_serial() -> int:
+    """Serial del día. Callable a propósito: un default literal se congelaría en
+    la fecha en que se escribió el código y una zona nueva nacería con un serial
+    del pasado (el esclavo la ignoraría por anti-rollback)."""
+    from scripts.dns_manager import next_serial
+    return next_serial()
+
+
 class DnsZone(Base):
     __tablename__ = "dns_zones"
 
     id            = Column(Integer, primary_key=True, index=True)
     domain_name   = Column(String(255), unique=True, nullable=False, index=True)
-    serial        = Column(Integer, default=2026052501)   # YYYYMMDDNN
+    serial        = Column(Integer, default=_default_serial)   # YYYYMMDDNN
     is_active     = Column(Boolean, default=True)
 
     # Configuración de la zona (estilo Hestia)
