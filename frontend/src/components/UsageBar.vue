@@ -77,7 +77,11 @@ function formatMB(mb) {
 .ub__track {
   height: 6px;
   border-radius: 999px;
-  background: var(--surface-inset, #eee);
+  /* NO usar --surface-inset: es el mismo color que el hover de la fila, y al
+     pasar el ratón el track se fundía con el fondo y la barra "desaparecía".
+     Un tinte del color del texto contrasta sobre cualquier fondo, en claro y
+     en oscuro. */
+  background: color-mix(in srgb, var(--text-muted) 22%, transparent);
   overflow: hidden;
 }
 .ub__fill {
