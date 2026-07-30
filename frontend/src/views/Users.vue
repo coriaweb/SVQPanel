@@ -11,6 +11,32 @@
       </BaseButton>
     </div>
 
+    <!-- Aviso de cuotas: se ve SIN tener que revisar las 33 filas a mano -->
+    <div v-if="!loading && quotaAlerts.total > 0" class="us-alert"
+         :class="quotaAlerts.critical.length ? 'us-alert--danger' : 'us-alert--warn'">
+      <i class="bi" :class="quotaAlerts.critical.length ? 'bi-exclamation-octagon-fill'
+                                                        : 'bi-exclamation-triangle-fill'"></i>
+      <div class="us-alert__body">
+        <strong>
+          {{ quotaAlerts.total }}
+          {{ quotaAlerts.total === 1 ? 'cuenta cerca de su límite' : 'cuentas cerca de su límite' }}
+        </strong>
+        <span class="us-alert__detail">
+          <template v-if="quotaAlerts.critical.length">
+            {{ quotaAlerts.critical.length }} en estado crítico (≥95%)<template v-if="quotaAlerts.warn.length">,
+            {{ quotaAlerts.warn.length }} en aviso (≥80%)</template>.
+          </template>
+          <template v-else>
+            {{ quotaAlerts.warn.length }} por encima del 80% de su cuota.
+          </template>
+          Al llegar al 100% dejarán de recibir correo y de escribir archivos.
+        </span>
+      </div>
+      <button class="us-alert__btn" @click="onlyAtRisk = !onlyAtRisk">
+        {{ onlyAtRisk ? 'Ver todas' : 'Ver solo estas' }}
+      </button>
+    </div>
+
     <BaseCard title="Usuarios del panel" icon="people" flush>
       <div v-if="loading" class="us-center"><div class="spinner-border spinner-border-sm"></div></div>
 
@@ -34,7 +60,9 @@
             </tr>
           </thead>
           <tbody>
-            <tr v-for="user in users" :key="user.id" :class="{ 'us-row--suspended': user.is_suspended }">
+            <tr v-for="user in visibleUsers" :key="user.id"
+                :class="{ 'us-row--suspended': user.is_suspended,
+                          'us-row--at-risk': quotaLevel(user) !== 'ok' }">
               <td>
                 <div class="us-user">
                   <i class="bi bi-person-circle"></i>
@@ -113,7 +141,7 @@
 </template>
 
 <script>
-import { ref, onMounted } from 'vue'
+import { ref, computed, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { useMainStore } from '../stores/useMainStore'
 import api from '../services/api'
@@ -159,6 +187,43 @@ export default {
       `Web: ${fmtMB(u.disk_web_mb)} · Correo: ${fmtMB(u.disk_mail_mb)} · BD: ${fmtMB(u.disk_db_mb)}`
 
     const fmtLastLogin = formatDateTime
+
+    // ── Cuotas cerca del límite ──────────────────────────────────────────
+    // Mismos umbrales que UsageBar (80% aviso / 95% crítico). Se miran disco
+    // Y tráfico: quedarse sin tráfico deja la web caída igual que quedarse
+    // sin disco deja de aceptar correo.
+    const QUOTA_WARN = 80
+    const QUOTA_CRIT = 95
+
+    const pct = (used, quota) =>
+      quota > 0 ? Math.min(100, Math.round((used || 0) / quota * 100)) : 0
+
+    // Nivel del usuario = el PEOR de sus dos cuotas.
+    const quotaLevel = (u) => {
+      const p = Math.max(
+        pct(u.disk_used_mb, u.disk_quota_mb),
+        pct(u.traffic_used_mb_month, u.traffic_quota_mb_month),
+      )
+      if (p >= QUOTA_CRIT) return 'critical'
+      if (p >= QUOTA_WARN) return 'warn'
+      return 'ok'
+    }
+
+    const quotaAlerts = computed(() => {
+      const critical = [], warn = []
+      for (const u of users.value) {
+        const lvl = quotaLevel(u)
+        if (lvl === 'critical') critical.push(u)
+        else if (lvl === 'warn') warn.push(u)
+      }
+      return { critical, warn, total: critical.length + warn.length }
+    })
+
+    const onlyAtRisk = ref(false)
+    const visibleUsers = computed(() =>
+      onlyAtRisk.value
+        ? users.value.filter((u) => quotaLevel(u) !== 'ok')
+        : users.value)
 
     const roleTagClass = (role) => {
       switch (role) {
@@ -244,6 +309,10 @@ export default {
 
     return {
       users,
+      visibleUsers,
+      quotaAlerts,
+      quotaLevel,
+      onlyAtRisk,
       loading,
       showUserForm,
       editingUser,
@@ -305,6 +374,49 @@ export default {
 /* Fila de usuario suspendido: tono ámbar tenue para distinguirla de un vistazo */
 .us-row--suspended > td { background: color-mix(in srgb, var(--warning) 7%, transparent); }
 .us-row--suspended .us-name { opacity: .7; }
+
+/* Aviso de cuotas cerca del límite */
+.us-alert {
+  display: flex;
+  align-items: flex-start;
+  gap: .65rem;
+  padding: .75rem 1rem;
+  margin-bottom: 1rem;
+  border-radius: var(--r-md, 10px);
+  border: 1px solid;
+  font-size: .875rem;
+  line-height: 1.45;
+}
+.us-alert > .bi { font-size: 1.05rem; line-height: 1.3; flex-shrink: 0; }
+.us-alert__body { flex: 1; display: flex; flex-direction: column; gap: .1rem; }
+.us-alert__detail { color: var(--text-secondary, inherit); opacity: .9; }
+.us-alert--warn {
+  color: var(--warning, #b45309);
+  background: color-mix(in srgb, var(--warning) 9%, transparent);
+  border-color: color-mix(in srgb, var(--warning) 35%, transparent);
+}
+.us-alert--danger {
+  color: var(--danger, #b91c1c);
+  background: color-mix(in srgb, var(--danger) 9%, transparent);
+  border-color: color-mix(in srgb, var(--danger) 35%, transparent);
+}
+.us-alert__btn {
+  flex-shrink: 0;
+  align-self: center;
+  padding: .3rem .7rem;
+  font-size: .8rem;
+  font-weight: 600;
+  color: inherit;
+  background: transparent;
+  border: 1px solid currentColor;
+  border-radius: var(--r-sm, 8px);
+  cursor: pointer;
+  opacity: .85;
+}
+.us-alert__btn:hover { opacity: 1; background: color-mix(in srgb, currentColor 10%, transparent); }
+
+/* Marca lateral en la fila del usuario en riesgo (no tapa "suspendido") */
+.us-row--at-risk > td:first-child { box-shadow: inset 3px 0 0 var(--warning, #d97706); }
 
 /* Acciones */
 .us-actions { display: inline-flex; align-items: center; gap: 4px; }
