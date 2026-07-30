@@ -18,18 +18,17 @@
           <option value="">Todos los usuarios</option>
           <option v-for="user in users" :key="user.id" :value="user.id">{{ user.username }}</option>
         </select>
-        <div class="view-toggle">
-          <button :class="{ active: viewMode === 'cards' }" @click="viewMode = 'cards'" title="Tarjetas"><i class="bi bi-grid"></i></button>
-          <button :class="{ active: viewMode === 'table' }" @click="viewMode = 'table'" title="Tabla"><i class="bi bi-list-ul"></i></button>
-        </div>
         <BaseButton variant="primary" icon="plus-lg" @click="openCreateForm">Crear dominio</BaseButton>
       </div>
     </header>
 
-    <!-- Carga -->
-    <div v-if="loading" class="cards-grid">
-      <div v-for="n in 6" :key="n" class="svq-skeleton" style="height:200px;border-radius:var(--r-lg)"></div>
-    </div>
+    <!-- Carga: filas, no tarjetas, para que el esqueleto se parezca a la tabla -->
+    <BaseCard v-if="loading" flush>
+      <div style="padding:var(--sp-4);display:flex;flex-direction:column;gap:var(--sp-3)">
+        <div v-for="n in 8" :key="n" class="svq-skeleton"
+             style="height:38px;border-radius:var(--r-sm)"></div>
+      </div>
+    </BaseCard>
 
     <!-- Vacío -->
     <BaseCard v-else-if="domains.length === 0">
@@ -39,91 +38,6 @@
       </EmptyState>
     </BaseCard>
 
-    <!-- ===== Vista de tarjetas ===== -->
-    <div v-else-if="viewMode === 'cards'" class="cards-grid">
-      <article v-for="domain in groupedDomains" :key="domain.id" class="dcard" :class="[`dcard--${domainTone(domain)}`, { 'dcard--sub': domain.is_subdomain }]">
-        <div class="dcard__head">
-          <div class="dcard__title">
-            <i class="bi" :class="domain.mail_dns_only ? 'bi-envelope' : (domain.is_subdomain ? 'bi-diagram-3' : 'bi-globe2')"></i>
-            <a v-if="!domain.mail_dns_only" :href="'http://' + domain.domain_name" target="_blank" class="dcard__name" @click.stop>{{ domain.domain_name }}</a>
-            <span v-else class="dcard__name">{{ domain.domain_name }}</span>
-            <span v-if="domain.is_subdomain" class="sub-chip" :title="'Subdominio de ' + domain.parent_domain">sub</span>
-            <span v-if="domain.mail_dns_only" class="sub-chip" title="Solo correo/DNS — la web está en otro servidor">correo/DNS</span>
-          </div>
-          <StatusBadge
-            :status="domain.is_suspended ? 'warning' : (domain.is_active ? 'active' : 'error')"
-            :label="domain.is_suspended ? 'Suspendido' : (domain.is_active ? 'Activo' : 'Inactivo')" />
-        </div>
-
-        <p v-if="isAdminOrReseller" class="dcard__owner"><i class="bi bi-person"></i> {{ getUserName(domain.user_id) }}</p>
-
-        <!-- Solo correo/DNS: sin web → no mostramos SSL/PHP/Cache/Tamaño -->
-        <div v-if="domain.mail_dns_only" class="dcard__stats">
-          <div class="dstat">
-            <span class="dstat__k">Tipo</span>
-            <span class="dstat__v"><i class="bi bi-envelope me-1"></i>Solo correo / DNS</span>
-          </div>
-          <div class="dstat">
-            <span class="dstat__k">Web</span>
-            <span class="dstat__v text-muted">En otro servidor</span>
-          </div>
-        </div>
-        <div v-else class="dcard__stats">
-          <div class="dstat">
-            <span class="dstat__k">SSL</span>
-            <StatusBadge :status="domain.ssl_enabled ? 'valid' : 'none'"
-              :label="domain.ssl_enabled ? 'Activo' : 'Sin SSL'"
-              :icon="domain.ssl_enabled ? 'lock-fill' : 'unlock'" :dot="false" />
-          </div>
-          <div class="dstat">
-            <span class="dstat__k">PHP</span>
-            <span class="dstat__v mono">{{ domain.php_version || '—' }}</span>
-          </div>
-          <div class="dstat">
-            <span class="dstat__k">Cache</span>
-            <StatusBadge :status="domain.fastcgi_cache_enabled ? 'active' : 'none'"
-              :label="domain.fastcgi_cache_enabled ? 'On' : 'Off'"
-              :icon="domain.fastcgi_cache_enabled ? 'lightning-fill' : 'lightning'" :dot="false" />
-          </div>
-          <div class="dstat">
-            <span class="dstat__k">Tamaño</span>
-            <span v-if="diskInfo[domain.id] && diskInfo[domain.id].calculated_at" class="dstat__v mono">
-              {{ formatMB(diskInfo[domain.id].public_html_mb) }}
-            </span>
-            <span v-else class="dstat__v mono t-muted">—</span>
-            <button class="dstat__load" :disabled="diskRefreshing[domain.id]"
-              :title="diskInfo[domain.id] && diskInfo[domain.id].calculated_at ? 'Recalcular tamaño' : 'Calcular tamaño'"
-              @click="refreshDiskInfo(domain)">
-              <i class="bi" :class="diskRefreshing[domain.id] ? 'bi-arrow-repeat spin' : 'bi-arrow-clockwise'"></i>
-            </button>
-          </div>
-        </div>
-
-        <div class="dcard__actions">
-          <BaseButton variant="subtle" size="sm" icon="box-arrow-in-right" tag="router-link" v-bind="{ to: `/domains/${domain.id}` }">Abrir</BaseButton>
-          <BaseButton v-if="!domain.mail_dns_only" variant="ghost" size="sm" icon="lock" @click="openSSLManager(domain)">SSL</BaseButton>
-          <div class="dcard__more">
-            <button class="more-btn" @click="toggleMenu(domain.id)" title="Más acciones"><i class="bi bi-three-dots"></i></button>
-            <div class="more-menu" v-if="openMenuId === domain.id" v-click-away="() => openMenuId = null">
-              <!-- Opciones web: solo para dominios con hosting aquí -->
-              <template v-if="!domain.mail_dns_only">
-                <button @click="run(openPhpManager, domain)"><i class="bi bi-filetype-php"></i> Configuración PHP</button>
-                <button @click="run(openCacheManager, domain)"><i class="bi bi-lightning"></i> FastCGI cache</button>
-                <button @click="run(openLogsViewer, domain)"><i class="bi bi-binoculars"></i> Ver registros</button>
-              </template>
-              <button @click="run(openIPv6Manager, domain)"><i class="bi bi-diagram-3"></i> IPv6</button>
-              <button v-if="!domain.mail_dns_only" @click="run(changePHPPrompt, domain)"><i class="bi bi-arrow-repeat"></i> Cambiar PHP</button>
-              <button @click="run(openEditForm, domain)"><i class="bi bi-pencil"></i> Editar</button>
-              <button v-if="!domain.mail_dns_only" @click="run(downloadSite, domain)" :disabled="downloadingId === domain.id"><i class="bi bi-download"></i> Descargar sitio</button>
-              <button v-if="!domain.is_suspended" @click="run(suspendDomain, domain)"><i class="bi bi-pause-circle"></i> Suspender</button>
-              <button v-else @click="run(unsuspendDomain, domain)"><i class="bi bi-play-circle"></i> Reactivar</button>
-              <div class="more-sep"></div>
-              <button class="is-danger" @click="run(() => deleteDomainConfirm(domain.id))"><i class="bi bi-trash"></i> Eliminar</button>
-            </div>
-          </div>
-        </div>
-      </article>
-    </div>
 
     <!-- ===== Vista de tabla (compacta) ===== -->
     <BaseCard v-else flush>
@@ -346,7 +260,7 @@
 </template>
 
 <script>
-import { ref, computed, onMounted, watch } from 'vue'
+import { ref, computed, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { useMainStore } from '../stores/useMainStore'
 import api from '../services/api'
@@ -410,8 +324,6 @@ export default {
       return out
     })
     const loading      = ref(false)
-    const viewMode     = ref(localStorage.getItem('domainsView') || 'cards')
-    const openMenuId   = ref(null)
 
     const showDomainForm  = ref(false)
     const showSSLManager  = ref(false)
@@ -721,24 +633,12 @@ export default {
       }
     }
 
-    // ─── Vista tarjetas: helpers UI ────────────────────────────────────────────
-    watch(viewMode, (v) => localStorage.setItem('domainsView', v))
-
+    // ─── Helpers UI ────────────────────────────────────────────────────────────
     const sslCount = computed(() => domains.value.filter(d => d.ssl_enabled).length)
 
     // Tono del borde superior de la tarjeta: peor estado manda
-    const domainTone = (d) => {
-      if (d.is_suspended || !d.is_active) return 'warning'
-      if (!d.ssl_enabled) return 'neutral'
-      return 'ok'
-    }
-
-    const toggleMenu = (id) => { openMenuId.value = openMenuId.value === id ? null : id }
-
-    // Ejecuta una acción y cierra el menú contextual
-    const run = (fn, ...args) => { openMenuId.value = null; fn(...args) }
-
-    // Cambio de PHP desde el menú (sin <select> en la tarjeta)
+    // Cambio de PHP por prompt (lo usaba el menú contextual de las tarjetas;
+    // se conserva porque `changePHP` sigue siendo la vía de cambio de versión).
     const changePHPPrompt = async (domain) => {
       const current = domain.php_version || phpVersions.value[0]
       const opts = phpVersions.value.join(', ')
@@ -763,7 +663,7 @@ export default {
 
     return {
       domains, groupedDomains, search, users, phpVersions, selectedUser, loading,
-      viewMode, openMenuId, sslCount, domainTone, toggleMenu, run, changePHPPrompt,
+      sslCount, changePHPPrompt,
       isAdminOrReseller,
       showDomainForm, showSSLManager, showIPv6Manager,
       editingDomain, selectedDomain,
@@ -809,72 +709,14 @@ export default {
 }
 .svq-select:focus { outline: none; border-color: var(--color-primary); box-shadow: var(--shadow-focus); }
 
-.view-toggle { display: inline-flex; background: var(--surface-inset); border: 1px solid var(--border); border-radius: var(--r-md); padding: 2px; }
-.view-toggle button { border: none; background: transparent; color: var(--text-muted); width: 34px; height: 32px; border-radius: var(--r-sm); cursor: pointer; font-size: 15px; transition: all var(--t-fast); }
-.view-toggle button.active { background: var(--surface); color: var(--color-primary); box-shadow: var(--shadow-xs); }
 
-.cards-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: var(--sp-4); }
 
-/* ===== Tarjeta de dominio ===== */
-.dcard {
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-top: 3px solid var(--border-strong);
-  border-radius: var(--r-lg);
-  box-shadow: var(--shadow-sm);
-  padding: var(--sp-5);
-  display: flex; flex-direction: column; gap: var(--sp-4);
-  transition: box-shadow var(--t-base) var(--ease), transform var(--t-base) var(--ease);
-}
-.dcard:hover { box-shadow: var(--shadow-md); transform: translateY(-2px); }
-.dcard--ok { border-top-color: var(--success); }
-.dcard--warning { border-top-color: var(--warning); }
-.dcard--neutral { border-top-color: var(--border-strong); }
-
-.dcard__head { display: flex; align-items: flex-start; justify-content: space-between; gap: var(--sp-2); }
-.dcard__title { display: flex; align-items: center; gap: var(--sp-2); min-width: 0; }
-.dcard__title .bi { color: var(--color-primary); font-size: 17px; flex-shrink: 0; }
-.dcard__name { font-weight: var(--fw-semibold); color: var(--text); text-decoration: none; font-size: var(--fs-md); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.dcard__name:hover { color: var(--color-primary); text-decoration: underline; }
-.dcard__owner { margin: -8px 0 0; font-size: var(--fs-sm); color: var(--text-muted); display: flex; align-items: center; gap: 5px; }
-
-.dcard__stats { display: grid; grid-template-columns: 1fr 1fr; gap: var(--sp-3) var(--sp-4); }
-.dstat { display: flex; align-items: center; justify-content: space-between; gap: var(--sp-2); }
-.dstat__k { font-size: var(--fs-sm); color: var(--text-muted); }
-.dstat__v { font-size: var(--fs-sm); font-weight: var(--fw-semibold); color: var(--text); }
-.dstat__load { border: none; background: var(--surface-inset); color: var(--text-muted); border-radius: var(--r-sm); width: 26px; height: 22px; cursor: pointer; }
-.dstat__load:disabled { opacity: .6; cursor: default; }
 .disk-refresh { border: none; background: transparent; color: var(--text-muted); cursor: pointer; padding: 0 0 0 6px; font-size: var(--fs-sm); vertical-align: middle; }
 .disk-refresh:hover:not(:disabled) { color: var(--text); }
 .disk-refresh:disabled { opacity: .6; cursor: default; }
 .spin { display: inline-block; animation: spin 0.8s linear infinite; }
 @keyframes spin { from { transform: rotate(0); } to { transform: rotate(360deg); } }
 .mono { font-family: var(--font-mono); }
-
-.dcard__actions { display: flex; align-items: center; gap: var(--sp-2); padding-top: var(--sp-3); border-top: 1px solid var(--border); }
-.dcard__more { margin-left: auto; position: relative; }
-.more-btn { width: 34px; height: 32px; border: 1px solid var(--border); background: var(--surface); border-radius: var(--r-md); color: var(--text-secondary); cursor: pointer; transition: all var(--t-fast); }
-.more-btn:hover { background: var(--surface-inset); color: var(--text); }
-.more-menu {
-  position: absolute; right: 0; bottom: calc(100% + 6px);
-  min-width: 210px;
-  background: var(--surface); border: 1px solid var(--border);
-  border-radius: var(--r-md); box-shadow: var(--shadow-lg);
-  padding: var(--sp-2); z-index: 50;
-}
-.more-menu button {
-  display: flex; align-items: center; gap: var(--sp-2); width: 100%;
-  padding: 8px var(--sp-3); border: none; background: transparent;
-  color: var(--text-secondary); font-size: var(--fs-sm); border-radius: var(--r-sm);
-  cursor: pointer; text-align: left; transition: background var(--t-fast), color var(--t-fast);
-}
-.more-menu button .bi { width: 16px; }
-.more-menu button:hover { background: var(--surface-inset); color: var(--text); }
-.more-menu button.is-danger { color: var(--danger); }
-.more-menu button.is-danger:hover { background: var(--danger-bg); }
-.more-menu button:disabled { opacity: .5; cursor: not-allowed; }
-.more-sep { height: 1px; background: var(--border); margin: var(--sp-2) 0; }
-
 /* ===== Tabla compacta ===== */
 .table-wrap { overflow-x: auto; }
 .svq-table { width: 100%; border-collapse: collapse; font-size: var(--fs-base); }
@@ -909,7 +751,6 @@ export default {
   border: 1px solid color-mix(in srgb, var(--color-primary) 25%, transparent); vertical-align: middle; }
 
 @media (max-width: 600px) {
-  .cards-grid { grid-template-columns: 1fr; }
   .page-head__actions { width: 100%; }
 }
 </style>
