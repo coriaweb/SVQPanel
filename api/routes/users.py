@@ -2,18 +2,59 @@
 Rutas API para gestión de usuarios
 """
 
-from fastapi import APIRouter, Depends, HTTPException, status, Query
+from fastapi import APIRouter, Depends, HTTPException, status, Query, Request
 from sqlalchemy.orm import Session
 from sqlalchemy.exc import IntegrityError
 from api.models.database import get_db
 from api.models.models_user import User
 from api.schemas.user_schemas import UserCreate, UserUpdate, UserResponse
 from api.dependencies import require_admin, require_auth, require_admin_or_reseller
+from api.utils.security_audit import log_audit
 from scripts.user_manager import UserManager
 import logging
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
+
+
+def _is_admin(u: User) -> bool:
+    """¿Es admin? Mira role Y is_admin porque pueden desincronizarse: cli.py y el
+    importador escriben cada uno por su lado, y require_admin solo mira `role`."""
+    return bool(getattr(u, "is_admin", False)) or getattr(u, "role", None) == "admin"
+
+
+def _guard_admin_target(actor: User, target: User, action: str) -> None:
+    """Impide que un admin toque la CUENTA de OTRO admin.
+
+    Un admin no debe poder robar, degradar ni borrar la cuenta de otro admin
+    (típicamente el fundador del panel): cambiarle la contraseña equivale a
+    apropiarse de ella, y además se propaga al usuario Linux. Es la misma regla
+    que ya aplicaban suspend_user() y sftp._resolve_target(); faltaba aquí.
+
+    Sobre uno mismo sí se permite (cambiarse la propia contraseña es legítimo).
+
+    Nota de alcance: esto NO es una frontera de privilegio dura. Por diseño
+    cualquier admin puede abrir una terminal como root (ver terminal.py), así que
+    un admin ya es todopoderoso en el servidor. Esto es una red de seguridad
+    contra errores y apropiaciones silenciosas (que además quedan auditadas),
+    no una defensa contra un admin hostil.
+    """
+    if target.id == actor.id:
+        return
+    if _is_admin(target):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=(f"No se puede {action} la cuenta de otro administrador "
+                    f"({target.username}). Debe hacerlo él mismo."),
+        )
+
+
+def _count_other_admins(db: Session, exclude_id: int) -> int:
+    """Nº de admins del panel distintos del indicado."""
+    return (db.query(User)
+            .filter(((User.is_admin == True) | (User.role == "admin")),  # noqa: E712
+                    User.id != exclude_id)
+            .count())
 
 
 def _apply_disk_quota(db_user: User) -> None:
@@ -38,6 +79,7 @@ def _apply_disk_quota(db_user: User) -> None:
 @router.post("/users", response_model=UserResponse, status_code=status.HTTP_201_CREATED)
 async def create_user(
     user: UserCreate,
+    request: Request,
     current_user: User = Depends(require_admin_or_reseller),
     db: Session = Depends(get_db)
 ):
@@ -51,6 +93,28 @@ async def create_user(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Los resellers solo pueden crear usuarios regulares"
         )
+
+    # parent_id llega del body y NO se validaba: un reseller podía colgar cuentas
+    # del árbol de OTRO reseller (metiendo/ocultando clientes en su cartera).
+    # Aquí sí hay frontera de privilegio real (un reseller no tiene shell root).
+    if user.parent_id is not None:
+        if current_user.role == "reseller" and user.parent_id != current_user.id:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Un reseller solo puede crear clientes en su propia cuenta",
+            )
+        parent = db.query(User).filter(User.id == user.parent_id).first()
+        if not parent:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"El padre indicado (parent_id={user.parent_id}) no existe",
+            )
+        if parent.role not in ("admin", "reseller"):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=("Solo un admin o un reseller puede ser padre de una "
+                        "cuenta; indicado: " + (parent.role or "user")),
+            )
 
     # Política de contraseñas del panel
     from scripts.password_policy import enforce_or_400
@@ -86,6 +150,14 @@ async def create_user(
         db.add(db_user)
         db.commit()
         db.refresh(db_user)
+
+        # Auditoría: la creación de un admin/reseller es un cambio de privilegios
+        # que debe quedar registrado (quién lo creó, con qué rol y bajo qué padre).
+        log_audit(db, user=current_user, category="users", action="create",
+                  target=db_user.username,
+                  after={"username": db_user.username, "email": db_user.email,
+                         "role": db_user.role, "parent_id": db_user.parent_id},
+                  request=request)
 
         # Aplicar la cuota de disco en el SO (si el sistema de cuotas está activo).
         # Tolerante a fallos: si no hay cuotas activas, no rompe la creación.
@@ -177,6 +249,7 @@ async def get_user(
 async def update_user(
     user_id: int,
     user_update: UserUpdate,
+    request: Request,
     current_user: User = Depends(require_admin),
     db: Session = Depends(get_db)
 ):
@@ -188,6 +261,32 @@ async def update_user(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail="Usuario no encontrado"
             )
+
+        # No tocar la cuenta de otro admin (contraseña, rol, estado…).
+        _guard_admin_target(current_user, db_user, "modificar")
+
+        # El panel debe conservar SIEMPRE al menos un admin activo: si no, nadie
+        # puede volver a entrar a administrarlo. Cubre degradar el rol y
+        # desactivar la cuenta, incluido hacérselo a uno mismo (el caso fácil de
+        # provocar por error). delete_user ya tenía este check; PUT no.
+        _losing_admin = (_is_admin(db_user)
+                         and user_update.role is not None
+                         and user_update.role != "admin")
+        _deactivating = (user_update.is_active is False and db_user.is_active
+                         and _is_admin(db_user))
+        if (_losing_admin or _deactivating) and _count_other_admins(db, db_user.id) == 0:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=("Es el único administrador del panel: no se puede quitarle "
+                        "el rol de administrador ni desactivarlo (nadie podría "
+                        "volver a administrar el panel). Crea otro admin primero."),
+            )
+
+        # Estado previo, para la auditoría (antes de mutar el objeto).
+        _before = {"email": db_user.email, "role": db_user.role,
+                   "is_active": db_user.is_active,
+                   "domains_limit": db_user.domains_limit,
+                   "disk_quota_mb": db_user.disk_quota_mb}
 
         if user_update.email is not None:
             db_user.email = user_update.email
@@ -224,6 +323,17 @@ async def update_user(
         db.commit()
         db.refresh(db_user)
 
+        # Auditoría: quién cambió qué y a quién. Sin esto, un cambio de rol o de
+        # contraseña ajena no dejaba NINGÚN rastro en el panel.
+        log_audit(db, user=current_user, category="users", action="update",
+                  target=db_user.username, before=_before,
+                  after={"email": db_user.email, "role": db_user.role,
+                         "is_active": db_user.is_active,
+                         "domains_limit": db_user.domains_limit,
+                         "disk_quota_mb": db_user.disk_quota_mb,
+                         "password_changed": bool(user_update.new_password)},
+                  request=request)
+
         # Si cambió la cuota de disco, aplicarla en el SO
         if quota_changed:
             _apply_disk_quota(db_user)
@@ -248,6 +358,7 @@ async def update_user(
 @router.delete("/users/{user_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_user(
     user_id: int,
+    request: Request,
     current_user: User = Depends(require_admin),
     db: Session = Depends(get_db)
 ):
@@ -262,16 +373,26 @@ async def delete_user(
                 detail="Usuario no encontrado"
             )
 
+        # Borrar un usuario PURGA todo su sistema (home, correo, BDs, vhosts) y
+        # es irreversible: un admin no puede hacérselo a otro admin.
+        _guard_admin_target(current_user, db_user, "eliminar")
+
+        # Tampoco puede borrarse a sí mismo: _guard_admin_target permite actuar
+        # sobre uno mismo (para cambiar la propia contraseña), pero auto-borrarse
+        # destruiría la sesión en curso y su home sin vuelta atrás.
+        if db_user.id == current_user.id:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=("No puedes eliminar tu propia cuenta. Pide a otro "
+                        "administrador que lo haga."),
+            )
+
         # No permitir borrar el último admin del panel (quedaría sin acceso).
-        if db_user.is_admin:
-            other_admins = (db.query(User)
-                            .filter(User.is_admin == True, User.id != db_user.id)  # noqa: E712
-                            .count())
-            if other_admins == 0:
-                raise HTTPException(
-                    status_code=status.HTTP_409_CONFLICT,
-                    detail="No se puede eliminar el único administrador del panel",
-                )
+        if _is_admin(db_user) and _count_other_admins(db, db_user.id) == 0:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="No se puede eliminar el único administrador del panel",
+            )
 
         # Limpieza COMPLETA de sistema (vhosts nginx+Apache, IPv6, correo,
         # DNS + cluster, BDs MariaDB, crontab, subcuentas SFTP, pools PHP…).
@@ -289,6 +410,16 @@ async def delete_user(
             user_manager.delete_user(db_user.username)
         except Exception as e:
             warnings.append(f"userdel: {e}")
+
+        # Auditoría ANTES del delete: después el usuario ya no existe y no
+        # podríamos registrar ni su username ni su rol.
+        log_audit(db, user=current_user, category="users", action="delete",
+                  target=db_user.username,
+                  before={"username": db_user.username, "email": db_user.email,
+                          "role": db_user.role, "id": db_user.id},
+                  after=None, request=request,
+                  success=not warnings,
+                  error="; ".join(warnings) if warnings else None)
 
         # Delete from database (cascade borra domains/mail/db/cron de la BD)
         db.delete(db_user)
