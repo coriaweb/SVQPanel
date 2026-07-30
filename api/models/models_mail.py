@@ -4,7 +4,7 @@ Almacenamiento bajo /home/{panel_user}/mail/{domain}/{mailbox}/
 """
 
 from sqlalchemy import (
-    Column, Integer, Float, String, Boolean, DateTime, Text,
+    Column, Integer, Float, String, Boolean, DateTime, Date, Text,
     ForeignKey, UniqueConstraint
 )
 from sqlalchemy.orm import relationship, backref
@@ -149,6 +149,9 @@ class Mailbox(Base):
     autoreply_body_text = Column(Text, nullable=True)
     # Días sin repetir respuesta al mismo remitente (Dovecot: 1..60)
     autoreply_days     = Column(Integer, default=1)
+    # Vigencia programada (Sieve currentdate). NULL = sin límite por ese extremo.
+    autoreply_start_date = Column(Date, nullable=True)
+    autoreply_end_date   = Column(Date, nullable=True)
     created_at         = Column(DateTime, default=datetime.utcnow)
     updated_at         = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 

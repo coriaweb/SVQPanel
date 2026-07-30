@@ -787,10 +787,61 @@ class MailManager(SystemManager):
         lines = (text or "").replace("\r\n", "\n").replace("\r", "\n").split("\n")
         return "\n".join(("." + ln) if ln.startswith(".") else ln for ln in lines)
 
+    @staticmethod
+    def _norm_date(value) -> str:
+        """Normaliza una fecha a 'YYYY-MM-DD' para el Sieve, o '' si no hay.
+
+        Acepta str ('2026-08-03', o ISO con hora) y date/datetime. El valor va
+        DENTRO del script, así que se valida de forma estricta: cualquier cosa
+        que no sea una fecha real se rechaza en vez de colarse en el Sieve.
+        """
+        if value in (None, ""):
+            return ""
+        if hasattr(value, "strftime"):          # date / datetime
+            return value.strftime("%Y-%m-%d")
+        s = str(value).strip()
+        if not s:
+            return ""
+        s = s.split("T")[0].split(" ")[0]       # admite ISO con hora
+        if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", s):
+            raise ValueError(f"Fecha inválida (se espera AAAA-MM-DD): {value!r}")
+        import datetime as _dt
+        try:
+            _dt.date.fromisoformat(s)           # rechaza 2026-02-31
+        except ValueError:
+            raise ValueError(f"Fecha inexistente: {value!r}")
+        return s
+
+    @classmethod
+    def _sieve_date_condition(cls, start_date, end_date) -> str:
+        """Condición `currentdate` para acotar la auto-respuesta por fechas.
+
+        Devuelve "" si no hay fechas (la auto-respuesta va siempre activa).
+        El rango es INCLUSIVO por ambos extremos: "del 3 al 14" cubre los dos
+        días enteros, que es como lo entiende el cliente.
+
+        `currentdate` usa la hora LOCAL del servidor (verificado: devuelve
+        +02:00 en Europe/Madrid), no UTC, así que las fechas se interpretan en
+        horario español.
+        """
+        ini, fin = cls._norm_date(start_date), cls._norm_date(end_date)
+        if ini and fin and ini > fin:
+            raise ValueError("La fecha de inicio no puede ser posterior a la de fin")
+        tests = []
+        if ini:
+            tests.append(f'currentdate :value "ge" "date" "{ini}"')
+        if fin:
+            tests.append(f'currentdate :value "le" "date" "{fin}"')
+        if not tests:
+            return ""
+        if len(tests) == 1:
+            return tests[0]
+        return "allof (\n  " + ",\n  ".join(tests) + "\n)"
+
     def set_autoreply(self, panel_username: str, domain_name: str,
                       mailbox_username: str, subject: str, body: str,
                       is_html: bool = False, body_text: str = None,
-                      days: int = 1):
+                      days: int = 1, start_date=None, end_date=None):
         """
         Activa auto-respuesta creando un script Sieve en el Maildir del buzón.
         Usa la extensión 'vacation' de Sieve (RFC 5230, estándar Dovecot).
@@ -798,6 +849,11 @@ class MailManager(SystemManager):
         is_html=True envía la respuesta como multipart/alternative (texto +
         HTML) usando `:mime`; body_text permite dar la versión en texto plano
         (si no, se deriva del HTML).
+
+        start_date/end_date (AAAA-MM-DD, opcionales) programan la vigencia con
+        `currentdate` (RFC 5260): el propio Sieve la activa y desactiva sola,
+        sin cron. Se pueden dar solo una de las dos (desde X / hasta X) o
+        ninguna (siempre activa).
 
         Anti-bucle: lo garantiza el propio 'vacation' de Pigeonhole, que ya
         descarta respuestas a mensajes con Auto-Submitted, Precedence: bulk,
@@ -844,9 +900,8 @@ class MailManager(SystemManager):
                 f"\n"
                 f"--{boundary}--\n"
             )
-            sieve_script = (
-                'require ["vacation", "mime"];\n'
-                "\n"
+            extensions = ["vacation", "mime"]
+            action = (
                 "vacation\n"
                 f"  :days {days}\n"
                 f'  :subject "{safe_subject}"\n'
@@ -861,9 +916,8 @@ class MailManager(SystemManager):
         else:
             plain = (body or "").strip() or \
                 "Estoy fuera de la oficina. Te responderé en cuanto pueda."
-            sieve_script = (
-                'require ["vacation"];\n'
-                "\n"
+            extensions = ["vacation"]
+            action = (
                 "vacation\n"
                 f"  :days {days}\n"
                 f'  :subject "{safe_subject}"\n'
@@ -874,6 +928,21 @@ class MailManager(SystemManager):
                 ".\n"
                 ";\n"
             )
+
+        # Programación por fechas: se envuelve la acción en un `if currentdate`
+        # (RFC 5260). Así el propio Sieve la activa y desactiva sola en cada
+        # correo entrante — sin cron ni procesos de fondo que puedan fallar.
+        cond = self._sieve_date_condition(start_date, end_date)
+        if cond:
+            extensions += ["date", "relational"]
+            # OJO: la acción NO se indenta. Lleva un bloque multi-line
+            # (`text:` … `.`) cuyo contenido es literal: indentarlo metería
+            # espacios en el cuerpo del correo y, peor, el '.' de cierre
+            # dejaría de estar al principio de línea y el script no compilaría.
+            action = f"if {cond}\n{{\n{action}}}\n"
+
+        req = ", ".join(f'"{e}"' for e in extensions)
+        sieve_script = f"require [{req}];\n\n{action}"
 
         try:
             # encoding explícito: el cuerpo lleva acentos/eñes y el Sieve

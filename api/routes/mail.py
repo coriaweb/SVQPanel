@@ -203,6 +203,8 @@ def _mailbox_to_dict(mb: Mailbox, disk_usage_mb: float = 0.0) -> dict:
         "autoreply_is_html": getattr(mb, "autoreply_is_html", False) or False,
         "autoreply_body_text": getattr(mb, "autoreply_body_text", None),
         "autoreply_days":    getattr(mb, "autoreply_days", 1) or 1,
+        "autoreply_start_date": getattr(mb, "autoreply_start_date", None),
+        "autoreply_end_date":   getattr(mb, "autoreply_end_date", None),
         "created_at":     mb.created_at,
         "updated_at":     mb.updated_at,
     }
@@ -1971,7 +1973,14 @@ async def update_mailbox(
     _ar_fields = (data.autoreply_subject, data.autoreply_body,
                   data.autoreply_is_html, data.autoreply_body_text,
                   data.autoreply_days)
-    if data.autoreply_enabled is not None or any(f is not None for f in _ar_fields):
+    # Las fechas se comprueban por "campo presente en el PUT" y no por "no es
+    # None": null es un valor con significado propio (borrar la fecha), y con
+    # `is not None` no habría forma de quitar una programación ya guardada.
+    _sent = data.model_fields_set
+    _ar_dates_sent = ("autoreply_start_date" in _sent or
+                      "autoreply_end_date" in _sent)
+    if (data.autoreply_enabled is not None
+            or any(f is not None for f in _ar_fields) or _ar_dates_sent):
         if data.autoreply_enabled is not None:
             mb.autoreply_enabled = data.autoreply_enabled
         if data.autoreply_subject is not None:
@@ -1984,6 +1993,19 @@ async def update_mailbox(
             mb.autoreply_body_text = data.autoreply_body_text
         if data.autoreply_days is not None:
             mb.autoreply_days = data.autoreply_days
+        if "autoreply_start_date" in _sent:
+            mb.autoreply_start_date = data.autoreply_start_date
+        if "autoreply_end_date" in _sent:
+            mb.autoreply_end_date = data.autoreply_end_date
+        # El rango debe validarse contra el estado FINAL: en un PUT que solo
+        # manda una de las dos fechas, el model_validator no ve la otra.
+        if (mb.autoreply_start_date and mb.autoreply_end_date
+                and mb.autoreply_start_date > mb.autoreply_end_date):
+            db.rollback()
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="La fecha de inicio no puede ser posterior a la de fin",
+            )
         try:
             from scripts.mail_manager import MailManager
             mgr3 = MailManager()
@@ -1995,6 +2017,8 @@ async def update_mailbox(
                     is_html=bool(getattr(mb, "autoreply_is_html", False)),
                     body_text=getattr(mb, "autoreply_body_text", None),
                     days=getattr(mb, "autoreply_days", 1) or 1,
+                    start_date=getattr(mb, "autoreply_start_date", None),
+                    end_date=getattr(mb, "autoreply_end_date", None),
                 )
             else:
                 mgr3.remove_autoreply(panel_username, md.domain_name, mb.username)

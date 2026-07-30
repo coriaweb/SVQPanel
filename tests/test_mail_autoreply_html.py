@@ -218,3 +218,84 @@ def test_html_que_solo_contiene_payload_no_queda_vacio_sin_control():
     """Si el cliente pega solo un <script>, el saneado deja cadena vacía y el
     generador debe sustituirla por el texto por defecto (no enviar un hueco)."""
     assert sanitize("<script>alert(1)</script>").strip() == ""
+
+
+# ────────────────── programación por fechas (Sieve currentdate) ─────────────
+# Los clientes piden "que se active el 3 de agosto y se quite el 14". Se hace
+# con `currentdate` (RFC 5260), que evalúa la condición en cada correo: no hay
+# cron ni proceso de fondo que pueda quedarse colgado o desincronizado.
+#
+# Verificado en el servidor (Dovecot 2.4.1) con tres entregas reales: un rango
+# que incluye hoy responde; uno pasado y uno futuro no. `currentdate` usa la
+# hora LOCAL (+02:00 en Europe/Madrid), no UTC, así que "3 de agosto" es el 3
+# de agosto español.
+
+import datetime
+
+cond = MailManager._sieve_date_condition
+norm = MailManager._norm_date
+
+
+def test_sin_fechas_no_genera_condicion():
+    """Sin fechas el Sieve debe salir igual que siempre: quien no usa la
+    programación no puede verse afectado por ella."""
+    assert cond(None, None) == ""
+    assert cond("", "") == ""
+
+
+def test_rango_completo_genera_allof_inclusivo():
+    out = cond("2026-08-03", "2026-08-14")
+    assert "allof" in out
+    # 'ge'/'le' (no 'gt'/'lt'): "del 3 al 14" incluye ambos días completos.
+    assert 'currentdate :value "ge" "date" "2026-08-03"' in out
+    assert 'currentdate :value "le" "date" "2026-08-14"' in out
+
+
+def test_solo_fecha_de_inicio():
+    out = cond("2026-08-03", None)
+    assert out == 'currentdate :value "ge" "date" "2026-08-03"'
+    assert "allof" not in out
+
+
+def test_solo_fecha_de_fin():
+    out = cond(None, "2026-08-14")
+    assert out == 'currentdate :value "le" "date" "2026-08-14"'
+    assert "allof" not in out
+
+
+def test_rango_invertido_se_rechaza():
+    """Un rango invertido COMPILA pero no salta nunca: hay que cazarlo aquí o
+    el cliente se queda con una auto-respuesta muerta sin ningún aviso."""
+    with pytest.raises(ValueError, match="posterior"):
+        cond("2026-08-14", "2026-08-03")
+
+
+def test_acepta_objetos_date_y_datetime():
+    assert norm(datetime.date(2026, 8, 3)) == "2026-08-03"
+    assert norm(datetime.datetime(2026, 8, 3, 17, 30)) == "2026-08-03"
+
+
+def test_acepta_iso_con_hora():
+    assert norm("2026-08-03T00:00:00") == "2026-08-03"
+    assert norm("2026-08-03 10:15") == "2026-08-03"
+
+
+@pytest.mark.parametrize("malo", [
+    "03/08/2026",      # formato español
+    "2026-8-3",        # sin ceros
+    "ayer",
+    "2026-13-01",      # mes inexistente
+    "2026-02-31",      # día inexistente
+    '2026-08-03" "x',  # intento de romper el string del Sieve
+])
+def test_fechas_invalidas_se_rechazan(malo):
+    """El valor va DENTRO del script: si no es una fecha real, no entra."""
+    with pytest.raises(ValueError):
+        norm(malo)
+
+
+def test_una_fecha_no_puede_inyectar_sieve():
+    """Defensa en profundidad: aunque la fecha venga de un campo <input date>
+    validado por Pydantic, el generador no debe fiarse."""
+    with pytest.raises(ValueError):
+        cond('2026-08-03"; discard; #', None)

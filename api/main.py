@@ -841,6 +841,9 @@ def _run_migrations():
         "ALTER TABLE mailboxes ADD COLUMN IF NOT EXISTS autoreply_is_html BOOLEAN NOT NULL DEFAULT FALSE",
         "ALTER TABLE mailboxes ADD COLUMN IF NOT EXISTS autoreply_body_text TEXT",
         "ALTER TABLE mailboxes ADD COLUMN IF NOT EXISTS autoreply_days INTEGER NOT NULL DEFAULT 1",
+        # Vigencia programada de la auto-respuesta (Sieve currentdate)
+        "ALTER TABLE mailboxes ADD COLUMN IF NOT EXISTS autoreply_start_date DATE",
+        "ALTER TABLE mailboxes ADD COLUMN IF NOT EXISTS autoreply_end_date DATE",
         # Rate-limit de envío de correo (Rspamd) por buzón y por dominio
         "ALTER TABLE mailboxes ADD COLUMN IF NOT EXISTS send_limit_hour INTEGER NOT NULL DEFAULT 200",
         "ALTER TABLE mail_domains ADD COLUMN IF NOT EXISTS send_limit_hour INTEGER NOT NULL DEFAULT 1000",

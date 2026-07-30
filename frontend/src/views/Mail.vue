@@ -399,6 +399,10 @@
                   <span class="mbx__status" :class="mb.is_active ? 'is-on' : 'is-off'">
                     <span class="dot"></span>{{ mb.is_active ? 'Activo' : 'Suspendido' }}
                   </span>
+                  <span v-if="autoreplyState(mb)" class="mbx__ar"
+                        :class="autoreplyState(mb).on ? 'is-on' : 'is-pending'">
+                    <i class="bi bi-reply-all"></i>{{ autoreplyState(mb).txt }}
+                  </span>
                 </div>
                 <div class="mbx__actions">
                   <button v-if="roundcubeEnabled" class="mbx__btn mbx__btn--primary"
@@ -411,7 +415,11 @@
                   <button class="mbx__btn" :class="{ 'mbx__btn--active': mb.forward_to }" @click="openForwardModal(mb)" title="Reenvío">
                     <i class="bi bi-forward"></i>
                   </button>
-                  <button class="mbx__btn" :class="{ 'mbx__btn--active': mb.autoreply_enabled }" @click="openAutoreplyModal(mb)" title="Auto-respuesta">
+                  <button class="mbx__btn"
+                          :class="{ 'mbx__btn--active': autoreplyState(mb)?.on,
+                                    'mbx__btn--pending': autoreplyState(mb) && !autoreplyState(mb).on }"
+                          @click="openAutoreplyModal(mb)"
+                          :title="autoreplyState(mb) ? `Auto-respuesta: ${autoreplyState(mb).txt}` : 'Auto-respuesta'">
                     <i class="bi bi-reply-all"></i>
                   </button>
                   <button class="mbx__btn" @click="toggleMailbox(mb)" :title="mb.is_active ? 'Suspender' : 'Activar'">
@@ -1350,6 +1358,28 @@
             </template>
 
             <div>
+              <label class="form-label fw-semibold">Programar fechas <span class="text-muted fw-normal">(opcional)</span></label>
+              <div class="row g-2">
+                <div class="col-sm-6">
+                  <label class="form-label small text-muted mb-1">Desde el día</label>
+                  <input v-model="autoreplyForm.autoreply_start_date" type="date"
+                         class="form-control form-control-sm">
+                </div>
+                <div class="col-sm-6">
+                  <label class="form-label small text-muted mb-1">Hasta el día</label>
+                  <input v-model="autoreplyForm.autoreply_end_date" type="date"
+                         class="form-control form-control-sm">
+                </div>
+              </div>
+              <p v-if="autoreplyDateError" class="small mb-0 mt-1" style="color:var(--danger)">
+                <i class="bi bi-exclamation-triangle me-1"></i>{{ autoreplyDateError }}
+              </p>
+              <p v-else class="text-muted small mt-1 mb-0">
+                {{ autoreplyScheduleHint }}
+              </p>
+            </div>
+
+            <div>
               <label class="form-label fw-semibold">No repetir al mismo remitente durante</label>
               <div class="d-flex align-items-center gap-2">
                 <input v-model.number="autoreplyForm.autoreply_days" type="number" min="1" max="60"
@@ -1557,6 +1587,7 @@ export default {
     const autoreplyForm   = ref({
       autoreply_enabled: false, autoreply_subject: '', autoreply_body: '',
       autoreply_is_html: false, autoreply_body_text: '', autoreply_days: 1,
+      autoreply_start_date: '', autoreply_end_date: '',
     })
     const autoreplyPreview = ref(false)
     const editTarget      = ref(null)
@@ -2381,9 +2412,56 @@ export default {
         autoreply_is_html: mb.autoreply_is_html || false,
         autoreply_body_text: mb.autoreply_body_text || '',
         autoreply_days:    mb.autoreply_days    || 1,
+        // El <input type="date"> necesita 'YYYY-MM-DD'; la API puede mandar
+        // la fecha con hora si el serializador cambia.
+        autoreply_start_date: (mb.autoreply_start_date || '').slice(0, 10),
+        autoreply_end_date:   (mb.autoreply_end_date   || '').slice(0, 10),
       }
       showAutoreplyModal.value = true
     }
+
+    // Estado real de la auto-respuesta de un buzón, para la lista. Distinguir
+    // "activa ahora" de "programada" evita el soporte de "la activé y no
+    // responde" cuando en realidad aún no ha llegado la fecha.
+    const autoreplyState = (mb) => {
+      if (!mb.autoreply_enabled) return null
+      const hoy = new Date().toISOString().slice(0, 10)
+      const a = (mb.autoreply_start_date || '').slice(0, 10)
+      const b = (mb.autoreply_end_date   || '').slice(0, 10)
+      const corto = (d) => new Date(d + 'T00:00:00')
+        .toLocaleDateString('es-ES', { day: 'numeric', month: 'short' })
+      if (a && hoy < a) return { txt: `Programada (desde ${corto(a)})`, on: false }
+      if (b && hoy > b) return { txt: `Caducada (${corto(b)})`, on: false }
+      if (a || b) {
+        return { txt: b ? `Activa hasta ${corto(b)}` : 'Activa', on: true }
+      }
+      return { txt: 'Activa', on: true }
+    }
+
+    const autoreplyDateError = computed(() => {
+      const { autoreply_start_date: a, autoreply_end_date: b } = autoreplyForm.value
+      if (a && b && a > b) return 'La fecha de inicio no puede ser posterior a la de fin.'
+      return ''
+    })
+
+    // Texto de ayuda: sin esto el cliente programa unas fechas futuras, ve el
+    // interruptor encendido, se manda un correo de prueba, no le llega nada y
+    // cree que está roto.
+    const autoreplyScheduleHint = computed(() => {
+      const { autoreply_start_date: a, autoreply_end_date: b } = autoreplyForm.value
+      if (!a && !b) return 'Sin fechas: responderá siempre que esté activa.'
+      const f = (d) => new Date(d + 'T00:00:00').toLocaleDateString('es-ES',
+        { day: 'numeric', month: 'long', year: 'numeric' })
+      const hoy = new Date().toISOString().slice(0, 10)
+      let txt
+      if (a && b) txt = `Responderá del ${f(a)} al ${f(b)}, ambos incluidos.`
+      else if (a) txt = `Responderá a partir del ${f(a)}.`
+      else txt = `Responderá hasta el ${f(b)}, incluido.`
+      if (a && hoy < a) txt += ' Aún no ha empezado.'
+      else if (b && hoy > b) txt += ' El periodo ya ha terminado.'
+      else txt += ' En vigor ahora mismo.'
+      return txt
+    })
 
     // La vista previa va en un <iframe sandbox> (sin scripts ni red): el HTML
     // lo escribe el cliente, así que no se inyecta en el DOM del panel.
@@ -2424,6 +2502,10 @@ export default {
     }
 
     const saveAutoreply = async () => {
+      if (autoreplyDateError.value) {
+        store.showNotification(autoreplyDateError.value, 'danger')
+        return
+      }
       saving.value = true
       try {
         const payload = {
@@ -2433,6 +2515,9 @@ export default {
           autoreply_is_html: autoreplyForm.value.autoreply_is_html,
           autoreply_body_text: autoreplyForm.value.autoreply_body_text,
           autoreply_days:    autoreplyForm.value.autoreply_days || 1,
+          // null (no '') para que el backend distinga "borrar la fecha".
+          autoreply_start_date: autoreplyForm.value.autoreply_start_date || null,
+          autoreply_end_date:   autoreplyForm.value.autoreply_end_date   || null,
         }
         await api.updateMailbox(selectedDomain.value.id, autoreplyTarget.value.id, payload)
         Object.assign(autoreplyTarget.value, payload)
@@ -2555,6 +2640,7 @@ export default {
       showForwardModal, forwardTarget, forwardForm, openForwardModal, saveForward, clearForward,
       showAutoreplyModal, autoreplyTarget, autoreplyForm, openAutoreplyModal, saveAutoreply,
       autoreplyPreview, autoreplyPreviewHtml, loadAutoreplyTemplate,
+      autoreplyDateError, autoreplyScheduleHint, autoreplyState,
       showEditModal, editTarget, editForm, openEditMailbox, saveEditMailbox,
       fmtMB, usagePct, usageClass,
       sendUsage, loadingSend, loadSendUsage, sendPct, sendClass,
@@ -2793,6 +2879,34 @@ export default {
 [data-theme="dark"] .mbx__btn--primary:hover { background: var(--surface-2); }
 .mbx__btn--danger:hover { background: var(--danger-bg); color: var(--danger); border-color: var(--danger-border); }
 .mbx__btn--active { background: color-mix(in srgb, var(--ac) 10%, transparent); color: var(--ac); border-color: color-mix(in srgb, var(--ac) 30%, transparent); }
+
+/* Estado de la auto-respuesta en la tarjeta del buzón */
+.mbx__ar {
+  display: inline-flex;
+  align-items: center;
+  gap: .3rem;
+  margin-left: .5rem;
+  padding: .12rem .5rem;
+  font-size: .72rem;
+  font-weight: 500;
+  white-space: nowrap;
+  border-radius: 999px;
+}
+.mbx__ar.is-on {
+  color: var(--color-primary);
+  background: var(--brand-50);
+  border: 1px solid var(--brand-200);
+}
+/* Programada o caducada: activa en la BD pero HOY no responde. */
+.mbx__ar.is-pending {
+  color: var(--text-muted);
+  background: var(--surface-inset);
+  border: 1px solid var(--border);
+}
+.mbx__btn--pending {
+  color: var(--text-muted);
+  border-style: dashed;
+}
 
 /* ── Auto-respuesta: selector de formato, editor HTML y vista previa ── */
 .ar-fmt { display: flex; gap: .5rem; }

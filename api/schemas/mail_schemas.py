@@ -5,7 +5,7 @@ Esquemas Pydantic para el módulo de correo electrónico
 import re
 from pydantic import BaseModel, Field, field_validator, model_validator, ValidationInfo
 from typing import Optional, List
-from datetime import datetime
+from datetime import datetime, date
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -262,6 +262,10 @@ class MailboxUpdate(BaseModel):
     autoreply_is_html: Optional[bool] = None
     autoreply_body_text: Optional[str] = Field(None, max_length=20000)
     autoreply_days:    Optional[int]  = Field(None, ge=1, le=60)
+    # Vigencia programada. "" se acepta como "sin fecha" (la UI manda vacío
+    # cuando el cliente borra el campo) y se normaliza a None.
+    autoreply_start_date: Optional[date] = None
+    autoreply_end_date:   Optional[date] = None
 
     @field_validator("password")
     @classmethod
@@ -286,6 +290,24 @@ class MailboxUpdate(BaseModel):
             raise ValueError("El asunto no puede contener saltos de línea")
         return v.strip()
 
+    @field_validator("autoreply_start_date", "autoreply_end_date", mode="before")
+    @classmethod
+    def normalize_autoreply_date(cls, v):
+        """La UI manda "" al borrar el campo: equivale a "sin fecha"."""
+        if isinstance(v, str) and not v.strip():
+            return None
+        return v
+
+    @model_validator(mode="after")
+    def validate_autoreply_range(self):
+        """Un rango invertido dejaría una auto-respuesta que no salta NUNCA:
+        el Sieve compila, así que el fallo sería silencioso."""
+        ini, fin = self.autoreply_start_date, self.autoreply_end_date
+        if ini and fin and ini > fin:
+            raise ValueError(
+                "La fecha de inicio no puede ser posterior a la de fin")
+        return self
+
 
 class MailboxResponse(BaseModel):
     id:             int
@@ -304,6 +326,8 @@ class MailboxResponse(BaseModel):
     autoreply_is_html: bool = False
     autoreply_body_text: Optional[str] = None
     autoreply_days:    int = 1
+    autoreply_start_date: Optional[date] = None
+    autoreply_end_date:   Optional[date] = None
     created_at:     Optional[datetime] = None
     updated_at:     Optional[datetime] = None
 
