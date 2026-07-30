@@ -641,6 +641,37 @@ async def list_mail_domains(
     return [_mail_domain_to_dict(md, current_user, counts) for md in domains]
 
 
+@router.get("/mail/domains/{domain_id}/disk")
+async def get_mail_domain_disk(
+    domain_id: int,
+    refresh: bool = False,
+    current_user=Depends(require_auth),
+    db: Session = Depends(get_db),
+):
+    """Peso en disco del correo de UN dominio.
+
+    Sin `refresh` devuelve el valor cacheado (instantáneo). Con `refresh=true`
+    ejecuta el `du` de ese dominio y persiste el resultado. Mismo contrato que
+    `/api/domains/{id}/disk` para los dominios web.
+    """
+    md = db.query(MailDomain).filter(MailDomain.id == domain_id).first()
+    if not md:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND,
+                            detail="Dominio de correo no encontrado")
+    if not _can_edit(md, current_user):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN,
+                            detail="Sin permiso sobre este dominio")
+    if refresh:
+        compute_mail_domain_disk(md, db)
+    return {
+        "domain":        md.domain_name,
+        "used_mb":       _mail_domain_used_mb(md),
+        "used_bytes":    getattr(md, "mail_disk_bytes", None) or 0,
+        "calculated_at": (md.mail_disk_calculated_at.isoformat()
+                          if getattr(md, "mail_disk_calculated_at", None) else None),
+    }
+
+
 @router.post("/mail/domains/refresh-disk")
 async def refresh_mail_disk(
     current_user=Depends(require_auth),

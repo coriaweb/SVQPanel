@@ -34,10 +34,10 @@
           <i v-else class="bi bi-arrow-repeat"></i> Actualizar
         </button>
         <button v-if="!selectedDomain" class="sv-btn sv-btn--ghost"
-                @click="refreshMailDisk" :disabled="refreshingDisk"
-                title="Recalcular el peso en disco del correo (puede tardar unos segundos)">
-          <span v-if="refreshingDisk" class="spinner-border spinner-border-sm"></span>
-          <i v-else class="bi bi-hdd"></i> Recalcular peso
+                @click="refreshAllMailDisk" :disabled="refreshingAllDisk"
+                title="Recalcular el peso en disco de todos los dominios (puede tardar unos segundos)">
+          <span v-if="refreshingAllDisk" class="spinner-border spinner-border-sm"></span>
+          <i v-else class="bi bi-hdd"></i> Recalcular todo
         </button>
         <button v-if="!selectedDomain && mailEnabled !== false" class="sv-btn sv-btn--primary" @click="openNewDomain">
           <i class="bi bi-plus-lg"></i> Añadir dominio
@@ -235,9 +235,17 @@
                 <td style="text-align:center">
                   <span class="sv-badge sv-badge--teal">{{ md.alias_count }}</span>
                 </td>
-                <td style="text-align:center;font-variant-numeric:tabular-nums"
-                    :title="mailDiskTitle(md)">
-                  {{ fmtMailSize(md.mail_used_mb) }}
+                <td style="text-align:center;font-variant-numeric:tabular-nums">
+                  <span class="mail-disk">
+                    <span :title="mailDiskTitle(md)">
+                      {{ md.mail_disk_calculated_at ? fmtMailSize(md.mail_used_mb) : '—' }}
+                    </span>
+                    <button class="disk-refresh" :disabled="diskRefreshing[md.id]"
+                            :title="md.mail_disk_calculated_at ? 'Recalcular tamaño' : 'Calcular tamaño'"
+                            @click.stop="refreshMailDisk(md)">
+                      <i class="bi" :class="diskRefreshing[md.id] ? 'bi-arrow-repeat spin' : 'bi-arrow-clockwise'"></i>
+                    </button>
+                  </span>
                 </td>
                 <td style="text-align:center">
                   <i v-if="md.dkim_enabled" class="bi bi-shield-check" style="color:var(--success);font-size:1.1rem" title="DKIM activo"></i>
@@ -2077,18 +2085,40 @@ export default {
       return `Calculado el ${d.toLocaleString('es-ES')}`
     }
 
-    const refreshingDisk = ref(false)
-    const refreshMailDisk = async () => {
-      refreshingDisk.value = true
+    // Recálculo por dominio (el `du` de uno solo es rápido). Mismo patrón que
+    // la vista de Dominios: botón ↻ en cada fila.
+    const diskRefreshing = ref({})
+    const refreshMailDisk = async (md) => {
+      diskRefreshing.value = { ...diskRefreshing.value, [md.id]: true }
+      try {
+        const info = await api.getMailDomainDisk(md.id, true)
+        md.mail_used_mb = info.used_mb
+        md.mail_disk_calculated_at = info.calculated_at
+      } catch (e) {
+        store.showNotification('No se pudo calcular el tamaño', 'danger')
+      } finally {
+        diskRefreshing.value = { ...diskRefreshing.value, [md.id]: false }
+      }
+    }
+
+    // Recálculo de TODOS (botón de la cabecera): con muchos dominios tarda
+    // varios segundos, por eso se avisa antes de lanzarlo.
+    const refreshingAllDisk = ref(false)
+    const refreshAllMailDisk = async () => {
+      const n = filteredMailDomains.value.length
+      if (n > 5 && !confirm(
+        `Se va a recalcular el peso de ${n} dominios. Puede tardar varios ` +
+        `segundos. ¿Continuar?`)) return
+      refreshingAllDisk.value = true
       try {
         const r = await api.post('/api/mail/domains/refresh-disk', {})
         await loadDomains()
-        const n = r?.data?.domains ?? 0
-        store.showNotification(`Peso recalculado para ${n} dominio(s)`, 'success')
+        store.showNotification(
+          `Peso recalculado para ${r?.data?.domains ?? 0} dominio(s)`, 'success')
       } catch (e) {
         store.showNotification('Error: ' + (e.message || e), 'danger')
       } finally {
-        refreshingDisk.value = false
+        refreshingAllDisk.value = false
       }
     }
 
@@ -2674,7 +2704,8 @@ export default {
       showAutoreplyModal, autoreplyTarget, autoreplyForm, openAutoreplyModal, saveAutoreply,
       autoreplyPreview, autoreplyPreviewHtml, loadAutoreplyTemplate,
       autoreplyDateError, autoreplyScheduleHint, autoreplyState,
-      mailDiskTitle, refreshMailDisk, refreshingDisk,
+      mailDiskTitle, refreshMailDisk, diskRefreshing,
+      refreshAllMailDisk, refreshingAllDisk,
       showEditModal, editTarget, editForm, openEditMailbox, saveEditMailbox,
       fmtMB, usagePct, usageClass,
       sendUsage, loadingSend, loadSendUsage, sendPct, sendClass,
@@ -2913,6 +2944,17 @@ export default {
 [data-theme="dark"] .mbx__btn--primary:hover { background: var(--surface-2); }
 .mbx__btn--danger:hover { background: var(--danger-bg); color: var(--danger); border-color: var(--danger-border); }
 .mbx__btn--active { background: color-mix(in srgb, var(--ac) 10%, transparent); color: var(--ac); border-color: color-mix(in srgb, var(--ac) 30%, transparent); }
+
+/* Peso en disco del correo + botón de recalcular (igual que en Dominios) */
+.mail-disk { display: inline-flex; align-items: center; gap: 2px; }
+.disk-refresh {
+  border: none; background: transparent; color: var(--text-muted);
+  cursor: pointer; padding: 0 0 0 6px; font-size: .85rem; vertical-align: middle;
+}
+.disk-refresh:hover:not(:disabled) { color: var(--text); }
+.disk-refresh:disabled { opacity: .6; cursor: default; }
+.spin { display: inline-block; animation: spin .8s linear infinite; }
+@keyframes spin { from { transform: rotate(0); } to { transform: rotate(360deg); } }
 
 /* Estado de la auto-respuesta en la tarjeta del buzón */
 .mbx__ar {

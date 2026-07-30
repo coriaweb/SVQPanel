@@ -829,6 +829,10 @@ class APIClient {
   getDomainDisk(domainId, refresh = false) {
     return this.get(`/api/domains/${domainId}/disk${refresh ? '?refresh=true' : ''}`)
   }
+  // Peso del correo de un dominio (cacheado; con refresh=true fuerza el du)
+  getMailDomainDisk(mailDomainId, refresh = false) {
+    return this.get(`/api/mail/domains/${mailDomainId}/disk${refresh ? '?refresh=true' : ''}`)
+  }
 
   // Autoinstalador de apps (WordPress, …)
   installApp(domainId, data) {
