@@ -15,7 +15,7 @@ import smtplib
 import logging
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
-from email.utils import formataddr
+from email.utils import formataddr, formatdate, make_msgid
 
 logger = logging.getLogger(__name__)
 
@@ -95,6 +95,15 @@ def _send(cfg, to_email, subject, body_text, body_html=None):
     msg["Subject"] = subject
     msg["From"] = formataddr((cfg["from_name"], cfg["from_email"]))
     msg["To"] = to_email
+    # Date y Message-ID son OBLIGATORIOS según el RFC 5322 §3.6 y Python no los
+    # añade solo. Sin ellos los filtros antispam suman puntos (MISSING_DATE ~1.4,
+    # MISSING_MID ~2.5 en Rspamd/SpamAssassin), y son justo los avisos que NO
+    # pueden acabar en spam: alertas de cuota, expiración de SSL, backups.
+    # El Message-ID se genera con el dominio del remitente, no con el hostname
+    # local, para que sea coherente con el From y el SPF del dominio.
+    msg["Date"] = formatdate(localtime=True)
+    _domain = cfg["from_email"].split("@")[-1] if "@" in cfg["from_email"] else None
+    msg["Message-ID"] = make_msgid(domain=_domain)
     msg.attach(MIMEText(body_text, "plain", "utf-8"))
     if body_html:
         msg.attach(MIMEText(body_html, "html", "utf-8"))
