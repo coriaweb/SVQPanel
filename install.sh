@@ -1264,7 +1264,21 @@ server:
     serve-expired: yes
     serve-expired-ttl: 60
     infra-cache-numhosts: 100000
+    # Debian activa 'subnetcache' (EDNS Client Subnet) por defecto, y ese
+    # módulo ANULA serve-expired y prefetch para lo que él cachea — justo lo
+    # que amortigua los picos. No lo necesitamos: esto es un resolver local
+    # para el antispam, no un DNS con respuestas por geolocalización.
+    module-config: "validator iterator"
 UNBOUNDEOF
+    # Los buffers de socket los limita el kernel: sin subir net.core.*mem_max,
+    # unbound pide 4m y solo se le conceden ~208k, que es justo lo que amortigua
+    # las ráfagas de consultas DNS del antispam.
+    cat > /etc/sysctl.d/99-svqpanel-unbound.conf << 'SYSCTLUNBOUNDEOF'
+# SVQPanel — buffers de socket para unbound (resolver del antispam)
+net.core.rmem_max = 4194304
+net.core.wmem_max = 4194304
+SYSCTLUNBOUNDEOF
+    sysctl -p /etc/sysctl.d/99-svqpanel-unbound.conf >/dev/null 2>&1 || true
     systemctl enable unbound 2>/dev/null || true
     systemctl restart unbound 2>/dev/null || true
     # Apuntar Rspamd a unbound (en vez del 127.0.0.1:53 de named).

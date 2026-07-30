@@ -43,6 +43,19 @@ CORES=$(nproc 2>/dev/null || echo 2)
 THREADS=2
 [ "$CORES" -ge 4 ] && THREADS=4
 
+# Los buffers de socket los limita el kernel: sin subir net.core.*mem_max,
+# unbound pide 4m y el kernel le concede ~208k ("so-rcvbuf was not granted").
+# Es justo lo que amortigua las ráfagas, así que se sube de forma persistente.
+SYSCTL_CONF=/etc/sysctl.d/99-svqpanel-unbound.conf
+cat > "$SYSCTL_CONF" << 'SYSCTLEOF'
+# SVQPanel — buffers de socket para unbound (resolver del antispam).
+# Sin esto el kernel recorta el so-rcvbuf/so-sndbuf que pide unbound y las
+# ráfagas de consultas DNS se pierden (ver update 0130).
+net.core.rmem_max = 4194304
+net.core.wmem_max = 4194304
+SYSCTLEOF
+sysctl -p "$SYSCTL_CONF" >/dev/null 2>&1 || true
+
 cat > "$UNBOUND_CONF" << UNBOUNDEOF
 # SVQPanel — resolver recursivo cacheante SOLO localhost para Rspamd (antispam).
 # Puerto 5353 para no chocar con named (DNS autoritativo del cluster en :53).
@@ -76,6 +89,11 @@ server:
     serve-expired: yes
     serve-expired-ttl: 60
     infra-cache-numhosts: 100000
+    # Debian activa 'subnetcache' (EDNS Client Subnet) por defecto, y ese
+    # módulo ANULA serve-expired y prefetch para lo que él cachea — justo lo
+    # que amortigua los picos. No lo necesitamos: esto es un resolver local
+    # para el antispam, no un DNS con respuestas por geolocalización.
+    module-config: "validator iterator"
 UNBOUNDEOF
 
 # Validar ANTES de reiniciar: una config inválida dejaría al antispam sin
