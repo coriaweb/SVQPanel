@@ -143,6 +143,12 @@ class Mailbox(Base):
     autoreply_enabled  = Column(Boolean, default=False)
     autoreply_subject  = Column(String(255), nullable=True)
     autoreply_body     = Column(Text, nullable=True)
+    # Cuerpo en HTML: la respuesta sale como multipart/alternative (Sieve :mime)
+    autoreply_is_html  = Column(Boolean, default=False, nullable=False)
+    # Versión en texto plano del cuerpo HTML (si NULL se deriva del HTML)
+    autoreply_body_text = Column(Text, nullable=True)
+    # Días sin repetir respuesta al mismo remitente (Dovecot: 1..60)
+    autoreply_days     = Column(Integer, default=1)
     created_at         = Column(DateTime, default=datetime.utcnow)
     updated_at         = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 

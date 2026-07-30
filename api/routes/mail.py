@@ -200,6 +200,9 @@ def _mailbox_to_dict(mb: Mailbox, disk_usage_mb: float = 0.0) -> dict:
         "autoreply_enabled": getattr(mb, "autoreply_enabled", False),
         "autoreply_subject": getattr(mb, "autoreply_subject", None),
         "autoreply_body":    getattr(mb, "autoreply_body", None),
+        "autoreply_is_html": getattr(mb, "autoreply_is_html", False) or False,
+        "autoreply_body_text": getattr(mb, "autoreply_body_text", None),
+        "autoreply_days":    getattr(mb, "autoreply_days", 1) or 1,
         "created_at":     mb.created_at,
         "updated_at":     mb.updated_at,
     }
@@ -1963,25 +1966,47 @@ async def update_mailbox(
             logger.warning(f"Error configurando forward en Postfix: {e}")
 
     # ── Auto-respuesta ────────────────────────────────────────────────────
-    if data.autoreply_enabled is not None:
-        mb.autoreply_enabled = data.autoreply_enabled
+    # Se reescribe el Sieve si cambia el interruptor O cualquier parte del
+    # contenido (asunto, cuerpo, HTML, periodo) estando ya activa.
+    _ar_fields = (data.autoreply_subject, data.autoreply_body,
+                  data.autoreply_is_html, data.autoreply_body_text,
+                  data.autoreply_days)
+    if data.autoreply_enabled is not None or any(f is not None for f in _ar_fields):
+        if data.autoreply_enabled is not None:
+            mb.autoreply_enabled = data.autoreply_enabled
         if data.autoreply_subject is not None:
             mb.autoreply_subject = data.autoreply_subject
         if data.autoreply_body is not None:
             mb.autoreply_body = data.autoreply_body
+        if data.autoreply_is_html is not None:
+            mb.autoreply_is_html = data.autoreply_is_html
+        if data.autoreply_body_text is not None:
+            mb.autoreply_body_text = data.autoreply_body_text
+        if data.autoreply_days is not None:
+            mb.autoreply_days = data.autoreply_days
         try:
             from scripts.mail_manager import MailManager
             mgr3 = MailManager()
-            if data.autoreply_enabled:
+            if mb.autoreply_enabled:
                 mgr3.set_autoreply(
                     panel_username, md.domain_name, mb.username,
-                    mb.autoreply_subject or f"Re: (Respuesta automática)",
+                    mb.autoreply_subject or "Re: (Respuesta automática)",
                     mb.autoreply_body   or "Estoy fuera de la oficina.",
+                    is_html=bool(getattr(mb, "autoreply_is_html", False)),
+                    body_text=getattr(mb, "autoreply_body_text", None),
+                    days=getattr(mb, "autoreply_days", 1) or 1,
                 )
             else:
                 mgr3.remove_autoreply(panel_username, md.domain_name, mb.username)
         except Exception as e:
+            # Un Sieve inválido NO puede quedarse "activado" en la BD: el
+            # cliente creería que su auto-respuesta funciona y no sería cierto.
             logger.warning(f"Error configurando autoreply Sieve: {e}")
+            db.rollback()
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"No se pudo activar la auto-respuesta: {e}",
+            )
 
     db.commit()
     db.refresh(mb)

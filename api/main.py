@@ -837,6 +837,10 @@ def _run_migrations():
         # Fase A: nameservers propios del panel
         "ALTER TABLE settings ADD COLUMN IF NOT EXISTS dns_ns1 VARCHAR(255)",
         "ALTER TABLE settings ADD COLUMN IF NOT EXISTS dns_ns2 VARCHAR(255)",
+        # Auto-respuesta en HTML (multipart/alternative vía Sieve :mime)
+        "ALTER TABLE mailboxes ADD COLUMN IF NOT EXISTS autoreply_is_html BOOLEAN NOT NULL DEFAULT FALSE",
+        "ALTER TABLE mailboxes ADD COLUMN IF NOT EXISTS autoreply_body_text TEXT",
+        "ALTER TABLE mailboxes ADD COLUMN IF NOT EXISTS autoreply_days INTEGER NOT NULL DEFAULT 1",
         # Rate-limit de envío de correo (Rspamd) por buzón y por dominio
         "ALTER TABLE mailboxes ADD COLUMN IF NOT EXISTS send_limit_hour INTEGER NOT NULL DEFAULT 200",
         "ALTER TABLE mail_domains ADD COLUMN IF NOT EXISTS send_limit_hour INTEGER NOT NULL DEFAULT 1000",

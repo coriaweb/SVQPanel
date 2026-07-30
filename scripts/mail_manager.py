@@ -682,34 +682,219 @@ class MailManager(SystemManager):
         maildir = self.maildir_path(panel_username, domain_name, mailbox_username)
         return os.path.join(maildir, ".dovecot.sieve")
 
+    # Etiquetas HTML que NUNCA deben salir en una auto-respuesta: el cuerpo lo
+    # escribe el cliente pero el correo lo firma (DKIM) y lo envía NUESTRA IP.
+    # Un <script> o un onerror= en una respuesta automática es spam/phishing
+    # servido por nosotros → reputación de la IP a la basura.
+    _HTML_FORBIDDEN_TAGS = (
+        "script", "iframe", "object", "embed", "applet", "form",
+        "base", "link", "meta", "style",
+    )
+
+    @classmethod
+    def sanitize_autoreply_html(cls, html: str) -> str:
+        """Limpia el HTML de una auto-respuesta antes de meterlo en el Sieve.
+
+        No pretende ser un sanitizador universal: el HTML de correo es un
+        subconjunto muy pequeño (texto, tablas, estilos inline). Quitamos todo
+        lo que pueda ejecutar código o cargar recursos externos.
+        """
+        if not html:
+            return ""
+        out = html
+        # 1. Bloques peligrosos completos (con su contenido).
+        for tag in cls._HTML_FORBIDDEN_TAGS:
+            out = re.sub(rf"<\s*{tag}\b[^>]*>.*?<\s*/\s*{tag}\s*>", "",
+                         out, flags=re.IGNORECASE | re.DOTALL)
+            # Y la variante sin cierre (<meta>, <base>, <link>…).
+            out = re.sub(rf"<\s*/?\s*{tag}\b[^>]*>", "", out,
+                         flags=re.IGNORECASE)
+        # 2. Manejadores de eventos: onclick=, onerror=, onload=…
+        out = re.sub(r"\son\w+\s*=\s*\"[^\"]*\"", "", out, flags=re.IGNORECASE)
+        out = re.sub(r"\son\w+\s*=\s*'[^']*'", "", out, flags=re.IGNORECASE)
+        out = re.sub(r"\son\w+\s*=\s*[^\s>]+", "", out, flags=re.IGNORECASE)
+        # 3. URLs ejecutables en href/src/action.
+        out = re.sub(r"(href|src|action)\s*=\s*([\"']?)\s*javascript:[^\"'>\s]*\2",
+                     r"\1=\2#\2", out, flags=re.IGNORECASE)
+        out = re.sub(r"(href|src|action)\s*=\s*([\"']?)\s*vbscript:[^\"'>\s]*\2",
+                     r"\1=\2#\2", out, flags=re.IGNORECASE)
+        # 4. Comentarios condicionales de IE (pueden reintroducir script).
+        out = re.sub(r"<!--\[if.*?\]>.*?<!\[endif\]-->", "", out,
+                     flags=re.IGNORECASE | re.DOTALL)
+        # 5. Los clientes pegan la plantilla ENTERA (<!DOCTYPE><html><head>…).
+        #    Dentro de una parte MIME text/html eso sobra: nos quedamos con el
+        #    contenido del <body> y conservamos sus estilos moviéndolos a un
+        #    <div> envolvente (fondo/fuente de la plantilla).
+        m_body = re.search(r"<\s*body\b([^>]*)>(.*?)<\s*/\s*body\s*>", out,
+                           flags=re.IGNORECASE | re.DOTALL)
+        if m_body:
+            attrs, inner = m_body.group(1), m_body.group(2)
+            m_style = re.search(r"style\s*=\s*\"([^\"]*)\"", attrs,
+                                flags=re.IGNORECASE)
+            inner = inner.strip()
+            out = (f'<div style="{m_style.group(1)}">{inner}</div>'
+                   if m_style else inner)
+        else:
+            # Sin <body>: quitar igualmente doctype/html/head sueltos.
+            out = re.sub(r"<!\s*DOCTYPE[^>]*>", "", out, flags=re.IGNORECASE)
+            out = re.sub(r"<\s*head\b[^>]*>.*?<\s*/\s*head\s*>", "", out,
+                         flags=re.IGNORECASE | re.DOTALL)
+            out = re.sub(r"<\s*/?\s*(html|head|body|title)\b[^>]*>", "", out,
+                         flags=re.IGNORECASE)
+        return out.strip()
+
+    @staticmethod
+    def _html_to_text(html: str) -> str:
+        """Fallback en texto plano a partir del HTML.
+
+        Va en la parte text/plain del multipart: los clientes sin HTML lo
+        muestran, y su presencia BAJA la puntuación de spam (un correo
+        text/html a secas puntúa peor en Rspamd/SpamAssassin).
+        """
+        if not html:
+            return ""
+        # <head> entero fuera: si no, el <title> acaba como primera línea del
+        # texto plano (las plantillas de correo reales suelen traer <title>).
+        txt = re.sub(r"<\s*head\b[^>]*>.*?<\s*/\s*head\s*>", "", html,
+                     flags=re.IGNORECASE | re.DOTALL)
+        txt = re.sub(r"<\s*title\b[^>]*>.*?<\s*/\s*title\s*>", "", txt,
+                     flags=re.IGNORECASE | re.DOTALL)
+        # Las imágenes aportan su alt (p.ej. el logo de la firma).
+        txt = re.sub(r"<\s*img\b[^>]*?\balt\s*=\s*\"([^\"]*)\"[^>]*>", r"\1", txt,
+                     flags=re.IGNORECASE)
+        txt = re.sub(r"<\s*br\s*/?\s*>", "\n", txt, flags=re.IGNORECASE)
+        txt = re.sub(r"<\s*/\s*(td|table)\s*>", "\n", txt, flags=re.IGNORECASE)
+        txt = re.sub(r"<\s*/\s*(p|div|tr|h[1-6]|li)\s*>", "\n", txt,
+                     flags=re.IGNORECASE)
+        txt = re.sub(r"<[^>]+>", "", txt)                      # resto de tags
+        # Entidades más comunes en texto de correo.
+        for ent, ch in (("&nbsp;", " "), ("&amp;", "&"), ("&lt;", "<"),
+                        ("&gt;", ">"), ("&quot;", '"'), ("&#39;", "'"),
+                        ("&middot;", "·"), ("&mdash;", "—"), ("&ndash;", "–")):
+            txt = txt.replace(ent, ch)
+        txt = re.sub(r"[ \t]+", " ", txt)
+        txt = re.sub(r"\n\s*\n\s*\n+", "\n\n", txt)
+        return txt.strip()
+
+    @staticmethod
+    def _sieve_multiline(text: str) -> str:
+        """Prepara un texto para un bloque Sieve multi-line (`text:` … `.`).
+
+        En este formato NO hay que escapar comillas (a diferencia de las cadenas
+        entrecomilladas), pero sí aplicar *dot-stuffing*: una línea que empiece
+        por '.' termina el bloque, así que se duplica el punto (RFC 5228 §8.1).
+        """
+        lines = (text or "").replace("\r\n", "\n").replace("\r", "\n").split("\n")
+        return "\n".join(("." + ln) if ln.startswith(".") else ln for ln in lines)
+
     def set_autoreply(self, panel_username: str, domain_name: str,
-                      mailbox_username: str, subject: str, body: str):
+                      mailbox_username: str, subject: str, body: str,
+                      is_html: bool = False, body_text: str = None,
+                      days: int = 1):
         """
         Activa auto-respuesta creando un script Sieve en el Maildir del buzón.
-        Usa la extensión 'vacation' de Sieve (estándar Dovecot).
+        Usa la extensión 'vacation' de Sieve (RFC 5230, estándar Dovecot).
+
+        is_html=True envía la respuesta como multipart/alternative (texto +
+        HTML) usando `:mime`; body_text permite dar la versión en texto plano
+        (si no, se deriva del HTML).
+
+        Anti-bucle: lo garantiza el propio 'vacation' de Pigeonhole, que ya
+        descarta respuestas a mensajes con Auto-Submitted, Precedence: bulk,
+        envelope nulo <>, y repeticiones al mismo remitente dentro de :days.
         """
         email = f"{mailbox_username}@{domain_name}"
         sieve_path = self._sieve_path(panel_username, domain_name, mailbox_username)
 
-        # Escapar comillas en subject y body para el script Sieve
-        safe_subject = subject.replace('"', '\\"') if subject else f"Re: (Respuesta automática)"
-        safe_body    = body.replace('"', '\\"') if body else "Estoy fuera de la oficina. Te responderé en cuanto pueda."
+        subject = (subject or "Re: (Respuesta automática)").strip()
+        # El asunto va entre comillas en el Sieve: escapar \ y " (en ese orden).
+        safe_subject = subject.replace("\\", "\\\\").replace('"', '\\"')
+        # Y nunca puede llevar saltos de línea (inyección de cabeceras).
+        safe_subject = re.sub(r"[\r\n]+", " ", safe_subject)
 
-        sieve_script = f'''require ["vacation"];
-
-vacation
-  :days 1
-  :subject "{safe_subject}"
-  :from "{email}"
-  "{safe_body}";
-'''
+        # :days debe caer en el rango que acepta Dovecot (min 1, max 60).
         try:
-            with open(sieve_path, "w") as f:
+            days = int(days)
+        except (TypeError, ValueError):
+            days = 1
+        days = max(1, min(60, days))
+
+        if is_html:
+            html = self.sanitize_autoreply_html(body or "")
+            if not html:
+                html = "<p>Estoy fuera de la oficina. Te responderé en cuanto pueda.</p>"
+            plain = (body_text or "").strip() or self._html_to_text(html)
+            if not plain:
+                plain = "Estoy fuera de la oficina. Te responderé en cuanto pueda."
+            # Boundary fijo: el contenido lo controlamos nosotros y va saneado,
+            # así que no puede aparecer la marca dentro del cuerpo.
+            boundary = "SVQPanel-Autoreply-Boundary"
+            mime_body = (
+                f'Content-Type: multipart/alternative; boundary="{boundary}"\n'
+                f"\n"
+                f"--{boundary}\n"
+                f"Content-Type: text/plain; charset=UTF-8\n"
+                f"\n"
+                f"{plain}\n"
+                f"\n"
+                f"--{boundary}\n"
+                f"Content-Type: text/html; charset=UTF-8\n"
+                f"\n"
+                f"{html}\n"
+                f"\n"
+                f"--{boundary}--\n"
+            )
+            sieve_script = (
+                'require ["vacation", "mime"];\n'
+                "\n"
+                "vacation\n"
+                f"  :days {days}\n"
+                f'  :subject "{safe_subject}"\n'
+                f'  :from "{email}"\n'
+                f'  :addresses ["{email}"]\n'
+                "  :mime\n"
+                "text:\n"
+                f"{self._sieve_multiline(mime_body)}"
+                ".\n"
+                ";\n"
+            )
+        else:
+            plain = (body or "").strip() or \
+                "Estoy fuera de la oficina. Te responderé en cuanto pueda."
+            sieve_script = (
+                'require ["vacation"];\n'
+                "\n"
+                "vacation\n"
+                f"  :days {days}\n"
+                f'  :subject "{safe_subject}"\n'
+                f'  :from "{email}"\n'
+                f'  :addresses ["{email}"]\n'
+                "text:\n"
+                f"{self._sieve_multiline(plain)}\n"
+                ".\n"
+                ";\n"
+            )
+
+        try:
+            # encoding explícito: el cuerpo lleva acentos/eñes y el Sieve
+            # declara charset=UTF-8. Sin esto se escribiría con la codificación
+            # por defecto del sistema y llegarían caracteres rotos.
+            with open(sieve_path, "w", encoding="utf-8") as f:
                 f.write(sieve_script)
-            os.chown(sieve_path, 5000, 5000)  # vmail:vmail
-            # Compilar el script Sieve
-            self.execute_command(["sievec", sieve_path], check=False)
-            logger.info(f"Auto-respuesta activada para {email}")
+            os.chown(sieve_path, self.VMAIL_UID, self.VMAIL_GID)
+            os.chmod(sieve_path, 0o600)
+            # Validar compilando: si el Sieve no compila, Dovecot NO entregaría
+            # el correo (error de script) → mejor revertir y avisar.
+            rc, _out, err = self.execute_command(["sievec", sieve_path], check=False)
+            if rc != 0:
+                try:
+                    os.remove(sieve_path)
+                except OSError:
+                    pass
+                raise ValueError("El script de auto-respuesta no es válido: "
+                                 f"{(err or '').strip()}")
+            logger.info(f"Auto-respuesta activada para {email} "
+                        f"({'HTML' if is_html else 'texto'}, :days {days})")
         except Exception as e:
             logger.error(f"Error creando script Sieve para {email}: {e}")
             raise
@@ -718,8 +903,11 @@ vacation
     def remove_autoreply(self, panel_username: str, domain_name: str, mailbox_username: str):
         """Desactiva la auto-respuesta eliminando el script Sieve"""
         sieve_path = self._sieve_path(panel_username, domain_name, mailbox_username)
-        sieve_compiled = sieve_path + "c"
-        for path in (sieve_path, sieve_compiled):
+        # Binario compilado: ".dovecot.sievec" (Dovecot 2.3) y ".dovecot.svbin"
+        # (Dovecot 2.4). Si queda el binario, Dovecot lo sigue ejecutando aunque
+        # el .sieve ya no exista → la auto-respuesta no se apagaría.
+        base, _ext = os.path.splitext(sieve_path)
+        for path in (sieve_path, sieve_path + "c", base + ".svbin"):
             if os.path.exists(path):
                 os.remove(path)
         logger.info(f"Auto-respuesta eliminada para {mailbox_username}@{domain_name}")

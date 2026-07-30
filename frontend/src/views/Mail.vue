@@ -1263,7 +1263,7 @@
     <!-- ══════════ Modal: Auto-respuesta ══════════ -->
     <div v-if="showAutoreplyModal" class="modal d-block" tabindex="-1"
          style="background:rgba(0,0,0,.5)" @click.self="showAutoreplyModal = false">
-      <div class="modal-dialog">
+      <div class="modal-dialog" :class="{ 'modal-lg': autoreplyForm.autoreply_is_html }">
         <div class="modal-content">
           <div class="modal-header">
             <h5 class="modal-title"><i class="bi bi-reply-all me-2"></i>Auto-respuesta — {{ autoreplyTarget?.full_email }}</h5>
@@ -1283,10 +1283,86 @@
               <input v-model="autoreplyForm.autoreply_subject" type="text" class="form-control form-control-sm"
                      placeholder="Ej: Fuera de la oficina hasta el 10 de junio">
             </div>
+
+            <!-- Formato del mensaje -->
             <div>
+              <label class="form-label fw-semibold">Formato del mensaje</label>
+              <div class="ar-fmt">
+                <button type="button" class="ar-fmt__opt"
+                        :class="{ 'ar-fmt__opt--on': !autoreplyForm.autoreply_is_html }"
+                        @click="autoreplyForm.autoreply_is_html = false">
+                  <i class="bi bi-type me-1"></i>Texto plano
+                </button>
+                <button type="button" class="ar-fmt__opt"
+                        :class="{ 'ar-fmt__opt--on': autoreplyForm.autoreply_is_html }"
+                        @click="autoreplyForm.autoreply_is_html = true">
+                  <i class="bi bi-code-slash me-1"></i>HTML
+                </button>
+              </div>
+            </div>
+
+            <!-- Texto plano -->
+            <div v-if="!autoreplyForm.autoreply_is_html">
               <label class="form-label fw-semibold">Mensaje</label>
               <textarea v-model="autoreplyForm.autoreply_body" class="form-control form-control-sm"
                         rows="4" placeholder="Ej: Estoy fuera hasta el 10 de junio. Te responderé en cuanto vuelva."></textarea>
+            </div>
+
+            <!-- HTML -->
+            <template v-else>
+              <div>
+                <div class="d-flex justify-content-between align-items-center mb-1">
+                  <label class="form-label fw-semibold mb-0">Mensaje HTML</label>
+                  <div class="d-flex gap-2">
+                    <button type="button" class="btn btn-outline-secondary btn-sm py-0 px-2"
+                            @click="loadAutoreplyTemplate" title="Insertar una plantilla de ejemplo">
+                      <i class="bi bi-file-earmark-richtext me-1"></i>Plantilla
+                    </button>
+                    <button type="button" class="btn btn-outline-secondary btn-sm py-0 px-2"
+                            @click="autoreplyPreview = !autoreplyPreview">
+                      <i class="bi me-1" :class="autoreplyPreview ? 'bi-pencil' : 'bi-eye'"></i>
+                      {{ autoreplyPreview ? 'Editar' : 'Vista previa' }}
+                    </button>
+                  </div>
+                </div>
+                <textarea v-if="!autoreplyPreview" v-model="autoreplyForm.autoreply_body"
+                          class="form-control form-control-sm ar-code" rows="12" spellcheck="false"
+                          placeholder="Pega aquí tu plantilla HTML de correo…"></textarea>
+                <div v-else class="ar-preview">
+                  <iframe :srcdoc="autoreplyPreviewHtml" sandbox="" title="Vista previa"></iframe>
+                </div>
+                <p class="text-muted small mt-1 mb-0">
+                  Se enviará en <strong>texto y HTML</strong> a la vez, para que se vea bien en cualquier
+                  programa de correo. Por seguridad se eliminan <code>&lt;script&gt;</code> y similares.
+                </p>
+              </div>
+
+              <details class="ar-adv">
+                <summary>Versión en texto plano (opcional)</summary>
+                <p class="text-muted small mt-2 mb-1">
+                  Es lo que verá quien tenga el HTML desactivado. Si lo dejas vacío se genera
+                  automáticamente a partir del HTML.
+                </p>
+                <textarea v-model="autoreplyForm.autoreply_body_text"
+                          class="form-control form-control-sm" rows="4"
+                          placeholder="Se genera solo a partir del HTML si lo dejas vacío"></textarea>
+              </details>
+            </template>
+
+            <div>
+              <label class="form-label fw-semibold">No repetir al mismo remitente durante</label>
+              <div class="d-flex align-items-center gap-2">
+                <input v-model.number="autoreplyForm.autoreply_days" type="number" min="1" max="60"
+                       class="form-control form-control-sm" style="max-width:110px">
+                <span class="text-muted small">días (entre 1 y 60)</span>
+              </div>
+            </div>
+
+            <div class="ar-note">
+              <i class="bi bi-shield-check me-1"></i>
+              No se responde a boletines, notificaciones automáticas ni rebotes, y solo se contesta
+              una vez por remitente en el periodo indicado. Así se evitan bucles con otras
+              auto-respuestas.
             </div>
           </div>
           <div class="modal-footer">
@@ -1478,7 +1554,11 @@ export default {
     const forwardTarget   = ref(null)
     const forwardForm     = ref({ forward_to_text: '', forward_keep_copy: true })
     const autoreplyTarget = ref(null)
-    const autoreplyForm   = ref({ autoreply_enabled: false, autoreply_subject: '', autoreply_body: '' })
+    const autoreplyForm   = ref({
+      autoreply_enabled: false, autoreply_subject: '', autoreply_body: '',
+      autoreply_is_html: false, autoreply_body_text: '', autoreply_days: 1,
+    })
+    const autoreplyPreview = ref(false)
     const editTarget      = ref(null)
     const editForm        = ref({ quota_mb: 1024, send_limit_hour: 200 })
 
@@ -2293,32 +2373,76 @@ export default {
 
     const openAutoreplyModal = (mb) => {
       autoreplyTarget.value = mb
+      autoreplyPreview.value = false
       autoreplyForm.value = {
         autoreply_enabled: mb.autoreply_enabled || false,
         autoreply_subject: mb.autoreply_subject || '',
         autoreply_body:    mb.autoreply_body    || '',
+        autoreply_is_html: mb.autoreply_is_html || false,
+        autoreply_body_text: mb.autoreply_body_text || '',
+        autoreply_days:    mb.autoreply_days    || 1,
       }
       showAutoreplyModal.value = true
+    }
+
+    // La vista previa va en un <iframe sandbox> (sin scripts ni red): el HTML
+    // lo escribe el cliente, así que no se inyecta en el DOM del panel.
+    const autoreplyPreviewHtml = computed(() => {
+      const body = autoreplyForm.value.autoreply_body || '<p class="text-muted">(vacío)</p>'
+      return `<!DOCTYPE html><html><head><meta charset="utf-8">` +
+             `<style>body{margin:0;font-family:Arial,Helvetica,sans-serif}</style>` +
+             `</head><body>${body}</body></html>`
+    })
+
+    const AUTOREPLY_TEMPLATE = `<div style="margin:0;padding:0;background:#f5f5f5;font-family:Arial,Helvetica,sans-serif;">
+<table width="100%" cellpadding="0" cellspacing="0" border="0" bgcolor="#f5f5f5">
+<tr><td align="center" style="padding:40px 15px;">
+  <table width="640" cellpadding="0" cellspacing="0" border="0" style="width:100%;max-width:640px;background:#ffffff;">
+    <tr>
+      <td align="center" style="padding:50px 45px 35px 45px;font-size:18px;line-height:30px;color:#333333;">
+        Les informamos que nuestras oficinas permanecerán cerradas por
+        <strong>vacaciones</strong> del <strong>1 al 15 de agosto, ambos inclusive.</strong>
+      </td>
+    </tr>
+    <tr>
+      <td bgcolor="#4f46e5" align="center" style="padding:30px 25px;font-size:15px;line-height:28px;color:#ffffff;">
+        <strong>Tlf.: +34 900 000 000</strong><br><br>
+        Calle Ejemplo, 1 · 41001 Sevilla<br><br>
+        <a href="mailto:info@ejemplo.com" style="color:#ffffff;font-weight:bold;text-decoration:none;">info@ejemplo.com</a>
+      </td>
+    </tr>
+  </table>
+</td></tr>
+</table>
+</div>`
+
+    const loadAutoreplyTemplate = () => {
+      if (autoreplyForm.value.autoreply_body &&
+          !confirm('Se reemplazará el contenido actual del mensaje. ¿Continuar?')) return
+      autoreplyForm.value.autoreply_body = AUTOREPLY_TEMPLATE
+      autoreplyPreview.value = false
     }
 
     const saveAutoreply = async () => {
       saving.value = true
       try {
-        await api.updateMailbox(selectedDomain.value.id, autoreplyTarget.value.id, {
+        const payload = {
           autoreply_enabled: autoreplyForm.value.autoreply_enabled,
           autoreply_subject: autoreplyForm.value.autoreply_subject,
           autoreply_body:    autoreplyForm.value.autoreply_body,
-        })
-        autoreplyTarget.value.autoreply_enabled = autoreplyForm.value.autoreply_enabled
-        autoreplyTarget.value.autoreply_subject = autoreplyForm.value.autoreply_subject
-        autoreplyTarget.value.autoreply_body    = autoreplyForm.value.autoreply_body
+          autoreply_is_html: autoreplyForm.value.autoreply_is_html,
+          autoreply_body_text: autoreplyForm.value.autoreply_body_text,
+          autoreply_days:    autoreplyForm.value.autoreply_days || 1,
+        }
+        await api.updateMailbox(selectedDomain.value.id, autoreplyTarget.value.id, payload)
+        Object.assign(autoreplyTarget.value, payload)
         showAutoreplyModal.value = false
         store.showNotification(
           autoreplyForm.value.autoreply_enabled ? 'Auto-respuesta activada' : 'Auto-respuesta desactivada',
           'success'
         )
       } catch (e) {
-        store.showNotification('Error: ' + e.message, 'danger')
+        store.showNotification('Error: ' + (e.message || e), 'danger')
       } finally {
         saving.value = false
       }
@@ -2430,6 +2554,7 @@ export default {
       newDomainForm, newMailboxForm, newAliasForm, passwordTarget, newPassword,
       showForwardModal, forwardTarget, forwardForm, openForwardModal, saveForward, clearForward,
       showAutoreplyModal, autoreplyTarget, autoreplyForm, openAutoreplyModal, saveAutoreply,
+      autoreplyPreview, autoreplyPreviewHtml, loadAutoreplyTemplate,
       showEditModal, editTarget, editForm, openEditMailbox, saveEditMailbox,
       fmtMB, usagePct, usageClass,
       sendUsage, loadingSend, loadSendUsage, sendPct, sendClass,
@@ -2668,4 +2793,57 @@ export default {
 [data-theme="dark"] .mbx__btn--primary:hover { background: var(--surface-2); }
 .mbx__btn--danger:hover { background: var(--danger-bg); color: var(--danger); border-color: var(--danger-border); }
 .mbx__btn--active { background: color-mix(in srgb, var(--ac) 10%, transparent); color: var(--ac); border-color: color-mix(in srgb, var(--ac) 30%, transparent); }
+
+/* ── Auto-respuesta: selector de formato, editor HTML y vista previa ── */
+.ar-fmt { display: flex; gap: .5rem; }
+.ar-fmt__opt {
+  flex: 1;
+  padding: .45rem .75rem;
+  font-size: .85rem;
+  font-weight: 500;
+  color: var(--text-muted);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm, 8px);
+  cursor: pointer;
+  transition: all var(--transition-fast, .15s) ease;
+}
+.ar-fmt__opt:hover { background: var(--surface-inset); color: var(--text); }
+.ar-fmt__opt--on {
+  color: var(--color-primary);
+  background: var(--brand-50);
+  border-color: var(--brand-200);
+}
+.ar-code {
+  font-family: var(--font-mono, 'JetBrains Mono', monospace);
+  font-size: .78rem;
+  line-height: 1.5;
+  white-space: pre;
+  overflow-x: auto;
+}
+.ar-preview {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm, 8px);
+  overflow: hidden;
+  background: #fff;
+}
+.ar-preview iframe { display: block; width: 100%; height: 320px; border: 0; }
+.ar-adv > summary {
+  cursor: pointer;
+  font-size: .85rem;
+  font-weight: 600;
+  color: var(--text-muted);
+}
+.ar-adv > summary:hover { color: var(--text); }
+.ar-note {
+  display: flex;
+  align-items: flex-start;
+  gap: .25rem;
+  padding: .6rem .75rem;
+  font-size: .8rem;
+  line-height: 1.5;
+  color: var(--text-muted);
+  background: var(--surface-inset);
+  border-radius: var(--radius-sm, 8px);
+}
 </style>

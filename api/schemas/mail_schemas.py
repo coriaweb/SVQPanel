@@ -256,7 +256,12 @@ class MailboxUpdate(BaseModel):
     # Auto-respuesta
     autoreply_enabled: Optional[bool] = None
     autoreply_subject: Optional[str]  = Field(None, max_length=255)
-    autoreply_body:    Optional[str]  = Field(None, max_length=10000)
+    # 64 KB: una plantilla HTML de correo real (tablas + estilos inline + varios
+    # idiomas) pasa fácil de 10 KB; el límite anterior las rechazaba.
+    autoreply_body:    Optional[str]  = Field(None, max_length=65536)
+    autoreply_is_html: Optional[bool] = None
+    autoreply_body_text: Optional[str] = Field(None, max_length=20000)
+    autoreply_days:    Optional[int]  = Field(None, ge=1, le=60)
 
     @field_validator("password")
     @classmethod
@@ -296,6 +301,9 @@ class MailboxResponse(BaseModel):
     autoreply_enabled: bool = False
     autoreply_subject: Optional[str] = None
     autoreply_body:    Optional[str] = None
+    autoreply_is_html: bool = False
+    autoreply_body_text: Optional[str] = None
+    autoreply_days:    int = 1
     created_at:     Optional[datetime] = None
     updated_at:     Optional[datetime] = None
 
