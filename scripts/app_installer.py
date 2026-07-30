@@ -505,7 +505,11 @@ class AppInstaller:
 
         # Extraer (crea una carpeta 'nextcloud/' dentro de tmp)
         _run(["mkdir", "-p", tmp])
-        rc, _, err = _run(["unzip", "-q", zip_path, "-d", tmp])
+        # -o: sobrescribir sin preguntar. Sin él, unzip pide confirmación por
+        # stdin si el destino ya tiene un fichero con el mismo nombre; bajo
+        # systemd stdin es /dev/null (lee EOF y aborta), pero ejecutado a mano
+        # desde una TTY se quedaría colgado hasta el timeout.
+        rc, _, err = _run(["unzip", "-qo", zip_path, "-d", tmp])
         if rc != 0:
             _run(["rm", "-rf", tmp, zip_path])
             raise RuntimeError(f"Descompresión de Nextcloud falló: {err}")
@@ -717,7 +721,7 @@ class AppInstaller:
             raise RuntimeError(f"Descarga de PrestaShop falló: {err}")
 
         # El zip de release contiene prestashop.zip (el código real) + index.php
-        rc, _, err = _run(["unzip", "-q", rel_zip, "-d", tmp])
+        rc, _, err = _run(["unzip", "-qo", rel_zip, "-d", tmp])   # -o: no preguntar
         if rc != 0:
             _run(["rm", "-rf", tmp, rel_zip])
             raise RuntimeError(f"Descompresión de PrestaShop falló: {err}")
@@ -729,7 +733,7 @@ class AppInstaller:
 
         # Limpiar docroot y extraer el código real directamente dentro
         _run(["find", docroot, "-mindepth", "1", "-delete"])
-        rc, _, err = _run(["unzip", "-q", inner, "-d", docroot])
+        rc, _, err = _run(["unzip", "-qo", inner, "-d", docroot])   # -o: no preguntar
         _run(["rm", "-rf", tmp, rel_zip])
         if rc != 0:
             raise RuntimeError(f"Extracción del core de PrestaShop falló: {err}")

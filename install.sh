@@ -1868,12 +1868,25 @@ gzip_types
 NGGZEOF
 # max_headers (nginx >= 1.29.8): limita el nº de cabeceras por petición. Defensa
 # contra el "HTTP/2 Bomb" (amplificación HPACK + window stall). El panel instala
-# nginx del repo oficial (reciente), pero lo añadimos condicionalmente por si
-# alguna instalación tuviera una versión vieja donde la directiva no existe.
-if nginx -V 2>&1 | grep -qoE 'nginx/[0-9]+\.[0-9]+\.[0-9]+' && \
-   printf '%s\n%s\n' "1.29.8" "$(nginx -v 2>&1 | grep -oE '[0-9]+\.[0-9]+\.[0-9]+')" | sort -V -C; then
-    echo "max_headers 100;" >> /etc/nginx/conf.d/svqpanel-hardening.conf
-    echo -e "${GREEN}✓ nginx: max_headers 100 (mitiga HTTP/2 Bomb)${NC}"
+# nginx del repo oficial (reciente), pero lo añadimos condicionalmente porque en
+# versiones viejas la directiva NO existe y nginx no arrancaría.
+# Misma lógica que updates/0019-nginx-max-headers.sh (validar + revertir).
+NGINX_VER=$(nginx -v 2>&1 | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' || echo "0.0.0")
+NGINX_HARD=/etc/nginx/conf.d/svqpanel-hardening.conf
+if grep -q 'max_headers' "$NGINX_HARD" 2>/dev/null; then
+    :   # ya presente (reinstalación): no duplicar la directiva
+elif printf '1.29.8\n%s\n' "$NGINX_VER" | sort -V -C; then
+    echo "max_headers 100;" >> "$NGINX_HARD"
+    # Validar SIEMPRE: si la directiva no la acepta esta build, nginx no
+    # arrancaría y la instalación quedaría con el webserver caído. Revertimos.
+    if nginx -t >/dev/null 2>&1; then
+        echo -e "${GREEN}✓ nginx: max_headers 100 (mitiga HTTP/2 Bomb)${NC}"
+    else
+        sed -i '/max_headers 100;/d' "$NGINX_HARD"
+        echo -e "${YELLOW}⚠ nginx $NGINX_VER rechazó max_headers; revertido (sin esa mitigación)${NC}"
+    fi
+else
+    echo -e "${YELLOW}⚠ nginx $NGINX_VER < 1.29.8: sin max_headers (actualiza nginx para mitigar HTTP/2 Bomb)${NC}"
 fi
 
 ###############################################################################
