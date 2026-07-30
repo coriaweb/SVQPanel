@@ -171,6 +171,26 @@ def _disk_usage_once():
     finally:
         db.close()
 
+    # Peso del correo por dominio (du del Maildir). Mismo motivo: la vista de
+    # correo lee el valor cacheado en BD en vez de hacer un du por dominio,
+    # que con 48 dominios costaba ~2,2 s en cada carga de la página.
+    from api.models.models_mail import MailDomain
+    from api.routes.mail import compute_mail_domain_disk
+
+    db = SessionLocal()
+    try:
+        mail_domains = db.query(MailDomain).all()
+        n = 0
+        for md in mail_domains:
+            try:
+                compute_mail_domain_disk(md, db)
+                n += 1
+            except Exception:
+                logger.exception("disk-usage(mail): fallo en %s", md.domain_name)
+        logger.info("disk-usage: peso de correo recalculado para %d dominio(s)", n)
+    finally:
+        db.close()
+
 
 def _wp_attack_once():
     """Refresca el cache de ataques WordPress (hits a xmlrpc/wp-login en 24h) de

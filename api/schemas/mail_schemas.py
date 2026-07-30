@@ -213,6 +213,8 @@ class MailDomainListItem(BaseModel):
     mailbox_count: int           = 0
     alias_count:   int           = 0
     mail_used_mb:  int           = 0
+    # Cuándo se calculó `mail_used_mb` (valor cacheado, no se mide al listar)
+    mail_disk_calculated_at: Optional[datetime] = None
     webmail_ssl:   bool          = False
     mail_ssl:      bool          = False
     created_at:    Optional[datetime] = None

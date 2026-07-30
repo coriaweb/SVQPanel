@@ -4,7 +4,7 @@ Almacenamiento bajo /home/{panel_user}/mail/{domain}/{mailbox}/
 """
 
 from sqlalchemy import (
-    Column, Integer, Float, String, Boolean, DateTime, Date, Text,
+    Column, Integer, BigInteger, Float, String, Boolean, DateTime, Date, Text,
     ForeignKey, UniqueConstraint
 )
 from sqlalchemy.orm import relationship, backref
@@ -39,6 +39,13 @@ class MailDomain(Base):
     # ── Catch-all ─────────────────────────────────────────────────────────
     # Si no es NULL, todo correo sin buzón explícito se redirige aquí
     catch_all = Column(String(255), nullable=True)
+
+    # ── Peso en disco cacheado ────────────────────────────────────────────
+    # `du` del correo del dominio. Es CARO (recorre todo el Maildir), así que
+    # NO se calcula al listar: la lista lee esto y lo refresca el scheduler
+    # (cada 12h) o el botón de refrescar. Mismo patrón que Domain.disk_*.
+    mail_disk_bytes        = Column(BigInteger, nullable=True)
+    mail_disk_calculated_at = Column(DateTime, nullable=True)
 
     # ── Límites ───────────────────────────────────────────────────────────
     max_mailboxes = Column(Integer, default=0)   # 0 = sin límite

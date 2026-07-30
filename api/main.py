@@ -844,6 +844,10 @@ def _run_migrations():
         # Vigencia programada de la auto-respuesta (Sieve currentdate)
         "ALTER TABLE mailboxes ADD COLUMN IF NOT EXISTS autoreply_start_date DATE",
         "ALTER TABLE mailboxes ADD COLUMN IF NOT EXISTS autoreply_end_date DATE",
+        # Peso en disco del correo cacheado (du es caro: la lista lee de aquí,
+        # lo refresca el scheduler cada 12h o el botón de refrescar)
+        "ALTER TABLE mail_domains ADD COLUMN IF NOT EXISTS mail_disk_bytes BIGINT",
+        "ALTER TABLE mail_domains ADD COLUMN IF NOT EXISTS mail_disk_calculated_at TIMESTAMP",
         # Rate-limit de envío de correo (Rspamd) por buzón y por dominio
         "ALTER TABLE mailboxes ADD COLUMN IF NOT EXISTS send_limit_hour INTEGER NOT NULL DEFAULT 200",
         "ALTER TABLE mail_domains ADD COLUMN IF NOT EXISTS send_limit_hour INTEGER NOT NULL DEFAULT 1000",

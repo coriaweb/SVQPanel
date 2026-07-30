@@ -33,6 +33,12 @@
           <span v-if="loading" class="spinner-border spinner-border-sm"></span>
           <i v-else class="bi bi-arrow-repeat"></i> Actualizar
         </button>
+        <button v-if="!selectedDomain" class="sv-btn sv-btn--ghost"
+                @click="refreshMailDisk" :disabled="refreshingDisk"
+                title="Recalcular el peso en disco del correo (puede tardar unos segundos)">
+          <span v-if="refreshingDisk" class="spinner-border spinner-border-sm"></span>
+          <i v-else class="bi bi-hdd"></i> Recalcular peso
+        </button>
         <button v-if="!selectedDomain && mailEnabled !== false" class="sv-btn sv-btn--primary" @click="openNewDomain">
           <i class="bi bi-plus-lg"></i> Añadir dominio
         </button>
@@ -229,7 +235,8 @@
                 <td style="text-align:center">
                   <span class="sv-badge sv-badge--teal">{{ md.alias_count }}</span>
                 </td>
-                <td style="text-align:center;font-variant-numeric:tabular-nums">
+                <td style="text-align:center;font-variant-numeric:tabular-nums"
+                    :title="mailDiskTitle(md)">
                   {{ fmtMailSize(md.mail_used_mb) }}
                 </td>
                 <td style="text-align:center">
@@ -2059,6 +2066,32 @@ export default {
       return mb >= 1024 ? (mb / 1024).toFixed(1) + ' GB' : mb + ' MB'
     }
 
+    // El peso es un valor CACHEADO (el du es caro y no se hace al listar).
+    // El tooltip dice de cuándo es, para que "0 MB" no se lea como "vacío"
+    // cuando en realidad aún no se ha calculado nunca.
+    const mailDiskTitle = (md) => {
+      if (!md.mail_disk_calculated_at) {
+        return 'Aún no calculado. Pulsa "Recalcular peso" para medirlo.'
+      }
+      const d = new Date(md.mail_disk_calculated_at)
+      return `Calculado el ${d.toLocaleString('es-ES')}`
+    }
+
+    const refreshingDisk = ref(false)
+    const refreshMailDisk = async () => {
+      refreshingDisk.value = true
+      try {
+        const r = await api.post('/api/mail/domains/refresh-disk', {})
+        await loadDomains()
+        const n = r?.data?.domains ?? 0
+        store.showNotification(`Peso recalculado para ${n} dominio(s)`, 'success')
+      } catch (e) {
+        store.showNotification('Error: ' + (e.message || e), 'danger')
+      } finally {
+        refreshingDisk.value = false
+      }
+    }
+
     const openNewDomain = () => {
       newDomainForm.value = { domain_name: '', catch_all: '', max_mailboxes: 0, user_id: null }
       showNewDomain.value = true
@@ -2641,6 +2674,7 @@ export default {
       showAutoreplyModal, autoreplyTarget, autoreplyForm, openAutoreplyModal, saveAutoreply,
       autoreplyPreview, autoreplyPreviewHtml, loadAutoreplyTemplate,
       autoreplyDateError, autoreplyScheduleHint, autoreplyState,
+      mailDiskTitle, refreshMailDisk, refreshingDisk,
       showEditModal, editTarget, editForm, openEditMailbox, saveEditMailbox,
       fmtMB, usagePct, usageClass,
       sendUsage, loadingSend, loadSendUsage, sendPct, sendClass,

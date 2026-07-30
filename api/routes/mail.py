@@ -9,10 +9,12 @@ import socket
 import base64
 import hashlib
 import logging
+from functools import lru_cache
 from datetime import datetime, timedelta
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request, status
 from fastapi.responses import Response
-from sqlalchemy.orm import Session
+from sqlalchemy import func
+from sqlalchemy.orm import Session, joinedload
 from typing import List
 from pydantic import BaseModel as _BM, Field as _F
 
@@ -105,6 +107,24 @@ def _get_mail_domain_or_404(domain_id: int, db: Session) -> MailDomain:
 # Helpers de serialización (evita DetachedInstanceError con propiedades lazy)
 # ─────────────────────────────────────────────────────────────────────────────
 
+@lru_cache(maxsize=512)
+def _cert_san_names(parent_domain: str, mtime: float) -> frozenset:
+    """SANs del cert de un dominio. Cacheado por (dominio, mtime del fichero):
+    parsear X.509 no es gratis y al listar se hacía 2 veces por dominio. Si
+    certbot renueva, cambia el mtime y la entrada se invalida sola."""
+    parent_cert = f"/etc/letsencrypt/live/{parent_domain}/cert.pem"
+    try:
+        with open(parent_cert, "rb") as f:
+            pem = f.read()
+        from cryptography import x509
+        cert = x509.load_pem_x509_certificate(pem)
+        san = cert.extensions.get_extension_for_class(
+            x509.SubjectAlternativeName).value
+        return frozenset(san.get_values_for_type(x509.DNSName))
+    except Exception:
+        return frozenset()
+
+
 def _cert_covers(host: str, parent_domain: str) -> bool:
     """¿Hay un certificado SSL que cubra `host`? True si:
       1) existe un cert propio /etc/letsencrypt/live/{host}/, o
@@ -115,49 +135,63 @@ def _cert_covers(host: str, parent_domain: str) -> bool:
     import os
     if os.path.exists(f"/etc/letsencrypt/live/{host}/fullchain.pem"):
         return True
-    # Mirar el cert del dominio padre y ver si lista `host` en su texto (SAN).
+    # Mirar el cert del dominio padre y ver si lista `host` como SAN.
     parent_cert = f"/etc/letsencrypt/live/{parent_domain}/cert.pem"
     try:
-        if os.path.exists(parent_cert):
-            with open(parent_cert, "rb") as f:
-                pem = f.read()
-            from cryptography import x509
-            cert = x509.load_pem_x509_certificate(pem)
-            try:
-                san = cert.extensions.get_extension_for_class(
-                    x509.SubjectAlternativeName).value
-                names = san.get_values_for_type(x509.DNSName)
-                return host in names
-            except x509.ExtensionNotFound:
-                return False
-    except Exception:
-        pass
-    return False
+        mtime = os.path.getmtime(parent_cert)
+    except OSError:
+        return False
+    return host in _cert_san_names(parent_domain, mtime)
+
+
+def compute_mail_domain_disk(md: MailDomain, db: Session) -> int:
+    """Calcula el peso real del correo del dominio (du -sb) y lo PERSISTE.
+
+    CARO: recorre todo el Maildir. Con 48 dominios tardaba ~2,2 s en total, que
+    era el 85 % del tiempo de carga de la vista de correo. Por eso NO se llama
+    al listar: solo desde el scheduler (cada 12 h) o el botón de refrescar.
+    Mismo patrón que `compute_domain_disk` para los dominios web.
+    """
+    import os
+    import subprocess
+    from datetime import datetime
+
+    total = 0
+    try:
+        owner = md.user
+        path = f"/home/{owner.username}/mail/{md.domain_name}" if owner else None
+        if path and os.path.isdir(path):
+            r = subprocess.run(["/usr/bin/du", "-sb", "--apparent-size", path],
+                               capture_output=True, text=True, timeout=120)
+            if r.returncode == 0:
+                total = int(r.stdout.split()[0])
+    except (subprocess.TimeoutExpired, ValueError, IndexError,
+            FileNotFoundError, OSError):
+        total = 0
+
+    md.mail_disk_bytes = total
+    md.mail_disk_calculated_at = datetime.utcnow()
+    db.commit()
+    return total // (1024 * 1024)
 
 
 def _mail_domain_used_mb(md: MailDomain) -> int:
-    """Tamaño total (MB) del correo de un dominio: du de /home/{user}/mail/{dom}.
-    Best-effort: 0 si no se puede medir."""
-    import os
-    import subprocess
-    try:
-        owner = md.user
-        if not owner:
-            return 0
-        path = f"/home/{owner.username}/mail/{md.domain_name}"
-        if not os.path.isdir(path):
-            return 0
-        r = subprocess.run(["/usr/bin/du", "-sb", "--apparent-size", path],
-                           capture_output=True, text=True, timeout=60)
-        if r.returncode != 0:
-            return 0
-        return int(r.stdout.split()[0]) // (1024 * 1024)
-    except Exception:
-        return 0
+    """Tamaño (MB) del correo del dominio, leído del valor CACHEADO en BD.
+
+    Devuelve 0 mientras no se haya calculado nunca (el scheduler lo rellena en
+    su primera pasada). No toca disco: la lista de dominios se carga instantánea.
+    """
+    return (getattr(md, "mail_disk_bytes", None) or 0) // (1024 * 1024)
 
 
-def _mail_domain_to_dict(md: MailDomain, current_user) -> dict:
+def _mail_domain_to_dict(md: MailDomain, current_user, counts: dict = None) -> dict:
+    """`counts` (opcional) evita el N+1 de len(md.mailboxes)/len(md.aliases):
+    al listar se pasan los conteos ya agregados en una sola query."""
     dom = md.domain_name
+    if counts is not None:
+        n_mailboxes, n_aliases = counts.get(md.id, (0, 0))
+    else:
+        n_mailboxes, n_aliases = len(md.mailboxes), len(md.aliases)
     return {
         "id":            md.id,
         "user_id":       md.user_id,
@@ -171,10 +205,11 @@ def _mail_domain_to_dict(md: MailDomain, current_user) -> dict:
         "max_mailboxes": md.max_mailboxes,
         "send_limit_hour": getattr(md, "send_limit_hour", 1000),
         "antivirus_enabled": bool(getattr(md, "antivirus_enabled", False)),
-        "mailbox_count": len(md.mailboxes),
-        "alias_count":   len(md.aliases),
+        "mailbox_count": n_mailboxes,
+        "alias_count":   n_aliases,
         # Tamaño total del correo de este dominio (suma de todos sus buzones).
         "mail_used_mb":  _mail_domain_used_mb(md),
+        "mail_disk_calculated_at": getattr(md, "mail_disk_calculated_at", None),
         # SSL de webmail.{dom} y mail.{dom}: cert propio O cubierto por el cert
         # del dominio padre como SAN (webmail suele ir en el cert del dominio).
         "webmail_ssl":   _cert_covers(f"webmail.{dom}", dom),
@@ -570,7 +605,10 @@ async def list_mail_domains(
     - Reseller: los de sus usuarios + los propios
     - Usuario: solo los suyos
     """
-    query = db.query(MailDomain).order_by(MailDomain.domain_name)
+    # joinedload del propietario: _can_edit() lo consulta por dominio (otro N+1).
+    query = (db.query(MailDomain)
+             .options(joinedload(MailDomain.user))
+             .order_by(MailDomain.domain_name))
 
     if current_user.role == "admin":
         domains = query.all()
@@ -585,7 +623,54 @@ async def list_mail_domains(
     else:
         domains = query.filter(MailDomain.user_id == current_user.id).all()
 
-    return [_mail_domain_to_dict(md, current_user) for md in domains]
+    # Conteos de buzones/alias en DOS queries agregadas en vez de dos por
+    # dominio (N+1). Con 48 dominios eran ~96 SELECT que además cargaban las
+    # filas enteras solo para hacerles len().
+    counts = {md.id: [0, 0] for md in domains}
+    if counts:
+        ids = list(counts.keys())
+        for mid, n in (db.query(Mailbox.mail_domain_id, func.count(Mailbox.id))
+                       .filter(Mailbox.mail_domain_id.in_(ids))
+                       .group_by(Mailbox.mail_domain_id).all()):
+            counts[mid][0] = n
+        for mid, n in (db.query(MailAlias.mail_domain_id, func.count(MailAlias.id))
+                       .filter(MailAlias.mail_domain_id.in_(ids))
+                       .group_by(MailAlias.mail_domain_id).all()):
+            counts[mid][1] = n
+
+    return [_mail_domain_to_dict(md, current_user, counts) for md in domains]
+
+
+@router.post("/mail/domains/refresh-disk")
+async def refresh_mail_disk(
+    current_user=Depends(require_auth),
+    db: Session = Depends(get_db),
+):
+    """Recalcula el peso en disco del correo (du) de los dominios visibles.
+
+    Operación CARA y bajo demanda: la lista sirve siempre el valor cacheado.
+    El scheduler lo refresca cada 12 h; esto es el botón "actualizar ahora".
+    """
+    query = db.query(MailDomain)
+    if current_user.role == "admin":
+        domains = query.all()
+    elif current_user.role == "reseller":
+        from api.models.models_user import User
+        client_ids = [u.id for u in db.query(User)
+                      .filter(User.parent_id == current_user.id).all()]
+        domains = query.filter(
+            MailDomain.user_id.in_([u for u in client_ids] + [current_user.id])).all()
+    else:
+        domains = query.filter(MailDomain.user_id == current_user.id).all()
+
+    total_mb = 0
+    for md in domains:
+        try:
+            total_mb += compute_mail_domain_disk(md, db)
+        except Exception:
+            logger.warning("refresh-disk: fallo en %s", md.domain_name)
+    return {"status": "success", "data": {"domains": len(domains),
+                                          "total_mb": total_mb}}
 
 
 @router.post("/mail/domains", response_model=MailDomainResponse,
