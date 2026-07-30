@@ -1423,7 +1423,22 @@ def import_mail(backup: "HestiaBackup", mailinfo: Dict, owner, db, report: Impor
             #   FWD          → destinos separados por coma
             #   FWD_ONLY=yes → redirección pura (no se guarda copia local)
             fwd_raw = acc.get("fwd") or ""
-            fwd_to = [d.strip() for d in fwd_raw.split(",") if d.strip()]
+            # Los destinos vienen de un servidor AJENO: validarlos uno a uno antes
+            # de que acaben en virtual_alias. Un destino con espacios o comillas
+            # se escribiría crudo en el mapa de Postfix y el reenvío se perdería
+            # en silencio. Se descarta el inválido y se sigue: un forward roto no
+            # debe abortar la migración de la cuenta entera.
+            from api.schemas.mail_schemas import validate_email_address
+            fwd_to = []
+            for d in fwd_raw.split(","):
+                d = d.strip()
+                if not d:
+                    continue
+                try:
+                    fwd_to.append(validate_email_address(d, "dirección de reenvío"))
+                except ValueError as e:
+                    report.fail("mail-forward", f"{user}@{domain}",
+                                f"destino descartado {d!r}: {e}")
             keep_copy = not acc.get("fwd_only", False)
 
             mbox = Mailbox(

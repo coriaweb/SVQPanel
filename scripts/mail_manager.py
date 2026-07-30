@@ -108,13 +108,28 @@ class MailManager(SystemManager):
         return result
 
     def _write_map(self, map_name, entries):
-        """Escribe un fichero de mapa Postfix desde dict"""
+        """Escribe un fichero de mapa Postfix desde dict.
+
+        Descarta entradas cuya clave o valor contenga saltos de línea: el formato
+        es «clave<TAB>valor» por línea, así que un \\n partiría la línea e
+        insertaría una entrada de alias que el panel no controla ni muestra.
+        Es defensa en profundidad — los schemas ya lo validan —, pero no todos los
+        caminos pasan por Pydantic (p. ej. los reenvíos que trae el importador de
+        Hestia), así que el escritor debe protegerse solo.
+        """
         path = self._map_path(map_name)
         tmp = path + ".tmp"
         with open(tmp, "w", encoding="utf-8") as f:
             f.write("# SVQPanel — gestionado automáticamente, no editar manualmente\n")
             for key in sorted(entries):
-                f.write(f"{key}\t{entries[key]}\n")
+                val = entries[key]
+                k_s, v_s = str(key), str(val if val is not None else "")
+                if any(c in k_s or c in v_s for c in ("\n", "\r")):
+                    logger.error(
+                        "mapa %s: entrada descartada por contener saltos de línea "
+                        "(clave=%r)", map_name, k_s[:80])
+                    continue
+                f.write(f"{k_s}\t{v_s}\n")
         os.replace(tmp, path)  # escritura atómica
 
     def _postmap(self, map_name):
@@ -168,12 +183,23 @@ class MailManager(SystemManager):
         return result
 
     def _write_dovecot_users(self, entries):
-        """Escribe /etc/dovecot/users de forma atómica"""
+        """Escribe /etc/dovecot/users de forma atómica.
+
+        Descarta líneas con saltos de línea: el fichero es una línea por buzón
+        (campos separados por ':'), así que un \\n inyectaría un buzón entero
+        —con su hash y su home— que el panel no gestiona. Defensa en profundidad,
+        igual que en _write_map.
+        """
         tmp = self.DOVECOT_USERS + ".tmp"
         with open(tmp, "w", encoding="utf-8") as f:
             f.write("# SVQPanel — gestionado automáticamente, no editar manualmente\n")
             for email in sorted(entries):
-                f.write(entries[email] + "\n")
+                line = str(entries[email])
+                if "\n" in line or "\r" in line:
+                    logger.error("dovecot users: línea descartada por contener "
+                                 "saltos de línea (email=%r)", str(email)[:80])
+                    continue
+                f.write(line + "\n")
         os.replace(tmp, self.DOVECOT_USERS)
         os.chmod(self.DOVECOT_USERS, 0o640)
         try:

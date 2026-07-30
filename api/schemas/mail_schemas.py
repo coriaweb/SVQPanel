@@ -12,6 +12,73 @@ from datetime import datetime
 # Validadores reutilizables
 # ─────────────────────────────────────────────────────────────────────────────
 
+# Límites del RFC 5321 §4.5.3.1 (los del formato de dirección, no del mensaje):
+#   parte local ≤ 64, dominio ≤ 255, total ≤ 254 en la práctica.
+MAX_LOCAL_PART = 64
+MAX_DOMAIN     = 255
+MAX_EMAIL      = 254
+
+# Parte local: allowlist estricta. NO se admite el "quoted string" del RFC 5322
+# ("john doe"@ejemplo.com): es válido por RFC pero irrelevante en hosting real y
+# rompería los mapas de Postfix (formato clave<TAB>valor) y el passwd-file de
+# Dovecot (formato separado por ':').
+_LOCAL_RE = re.compile(r'^[a-z0-9][a-z0-9._+-]*$')
+# Dominio: etiquetas alfanuméricas con guiones internos, TLD alfabético.
+_DOMAIN_RE = re.compile(r'^(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,}$')
+
+
+def validate_email_address(v: str, field: str = "dirección") -> str:
+    """Valida una dirección de correo COMPLETA (local@dominio).
+
+    Sustituye a la regex laxa `^[^@]+@[^@]+\\.[^@]+$` que se repetía en tres
+    sitios. Esa regex usaba `[^@]`, que acepta TODO menos la arroba: espacios,
+    comas, tabuladores, comillas, ':' y '\\'. Eso importa porque estos valores se
+    escriben tal cual en /etc/postfix/virtual_alias (formato «clave<TAB>valor») y
+    en el passwd-file de Dovecot (campos separados por ':'):
+
+      - un espacio o TAB en el destino → Postfix lee un destino inválido y el
+        correo reenviado se pierde en silencio;
+      - una coma → Postfix la interpreta como separador de destinos;
+      - dos puntos → rompe la línea del passwd-file de Dovecot.
+
+    Rechaza además lo que el RFC no permite y suele fallar con MTAs remotos:
+    punto al principio o al final de la parte local, y dos puntos seguidos.
+    """
+    if v is None:
+        raise ValueError(f"La {field} no puede estar vacía")
+    v = v.strip().lower()
+    if not v:
+        raise ValueError(f"La {field} no puede estar vacía")
+
+    # Cualquier espacio en blanco (incluidos \n, \r, \t) invalida la dirección y
+    # además corrompería el fichero de mapas.
+    if any(c.isspace() for c in v):
+        raise ValueError(f"La {field} no puede contener espacios ni saltos de línea")
+
+    if v.count("@") != 1:
+        raise ValueError(f"La {field} debe tener exactamente una @")
+    local, domain = v.split("@", 1)
+
+    if len(v) > MAX_EMAIL:
+        raise ValueError(f"La {field} es demasiado larga (máx {MAX_EMAIL} caracteres)")
+    if len(local) > MAX_LOCAL_PART:
+        raise ValueError(
+            f"La parte antes de la @ es demasiado larga (máx {MAX_LOCAL_PART})")
+    if len(domain) > MAX_DOMAIN:
+        raise ValueError(f"El dominio es demasiado largo (máx {MAX_DOMAIN})")
+
+    if not _LOCAL_RE.match(local):
+        raise ValueError(
+            f"La {field} tiene caracteres no permitidos antes de la @ "
+            "(solo letras, dígitos y . _ + -)")
+    if local.startswith(".") or local.endswith(".") or ".." in local:
+        raise ValueError(
+            f"La {field} no puede empezar ni acabar en punto, ni tener dos seguidos")
+    if not _DOMAIN_RE.match(domain):
+        raise ValueError(f"El dominio de la {field} no es válido")
+    return v
+
+
 def _validate_mailbox_username(v: str) -> str:
     """Valida que un nombre de buzón sea un prefijo de email válido"""
     v = v.lower().strip()
@@ -23,7 +90,37 @@ def _validate_mailbox_username(v: str) -> str:
         raise ValueError(
             "Solo letras minúsculas, dígitos y los caracteres . _ + -"
         )
+    # Igual que en la parte local de una dirección: '.inicio', 'fin.' y 'a..b'
+    # los rechaza el RFC y dan problemas con MTAs remotos.
+    if v.startswith(".") or v.endswith(".") or ".." in v:
+        raise ValueError(
+            "El nombre no puede empezar ni acabar en punto, ni tener dos seguidos")
     return v
+
+
+def _validate_forward_list(v: str) -> str:
+    """Valida una lista de destinos de reenvío separados por comas.
+
+    forward_to no tenía NINGUNA validación: llegaba tal cual a set_forward() y de
+    ahí a virtual_alias, así que un destino con espacios o comillas se escribía
+    crudo en el mapa de Postfix."""
+    if v is None:
+        return None
+    if not v.strip():
+        return ""
+    destinos = [d.strip() for d in v.split(",") if d.strip()]
+    if not destinos:
+        return ""
+    if len(destinos) > 20:
+        raise ValueError("Demasiados destinos de reenvío (máx 20)")
+    validados = [validate_email_address(d, "dirección de reenvío") for d in destinos]
+    # Deduplicar conservando el orden (un destino repetido duplicaría el correo).
+    vistos, unicos = set(), []
+    for d in validados:
+        if d not in vistos:
+            vistos.add(d)
+            unicos.append(d)
+    return ", ".join(unicos)
 
 
 def _validate_password(v: str) -> str:
@@ -62,13 +159,12 @@ class MailDomainCreate(BaseModel):
     def validate_catch_all(cls, v):
         if v is None or v == "":
             return None
-        if not re.match(r'^[^@]+@[^@]+\.[^@]+$', v):
-            raise ValueError("El catch-all debe ser una dirección de email válida")
-        return v.lower().strip()
+        return validate_email_address(v, "dirección del catch-all")
 
 
 class MailDomainUpdate(BaseModel):
-    catch_all:     Optional[str]  = None
+    # max_length igual que en Create: era asimétrico (Create lo tenía, Update no).
+    catch_all:     Optional[str]  = Field(None, max_length=254)
     max_mailboxes: Optional[int]  = Field(None, ge=0)
     is_active:     Optional[bool] = None
     send_limit_hour: Optional[int] = Field(None, ge=0, le=1000000)
@@ -78,9 +174,7 @@ class MailDomainUpdate(BaseModel):
     def validate_catch_all(cls, v):
         if v is None or v == "":
             return None
-        if not re.match(r'^[^@]+@[^@]+\.[^@]+$', v):
-            raise ValueError("El catch-all debe ser una dirección de email válida")
-        return v.lower().strip()
+        return validate_email_address(v, "dirección del catch-all")
 
 
 class MailDomainResponse(BaseModel):
@@ -157,12 +251,12 @@ class MailboxUpdate(BaseModel):
     is_active: Optional[bool] = None
     send_limit_hour: Optional[int] = Field(None, ge=0, le=100000)
     # Reenvío
-    forward_to:        Optional[str]  = None   # emails separados por coma
+    forward_to:        Optional[str]  = Field(None, max_length=2048)   # separados por coma
     forward_keep_copy: Optional[bool] = None
     # Auto-respuesta
     autoreply_enabled: Optional[bool] = None
-    autoreply_subject: Optional[str]  = None
-    autoreply_body:    Optional[str]  = None
+    autoreply_subject: Optional[str]  = Field(None, max_length=255)
+    autoreply_body:    Optional[str]  = Field(None, max_length=10000)
 
     @field_validator("password")
     @classmethod
@@ -170,6 +264,22 @@ class MailboxUpdate(BaseModel):
         if v is not None:
             return _validate_password(v)
         return v
+
+    @field_validator("forward_to")
+    @classmethod
+    def validate_forward_to(cls, v):
+        return _validate_forward_list(v)
+
+    @field_validator("autoreply_subject")
+    @classmethod
+    def validate_autoreply_subject(cls, v):
+        """El asunto va a una cabecera del Sieve de autorespuesta: un salto de
+        línea permitiría inyectar cabeceras adicionales en la respuesta."""
+        if v is None:
+            return v
+        if "\n" in v or "\r" in v:
+            raise ValueError("El asunto no puede contener saltos de línea")
+        return v.strip()
 
 
 class MailboxResponse(BaseModel):
@@ -198,9 +308,11 @@ class MailboxResponse(BaseModel):
 # ─────────────────────────────────────────────────────────────────────────────
 
 class MailAliasCreate(BaseModel):
-    source:      str = Field(..., max_length=128,
+    # max_length 64: es la parte local de una dirección (RFC 5321). Antes decía
+    # 128, que contradecía al propio validador (tope 64) y no servía de nada.
+    source:      str = Field(..., max_length=64,
                              description="Prefijo origen, ej: 'info' o '@' para catch-all")
-    destination: str = Field(..., max_length=255,
+    destination: str = Field(..., max_length=254,
                              description="Email destino completo")
 
     @field_validator("source")
@@ -209,18 +321,14 @@ class MailAliasCreate(BaseModel):
         v = v.lower().strip()
         if v == "@":
             return v   # catch-all explícito
-        if "@" in v:
-            raise ValueError("Introduce solo el prefijo, sin @dominio")
-        if not re.match(r'^[a-z0-9][a-z0-9._+-]{0,63}$', v):
-            raise ValueError("Prefijo de alias inválido")
-        return v
+        # Mismo validador que el nombre de buzón: es el mismo tipo de valor y
+        # antes estaba duplicado inline (y sin el check de puntos).
+        return _validate_mailbox_username(v)
 
     @field_validator("destination")
     @classmethod
     def validate_destination(cls, v):
-        if not re.match(r'^[^@]+@[^@]+\.[^@]+$', v):
-            raise ValueError("El destino debe ser una dirección de email válida")
-        return v.lower().strip()
+        return validate_email_address(v, "dirección de destino")
 
 
 class MailAliasResponse(BaseModel):
