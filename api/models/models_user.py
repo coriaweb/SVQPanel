@@ -1,6 +1,6 @@
 from sqlalchemy import Column, Integer, String, Boolean, DateTime, Text, Enum, ForeignKey
 from sqlalchemy.orm import relationship
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from api.models.database import Base
 import hashlib
 import secrets
@@ -103,7 +103,14 @@ class User(Base):
             return False
 
     def generate_token(self, expires_hours: int = 24) -> str:
-        """Genera JWT token válido por 24 horas"""
+        """Genera el JWT de sesión (24 h por defecto).
+
+        `exp` se construye con datetime CONSCIENTE de zona (timezone.utc): con
+        el `utcnow()` naive de antes, PyJWT lo interpretaba como hora LOCAL al
+        pasarlo a timestamp, así que en un servidor en Europe/Madrid (+02:00)
+        el token duraba 26 h en vez de 24 (y en invierno 25). Duraba de más, no
+        de menos, pero el plazo real no era el declarado.
+        """
         from api.utils.secret import get_secret_key
         secret = get_secret_key()
         payload = {
@@ -112,7 +119,7 @@ class User(Base):
             "email": self.email,
             "role": self.role,
             "is_admin": self.is_admin,
-            "exp": datetime.utcnow() + timedelta(hours=expires_hours)
+            "exp": datetime.now(timezone.utc) + timedelta(hours=expires_hours)
         }
         return jwt.encode(payload, secret, algorithm="HS256")
 

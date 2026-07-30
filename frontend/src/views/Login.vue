@@ -46,6 +46,15 @@
             />
           </div>
 
+          <!-- Sesión caducada: explica por qué ha vuelto al login. Sin esto, al
+               usuario se le cierra la sesión a mitad de trabajo y el login aparece
+               "de la nada": lo lee como un fallo del panel o como que su contraseña
+               ha dejado de valer. Se oculta si hay un error real, para no mezclarlos. -->
+          <div v-if="sessionExpired && !error" class="login-alert login-alert--info">
+            <i class="bi bi-clock-history"></i>
+            Tu sesión ha caducado por seguridad. Vuelve a iniciar sesión para continuar.
+          </div>
+
           <div v-if="error" class="login-alert login-alert--error">
             <i class="bi bi-exclamation-circle-fill"></i>
             {{ error }}
@@ -140,6 +149,14 @@ export default {
     const credentials = ref({ username: '', password: '' })
     const loading       = ref(false)
     const error         = ref(null)
+    // La marca la deja api.js al recibir un 401 y expulsar al login. Se lee y se
+    // BORRA aquí mismo: es un aviso de un solo uso, no debe reaparecer si el
+    // usuario vuelve al login por su propio pie más tarde.
+    const sessionExpired = ref(false)
+    try {
+      sessionExpired.value = sessionStorage.getItem('sessionExpired') === '1'
+      if (sessionExpired.value) sessionStorage.removeItem('sessionExpired')
+    } catch (e) { /* sessionStorage puede fallar en modo privado */ }
     const twoFARequired = ref(false)
     const tempToken     = ref(null)
     const totpCode      = ref('')
@@ -230,6 +247,7 @@ export default {
       credentials,
       loading,
       error,
+      sessionExpired,
       twoFARequired,
       totpCode,
       totpInput,
@@ -433,6 +451,14 @@ export default {
   background: var(--danger-bg);
   color: var(--danger);
   border: 1px solid var(--danger-border);
+}
+
+/* Informativo (sesión caducada): NO es un error del usuario, así que se
+   distingue en color del aviso de credenciales incorrectas. */
+.login-alert--info {
+  background: color-mix(in srgb, var(--color-primary) 10%, transparent);
+  color: var(--color-primary);
+  border: 1px solid color-mix(in srgb, var(--color-primary) 30%, transparent);
 }
 
 .login-alert i {

@@ -435,6 +435,40 @@ async def verify_2fa(
     }
 
 
+@router.post("/auth/refresh", tags=["Authentication"])
+async def refresh_token(user: User = Depends(require_auth)):
+    """Renueva el JWT de un usuario YA autenticado.
+
+    El token dura 24 h y no se renovaba nunca: al cumplirse, la sesión se
+    cortaba en seco a mitad de trabajo (el frontend recibe un 401 y expulsa al
+    login). El cliente lo vive como "estaba trabajando y me ha echado".
+
+    Aquí solo se re-emite el token: el usuario ya ha demostrado tener uno
+    válido para llegar a este endpoint (require_auth), así que no se relajan
+    las credenciales ni se saltan comprobaciones. Un token caducado NO puede
+    renovarse — hay que volver a iniciar sesión, que es lo correcto.
+
+    Se re-comprueba el estado de la cuenta: si al usuario lo han suspendido o
+    desactivado mientras tenía la sesión abierta, la renovación se le deniega
+    en vez de prolongarle el acceso.
+    """
+    if not user.is_active:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN,
+                            detail="Usuario inactivo")
+    if getattr(user, "is_suspended", False):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN,
+                            detail="Cuenta suspendida")
+    return {
+        "access_token": user.generate_token(),
+        "token_type":   "bearer",
+        "user_id":      user.id,
+        "username":     user.username,
+        "email":        user.email,
+        "role":         user.role,
+        "is_admin":     user.is_admin,
+    }
+
+
 @router.get("/auth/2fa/status", tags=["2FA"])
 async def get_2fa_status(user: User = Depends(require_auth)):
     """Devuelve si el usuario tiene 2FA activado."""

@@ -51,10 +51,15 @@ class APIClient {
       }
 
       if (!response.ok) {
-        // Si es 401, limpiar token y redirigir a login (excepto en el propio endpoint de login)
+        // Si es 401, limpiar token y redirigir a login (excepto en el propio endpoint de login).
+        // Se deja una marca en sessionStorage para que la pantalla de login pueda
+        // explicar POR QUÉ está ahí: sin ella, al usuario se le cierra la sesión a
+        // mitad de trabajo y aparece el login "de la nada", que se lee como un fallo
+        // del panel o como que su contraseña ha dejado de valer.
         if (response.status === 401 && !skipAuthRedirect) {
           localStorage.removeItem('token')
           localStorage.removeItem('user')
+          try { sessionStorage.setItem('sessionExpired', '1') } catch (e) { /* modo privado */ }
           window.location.href = '/login'
           throw new Error('Sesión expirada. Por favor inicia sesión nuevamente.')
         }
@@ -1007,6 +1012,71 @@ class APIClient {
       body: JSON.stringify(credentials),
       skipAuthRedirect: true
     })
+  }
+
+  // ── Renovación de sesión ────────────────────────────────────────────────
+  // El JWT dura 24 h y antes no se renovaba: al cumplirse, la sesión moría a
+  // mitad de trabajo. Ahora se re-emite periódicamente mientras la pestaña
+  // está abierta, de modo que quien usa el panel a diario no vuelve a ver el
+  // login de golpe.
+
+  /** Devuelve los segundos que le quedan al token actual (0 si no vale). */
+  tokenSecondsLeft() {
+    const t = localStorage.getItem('token') || this.token
+    if (!t) return 0
+    try {
+      // El payload va en base64url: hay que normalizarlo antes de atob().
+      const b64 = t.split('.')[1].replace(/-/g, '+').replace(/_/g, '/')
+      const { exp } = JSON.parse(atob(b64))
+      if (!exp) return 0
+      return Math.max(0, exp - Math.floor(Date.now() / 1000))
+    } catch (e) {
+      return 0   // token ilegible: que lo trate el 401 de siempre
+    }
+  }
+
+  async refreshToken() {
+    // skipAuthRedirect: si el token ya caducó, este 401 NO debe expulsar al
+    // login por su cuenta — deja que lo haga la petición real del usuario.
+    const r = await this.request('/api/auth/refresh', {
+      method: 'POST', skipAuthRedirect: true, silent: true,
+    })
+    if (r?.access_token) {
+      localStorage.setItem('token', r.access_token)
+      this.token = r.access_token
+    }
+    return r
+  }
+
+  /**
+   * Arranca la renovación automática. Comprueba cada 5 min y renueva cuando al
+   * token le queda menos de 1 h. No renueva si no hay sesión, y si falla lo
+   * ignora: el token viejo sigue siendo válido hasta su expiración real.
+   */
+  startSessionRenewal() {
+    if (this._renewTimer) return          // idempotente: no duplicar timers
+    const RENEW_BELOW = 3600              // renovar con < 1 h de margen
+    const CHECK_EVERY = 5 * 60 * 1000     // mirar cada 5 min
+    const tick = async () => {
+      const left = this.tokenSecondsLeft()
+      if (left > 0 && left < RENEW_BELOW) {
+        try { await this.refreshToken() } catch (e) { /* reintenta al siguiente tick */ }
+      }
+    }
+    this._renewTimer = setInterval(tick, CHECK_EVERY)
+    // Al volver a la pestaña: si estuvo horas en segundo plano, los timers del
+    // navegador se ralentizan y puede haberse pasado la ventana de renovación.
+    this._onVisible = () => { if (!document.hidden) tick() }
+    document.addEventListener('visibilitychange', this._onVisible)
+    tick()
+  }
+
+  stopSessionRenewal() {
+    if (this._renewTimer) { clearInterval(this._renewTimer); this._renewTimer = null }
+    if (this._onVisible) {
+      document.removeEventListener('visibilitychange', this._onVisible)
+      this._onVisible = null
+    }
   }
 
   logout() {

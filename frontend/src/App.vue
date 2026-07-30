@@ -436,14 +436,30 @@ export default {
       return r < 0.85 ? 'ok' : r < 1.5 ? 'warn' : 'crit'
     })
     onMounted(() => {
-      if (isAuthenticated.value) loadPanelTimezone(api)  // zona horaria del panel (fechas)
+      if (isAuthenticated.value) {
+        loadPanelTimezone(api)  // zona horaria del panel (fechas)
+        // Renovación de sesión: el JWT dura 24 h y antes no se refrescaba, así
+        // que la sesión moría a mitad de trabajo y el panel echaba al login sin
+        // explicar nada.
+        api.startSessionRenewal()
+      }
       loadServerLoad()
       loadTimer = setInterval(loadServerLoad, 15000)  // refresco cada 15s
       checkLicense()
     })
-    onUnmounted(() => { if (loadTimer) clearInterval(loadTimer) })
+    onUnmounted(() => {
+      if (loadTimer) clearInterval(loadTimer)
+      api.stopSessionRenewal()
+    })
     // Cargar al iniciar sesión (cuando cambia la autenticación)
-    watch(isAuthenticated, (v) => { if (v) { loadServerLoad(); checkLicense(); loadPanelTimezone(api) } })
+    watch(isAuthenticated, (v) => {
+      if (v) {
+        loadServerLoad(); checkLicense(); loadPanelTimezone(api)
+        api.startSessionRenewal()
+      } else {
+        api.stopSessionRenewal()
+      }
+    })
 
     return {
       store, route, router, notification, copiedToast, copyNotification, isAuthenticated, currentUser, theme,
