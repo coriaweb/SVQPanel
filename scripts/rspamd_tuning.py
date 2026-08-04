@@ -54,11 +54,17 @@ RULE_MATCHES = {
     "exact":    "es exactamente",
 }
 
-# Umbrales por defecto de Rspamd (para mostrar en la UI y como base).
+# Umbrales por defecto del PANEL (más estrictos que los de fábrica de Rspamd,
+# que son 4/6/15). Se escriben en actions.conf en instalaciones nuevas
+# (install.sh) y vía ensure_default_actions() (update 0133) en servidores que
+# no los hayan personalizado. Racional (v0.221.0): con el Bayes sano, a 4+
+# puntos casi no hay correo legítimo (y acabar en Junk es recuperable); el
+# rechazo a 10 mantiene margen para no rebotar correo bueno un mal día del
+# DNS o del Bayes (a 8 aún cae legítimo: BCC legítimo = FORGED_RECIPIENTS +2).
 DEFAULT_ACTIONS = {
-    "greylist": 4.0,
-    "add header": 6.0,      # = "marcar como spam" (X-Spam: Yes)
-    "reject": 15.0,
+    "greylist": 3.0,
+    "add header": 4.0,      # = "marcar como spam" (X-Spam: Yes)
+    "reject": 10.0,
 }
 # Límites de cordura para los umbrales (evitar que el admin se dispare en el pie).
 ACTION_BOUNDS = {
@@ -348,6 +354,18 @@ def apply(weight_overrides: dict | None, actions: dict | None) -> dict:
     return {"success": True,
             "weight_overrides": get_weight_overrides(),
             "actions": get_actions()}
+
+
+def ensure_default_actions() -> dict:
+    """Aplica los umbrales por defecto del panel SOLO si el admin no los ha
+    personalizado (no existe actions.conf). Idempotente: la invocan install.sh
+    (vía el heredoc equivalente) y el update 0133; re-ejecutar no pisa nada."""
+    if os.path.exists(ACTIONS_FILE):
+        return {"success": True, "skipped": True,
+                "reason": "actions.conf ya existe (umbrales personalizados)"}
+    res = apply(None, dict(DEFAULT_ACTIONS))
+    res["skipped"] = False
+    return res
 
 
 def _read(path: str):

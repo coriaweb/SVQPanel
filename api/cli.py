@@ -1395,6 +1395,25 @@ def cmd_setup_spam_learning() -> int:
     return 0
 
 
+def cmd_ensure_antispam_defaults() -> int:
+    """Aplica los umbrales antispam por defecto del panel (greylist 3 / marcar
+    spam 4 / rechazar 10) SOLO si el admin no los personalizó ya. Idempotente.
+    """
+    try:
+        from scripts import rspamd_tuning
+        res = rspamd_tuning.ensure_default_actions()
+    except Exception as e:
+        logger.error(f"ensure_antispam_defaults: {e}")
+        return 0
+    if res.get("skipped"):
+        logger.info(f"ensure_antispam_defaults: {res.get('reason')}")
+    elif res.get("success"):
+        logger.info(f"ensure_antispam_defaults: aplicados {rspamd_tuning.DEFAULT_ACTIONS}")
+    else:
+        logger.warning(f"ensure_antispam_defaults: {res.get('error')}")
+    return 0
+
+
 def cmd_setup_spam_to_junk() -> int:
     """Instala el Sieve global que mueve el spam (X-Spam: Yes de Rspamd) a la
     carpeta Junk. Respeta el estado guardado en Settings.spam_to_junk_enabled
@@ -2133,6 +2152,8 @@ def main():
         help="Configura el aprendizaje de spam (IMAPSieve + autolearn Bayes)")
     sub.add_parser("setup_spam_to_junk",
         help="Instala el Sieve global que mueve el spam marcado a la carpeta Junk")
+    sub.add_parser("ensure_antispam_defaults",
+        help="Aplica los umbrales antispam por defecto del panel (3/4/10) si el admin no los personalizó")
     sub.add_parser("secure_rspamd_redis",
         help="Protege el Redis global (backend de Rspamd) con contraseña (requirepass)")
     sub.add_parser("setup_auto_updates",
@@ -2280,6 +2301,8 @@ def main():
 
     if args.cmd == "setup_spam_to_junk":
         sys.exit(cmd_setup_spam_to_junk())
+    if args.cmd == "ensure_antispam_defaults":
+        sys.exit(cmd_ensure_antispam_defaults())
     if args.cmd == "secure_rspamd_redis":
         sys.exit(cmd_secure_rspamd_redis())
     if args.cmd == "setup_auto_updates":

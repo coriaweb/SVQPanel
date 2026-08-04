@@ -1218,6 +1218,18 @@ RSPAMDGREYEOF
     # Limpiar el nombre antiguo erróneo si existe de instalaciones previas.
     rm -f /etc/rspamd/local.d/greylisting.conf 2>/dev/null || true
 
+    # Umbrales de acción por defecto del panel: más estrictos que los de
+    # fábrica de Rspamd (4/6/15). A 4+ puntos casi no hay correo legítimo (ir
+    # a Junk es recuperable) y el rechazo a 10 deja margen para no rebotar
+    # correo bueno. Mismo formato que scripts/rspamd_tuning.py (_build_actions):
+    # el admin puede cambiarlos luego desde la vista de ajuste antispam.
+    cat > /etc/rspamd/local.d/actions.conf << 'RSPAMDACTEOF'
+# SVQPanel — umbrales de acción antispam (admin). NO editar a mano.
+"greylist" = 3.00;
+"add header" = 4.00;
+"reject" = 10.00;
+RSPAMDACTEOF
+
     # ── Resolver DNS propio para Rspamd (unbound) ─────────────────────────
     # CLAVE para el antispam: Rspamd necesita resolver DNS (SPF, DKIM, DMARC,
     # listas negras RBL). NO puede usar el 'named' del cluster DNS porque ese es
