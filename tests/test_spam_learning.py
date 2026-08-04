@@ -56,12 +56,17 @@ def test_imap_sieve_conf_elige_segun_version(monkeypatch):
     assert "imapsieve_mailbox1_name = Junk" in sl._imap_sieve_conf()
 
 
-def test_sieve_flag_distingue_spam_y_ham():
+def test_sieve_flag_solo_aprende_spam():
+    # El flag Junk (botón "Basura") entrena spam, pero el flag NonJunk NUNCA
+    # debe entrenar ham: Thunderbird lo pone AUTOMÁTICAMENTE a cada correo
+    # nuevo que su propio clasificador cree bueno, y eso envenenaba el Bayes
+    # del servidor con spam aprendido como legítimo (bug 0.220.1 / update 0132).
     c = sl._SIEVE_LEARN_FLAG
     assert '"copy"' in c                 # pipe :copy requiere el require "copy"
     assert "rspamd-learn-spam.sh" in c   # flag Junk → spam
-    assert "rspamd-learn-ham.sh" in c    # flag NonJunk/NotJunk → ham
-    assert "Junk" in c and "NonJunk" in c
+    assert "rspamd-learn-ham.sh" not in c  # NonJunk automático NO entrena ham
+    # El guard sigue: "NonJunk" contiene "Junk", no debe aprender spam por él.
+    assert 'not string :contains "${flags}" "NonJunk"' in c
 
 
 def test_wrappers_llaman_a_rspamc_learn():

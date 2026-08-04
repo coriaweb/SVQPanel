@@ -54,7 +54,9 @@ _IMAP_SIEVE_CONF_23 = """# SVQPanel — Aprendizaje de spam (IMAPSieve → rspam
 #   a) Mover el correo a la carpeta Junk (Roundcube "marcar spam", arrastrar en
 #      Thunderbird) → COPY/APPEND a Junk → learn_spam. Sacar de Junk → learn_ham.
 #   b) Marcar el FLAG Junk SIN mover (botón "Basura" de Thunderbird en algunas
-#      configs) → reaccionamos al cambio de flag en cualquier carpeta.
+#      configs) → reaccionamos al cambio de flag en cualquier carpeta (solo
+#      para aprender SPAM; el flag NonJunk automático de Thunderbird NO
+#      entrena ham — ver learn-flag.sieve).
 protocol imap {
   mail_plugins = $mail_plugins imap_sieve
 }
@@ -89,7 +91,8 @@ plugin {
 _IMAP_SIEVE_CONF_24 = """# SVQPanel — Aprendizaje de spam (IMAPSieve → rspamc) en Dovecot 2.4. NO editar.
 # Cubre los hábitos de los clientes:
 #   a) Mover correo a Junk → learn-spam ; sacarlo de Junk → learn-ham
-#   b) Marcar el FLAG Junk sin mover → learn-flag decide spam/ham
+#   b) Marcar el FLAG Junk sin mover → learn-flag aprende spam (solo spam:
+#      el NonJunk automático de Thunderbird NO entrena ham)
 protocol imap {
   mail_plugins {
     imap_sieve = yes
@@ -150,9 +153,16 @@ pipe :copy "rspamd-learn-ham.sh" [ "${username}" ];
 """
 
 # Cambio de flag: imap.changedflags contiene los flags que cambiaron. Si entre
-# ellos está Junk/$Junk → el usuario lo marcó como spam (learn_spam). Si el flag
-# que cambió es NonJunk/NotJunk → lo marcó como legítimo (learn_ham). Ignoramos
+# ellos está Junk/$Junk → el usuario lo marcó como spam (learn_spam). Ignoramos
 # otros flags (\Seen, etc.) para no entrenar con cualquier cosa.
+#
+# ⚠️ NUNCA aprender ham desde el flag NonJunk/NotJunk: el filtro antispam
+# PROPIO de Thunderbird pone NonJunk automáticamente a cada correo nuevo que
+# su clasificador cree bueno (sin intervención del usuario), lo que entrenaba
+# el Bayes del servidor con spam como si fuera legítimo y lo dejaba ciego
+# (bug corregido en 0.220.1 / update 0132). El ham se aprende solo por vías
+# humanas inequívocas: sacar un correo de Junk (learn-ham.sieve) y el
+# autolearn de Rspamd (score <= 0.5).
 _SIEVE_LEARN_FLAG = """require ["vnd.dovecot.pipe", "copy", "imapsieve", "environment", "variables", "imap4flags"];
 if environment :matches "imap.user" "*" { set "username" "${1}"; }
 if environment :matches "imap.changedflags" "*" { set "flags" "${1}"; }
@@ -160,9 +170,6 @@ if anyof (string :contains "${flags}" "Junk", string :contains "${flags}" "$Junk
   if not string :contains "${flags}" "NonJunk" {
     pipe :copy "rspamd-learn-spam.sh" [ "${username}" ];
   }
-}
-if anyof (string :contains "${flags}" "NonJunk", string :contains "${flags}" "NotJunk") {
-  pipe :copy "rspamd-learn-ham.sh" [ "${username}" ];
 }
 """
 
