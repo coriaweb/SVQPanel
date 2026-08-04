@@ -1627,6 +1627,13 @@ PYEOF
 // archive: carpeta destino del botón Archivar
 \$config['archive_mbox'] = 'Archive';
 
+// attachment_reminder y newmail_notifier ACTIVOS por defecto: son preferencias
+// por usuario que de fábrica vienen a false → sin esto los plugins no hacen
+// NADA hasta que cada usuario los active a mano. El usuario puede apagarlos
+// en Configuración → Preferencias.
+\$config['attachment_reminder'] = true;
+\$config['newmail_notifier_basic'] = true;
+
 // Tamaño máx. de adjunto por webmail. Acompaña al message_size_limit de Postfix
 // (25 MB por defecto) + margen base64 (~40%). Lo mantiene sincronizado el panel
 // (Configuración → Email → Tamaño máximo de mensaje → WebmailManager.sync_upload_limit).
