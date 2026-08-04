@@ -1485,6 +1485,21 @@ RCDBEOF
 
     echo -e "  ${GREEN}✓ Roundcube ${RC_VERSION} descargado en ${RC_APP_DIR}${NC}"
 
+    # ── Plugin de terceros: authres_status (icono SPF/DKIM/DMARC por correo) ──
+    # No viene con Roundcube. Versión FIJADA (no "latest"): así el install es
+    # reproducible y la subida de versión es un cambio de código consciente.
+    # roundcube_updater preserva plugins/ al actualizar Roundcube.
+    AUTHRES_VER="0.7.1"
+    if [[ ! -d "${RC_APP_DIR}/plugins/authres_status" ]]; then
+        curl -fsSL "https://github.com/pimlie/authres_status/archive/refs/tags/${AUTHRES_VER}.tar.gz" \
+            -o /tmp/authres_status.tar.gz \
+            && tar -xzf /tmp/authres_status.tar.gz -C /tmp/ \
+            && mv "/tmp/authres_status-${AUTHRES_VER}" "${RC_APP_DIR}/plugins/authres_status" \
+            && rm -f /tmp/authres_status.tar.gz \
+            && echo -e "  ${GREEN}✓ Plugin authres_status ${AUTHRES_VER} instalado${NC}" \
+            || echo -e "  ${YELLOW}⚠ No se pudo descargar authres_status (el webmail funciona sin él)${NC}"
+    fi
+
     # NOTA: un servidor nuevo nace en la última versión porque descargamos la
     # release más reciente, pero Roundcube NO viene de apt: a partir de aquí
     # nadie lo actualizaría solo (ni apt, ni unattended-upgrades, ni update.sh).
@@ -1572,8 +1587,11 @@ PYEOF
 
 // Plugins: autologin SVQPanel + utilidades. markasjunk da el botón Spam/No-spam;
 // zipdownload baja varios adjuntos en ZIP; archive añade botón Archivar;
-// attachment_reminder avisa si mencionas un adjunto y no lo pusiste.
-\$config['plugins'] = ['svqpanel_autologin', 'markasjunk', 'zipdownload', 'archive', 'attachment_reminder'];
+// attachment_reminder avisa si mencionas un adjunto y no lo pusiste;
+// newmail_notifier notifica el correo nuevo (escritorio/sonido);
+// authres_status (terceros, lo descarga este install) muestra el icono con el
+// resultado SPF/DKIM/DMARC de cada correo recibido.
+\$config['plugins'] = ['svqpanel_autologin', 'markasjunk', 'zipdownload', 'archive', 'attachment_reminder', 'newmail_notifier', 'authres_status'];
 
 // Skin
 \$config['skin']             = 'elastic';
