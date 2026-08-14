@@ -17,20 +17,13 @@ from datetime import datetime
 from typing import Optional
 from fastapi import Request
 
+# Re-export: la lógica vive en api.utils.client_ip (fuente única). Se mantiene
+# el nombre aquí porque varios módulos hacen `from api.utils.auth_log import
+# client_ip`. NO reimplementar: leer el primer valor del XFF es falsificable.
+from api.utils.client_ip import client_ip  # noqa: F401
+
 AUTH_LOG_PATH = "/opt/svqpanel/logs/auth.log"
 _FALLBACK_LOG = logging.getLogger(__name__)
-
-
-def client_ip(request: Optional[Request]) -> Optional[str]:
-    """Extrae IP del request respetando X-Forwarded-For."""
-    if request is None:
-        return None
-    xff = request.headers.get("x-forwarded-for")
-    if xff:
-        return xff.split(",")[0].strip()
-    if request.client:
-        return request.client.host
-    return None
 
 
 def _sanitize(value: str, max_len: int = 64) -> str:

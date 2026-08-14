@@ -156,7 +156,10 @@ class DNSManager(SystemManager):
             f"@\tIN\tSOA\t{hostname}. hostmaster.{domain}. (\n"
             f"\t\t\t{serial}\t; serial\n"
             f"\t\t\t28800\t\t; refresh\n"
-            f"\t\t\t7200\t\t; retry\n"
+            # retry 1800: lo exigen los checks de DENIC (.de) y de RIPE, que
+            # piden retry < refresh y >= 1800. Con 7200 un slave tardaba 2h en
+            # reintentar tras un AXFR fallido (hestiacp#5030).
+            f"\t\t\t1800\t\t; retry\n"
             f"\t\t\t604800\t\t; expire\n"
             f"\t\t\t86400 )\t\t; minimum TTL\n"
         )
@@ -215,7 +218,9 @@ class DNSManager(SystemManager):
             f"@\tIN\tSOA\t{hostname}. hostmaster.{domain}. (\n",
             f"\t\t\t{serial}\t; serial\n",
             f"\t\t\t28800\t\t; refresh\n",
-            f"\t\t\t7200\t\t; retry\n",
+            # retry 1800: ver comentario en create_zone(). Ambos generadores de
+            # SOA deben coincidir o las zonas quedan inconsistentes.
+            f"\t\t\t1800\t\t; retry\n",
             f"\t\t\t604800\t\t; expire\n",
             f"\t\t\t86400 )\t\t; minimum TTL\n",
             f"\n; Registros generados por SVQPanel\n",

@@ -2,7 +2,13 @@
 
 import logging
 from .base import SystemManager
-from .utils import validate_username, validate_email, get_home_directory, get_web_root
+from .utils import (
+    validate_username,
+    validate_new_username,
+    validate_email,
+    get_home_directory,
+    get_web_root,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -25,9 +31,11 @@ class UserManager(SystemManager):
         Returns:
             {'success': True, 'home_dir': '/home/user', ...}
         """
-        # Validate inputs
-        if not validate_username(username):
-            raise ValueError(f"Invalid username format: {username}")
+        # Validate inputs. En creación se usa el validador estricto: rechaza
+        # además los nombres reservados del sistema/servicios (root, www-data,
+        # postfix, vmail…) para que un cliente no se apropie de esas cuentas.
+        if not validate_new_username(username):
+            raise ValueError(f"Invalid or reserved username: {username}")
 
         if not validate_email(email):
             raise ValueError(f"Invalid email format: {email}")

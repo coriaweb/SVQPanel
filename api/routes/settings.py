@@ -590,11 +590,12 @@ class PanelWhitelistRequest(_BM):
 
 
 def _client_ip(request) -> str:
-    """IP del cliente respetando X-Forwarded-For (nginx la pasa)."""
-    xff = request.headers.get("x-forwarded-for")
-    if xff:
-        return xff.split(",")[0].strip()
-    return request.client.host if request.client else ""
+    """IP del cliente. Delega en el helper único (X-Real-IP, nunca el primer
+    valor del XFF, que es falsificable). Devuelve "" si no se puede determinar:
+    aquí se usa para auto-incluir la IP del admin en la whitelist del panel y el
+    caller ya trata la cadena vacía."""
+    from api.utils.client_ip import client_ip
+    return client_ip(request) or ""
 
 
 @router.get("/settings/panel-whitelist")

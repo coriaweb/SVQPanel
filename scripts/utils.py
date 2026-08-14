@@ -31,11 +31,53 @@ SSL_SIGN_ALGS = (
 SSL_CONF_COMMAND_LINE = f"    ssl_conf_command SignatureAlgorithms {SSL_SIGN_ALGS};\n"
 
 
+# Nombres que NO puede usar un cliente del panel: son cuentas/grupos del sistema
+# o de los servicios que gestionamos. Crear un usuario del panel con uno de estos
+# nombres haría que `useradd` fallara (ya existe) o, peor, que el panel creyera
+# que la cuenta es suya y tocara su home, cuota o permisos. Equivalente al fix de
+# HestiaCP "Added that local usernames can't be used in Hestia" (hestiacp#5134).
+RESERVED_USERNAMES = frozenset({
+    # Cuentas base de Linux
+    "root", "daemon", "bin", "sys", "sync", "games", "man", "lp", "mail", "news",
+    "uucp", "proxy", "backup", "list", "irc", "gnats", "nobody", "systemd",
+    "syslog", "messagebus", "sshd", "ftp", "adm", "tty", "disk", "shadow",
+    "operator", "halt", "shutdown",
+    # Servicios que gestiona el panel
+    "www-data", "nginx", "apache", "apache2", "httpd", "postfix", "dovecot",
+    "vmail", "rspamd", "clamav", "amavis", "opendkim", "postgres", "postgresql",
+    "mysql", "mariadb", "redis", "memcached", "bind", "named", "unbound",
+    "crowdsec", "fail2ban", "certbot", "letsencrypt", "restic", "ttyd",
+    # Propias del panel
+    "svqpanel", "panel", "hestiaweb",
+})
+# Nota: "admin"/"administrator" NO están en la lista a propósito. No son cuentas
+# del sistema en Debian y el install.sh permite elegir ese nombre para el admin
+# del panel (`SVQ_ADMIN_USER`); bloquearlo dejaría instalaciones existentes con
+# un usuario que el panel se niega a recrear o migrar.
+
+
 def validate_username(username: str) -> bool:
-    """Validate Linux username format"""
+    """Validate Linux username format (solo FORMATO).
+
+    ⚠️ No comprueba nombres reservados a propósito: esta función también valida
+    el nombre en operaciones sobre cuentas que YA existen (delete_user,
+    change_password, suspend…). Si rechazara los reservados, un admin llamado
+    `admin` no podría cambiar su propia contraseña. Para CREAR una cuenta usa
+    `validate_new_username()`, que además rechaza los reservados.
+    """
     # Usernames must start with letter/underscore, contain only alphanumeric and underscore
     pattern = r'^[a-zA-Z_][a-zA-Z0-9_-]{2,31}$'
     return bool(re.match(pattern, username))
+
+
+def validate_new_username(username: str) -> bool:
+    """Valida un username para CREAR una cuenta nueva: formato + no reservado.
+
+    Se usa solo en creación; para cuentas existentes ver `validate_username()`.
+    """
+    if not validate_username(username):
+        return False
+    return username.lower() not in RESERVED_USERNAMES
 
 
 def validate_domain(domain: str) -> bool:

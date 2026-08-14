@@ -22,16 +22,10 @@ def _serialize(obj: Any) -> Optional[str]:
         return str(obj)[:8000]
 
 
-def client_ip(request: Optional[Request]) -> Optional[str]:
-    """Extrae la IP origen del request, respetando X-Forwarded-For si existe."""
-    if request is None:
-        return None
-    xff = request.headers.get("x-forwarded-for")
-    if xff:
-        return xff.split(",")[0].strip()
-    if request.client:
-        return request.client.host
-    return None
+# Re-export: la lógica vive en api.utils.client_ip (fuente única). Se mantiene
+# el nombre aquí porque api.routes.firewall lo importa desde este módulo.
+# NO reimplementar: leer el primer valor del XFF es falsificable.
+from api.utils.client_ip import client_ip  # noqa: F401
 
 
 def log_audit(
