@@ -1340,6 +1340,83 @@ def cmd_backfill_caa(dry_run: bool = False) -> int:
         db.close()
 
 
+def cmd_fix_placeholder_ns(dry_run: bool = False) -> int:
+    """Repara las zonas que quedaron con el nameserver PLACEHOLDER
+    (ns1/ns2.svqpanel.local) en vez de los NS reales del panel.
+
+    Origen del bug: al crear un dominio con DNS desde /api/domains, la zona se
+    generaba sin pasar ns1/ns2 (api/routes/domains.py), así que caía al
+    placeholder histórico de dns_manager. Efecto: el registrador delega en los
+    NS de verdad, pero la zona se declara autoritativa para un TLD .local
+    inexistente → el dominio NO propaga (intoDNS: "Missing nameservers").
+
+    Repara dos cosas, por separado:
+      - registros NS con .local  → rompen la delegación (crítico).
+      - zone.soa_ns con .local   → SOA MNAME a un host inexistente (menor).
+    Solo actúa si los NS reales están configurados (settings o cluster): si
+    get_panel_nameservers sigue devolviendo el placeholder, no hay nada mejor
+    que poner y reescribir sería inútil. Idempotente.
+    """
+    from api.models.models_dns import DnsZone, DnsRecord
+    from api.routes.dns import _sync_zone_to_bind, _bump_serial
+    from scripts.dns_manager import get_panel_nameservers, DEFAULT_NS1, DEFAULT_NS2
+
+    db = SessionLocal()
+    try:
+        ns1, ns2 = get_panel_nameservers(db)
+        if ns1 == DEFAULT_NS1 or ns2 == DEFAULT_NS2:
+            logger.warning(
+                "fix_placeholder_ns: el panel NO tiene nameservers reales "
+                "configurados (settings.dns_ns1/ns2 ni nodos del cluster). "
+                "Configúralos antes de reparar; no se toca nada.")
+            return 0
+
+        # Mapa placeholder → NS real, para sustituir cada uno por el que le toca.
+        repl = {f"{DEFAULT_NS1}.": f"{ns1}.", f"{DEFAULT_NS2}.": f"{ns2}."}
+        tocadas = 0
+
+        for z in db.query(DnsZone).order_by(DnsZone.domain_name).all():
+            cambios = []
+
+            malos = [r for r in db.query(DnsRecord).filter(
+                DnsRecord.zone_id == z.id, DnsRecord.record_type == "NS").all()
+                if (r.content or "").rstrip(".") + "." in repl]
+            for r in malos:
+                nuevo = repl[(r.content or "").rstrip(".") + "."]
+                cambios.append(f"NS {r.content} → {nuevo}")
+                if not dry_run:
+                    r.content = nuevo
+
+            if (z.soa_ns or "").rstrip(".") in (DEFAULT_NS1, DEFAULT_NS2):
+                cambios.append(f"SOA {z.soa_ns} → {ns1}")
+                if not dry_run:
+                    z.soa_ns = ns1
+
+            if not cambios:
+                continue
+            tocadas += 1
+            logger.info(f"  {z.domain_name}: {'; '.join(cambios)}")
+            if dry_run:
+                continue
+
+            # Serial nuevo: sin subirlo el esclavo ignora la zona (anti-rollback)
+            # y seguiría sirviendo los NS viejos pese al cambio en la BD.
+            z.serial = _bump_serial(z.serial)
+            db.commit()
+            try:
+                _sync_zone_to_bind(z, db)
+            except Exception as e:
+                logger.warning(f"  {z.domain_name}: no se pudo publicar la zona: {e}")
+
+        if not tocadas:
+            logger.info("fix_placeholder_ns: ninguna zona con NS placeholder")
+        else:
+            logger.info(f"fix_placeholder_ns: zonas {'a reparar' if dry_run else 'reparadas'}={tocadas}")
+        return 0
+    finally:
+        db.close()
+
+
 def cmd_backfill_dkim(dry_run: bool = False) -> int:
     """Genera y publica la clave DKIM de los dominios de correo que no la tienen
     (dkim_enabled=false). Desde v0.214.0 el alta de correo la genera sola; esto
@@ -2146,6 +2223,10 @@ def main():
         help="Genera y publica DKIM en los dominios de correo que no lo tienen (Outlook/Gmail lo exigen)")
     p_dkim.add_argument("--dry-run", action="store_true", help="Solo muestra qué haría")
 
+    p_pns = sub.add_parser("fix_placeholder_ns",
+        help="Repara zonas con el NS placeholder (ns1/ns2.svqpanel.local) que no propagan")
+    p_pns.add_argument("--dry-run", action="store_true", help="Solo muestra qué haría")
+
     sub.add_parser("rebuild_mail_ratelimit",
         help="Regenera rate-limit Rspamd (incl. límite del correo no autenticado de PHP/web)")
     sub.add_parser("setup_spam_learning",
@@ -2339,6 +2420,8 @@ def main():
         sys.exit(cmd_backfill_caa(dry_run=args.dry_run))
     if args.cmd == "backfill_dkim":
         sys.exit(cmd_backfill_dkim(dry_run=args.dry_run))
+    if args.cmd == "fix_placeholder_ns":
+        sys.exit(cmd_fix_placeholder_ns(dry_run=args.dry_run))
     if args.cmd == "migrate_mail_out_ip":
         sys.exit(cmd_migrate_mail_out_ip(dry_run=args.dry_run))
     if args.cmd == "sync_srs_excludes":

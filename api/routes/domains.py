@@ -205,7 +205,7 @@ async def create_domain(
                 from api.models.models_settings import Settings
                 from api.routes.dns import (_build_template_records, _get_server_ipv4,
                                             apply_subdomain_dns)
-                from scripts.dns_manager import DNSManager
+                from scripts.dns_manager import DNSManager, get_panel_nameservers
 
                 # Subdominio con padre en el panel → registro A/AAAA en la zona
                 # padre (no zona separada). Si apply devuelve 'own', no había
@@ -229,9 +229,14 @@ async def create_domain(
 
                 if not handled_as_sub and not existing_zone:
                     ipv4 = _get_server_ipv4(db)
+                    # Nameservers reales del panel (settings → cluster → placeholder).
+                    # Sin esto la zona nace con el placeholder ns1/ns2.svqpanel.local
+                    # y NO propaga: el registrador delega en los NS de verdad pero la
+                    # zona se declara autoritativa para un TLD .local inexistente.
+                    ns1, ns2 = get_panel_nameservers(db)
                     try:
                         dns_mgr = DNSManager()
-                        serial = dns_mgr.create_zone(domain.domain_name, ipv4=ipv4)
+                        serial = dns_mgr.create_zone(domain.domain_name, ipv4=ipv4, ns1=ns1)
                     except PermissionError:
                         from scripts.dns_manager import next_serial
                         serial = next_serial()
@@ -239,12 +244,13 @@ async def create_domain(
                     # ip_address: necesario para que la lista de zonas muestre la
                     # IP (si no, sale "—"). Coherente con el endpoint create_zone.
                     zone = DnsZone(domain_name=domain.domain_name, serial=serial,
-                                   ip_address=ipv4)
+                                   ip_address=ipv4, soa_ns=ns1)
                     db.add(zone)
                     db.commit()
                     db.refresh(zone)
 
-                    default_records = _build_template_records(domain.domain_name, ipv4)
+                    default_records = _build_template_records(domain.domain_name, ipv4,
+                                                             ns1=ns1, ns2=ns2)
                     for r in default_records:
                         db.add(DnsRecord(zone_id=zone.id, **r))
                     db.commit()
