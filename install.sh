@@ -655,6 +655,24 @@ map $http_user_agent $bad_bot {
 NGINXBADBOTSEOF
     fi
 
+    # Exención del reto ACME: los vhosts con dominio canónico (www/non-www)
+    # consultan $canonical_redirect, así que este map DEBE existir o nginx no
+    # arranca. Vale "" durante /.well-known/acme-challenge/ (para que el 301 al
+    # canónico NO se aplique al reto: rompería la emisión de SSL con un 404) y
+    # $host en el resto de peticiones.
+    if [[ ! -f /etc/nginx/conf.d/svqpanel-acme-exempt.conf ]]; then
+        cat > /etc/nginx/conf.d/svqpanel-acme-exempt.conf << 'NGINXACMEEOF'
+# SVQPanel — exime el reto ACME de las redirecciones (nivel http)
+# $canonical_redirect = "" durante /.well-known/acme-challenge/, si no = $host.
+# Lo usan los vhosts para no redirigir la validación de Let's Encrypt: un 301
+# del reto rompe la emisión (404 del token) y la renovación automática.
+map $request_uri $canonical_redirect {
+    ~^/\.well-known/acme-challenge/  "";
+    default                          $host;
+}
+NGINXACMEEOF
+    fi
+
     # stub_status: endpoint interno (solo 127.0.0.1) para el monitor del panel.
     # Expone conexiones activas, accepted/handled/requests, reading/writing/waiting.
     cat > /etc/nginx/conf.d/svqpanel-status.conf << 'NGINXSTATUSEOF'

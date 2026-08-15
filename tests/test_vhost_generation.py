@@ -101,17 +101,44 @@ def test_nginx_redirect_genera_301():
 # Dominio canónico (www / non-www / none) — redirección 301 a la variante elegida
 # ─────────────────────────────────────────────────────────────────────────────
 def test_nginx_canonical_www_por_defecto_redirige_no_www_a_www():
-    # El default del panel es forzar www: dominio.com → www.dominio.com
+    # El default del panel es forzar www: dominio.com → www.dominio.com.
+    # La condición va sobre $canonical_redirect (no $host) para eximir el reto
+    # ACME de la redirección; ver test_nginx_canonical_no_redirige_reto_acme.
     cfg = generate_nginx_config("ejemplo.com", "user1", "8.3")
-    assert "if ($host = ejemplo.com)" in cfg
+    assert 'if ($canonical_redirect = "ejemplo.com")' in cfg
     assert "return 301 $scheme://www.ejemplo.com$request_uri;" in cfg
 
 
 def test_nginx_canonical_non_www_redirige_www_a_raiz():
     cfg = generate_nginx_config("ejemplo.com", "user1", "8.3",
                                 canonical_domain="non-www")
-    assert "if ($host = www.ejemplo.com)" in cfg
+    assert 'if ($canonical_redirect = "www.ejemplo.com")' in cfg
     assert "return 301 $scheme://ejemplo.com$request_uri;" in cfg
+
+
+# ── Regresión: el reto ACME NO debe redirigirse ──────────────────────────────
+# Un 301 del reto (al canónico o a HTTPS) hace que certbot reciba un 404 del
+# token y la emisión de SSL falle. Pasó en producción con un dominio real:
+# "Invalid response from http://www.dominio/.well-known/acme-challenge/…: 404".
+def test_nginx_canonical_no_redirige_reto_acme():
+    # La condición NO puede ir sobre $host: sería siempre cierta, también
+    # durante el reto. Debe usar $canonical_redirect, que el map global pone
+    # a "" mientras se pide /.well-known/acme-challenge/.
+    cfg = generate_nginx_config("ejemplo.com", "user1", "8.3")
+    assert "if ($host = ejemplo.com)" not in cfg
+    assert "$canonical_redirect" in cfg
+
+
+def test_nginx_force_https_no_redirige_reto_acme():
+    # force_https mandaba TODO a https, incluido el reto → rompía las
+    # renovaciones automáticas (Let's Encrypt las valida por el puerto 80).
+    cfg = generate_nginx_config("ejemplo.com", "user1", "8.3",
+                                ssl_enabled=True, force_https=True)
+    pos = cfg.find("return 301 https://$host$request_uri;")
+    assert pos != -1, "debe existir el redirect a HTTPS"
+    # La exención del reto va ANTES del return, o nunca se alcanzaría.
+    exempt = cfg.find("location ^~ /.well-known/acme-challenge/")
+    assert exempt != -1 and exempt < pos
 
 
 def test_nginx_canonical_none_no_redirige():

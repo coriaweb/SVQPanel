@@ -161,6 +161,43 @@ limit_req_status 429;
 '''
 
 
+# ── Exención del reto ACME en la redirección al dominio canónico ─────────────
+# El 301 de dominio canónico (www ↔ non-www) NO debe aplicarse al reto ACME:
+# certbot valida cada identificador en SU propio nombre, y si el reto de la
+# variante no canónica se redirige a la canónica el token no existe allí → 404
+# y la emisión falla. Tampoco debe aplicarse en el redirect a HTTPS (rompería
+# las RENOVACIONES, que se validan por HTTP).
+#
+# Se resuelve con un `map` global: $canonical_redirect vale "" (cadena vacía)
+# cuando la petición es un reto ACME, y $host en cualquier otro caso. Así el
+# `if ($canonical_redirect = "dominio.com")` del vhost no entra durante el reto.
+# Hace falta un map (y no un `location`) porque en nginx los `if` de la fase
+# rewrite se evalúan ANTES que cualquier location.
+ACME_EXEMPT_GLOBAL_CONF = "/etc/nginx/conf.d/svqpanel-acme-exempt.conf"
+ACME_EXEMPT_GLOBAL_CONTENT = '''# SVQPanel — exime el reto ACME de las redirecciones (nivel http)
+# $canonical_redirect = "" durante /.well-known/acme-challenge/, si no = $host.
+# Lo usan los vhosts para no redirigir la validación de Let's Encrypt: un 301
+# del reto rompe la emisión (404 del token) y la renovación automática.
+map $request_uri $canonical_redirect {
+    ~^/\\.well-known/acme-challenge/  "";
+    default                          $host;
+}
+'''
+
+
+def ensure_acme_exempt_global() -> None:
+    """Crea el map global $canonical_redirect. Idempotente.
+
+    Debe existir SIEMPRE que un vhost lo referencie: nginx no arranca si usa
+    una variable de un map inexistente, así que se escribe también al regenerar
+    vhosts (no solo al instalar).
+    """
+    import os
+    if not os.path.isfile(ACME_EXEMPT_GLOBAL_CONF):
+        with open(ACME_EXEMPT_GLOBAL_CONF, "w") as f:
+            f.write(ACME_EXEMPT_GLOBAL_CONTENT)
+
+
 def get_ratelimit_conf_path(domain: str) -> str:
     """Ruta del fichero conf con la zona de rate limit del dominio."""
     return f"/etc/nginx/conf.d/svqpanel-ratelimit-{domain}.conf"
@@ -449,20 +486,28 @@ def _canonical_redirect_block(domain: str, canonical_domain: Optional[str]) -> s
     Se inyecta dentro del server{} (que escucha tanto dominio como www.dominio).
     Usa $host para detectar la variante pedida y redirige a la canónica
     preservando esquema y URI. Devuelve "" si canonical_domain es 'none'/None.
+
+    El reto ACME queda EXENTO de la redirección ($acme_challenge, definido en
+    _acme_exempt_map): certbot valida cada identificador en su propio nombre, y
+    un 301 de dominio.com → www.dominio.com hace que el reto de la variante NO
+    canónica aterrice en la canónica, donde ese token no existe → 404 y la
+    emisión falla ("Invalid response … acme-challenge/…: 404"). La exención va
+    DENTRO del if: en nginx un `if` de la fase rewrite se evalúa antes que
+    cualquier `location`, así que un `location ^~ /.well-known/…` no basta.
     """
     if canonical_domain == "www":
         # dominio.com → www.dominio.com (la variante con www es la canónica)
         return (
-            f"\n    # ── Dominio canónico: forzar www ──\n"
-            f"    if ($host = {domain}) {{\n"
+            f"\n    # ── Dominio canónico: forzar www (excepto el reto ACME) ──\n"
+            f"    if ($canonical_redirect = \"{domain}\") {{\n"
             f"        return 301 $scheme://www.{domain}$request_uri;\n"
             f"    }}\n"
         )
     if canonical_domain == "non-www":
         # www.dominio.com → dominio.com (la variante sin www es la canónica)
         return (
-            f"\n    # ── Dominio canónico: forzar sin www ──\n"
-            f"    if ($host = www.{domain}) {{\n"
+            f"\n    # ── Dominio canónico: forzar sin www (excepto el reto ACME) ──\n"
+            f"    if ($canonical_redirect = \"www.{domain}\") {{\n"
             f"        return 301 $scheme://{domain}$request_uri;\n"
             f"    }}\n"
         )
@@ -622,6 +667,13 @@ def generate_nginx_config(
     # Redirección al dominio canónico (www / non-www). Vacío si 'none'/None o si
     # es un subdominio (no aplica el concepto www).
     canonical_block = "" if is_subdomain else _canonical_redirect_block(domain, canonical_domain)
+    if canonical_block:
+        # El vhost va a usar $canonical_redirect: el map global DEBE existir o
+        # nginx no arranca ("unknown variable"), tumbando TODOS los dominios.
+        try:
+            ensure_acme_exempt_global()
+        except OSError:
+            pass  # sin permisos (tests/dry-run): el install/update lo crea
 
     # Inyección dentro del server{}: primero la plantilla, luego las directivas
     # personalizadas del dominio (pueden complementar/sobrescribir a la plantilla).
@@ -788,10 +840,23 @@ def generate_nginx_config(
         # $server_name al redirigir a https da el primer nombre del bloque (el
         # dominio raíz); para respetar la variante pedida usamos $host. El
         # canonical_block (si aplica) ya redirige a la variante correcta antes.
+        #
+        # El reto ACME se sirve por HTTP y NO se redirige: Let's Encrypt valida
+        # las renovaciones por el puerto 80, y mandarlo a HTTPS antes de tener
+        # (o con) el certificado rompe la renovación automática. Va como
+        # `location ^~` para ganar a los location de regex, y aquí sí funciona
+        # porque el `return` de este server{} no es un `if` de fase rewrite.
         http_block = f"""server {{
     listen {ipv4_listen_http};
     {ipv6_listen_http}
     server_name {server_names};
+
+    # Reto ACME por HTTP (renovaciones): no redirigir a HTTPS ni al canónico.
+    location ^~ /.well-known/acme-challenge/ {{
+        root {public_html};
+        default_type "text/plain";
+        try_files $uri =404;
+    }}
 {canonical_block}    return 301 https://$host$request_uri;
 }}
 """
