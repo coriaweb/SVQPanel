@@ -18,6 +18,16 @@ if [ ! -d /etc/rspamd ]; then
     exit 0
 fi
 
+# Superseded por 0130/0131: si ya está la config buena (unbound en 127.0.0.1:5353),
+# NO la pisamos con la antigua. El named del panel tiene `recursion no`, así que
+# apuntar Rspamd al :53 lo deja sin resolver SPF/DKIM/DMARC/RBL (todo REFUSED).
+# Sin este guard, una instalación limpia pasa por una ventana con el antispam
+# ciego entre este update y el 0130 — y se queda así si el 0130 falla.
+if grep -q '5353' /etc/rspamd/local.d/options.inc 2>/dev/null; then
+    echo "  Ya usa el resolver dedicado (unbound :5353) — no toco nada."
+    exit 0
+fi
+
 # Comprobar que hay un resolver local en 127.0.0.1:53 (BIND del panel)
 if ! ss -lnu 2>/dev/null | grep -q '127.0.0.1:53'; then
     echo "  ⚠ No hay resolver local en 127.0.0.1:53; omito (Rspamd seguirá con el del sistema)."
