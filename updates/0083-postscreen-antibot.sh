@@ -48,6 +48,11 @@ if ! grep -q '^postscreen_greet_action' "$MAIN"; then
 
 # ── SVQPanel: postscreen (portero anti-bot, tests de protocolo) ──
 postscreen_greet_action = enforce
+# 2s y NO el default ${stress?{2}:{6}}s: con 6s la 1a conexion de cada IP nueva se
+# rechaza con 450 y el PASS se registra DESPUES, o sea greylisting de facto. Las
+# granjas grandes (Microsoft/Google) reintentan desde otra IP cada vez, asi que
+# nunca salen del bucle (ver update 0138). Los bots hacen pregreet en <0.4s.
+postscreen_greet_wait = 2s
 postscreen_pipelining_enable = yes
 postscreen_pipelining_action = enforce
 postscreen_non_smtp_command_enable = yes
