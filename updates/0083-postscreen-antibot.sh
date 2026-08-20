@@ -47,12 +47,13 @@ if ! grep -q '^postscreen_greet_action' "$MAIN"; then
     cat >> "$MAIN" << 'PSEOF'
 
 # ── SVQPanel: postscreen (portero anti-bot, tests de protocolo) ──
-# ignore y NO enforce: con enforce, postscreen RECHAZA a toda IP desconocida en su
-# primera conexion (450 4.3.2) pase o no la prueba, y el PASS se registra DESPUES.
-# Eso es greylisting: las granjas grandes (Microsoft/Google) reintentan desde otra
-# IP cada vez, asi que nunca salen del bucle y el correo se retrasa horas. Con
-# ignore la prueba SE HACE y se cachea, pero no rechaza (ver update 0139).
-postscreen_greet_action = ignore
+# enforce rechaza a toda IP desconocida en su primera conexion (450 4.3.2). Eso es
+# greylisting: los emisores pequenos reintentan desde la misma IP y entran al 2o
+# intento, pero las granjas grandes (Microsoft/Google/Amazon SES) reintentan desde
+# otra IP cada vez y nunca salen del bucle → correo retrasado horas. La solucion NO
+# es bajar esta directiva (se probo en 0138 y 0139 y no funciono), sino eximir a
+# esas granjas via allowlist: lo hace el update 0140.
+postscreen_greet_action = enforce
 # 2s en vez del default ${stress?{2}:{6}}s: menos latencia por conexion (ver 0138).
 postscreen_greet_wait = 2s
 postscreen_pipelining_enable = yes
