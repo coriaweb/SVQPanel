@@ -1,7 +1,19 @@
 #!/bin/bash
 # 0138-postscreen-greet-wait.sh
 #
-# Baja postscreen_greet_wait a 2s para que el correo legítimo NO se difiera.
+# Baja postscreen_greet_wait de 6s a 2s (acorta la espera del saludo SMTP).
+#
+# ⚠️ DIAGNÓSTICO ERRÓNEO — ver 0139. Este update se escribió creyendo que greet_wait
+# era la causa de que el correo legítimo se difiriera. NO LO ERA: bajarlo a 2s solo
+# acorta la espera, pero el rechazo se sigue produciendo igual. Medido en producción
+# al día siguiente: 450 rechazos (449 DESPUÉS de este cambio) frente a 221 el día
+# anterior. La causa real es postscreen_greet_action = enforce, que rechaza toda IP
+# desconocida en su PRIMERA conexión pase o no las pruebas → lo arregla el 0139.
+#
+# Se mantiene porque 2s es un valor sano (menos latencia por conexión) y es inocuo,
+# pero por sí solo NO resuelve nada.
+#
+# El análisis original (incorrecto en su conclusión, correcto en los síntomas) era:
 #
 # EL BUG: el update 0083 activó postscreen pero no fijó greet_wait, así que quedó
 # el default de Postfix: ${stress?{2}:{6}}s (6s en operación normal). Con 6s de
@@ -23,10 +35,9 @@
 # 18:42 — 6h30 de retraso. 828 rechazos en un día, 806 de ellos "PASS NEW",
 # repartidos entre 20+ dominios del servidor.
 #
-# EL FIX: greet_wait = 2s. Los emisores legítimos esperan a que el servidor
-# termine de saludar antes de hablar, así que pasan a la primera. Los bots
-# escupen el EHLO de inmediato (en los logs: 0.18-0.37s), así que el pregreet
-# los sigue cazando con margen de sobra.
+# EL FIX QUE SE CREYÓ: greet_wait = 2s, pensando que los emisores legítimos
+# pasarían a la primera. FALSO: el rechazo de la primera conexión no depende de
+# cuánto se espere, sino de greet_action = enforce (ver 0139).
 #
 # Idempotente: si ya está en 2s, no hace nada.
 set -e
