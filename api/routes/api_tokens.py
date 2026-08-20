@@ -66,22 +66,50 @@ class ApiTokenCreated(ApiTokenResponse):
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
+# Un prefijo más corto que esto autoriza medio internet: se rechaza igual que un
+# comodín. /24 en IPv4 (256 hosts) y /48 en IPv6 (la asignación típica de un
+# cliente; su /64 de salida cae dentro).
+_MIN_PREFIX = {4: 24, 6: 48}
+
+
 def _validate_ip(ip: str) -> str:
-    """Valida una IP de la allowlist. Rechaza comodines/rangos peligrosos —misma
-    política que el acceso remoto a MySQL (api/routes/databases.py)."""
+    """Valida una entrada de la allowlist: IP suelta (IPv4/IPv6) o prefijo CIDR.
+
+    Rechaza comodines y rangos demasiado amplios —misma política que el acceso
+    remoto a MySQL (api/routes/databases.py). Se admite CIDR porque muchos
+    clientes salen por una IPv6 SLAAC que rota dentro de su /64: fijar la IP
+    exacta funcionaría hoy y fallaría al rotar.
+    """
     ip = (ip or "").strip()
-    if ip in ("%", "*", "", "0.0.0.0", "0.0.0.0/0", "::/0"):
+    if ip in ("%", "*", "", "0.0.0.0", "0.0.0.0/0", "::/0", "::"):
         raise HTTPException(
             status_code=400,
-            detail="No se permite autorizar TODAS las IPs. Indica una IP concreta.",
+            detail="No se permite autorizar TODAS las IPs. Indica una IP o un prefijo concreto.",
         )
+
+    # IP suelta: se normaliza (2001:0db8::1 → 2001:db8::1) para que la allowlist
+    # no dependa de cómo se escribiera.
     try:
-        addr = ipaddress.ip_address(ip)
+        return str(ipaddress.ip_address(ip))
     except ValueError:
-        raise HTTPException(status_code=400, detail=f"IP no válida: {ip}")
-    if addr.version != 4:
-        raise HTTPException(status_code=400, detail="Solo se admiten IPv4 por ahora.")
-    return str(addr)
+        pass
+
+    # Prefijo CIDR
+    try:
+        net = ipaddress.ip_network(ip, strict=False)
+    except ValueError:
+        raise HTTPException(status_code=400, detail=f"IP o prefijo no válido: {ip}")
+
+    minimo = _MIN_PREFIX[net.version]
+    if net.prefixlen < minimo:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"El prefijo {ip} abarca demasiadas direcciones. "
+                f"Para IPv{net.version} se admite /{minimo} o más específico."
+            ),
+        )
+    return str(net)
 
 
 def _to_response(token: ApiToken, owner: Optional[User] = None) -> dict:

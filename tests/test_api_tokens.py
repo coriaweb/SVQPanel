@@ -82,3 +82,65 @@ def test_allowlist_solo_deja_pasar_las_suyas():
     assert t.ip_allowed("10.0.0.1") is True
     assert t.ip_allowed("8.8.8.8") is False
     assert t.ip_allowed("") is False
+
+
+# ── Allowlist: IPv6 y prefijos CIDR (v0.226.0) ──
+# El caso real que motivó esto: la web de gestión llamaba a la API saliendo por
+# IPv6 y la allowlist, solo IPv4, la rechazaba con un 403.
+IPV6_REAL = "2001:678:ff4:d48d:c525:53d9:5bda:3c5c"
+
+
+def test_allowlist_admite_ipv6_exacta():
+    t = ApiToken(allowed_ips=IPV6_REAL)
+    assert t.ip_allowed(IPV6_REAL) is True
+    assert t.ip_allowed("2001:678:ff4:d48d::1") is False
+
+
+def test_ipv6_se_compara_normalizada_no_como_texto():
+    """La misma IPv6 escrita de dos formas es la misma IP."""
+    t = ApiToken(allowed_ips="2001:0678:0ff4:d48d:c525:53d9:5bda:3c5c")
+    assert t.ip_allowed(IPV6_REAL) is True
+
+
+def test_allowlist_admite_prefijo_cidr():
+    """Un /64 cubre toda la subred: necesario si la IPv6 de salida rota (SLAAC)."""
+    t = ApiToken(allowed_ips="2001:678:ff4:d48d::/64")
+    assert t.ip_allowed(IPV6_REAL) is True
+    assert t.ip_allowed("2001:678:ff4:d48d:ffff:ffff:ffff:ffff") is True
+    assert t.ip_allowed("2001:678:ff4:ffff::1") is False
+
+
+def test_cidr_ipv4():
+    t = ApiToken(allowed_ips="203.0.113.0/24")
+    assert t.ip_allowed("203.0.113.9") is True
+    assert t.ip_allowed("203.0.114.9") is False
+
+
+def test_ipv4_e_ipv6_conviven_en_la_misma_allowlist():
+    t = ApiToken(allowed_ips="185.104.188.71,2001:678:ff4:d48d::/64")
+    assert t.ip_allowed("185.104.188.71") is True
+    assert t.ip_allowed(IPV6_REAL) is True
+    assert t.ip_allowed("8.8.8.8") is False
+
+
+def test_no_hay_cruce_entre_familias():
+    """Una IPv4 no puede colarse por un rango IPv6 ni al revés."""
+    t6 = ApiToken(allowed_ips="2001:678:ff4:d48d::/64")
+    assert t6.ip_allowed("1.2.3.4") is False
+    t4 = ApiToken(allowed_ips="203.0.113.0/24")
+    assert t4.ip_allowed(IPV6_REAL) is False
+
+
+def test_entrada_corrupta_se_ignora_sin_romper():
+    """Una entrada ilegible en BD no debe autorizar ni reventar la petición."""
+    t = ApiToken(allowed_ips="no-es-una-ip," + IPV6_REAL)
+    assert t.ip_allowed(IPV6_REAL) is True
+    t2 = ApiToken(allowed_ips="no-es-una-ip")
+    assert t2.ip_allowed(IPV6_REAL) is False
+
+
+def test_ip_invalida_nunca_pasa():
+    t = ApiToken(allowed_ips="2001:678:ff4:d48d::/64")
+    assert t.ip_allowed("") is False
+    assert t.ip_allowed("no-una-ip") is False
+    assert t.ip_allowed(None) is False

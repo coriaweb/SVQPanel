@@ -10,13 +10,16 @@ usar el JWT del login (que caduca a las 24h y choca con el 2FA). El token:
   - Se MUESTRA en claro una sola vez al crearlo; en BD solo se guarda el HASH
     (mismo pbkdf2-sha256 que las contraseñas en models_user.py).
   - Caducidad opcional (`expires_at`), revocable (`is_revoked`).
-  - Allowlist de IPs opcional (`allowed_ips`): solo esas IPs pueden usar el token.
+  - Allowlist opcional (`allowed_ips`): solo esas IPs pueden usar el token. Admite
+    IPv4 e IPv6, sueltas o como prefijo CIDR (`2001:db8::/64`) — necesario porque
+    muchos clientes salen por una IPv6 SLAAC que rota dentro de su /64.
 
 El secreto en claro tiene el prefijo `svq_` para distinguirlo de un JWT (que
 empieza por `eyJ`) en la capa de autenticación, sin colisión posible.
 """
 
 import hashlib
+import ipaddress
 import secrets
 from datetime import datetime
 
@@ -94,8 +97,31 @@ class ApiToken(Base):
         return (not self.is_revoked) and (not self.is_expired())
 
     def ip_allowed(self, ip: str) -> bool:
-        """True si la IP puede usar el token. Sin allowlist → cualquier IP."""
+        """True si la IP puede usar el token. Sin allowlist → cualquier IP.
+
+        Cada entrada puede ser una IP suelta (IPv4/IPv6) o un prefijo CIDR. Se
+        comparan objetos de `ipaddress`, no cadenas: dos formas de escribir la
+        misma IPv6 (`2001:db8::1` y `2001:0db8:0000::0001`) son la misma IP, y
+        una comparación textual las daría por distintas.
+        """
         if not self.allowed_ips:
             return True
-        allowed = {p.strip() for p in self.allowed_ips.split(",") if p.strip()}
-        return ip in allowed if allowed else True
+
+        entries = [p.strip() for p in self.allowed_ips.split(",") if p.strip()]
+        if not entries:
+            return True
+
+        try:
+            addr = ipaddress.ip_address((ip or "").strip())
+        except ValueError:
+            return False  # sin IP válida no se puede autorizar
+
+        for entry in entries:
+            try:
+                # strict=False: acepta "2001:db8::1/64" además de "2001:db8::/64"
+                net = ipaddress.ip_network(entry, strict=False)
+            except ValueError:
+                continue  # entrada corrupta en BD: se ignora, no autoriza
+            if addr.version == net.version and addr in net:
+                return True
+        return False

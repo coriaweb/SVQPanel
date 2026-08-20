@@ -122,9 +122,13 @@
             v-model="editForm.allowed_ips"
             class="form-control"
             rows="2"
-            placeholder="Una IPv4 por línea o separadas por comas. Vacío = cualquier IP."
+            placeholder="Una por línea o separadas por comas. Vacío = cualquier IP.&#10;Ej: 203.0.113.9 · 2001:db8::1 · 2001:db8:aaaa:bbbb::/64"
           ></textarea>
-          <small class="text-muted">Si indicas IPs, el token <strong>solo</strong> funcionará desde ellas.</small>
+          <small class="text-muted">
+            Si indicas IPs, el token <strong>solo</strong> funcionará desde ellas.
+            Admite IPv4, IPv6 y prefijos CIDR — útil si el origen sale por una IPv6
+            que rota: autoriza su <code>/64</code> en vez de la dirección exacta.
+          </small>
         </div>
 
         <div class="alert alert-info small">
@@ -165,9 +169,13 @@
             v-model="form.allowed_ips"
             class="form-control"
             rows="2"
-            placeholder="Una IPv4 por línea o separadas por comas. Vacío = cualquier IP."
+            placeholder="Una por línea o separadas por comas. Vacío = cualquier IP.&#10;Ej: 203.0.113.9 · 2001:db8::1 · 2001:db8:aaaa:bbbb::/64"
           ></textarea>
-          <small class="text-muted">Si indicas IPs, el token <strong>solo</strong> funcionará desde ellas.</small>
+          <small class="text-muted">
+            Si indicas IPs, el token <strong>solo</strong> funcionará desde ellas.
+            Admite IPv4, IPv6 y prefijos CIDR — útil si el origen sale por una IPv6
+            que rota: autoriza su <code>/64</code> en vez de la dirección exacta.
+          </small>
         </div>
 
         <div class="alert alert-warning small">
