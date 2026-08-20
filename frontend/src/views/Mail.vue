@@ -1127,16 +1127,8 @@
                 <PasswordField v-model="newMailboxForm.password" placeholder="Contraseña del buzón" />
               </div>
               <div class="mb-3">
-                <label class="form-label">Cuota (MB)</label>
-                <select class="form-select" v-model.number="newMailboxForm.quota_mb">
-                  <option :value="0">Sin límite</option>
-                  <option :value="256">256 MB</option>
-                  <option :value="512">512 MB</option>
-                  <option :value="1024">1 GB</option>
-                  <option :value="2048">2 GB</option>
-                  <option :value="5120">5 GB</option>
-                  <option :value="10240">10 GB</option>
-                </select>
+                <label class="form-label">Cuota del buzón</label>
+                <QuotaSelect v-model="newMailboxForm.quota_mb" />
               </div>
               <div class="mb-0">
                 <label class="form-label">Límite de envío (correos/hora)</label>
@@ -1208,16 +1200,9 @@
           <form @submit.prevent="saveEditMailbox">
             <div class="modal-body">
               <div class="mb-3">
-                <label class="form-label">Cuota (MB)</label>
-                <select class="form-select" v-model.number="editForm.quota_mb">
-                  <option :value="0">Sin límite</option>
-                  <option :value="256">256 MB</option>
-                  <option :value="512">512 MB</option>
-                  <option :value="1024">1 GB</option>
-                  <option :value="2048">2 GB</option>
-                  <option :value="5120">5 GB</option>
-                  <option :value="10240">10 GB</option>
-                </select>
+                <label class="form-label">Cuota del buzón</label>
+                <QuotaSelect v-model="editForm.quota_mb" />
+                <div class="form-text">Uso actual: {{ fmtMB(editTarget?.disk_usage_mb) }}</div>
               </div>
               <div class="mb-0">
                 <label class="form-label">Límite de envío (correos/hora)</label>
@@ -1508,10 +1493,11 @@ import { ref, reactive, computed, onMounted, onUnmounted } from 'vue'
 import { useMainStore } from '../stores/useMainStore'
 import api from '../services/api'
 import PasswordField from '../components/PasswordField.vue'
+import QuotaSelect from '../components/QuotaSelect.vue'
 
 export default {
   name: 'Mail',
-  components: { PasswordField },
+  components: { PasswordField, QuotaSelect },
   setup() {
     const store = useMainStore()
 
