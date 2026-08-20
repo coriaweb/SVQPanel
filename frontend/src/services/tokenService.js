@@ -14,6 +14,15 @@ export default {
     return api.post('/api/tokens', data)
   },
 
+  // Editar un token existente: nombre, caducidad y allowlist de IPs.
+  // El secreto NO cambia: los clientes que ya lo usan siguen funcionando.
+  // data = { name?, expires_at?: string|null, allowed_ips?: string[] }
+  // Ojo: enviar allowed_ips: [] o expires_at: null QUITA la restricción;
+  // omitir el campo la deja como estaba.
+  async update(tokenId, data) {
+    return api.put(`/api/tokens/${tokenId}`, data)
+  },
+
   // Revocar (desactivar) un token. Irreversible.
   async revoke(tokenId) {
     return api.delete(`/api/tokens/${tokenId}`)

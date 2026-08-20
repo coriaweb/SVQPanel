@@ -3,7 +3,8 @@ Rutas de gestión de API tokens (acceso programático a la API del panel).
 
 Un API token hereda el rol y el alcance del usuario que lo crea (ver
 api/dependencies.py). Aquí solo se gestiona su ciclo de vida: crear (devuelve el
-secreto en claro UNA vez), listar (sin el secreto) y revocar.
+secreto en claro UNA vez), listar (sin el secreto), editar (nombre, caducidad y
+allowlist de IPs — nunca el secreto) y revocar.
 
 Permisos: cada usuario gestiona SOLO sus tokens; un admin puede gestionar los de
 cualquiera (mismo patrón de propiedad que el resto del panel).
@@ -30,6 +31,21 @@ class ApiTokenCreate(BaseModel):
     name: str = Field(..., min_length=1, max_length=64)
     expires_at: Optional[datetime] = None
     allowed_ips: Optional[List[str]] = None  # IPv4; vacío/None = sin restricción
+
+
+class ApiTokenUpdate(BaseModel):
+    """Campos editables de un token ya creado.
+
+    Ninguno afecta al secreto: el token sigue siendo el mismo y los clientes que
+    ya lo usan no tienen que cambiar nada. Se distingue "no tocar el campo"
+    (ausente) de "dejarlo vacío": mandar `allowed_ips: []` o `expires_at: null`
+    QUITA la restricción, mandar el campo ausente la deja como estaba.
+    """
+    name: Optional[str] = Field(None, min_length=1, max_length=64)
+    expires_at: Optional[datetime] = None
+    allowed_ips: Optional[List[str]] = None
+
+    model_config = {"extra": "forbid"}
 
 
 class ApiTokenResponse(BaseModel):
@@ -155,6 +171,63 @@ async def create_token(
     data = _to_response(token, current)
     data["secret"] = secret  # única vez
     return data
+
+
+@router.put("/tokens/{token_id}", response_model=ApiTokenResponse, tags=["API Tokens"])
+async def update_token(
+    token_id: int,
+    payload: ApiTokenUpdate,
+    current: User = Depends(require_auth),
+    db: Session = Depends(get_db),
+):
+    """Edita un token ya creado: nombre, caducidad y allowlist de IPs.
+
+    No se puede cambiar el secreto (en BD solo está el hash); para eso hay que
+    revocar y crear otro. Un token REVOCADO no se edita (la revocación es
+    definitiva); uno caducado sí, porque alargarle la fecha es justo la forma de
+    recuperarlo sin repartir un secreto nuevo a los clientes que ya lo usan.
+    """
+    token = _get_token_or_404(token_id, db)
+    _check_access(current, token)
+
+    if token.is_revoked:
+        raise HTTPException(
+            status_code=400,
+            detail="Un token revocado no se puede editar. Crea uno nuevo.",
+        )
+
+    fields = payload.model_dump(exclude_unset=True)
+
+    if "name" in fields:
+        name = (fields["name"] or "").strip()
+        if not name:
+            raise HTTPException(status_code=400, detail="El nombre no puede estar vacío.")
+        token.name = name
+
+    if "allowed_ips" in fields:
+        ips = fields["allowed_ips"]
+        if ips:
+            token.allowed_ips = ",".join(_validate_ip(ip) for ip in ips)
+        else:
+            token.allowed_ips = None      # sin restricción de IP
+
+    if "expires_at" in fields:
+        exp = fields["expires_at"]
+        if exp is None:
+            token.expires_at = None       # deja de caducar
+        else:
+            exp = exp.replace(tzinfo=None)
+            if exp <= datetime.utcnow():
+                raise HTTPException(
+                    status_code=400, detail="La fecha de caducidad debe ser futura."
+                )
+            token.expires_at = exp
+
+    db.commit()
+    db.refresh(token)
+
+    owner = db.query(User).filter(User.id == token.user_id).first()
+    return _to_response(token, owner)
 
 
 @router.delete("/tokens/{token_id}", tags=["API Tokens"])

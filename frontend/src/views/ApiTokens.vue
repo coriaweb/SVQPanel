@@ -74,18 +74,71 @@
                   <span v-else class="badge bg-success">Activo</span>
                 </td>
                 <td>
-                  <button
-                    class="btn btn-sm btn-outline-danger"
-                    :disabled="t.is_revoked"
-                    @click="confirmRevoke(t)"
-                    title="Revocar"
-                  >
-                    <i class="bi bi-trash"></i>
-                  </button>
+                  <div class="d-flex gap-1">
+                    <button
+                      class="btn btn-sm btn-outline-secondary"
+                      :disabled="t.is_revoked"
+                      @click="openEdit(t)"
+                      title="Editar nombre, IPs y caducidad"
+                    >
+                      <i class="bi bi-pencil"></i>
+                    </button>
+                    <button
+                      class="btn btn-sm btn-outline-danger"
+                      :disabled="t.is_revoked"
+                      @click="confirmRevoke(t)"
+                      title="Revocar"
+                    >
+                      <i class="bi bi-trash"></i>
+                    </button>
+                  </div>
                 </td>
               </tr>
             </tbody>
           </table>
+        </div>
+      </div>
+    </div>
+
+    <!-- Modal: editar token -->
+    <div v-if="showEdit" class="modal-backdrop-custom" @click.self="showEdit = false">
+      <div class="modal-card">
+        <h4 class="mb-3"><i class="bi bi-pencil"></i> Editar token</h4>
+
+        <div class="mb-3">
+          <label class="form-label">Nombre</label>
+          <input v-model="editForm.name" class="form-control" maxlength="64" />
+        </div>
+
+        <div class="mb-3">
+          <label class="form-label">Caducidad</label>
+          <input v-model="editForm.expires_at" type="date" class="form-control" />
+          <small class="text-muted">Vacío = no caduca.</small>
+        </div>
+
+        <div class="mb-3">
+          <label class="form-label">IPs permitidas</label>
+          <textarea
+            v-model="editForm.allowed_ips"
+            class="form-control"
+            rows="2"
+            placeholder="Una IPv4 por línea o separadas por comas. Vacío = cualquier IP."
+          ></textarea>
+          <small class="text-muted">Si indicas IPs, el token <strong>solo</strong> funcionará desde ellas.</small>
+        </div>
+
+        <div class="alert alert-info small">
+          <i class="bi bi-info-circle me-1"></i>
+          El secreto <strong>no cambia</strong>: los scripts que ya usan este token
+          siguen funcionando sin tocar nada.
+        </div>
+
+        <div class="d-flex justify-content-end gap-2">
+          <button class="btn btn-secondary" @click="showEdit = false">Cancelar</button>
+          <button class="btn btn-primary" :disabled="editing || !editForm.name.trim()" @click="submitEdit">
+            <span v-if="editing" class="spinner-border spinner-border-sm me-1"></span>
+            Guardar cambios
+          </button>
         </div>
       </div>
     </div>
@@ -173,6 +226,11 @@ export default {
     const creating = ref(false)
     const form = ref({ name: '', expires_at: '', allowed_ips: '' })
 
+    const showEdit = ref(false)
+    const editing = ref(false)
+    const editTarget = ref(null)
+    const editForm = ref({ name: '', expires_at: '', allowed_ips: '' })
+
     const createdSecret = ref('')
     const copied = ref(false)
 
@@ -233,6 +291,49 @@ export default {
       copied.value = false
     }
 
+    const openEdit = (t) => {
+      editTarget.value = t
+      editForm.value = {
+        name: t.name || '',
+        // <input type="date"> quiere YYYY-MM-DD, no un ISO completo
+        expires_at: t.expires_at ? String(t.expires_at).slice(0, 10) : '',
+        allowed_ips: (t.allowed_ips || []).join('\n'),
+      }
+      showEdit.value = true
+    }
+
+    const submitEdit = async () => {
+      editing.value = true
+      try {
+        const ips = editForm.value.allowed_ips
+          .split(/[\n,]+/).map(s => s.trim()).filter(Boolean)
+        // Se mandan siempre: así vaciar el campo QUITA la restricción (el
+        // backend distingue ausente de vacío, pero este modal edita todo).
+        const payload = {
+          name: editForm.value.name.trim(),
+          allowed_ips: ips,
+        }
+        // La caducidad solo viaja si la has tocado: reenviar la fecha original
+        // de un token ya caducado haría que el backend lo rechazase por pasada,
+        // dejándote sin poder editarle las IPs.
+        const originalExp = editTarget.value.expires_at
+          ? String(editTarget.value.expires_at).slice(0, 10) : ''
+        if (editForm.value.expires_at !== originalExp) {
+          payload.expires_at = editForm.value.expires_at
+            ? new Date(editForm.value.expires_at).toISOString()
+            : null
+        }
+        await tokenService.update(editTarget.value.id, payload)
+        showEdit.value = false
+        store.showNotification('Token actualizado', 'success')
+        await load()
+      } catch (e) {
+        store.showNotification(`Error actualizando token: ${e.message}`, 'error')
+      } finally {
+        editing.value = false
+      }
+    }
+
     const confirmRevoke = async (t) => {
       if (!confirm(`¿Revocar el token "${t.name}"? Dejará de funcionar al instante y no se puede deshacer.`)) return
       try {
@@ -249,6 +350,7 @@ export default {
     return {
       tokens, loading, selectedUser, isAdmin,
       showCreate, creating, form, openCreate, submitCreate,
+      showEdit, editing, editForm, editTarget, openEdit, submitEdit,
       createdSecret, copied, copySecret, closeSecret,
       confirmRevoke, load, fmtDate,
     }
