@@ -1,8 +1,8 @@
 #!/bin/bash
 # 0140-postscreen-allowlist-grandes.sh
 #
-# Allowlist de las granjas de correo grandes en postscreen: Microsoft/Outlook,
-# Google/Gmail y Amazon SES entran sin pasar por el portero.
+# Allowlist en postscreen de los proveedores que rotan IP en cada reintento:
+# Microsoft/Outlook, Google/Gmail, Amazon SES, register.it, srv2.de y Sophos.
 #
 # EL PROBLEMA (medido en producción, no supuesto):
 # postscreen rechaza a toda IP desconocida en su primera conexión con
@@ -42,9 +42,19 @@
 #   dig TXT _spf.google.com              → Google
 #   dig TXT amazonses.com                → Amazon SES
 # Verificado además por rDNS: 52.101.94.128 → mail-…outbound.protection.outlook.com
+# Para los proveedores sin SPF útil, por rDNS + whois del inetnum:
+#   81.88.48.40  → authsmtp17.register.it   (inetnum REGISTERIT)
+#   193.169.180.15 → mail17-15.srv2.de      (inetnum NET-UM-OPTIMIZELY-1)
+#   94.140.18.100 → ix-euc1.prod.hydra.sophos.com
+#
+# ⚠️ LECCIÓN APRENDIDA: la primera versión puso solo 2 de los 12 rangos del SPF de
+# Amazon SES, y a las pocas horas se coló un rechazo real de 54.240.65.34 — que cae
+# en 54.240.64.0/18, un /18 CONTIGUO al que sí estaba pero distinto. Al ampliar esta
+# lista, copiar el SPF ENTERO, no los rangos que parezcan suficientes.
 #
 # MANTENIMIENTO: estos rangos cambian de tanto en tanto. Si en el futuro vuelve a
 # aparecer correo diferido de estas granjas, recomprobar los SPF y ampliar la lista.
+# Para detectarlo: buscar en mail.log remitentes con >=3 rechazos 450 y 0 entregas.
 #
 # Idempotente y no interactivo. Reversible: basta borrar el fichero de la allowlist
 # y quitar la referencia en main.cf.
@@ -116,9 +126,36 @@ cat > "$ALLOW" << 'CIDREOF'
 2c0f:fb50:4000::/36     permit
 2c0f:fb50:4864::/56     permit
 
-# ── Amazon SES (amazonses.com) ──
+# ── Amazon SES (amazonses.com) — SPF COMPLETO ──
+# OJO: son 12 rangos, no 2. La primera versión de este update solo puso
+# 54.240.0.0/18 y 76.223.176.0/20, y se coló un rechazo real de 54.240.65.34
+# (a65-34.smtp-out.amazonses.com), que cae en 54.240.64.0/18 — otro /18 distinto.
+199.255.192.0/22        permit
+199.127.232.0/22        permit
 54.240.0.0/18           permit
+54.240.64.0/18          permit
+69.169.224.0/20         permit
+23.249.208.0/20         permit
+23.251.224.0/19         permit
 76.223.176.0/20         permit
+76.223.128.0/19         permit
+216.221.160.0/19        permit
+206.55.144.0/20         permit
+24.110.64.0/18          permit
+
+# ── Otros proveedores que también rotan IP en cada reintento ──
+# Mismo mecanismo que las granjas grandes: cada reintento llega desde una IP
+# distinta de su pool, así que nunca salen de "IP nueva". Verificados por rDNS
+# sobre rechazos reales observados en producción.
+
+# register.it (authsmtpNN.register.it) — correo de empresa italiano/español
+81.88.48.0/20           permit
+
+# srv2.de / Optimizely (mail17-NN.srv2.de) — envíos transaccionales (Makro…)
+193.169.180.0/23        permit
+
+# Sophos Email Security (prod.hydra.sophos.com) — pasarela antispam corporativa
+94.140.16.0/20          permit
 CIDREOF
 
 chmod 644 "$ALLOW"
@@ -153,6 +190,6 @@ if ! systemctl is-active --quiet postfix; then
     exit 1
 fi
 
-echo "  ✓ allowlist activa (Microsoft + Google + Amazon SES)"
+echo "  ✓ allowlist activa (Microsoft + Google + Amazon SES + register.it/srv2.de/Sophos)"
 echo "✓ 0140: las granjas grandes ya no se difieren"
 exit 0
