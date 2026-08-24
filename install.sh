@@ -1049,8 +1049,11 @@ MASTEREOF
     echo -e "  ${YELLOW}→ Instalando Dovecot...${NC}"
     # dovecot-sieve: necesario para el aprendizaje de spam (IMAPSieve dispara
     # rspamc learn_spam/learn_ham al mover correos a/desde la carpeta Junk).
+    # dovecot-managesieved: servicio ManageSieve (4190) que permite al usuario
+    # EDITAR sus filtros desde el webmail (Roundcube → Configuración → Filtros).
+    # Sin él, dovecot-sieve sólo sirve para los scripts globales del sistema.
     apt-get install -y -qq dovecot-core dovecot-imapd dovecot-pop3d dovecot-lmtpd \
-        dovecot-sieve
+        dovecot-sieve dovecot-managesieved
 
     # Usuario vmail uid/gid 5000 — propietario de todos los buzones
     groupadd -g 5000 vmail 2>/dev/null || true
@@ -1147,6 +1150,47 @@ namespace inbox {
   }
 }
 DOVEMBOXEOF
+
+    # ManageSieve: filtros de correo del usuario desde el webmail (Roundcube →
+    # Configuración → Filtros). Mismo drop-in que updates/0142.
+    # ⚠️ En Dovecot 2.4 el servicio NO arranca si 'sieve' no está en protocols,
+    # aunque dovecot-managesieved esté instalado.
+    # ⚠️ El sieve_script 'personal' es imprescindible: sin él, ManageSieve guarda
+    # los filtros del usuario en un script que NUNCA se ejecuta en la entrega
+    # (el cliente crea reglas, las ve guardadas, y no hacen nada).
+    # Los scripts globales 'before' (spam-to-junk, learn-*) se ejecutan ANTES que
+    # el personal, así que el antispam y el Bayes mandan sobre los filtros.
+    cat > /etc/dovecot/conf.d/92-svqpanel-managesieve.conf << 'DOVESIEVEEOF'
+# SVQPanel — ManageSieve: filtros de correo del usuario desde el webmail.
+# NO editar a mano (lo gestiona install.sh y updates/0142).
+protocols {
+  sieve = yes
+}
+
+# Listener SOLO en localhost: lo consume Roundcube, que corre en esta máquina.
+# No se expone a Internet (sin firewall que abrir ni jail de fail2ban).
+# ⚠️ Dovecot 2.4: la restricción de IP va en `listen` a nivel de SERVICE. La
+# directiva `address` dentro de inet_listener (sintaxis 2.3) ya NO existe y hace
+# que Dovecot aborte con "Unknown setting: address".
+# ⚠️ El paquete instala su propio 20-managesieve.conf que abre 4190 y ADEMÁS 2000
+# (sieve_deprecated) en todas las interfaces. Este drop-in (92-, se lee después)
+# los sobreescribe: fija listen a localhost y apaga el 2000 con port = 0.
+service managesieve-login {
+  listen = 127.0.0.1
+  inet_listener sieve {
+    port = 4190
+  }
+  inet_listener sieve_deprecated {
+    port = 0
+  }
+}
+
+sieve_script personal {
+  type = personal
+  path = ~/sieve
+  active_path = ~/.dovecot.sieve
+}
+DOVESIEVEEOF
 
     # Dovecot 2.4 (Debian 13/trixie) cambió la sintaxis de varios ajustes que la
     # config de arriba escribe en formato 2.3 (Debian 12). Sin traducirlos, el
@@ -1608,8 +1652,9 @@ PYEOF
 // attachment_reminder avisa si mencionas un adjunto y no lo pusiste;
 // newmail_notifier notifica el correo nuevo (escritorio/sonido);
 // authres_status (terceros, lo descarga este install) muestra el icono con el
-// resultado SPF/DKIM/DMARC de cada correo recibido.
-\$config['plugins'] = ['svqpanel_autologin', 'markasjunk', 'zipdownload', 'archive', 'attachment_reminder', 'newmail_notifier', 'authres_status'];
+// resultado SPF/DKIM/DMARC de cada correo recibido;
+// managesieve da el botón "Filtros" (reglas del tipo "si viene de X → carpeta Y").
+\$config['plugins'] = ['svqpanel_autologin', 'markasjunk', 'zipdownload', 'archive', 'attachment_reminder', 'newmail_notifier', 'authres_status', 'managesieve'];
 
 // Skin
 \$config['skin']             = 'elastic';
@@ -1651,6 +1696,16 @@ PYEOF
 // en Configuración → Preferencias.
 \$config['attachment_reminder'] = true;
 \$config['newmail_notifier_basic'] = true;
+
+// ── managesieve: filtros de correo del usuario (Configuración → Filtros) ──
+// Habla con el ManageSieve de Dovecot en localhost:4190 (no expuesto a Internet),
+// por eso no hace falta TLS: la conexión no sale de la máquina.
+\$config['managesieve_host'] = 'localhost:4190';
+\$config['managesieve_usetls'] = false;
+\$config['managesieve_script_name'] = 'managesieve';
+// Editor por formulario, no el código Sieve en crudo (es lo que espera un
+// usuario final que sólo quiere "si viene de X, mándalo a la carpeta Y").
+\$config['managesieve_raw_editor'] = false;
 
 // Tamaño máx. de adjunto por webmail. Acompaña al message_size_limit de Postfix
 // (25 MB por defecto) + margen base64 (~40%). Lo mantiene sincronizado el panel
