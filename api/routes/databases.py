@@ -17,10 +17,12 @@ Endpoints:
   PUT    /api/databases/{id}         → actualizar quota/dominio/estado
   DELETE /api/databases/{id}         → eliminar BD y usuario de MariaDB
   PUT    /api/databases/{id}/password → cambiar contraseña del usuario MariaDB
+  GET    /api/databases/{id}/export   → descargar volcado .sql.gz (streaming, 0 disco)
   GET    /api/databases/charsets     → listar charsets/collations disponibles
 """
 
 import json
+import logging
 import os
 import re
 import secrets
@@ -29,9 +31,11 @@ import hashlib
 import subprocess
 import time
 import uuid
+from datetime import datetime
 from typing import List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, status, Query
+from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
 from sqlalchemy.exc import IntegrityError
 
@@ -47,6 +51,8 @@ from api.schemas.database_schemas import (
     DatabaseUserCreate, DatabaseUserUpdate, DatabaseUserResponse,
 )
 from api.dependencies import get_current_user, require_admin
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
@@ -134,6 +140,34 @@ def _mariadb_binary() -> str:
             return found
     raise Exception(
         "Cliente MariaDB/MySQL no encontrado. "
+        "Ejecuta en el servidor: apt install -y mariadb-client"
+    )
+
+
+def _mariadb_dump_binary() -> str:
+    """
+    Ruta al binario de volcado (mariadb-dump o mysqldump).
+
+    Misma estrategia que _mariadb_binary(): rutas explícitas primero, porque el
+    PATH bajo systemd es más restrictivo que el interactivo.
+    """
+    import shutil
+    explicit_paths = [
+        "/usr/bin/mariadb-dump",
+        "/usr/bin/mysqldump",
+        "/usr/local/bin/mariadb-dump",
+        "/usr/local/bin/mysqldump",
+        "/opt/mariadb/bin/mariadb-dump",
+    ]
+    for path in explicit_paths:
+        if os.path.isfile(path) and os.access(path, os.X_OK):
+            return path
+    for binary in ("mariadb-dump", "mysqldump"):
+        found = shutil.which(binary)
+        if found:
+            return found
+    raise Exception(
+        "Cliente de volcado MariaDB/MySQL no encontrado. "
         "Ejecuta en el servidor: apt install -y mariadb-client"
     )
 
@@ -522,6 +556,116 @@ def get_database(
 
     _assert_can_manage(current_user, client_db.user_id, db)
     return client_db
+
+
+@router.get("/databases/{db_id}/export", tags=["Databases"])
+def export_database(
+    db_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """
+    Descarga un volcado .sql.gz de la base de datos, directo al navegador.
+
+    IMPORTANTE — no se escribe NADA en disco del servidor. El dump se
+    transmite en streaming: mariadb-dump escribe en un pipe, lo comprimimos
+    por trozos con gzip y lo enviamos según se genera. Así el consumo de
+    disco es 0 bytes sea cual sea el tamaño de la BD (a diferencia de otros
+    paneles, que primero materializan el .sql y pueden llenar la partición).
+    """
+    _check_mariadb_enabled()
+
+    client_db = db.query(ClientDatabase).filter(ClientDatabase.id == db_id).first()
+    if not client_db:
+        raise HTTPException(status_code=404, detail="Base de datos no encontrada")
+
+    _assert_can_manage(current_user, client_db.user_id, db)
+
+    if client_db.is_suspended:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="La base de datos está suspendida. Reactívala para poder exportarla.",
+        )
+
+    db_name = client_db.db_name
+    if not re.fullmatch(r"[A-Za-z0-9_]+", db_name or ""):
+        # Defensa en profundidad: el nombre va como argv (no shell), pero
+        # nunca ejecutamos un identificador que no cumpla la convención.
+        raise HTTPException(status_code=400, detail="Nombre de base de datos no válido")
+
+    try:
+        binary = _mariadb_dump_binary()
+    except Exception as exc:
+        raise HTTPException(status_code=503, detail=str(exc))
+
+    cmd = [
+        binary,
+        f"--host={MARIADB_HOST}",
+        f"--user={MARIADB_PANEL_USER}",
+        f"--password={MARIADB_PANEL_PASSWORD}",
+        "--single-transaction",   # consistente y sin bloquear al cliente
+        "--quick",                # fila a fila: no carga la tabla en RAM
+        "--routines",
+        "--triggers",
+        "--default-character-set=utf8mb4",
+        db_name,
+    ]
+
+    filename = f"{db_name}-{datetime.utcnow().strftime('%Y%m%d-%H%M%S')}.sql.gz"
+
+    def _stream():
+        """Genera el .gz por trozos, sin materializar el dump en memoria ni en disco."""
+        import gzip as _gzip
+        import io as _io
+
+        buf = _io.BytesIO()
+        gz = _gzip.GzipFile(fileobj=buf, mode="wb", compresslevel=6)
+        proc = subprocess.Popen(
+            cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, bufsize=1024 * 1024,
+        )
+        try:
+            while True:
+                chunk = proc.stdout.read(1024 * 1024)
+                if not chunk:
+                    break
+                gz.write(chunk)
+                data = buf.getvalue()
+                if data:
+                    buf.seek(0)
+                    buf.truncate(0)
+                    yield data
+            gz.close()
+            tail = buf.getvalue()
+            if tail:
+                yield tail
+
+            proc.wait(timeout=60)
+            if proc.returncode != 0:
+                err = (proc.stderr.read() or b"").decode(errors="replace")
+                # La respuesta ya va en curso (200 + headers enviados): no podemos
+                # convertirla en un HTTP 500. Lo dejamos en el log del panel y
+                # cortamos el stream, así el .gz queda truncado y el navegador o
+                # el gunzip del usuario avisan de que está incompleto.
+                logger.error("Fallo exportando la BD %s: %s", db_name, err[:500])
+        finally:
+            if proc.poll() is None:
+                proc.kill()
+            for pipe in (proc.stdout, proc.stderr):
+                try:
+                    pipe.close()
+                except Exception:
+                    pass
+
+    return StreamingResponse(
+        _stream(),
+        media_type="application/gzip",
+        headers={
+            "Content-Disposition": f'attachment; filename="{filename}"',
+            # Evita que un proxy intermedio intente bufferizar el volcado entero.
+            "X-Accel-Buffering": "no",
+            "Cache-Control": "no-store",
+        },
+    )
 
 
 @router.get("/databases/{db_id}/pma-token", tags=["Databases"])

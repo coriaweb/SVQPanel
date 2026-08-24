@@ -69,6 +69,27 @@ export default {
     return api.get(`/api/databases/${dbId}/pma-token`)
   },
 
+  // Descargar volcado .sql.gz de la BD (llega en streaming, sin fichero temporal
+  // en el servidor). Devuelve { blob, filename } igual que downloadDomainSite.
+  async exportDump(dbId) {
+    const response = await fetch(`/api/databases/${dbId}/export`, {
+      headers: api.getHeaders()
+    })
+    if (!response.ok) {
+      let msg = `Error ${response.status}`
+      try {
+        const data = await response.json()
+        msg = data?.message || data?.detail || msg
+      } catch { /* respuesta no-JSON */ }
+      throw new Error(msg)
+    }
+    const cd = response.headers.get('content-disposition') || ''
+    const m = /filename="?([^"]+)"?/.exec(cd)
+    const filename = m ? m[1] : `bd_${dbId}.sql.gz`
+    const blob = await response.blob()
+    return { blob, filename }
+  },
+
   // ── Acceso remoto (allowlist de IPs por BD) ──
   async listRemoteHosts(dbId) {
     return api.get(`/api/databases/${dbId}/remote-hosts`)

@@ -94,7 +94,7 @@
                 <td>
                   <div class="btn-group btn-group-sm">
                     <button
-                      class="btn btn-outline-success"
+                      class="btn btn-sm btn-outline-success"
                       @click="openPhpMyAdmin(db)"
                       title="Abrir phpMyAdmin"
                       :disabled="pmaLoading === db.id"
@@ -104,7 +104,17 @@
                       <i v-else class="bi bi-box-arrow-up-right"></i>
                     </button>
                     <button
-                      class="btn btn-outline-info"
+                      class="btn btn-sm btn-outline-primary"
+                      @click="downloadDump(db)"
+                      title="Descargar copia (.sql.gz) a tu ordenador"
+                      :disabled="exportLoading === db.id"
+                      v-if="canManage(db)"
+                    >
+                      <span v-if="exportLoading === db.id" class="spinner-border spinner-border-sm"></span>
+                      <i v-else class="bi bi-download"></i>
+                    </button>
+                    <button
+                      class="btn btn-sm btn-outline-info"
                       @click="openEditForm(db)"
                       title="Editar"
                       v-if="canManage(db)"
@@ -112,7 +122,7 @@
                       <i class="bi bi-pencil"></i>
                     </button>
                     <button
-                      class="btn btn-outline-secondary"
+                      class="btn btn-sm btn-outline-secondary"
                       @click="openUsersModal(db)"
                       title="Gestionar usuarios"
                       v-if="canManage(db)"
@@ -120,7 +130,7 @@
                       <i class="bi bi-people"></i>
                     </button>
                     <button
-                      class="btn btn-outline-warning"
+                      class="btn btn-sm btn-outline-warning"
                       @click="openPasswordForm(db)"
                       title="Cambiar contraseña"
                       v-if="canManage(db)"
@@ -128,7 +138,7 @@
                       <i class="bi bi-key"></i>
                     </button>
                     <button
-                      class="btn btn-outline-info"
+                      class="btn btn-sm btn-outline-info"
                       @click="openRemoteModal(db)"
                       title="Acceso remoto (IPs)"
                       v-if="canManage(db)"
@@ -136,17 +146,17 @@
                       <i class="bi bi-hdd-network"></i>
                     </button>
                     <button v-if="canManage(db) && !db.is_suspended"
-                      class="btn btn-outline-warning" @click="suspendDb(db)"
+                      class="btn btn-sm btn-outline-warning" @click="suspendDb(db)"
                       title="Suspender (revoca acceso, conserva datos)">
                       <i class="bi bi-pause-circle"></i>
                     </button>
                     <button v-else-if="canManage(db)"
-                      class="btn btn-outline-success" @click="unsuspendDb(db)"
+                      class="btn btn-sm btn-outline-success" @click="unsuspendDb(db)"
                       title="Reactivar">
                       <i class="bi bi-play-circle"></i>
                     </button>
                     <button
-                      class="btn btn-outline-danger"
+                      class="btn btn-sm btn-outline-danger"
                       @click="confirmDelete(db)"
                       title="Eliminar"
                       v-if="canManage(db)"
@@ -427,6 +437,7 @@ export default {
     const showNewPassword = ref(false)
     const isMariaDBDisabled = ref(false)
     const pmaLoading = ref(null)  // id de la BD cuyo botón phpMyAdmin está en carga
+    const exportLoading = ref(null)  // id de la BD que se está descargando
 
     // ── Estado: usuarios adicionales de BD ──────────────────────────────────
     const showUsersModal     = ref(false)
@@ -592,6 +603,38 @@ export default {
         }
       } finally {
         pmaLoading.value = null
+      }
+    }
+
+    const downloadDump = async (db) => {
+      exportLoading.value = db.id
+      store.showNotification(
+        `Preparando la copia de ${db.db_name}. La descarga empezará en unos segundos…`,
+        'info'
+      )
+      try {
+        const { blob, filename } = await databaseService.exportDump(db.id)
+        const url = URL.createObjectURL(blob)
+        const a = document.createElement('a')
+        a.href = url
+        a.download = filename
+        document.body.appendChild(a)
+        a.click()
+        document.body.removeChild(a)
+        URL.revokeObjectURL(url)
+        store.showNotification(`Copia de ${db.db_name} descargada`, 'success')
+      } catch (error) {
+        const msg = error.message || ''
+        if (msg.includes('409') || msg.toLowerCase().includes('suspendida')) {
+          store.showNotification(
+            'La base de datos está suspendida. Reactívala para poder descargarla.',
+            'warning'
+          )
+        } else {
+          store.showNotification(`Error descargando la copia: ${msg}`, 'error')
+        }
+      } finally {
+        exportLoading.value = null
       }
     }
 
@@ -811,6 +854,8 @@ export default {
       getUserName,
       openPhpMyAdmin,
       pmaLoading,
+      exportLoading,
+      downloadDump,
       // Usuarios adicionales de BD
       showUsersModal,
       showRemoteModal,
