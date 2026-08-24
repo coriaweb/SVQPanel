@@ -1185,12 +1185,35 @@ service managesieve-login {
   }
 }
 
+# ⚠️ Los Sieve NO pueden vivir en ~/: el home del buzón y el maildir son el MISMO
+# directorio (mail_path = ~/) y en Maildir++ toda entrada que empieza por '.' es
+# una CARPETA DE CORREO. Con path = ~/sieve, el '~/.dovecot.sieve' de ManageSieve
+# le sale al cliente como carpeta fantasma "dovecot.sieve" y, peor, 'fileinto'
+# intenta escribir en '.dovecot.sieve/tmp' → la entrega falla con
+# "451 4.2.0 Internal error" y el correo SE QUEDA EN COLA. Por eso van fuera.
+#
+# Filtros del usuario (los gestiona el webmail vía ManageSieve).
 sieve_script personal {
   type = personal
-  path = ~/sieve
-  active_path = ~/.dovecot.sieve
+  path = /var/lib/dovecot/sieve-users/%{user}/scripts
+  active_path = /var/lib/dovecot/sieve-users/%{user}/active.sieve
+}
+
+# Auto-respuesta, que escribe el PANEL. Va aparte (type = before) para que
+# auto-respuesta y filtros CONVIVAN en vez de pisarse mutuamente.
+# Orden: globales 'before' (spam→Junk, learn-*) → autoreply → personal.
+sieve_script autoreply {
+  type = before
+  path = /var/lib/dovecot/sieve-users/%{user}/autoreply.sieve
 }
 DOVESIEVEEOF
+
+    # Directorio raíz de los Sieve por buzón (fuera del maildir). El panel crea
+    # dentro un <email>/ por buzón al activar una auto-respuesta o al abrir los
+    # filtros del webmail.
+    mkdir -p /var/lib/dovecot/sieve-users
+    chown vmail:vmail /var/lib/dovecot/sieve-users
+    chmod 700 /var/lib/dovecot/sieve-users
 
     # Dovecot 2.4 (Debian 13/trixie) cambió la sintaxis de varios ajustes que la
     # config de arriba escribe en formato 2.3 (Debian 12). Sin traducirlos, el

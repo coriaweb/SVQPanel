@@ -91,16 +91,32 @@ service managesieve-login {
   }
 }
 
+# ⚠️ Los Sieve NO pueden vivir en ~/: el home del buzón y el maildir son el MISMO
+# directorio (mail_path = ~/) y en Maildir++ toda entrada que empieza por '.' es
+# una CARPETA DE CORREO. Con path = ~/sieve, el '~/.dovecot.sieve' de ManageSieve
+# le sale al cliente como carpeta fantasma "dovecot.sieve" y, peor, 'fileinto'
+# intenta escribir en '.dovecot.sieve/tmp' → la entrega falla con
+# "451 4.2.0 Internal error" y el correo SE QUEDA EN COLA. Por eso van fuera.
+#
 # Script PERSONAL del usuario: aquí es donde ManageSieve guarda los filtros que
 # el cliente crea en el webmail. Sin esta declaración los filtros se guardarían
 # pero NO se ejecutarían en la entrega.
-# Los scripts globales 'before' (spam-to-junk, learn-*) siguen ejecutándose ANTES
-# que éste, así que el antispam y el aprendizaje Bayes mandan sobre los filtros
-# del usuario.
 sieve_script personal {
   type = personal
-  path = ~/sieve
-  active_path = ~/.dovecot.sieve
+  path = /var/lib/dovecot/sieve-users/%{user}/scripts
+  active_path = /var/lib/dovecot/sieve-users/%{user}/active.sieve
+}
+
+# Script de AUTO-RESPUESTA, que escribe el PANEL. Va aparte (type = before) para
+# que auto-respuesta y filtros CONVIVAN: antes ambos peleaban por
+# '~/.dovecot.sieve' y el que escribía último borraba al otro (abrir la pestaña
+# Filtros en el webmail desactivaba la auto-respuesta, y activar una
+# auto-respuesta desde el panel borraba los filtros del cliente).
+# Orden de ejecución: globales 'before' (spam→Junk, learn-*) → autoreply →
+# personal. El antispam y el Bayes siguen mandando sobre todo lo demás.
+sieve_script autoreply {
+  type = before
+  path = /var/lib/dovecot/sieve-users/%{user}/autoreply.sieve
 }
 EOF
 
@@ -152,6 +168,58 @@ if ss -lnt 2>/dev/null | grep -E ':(4190|2000)\b' | grep -qv '127.0.0.1'; then
     exit 1
 fi
 echo "  ✓ no expuesto fuera de localhost (2000 'deprecated' cerrado)"
+
+# ── 4b. Migrar las auto-respuestas que aún viven dentro del maildir ───────────
+# Hasta ahora el panel escribía la auto-respuesta en '~/.dovecot.sieve', dentro
+# del maildir. Se mueven a /var/lib/dovecot/sieve-users/<email>/autoreply.sieve,
+# que es donde las busca el sieve_script 'autoreply' declarado arriba. Sin este
+# paso, los buzones con auto-respuesta activa la perderían al aplicar el update.
+SIEVE_USERS=/var/lib/dovecot/sieve-users
+mkdir -p "$SIEVE_USERS"
+chown vmail:vmail "$SIEVE_USERS"
+chmod 700 "$SIEVE_USERS"
+
+migrados=0
+# Los maildir viven en /home/<panel_user>/mail/<dominio>/<buzon>/
+for sieve in /home/*/mail/*/*/.dovecot.sieve; do
+    [ -e "$sieve" ] || continue
+    # Un symlink aquí es de ManageSieve (no del panel): no es una auto-respuesta.
+    [ -L "$sieve" ] && continue
+
+    box=$(dirname "$sieve")
+    mailbox=$(basename "$box")
+    domain=$(basename "$(dirname "$box")")
+    email="${mailbox}@${domain}"
+
+    dest="$SIEVE_USERS/$email"
+    mkdir -p "$dest/scripts"
+
+    # No pisar una auto-respuesta ya migrada (idempotencia).
+    if [ ! -f "$dest/autoreply.sieve" ]; then
+        cp -a "$sieve" "$dest/autoreply.sieve"
+        migrados=$((migrados + 1))
+    fi
+
+    # Quitar del maildir el script y sus binarios: si se quedan, Dovecot los
+    # sigue mostrando como carpeta fantasma y 'fileinto' vuelve a romper.
+    rm -f "$sieve" "${sieve}c" "$box/.dovecot.svbin" "$box/.dovecot.sieve.log"
+
+    chown -R vmail:vmail "$dest"
+    chmod -R u+rwX,go-rwx "$dest"
+done
+
+if [ "$migrados" -gt 0 ]; then
+    # Compilar como vmail: si compila root, el .svbin queda ilegible para Dovecot
+    # (euid vmail) y la entrega falla con 451 dejando el correo en cola.
+    for s in "$SIEVE_USERS"/*/autoreply.sieve; do
+        [ -e "$s" ] || continue
+        su -s /bin/sh vmail -c "sievec $(printf '%q' "$s")" 2>/dev/null || \
+            echo "  · aviso: no compiló $s (se revisará al reactivar la auto-respuesta)"
+    done
+    echo "  ✓ $migrados auto-respuesta(s) migradas fuera del maildir"
+else
+    echo "  · no había auto-respuestas que migrar"
+fi
 
 # ── 5. Activar el plugin managesieve en Roundcube ─────────────────────────────
 if [ ! -f "$CONF" ]; then

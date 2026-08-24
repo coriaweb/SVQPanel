@@ -14,6 +14,7 @@ Ficheros gestionados:
 
 import os
 import re
+import shlex
 import shutil
 import logging
 from .base import SystemManager
@@ -523,6 +524,15 @@ class MailManager(SystemManager):
             shutil.rmtree(maildir)
             logger.info(f"Maildir eliminado: {maildir}")
 
+        # Los Sieve del buzón (auto-respuesta + filtros del usuario) viven FUERA
+        # del maildir, así que no se los lleva el rmtree de arriba: hay que
+        # borrarlos aparte o quedarían huérfanos, y un buzón nuevo con el mismo
+        # nombre heredaría los filtros del anterior.
+        sieve_dir = self._sieve_user_dir(domain_name, mailbox_username)
+        if os.path.isdir(sieve_dir):
+            shutil.rmtree(sieve_dir, ignore_errors=True)
+            logger.info(f"Sieve del buzón eliminado: {sieve_dir}")
+
         self._reload_dovecot()
 
         return {"success": True}
@@ -678,9 +688,43 @@ class MailManager(SystemManager):
     # Auto-respuesta (Dovecot Sieve)
     # ─────────────────────────────────────────────────────────────────────
 
+    # Los Sieve NO van dentro del maildir. El home del buzón y el maildir son el
+    # MISMO directorio (mail_path = ~/), y en Maildir++ toda entrada que empieza
+    # por '.' es una CARPETA DE CORREO: un '.dovecot.sieve' ahí dentro le sale al
+    # cliente como una carpeta fantasma y, peor, 'fileinto' intenta escribir en
+    # '.dovecot.sieve/tmp' → la entrega falla con 451 y el correo se queda en cola.
+    # Por eso viven fuera, en SIEVE_USERS_DIR/<email>/ (mismo sitio que declara el
+    # drop-in 92-svqpanel-managesieve.conf con %{user}).
+    SIEVE_USERS_DIR = "/var/lib/dovecot/sieve-users"
+
+    def _sieve_user_dir(self, domain_name: str, mailbox_username: str) -> str:
+        """Directorio de scripts Sieve del buzón (fuera del maildir)."""
+        return os.path.join(self.SIEVE_USERS_DIR, f"{mailbox_username}@{domain_name}")
+
+    def _ensure_sieve_user_dir(self, domain_name: str, mailbox_username: str) -> str:
+        """Crea (si falta) el directorio de Sieve del buzón, con dueño vmail.
+
+        'scripts/' es donde ManageSieve guarda los filtros del usuario; que exista
+        desde el principio evita que Roundcube falle la primera vez que el cliente
+        abre la pestaña Filtros."""
+        base = self._sieve_user_dir(domain_name, mailbox_username)
+        for path in (self.SIEVE_USERS_DIR, base, os.path.join(base, "scripts")):
+            if not os.path.isdir(path):
+                os.makedirs(path, exist_ok=True)
+            # Sólo el dueño: los Sieve pueden llevar datos del cliente.
+            os.chown(path, self.VMAIL_UID, self.VMAIL_GID)
+            os.chmod(path, 0o700)
+        return base
+
     def _sieve_path(self, panel_username: str, domain_name: str, mailbox_username: str) -> str:
-        maildir = self.maildir_path(panel_username, domain_name, mailbox_username)
-        return os.path.join(maildir, ".dovecot.sieve")
+        """Script de AUTO-RESPUESTA del buzón.
+
+        Es un script 'before' propio, separado del script personal que gestiona
+        el usuario desde el webmail (Roundcube → Filtros). Así auto-respuesta y
+        filtros CONVIVEN: antes ambos peleaban por '~/.dovecot.sieve' y el que
+        escribía último borraba al otro."""
+        return os.path.join(self._sieve_user_dir(domain_name, mailbox_username),
+                            "autoreply.sieve")
 
     # Etiquetas HTML que NUNCA deben salir en una auto-respuesta: el cuerpo lo
     # escribe el cliente pero el correo lo firma (DKIM) y lo envía NUESTRA IP.
@@ -861,6 +905,9 @@ class MailManager(SystemManager):
         """
         email = f"{mailbox_username}@{domain_name}"
         sieve_path = self._sieve_path(panel_username, domain_name, mailbox_username)
+        # El directorio de Sieve del buzón puede no existir todavía (buzones
+        # anteriores a la separación auto-respuesta/filtros).
+        self._ensure_sieve_user_dir(domain_name, mailbox_username)
 
         subject = (subject or "Re: (Respuesta automática)").strip()
         # El asunto va entre comillas en el Sieve: escapar \ y " (en ese orden).
@@ -954,7 +1001,13 @@ class MailManager(SystemManager):
             os.chmod(sieve_path, 0o600)
             # Validar compilando: si el Sieve no compila, Dovecot NO entregaría
             # el correo (error de script) → mejor revertir y avisar.
-            rc, _out, err = self.execute_command(["sievec", sieve_path], check=False)
+            # Se compila COMO VMAIL: si lo hace root, el .svbin queda con dueño
+            # root y Dovecot (euid vmail) no puede leerlo → "Permission denied"
+            # en la entrega y el correo se queda en cola con 451. El .sieve ya es
+            # de vmail (chown de arriba), así que sievec puede escribir al lado.
+            rc, _out, err = self.execute_command(
+                ["su", "-s", "/bin/sh", "vmail", "-c",
+                 f"sievec {shlex.quote(sieve_path)}"], check=False)
             if rc != 0:
                 try:
                     os.remove(sieve_path)
@@ -972,9 +1025,11 @@ class MailManager(SystemManager):
     def remove_autoreply(self, panel_username: str, domain_name: str, mailbox_username: str):
         """Desactiva la auto-respuesta eliminando el script Sieve"""
         sieve_path = self._sieve_path(panel_username, domain_name, mailbox_username)
-        # Binario compilado: ".dovecot.sievec" (Dovecot 2.3) y ".dovecot.svbin"
+        # Binario compilado: "<script>.sievec" (Dovecot 2.3) y "<script>.svbin"
         # (Dovecot 2.4). Si queda el binario, Dovecot lo sigue ejecutando aunque
         # el .sieve ya no exista → la auto-respuesta no se apagaría.
+        # NOTA: sólo se borra el script de auto-respuesta. Los filtros del usuario
+        # viven en scripts/ (mismo directorio) y NO se tocan.
         base, _ext = os.path.splitext(sieve_path)
         for path in (sieve_path, sieve_path + "c", base + ".svbin"):
             if os.path.exists(path):
