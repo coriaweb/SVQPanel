@@ -71,14 +71,42 @@
         <i class="bi bi-check2-square me-1"></i>
         {{ selected.size }} seleccionado{{ selected.size !== 1 ? 's' : '' }}
       </span>
+      <button class="btn btn-sm btn-outline-primary" @click="cutSelection" title="Cortar para mover a otra carpeta">
+        <i class="bi bi-scissors me-1"></i> Mover
+      </button>
+      <button class="btn btn-sm btn-outline-primary" @click="copySelection" title="Copiar a otra carpeta">
+        <i class="bi bi-files me-1"></i> Copiar
+      </button>
+      <button class="btn btn-sm btn-outline-warning" @click="compressSelection" :disabled="compressing">
+        <span v-if="compressing" class="spinner-border spinner-border-sm me-1"></span>
+        <i v-else class="bi bi-file-zip me-1"></i>
+        Comprimir
+      </button>
+      <span class="bulk-sep"></span>
       <button class="btn btn-sm btn-outline-danger" @click="deleteSelected" :disabled="bulkDeleting">
         <span v-if="bulkDeleting" class="spinner-border spinner-border-sm me-1"></span>
         <i v-else class="bi bi-trash me-1"></i>
-        Eliminar seleccionados
+        Eliminar
       </button>
-      <button class="btn btn-sm btn-outline-secondary" @click="clearSelection">
+      <button class="btn btn-sm btn-outline-secondary ms-auto" @click="clearSelection">
         Cancelar
       </button>
+    </div>
+
+    <!-- Portapapeles: se muestra tras Cortar/Copiar hasta que se pega o cancela -->
+    <div v-if="clipboard" class="bulk-bar">
+      <span class="bulk-count">
+        <i :class="clipboard.mode === 'move' ? 'bi bi-scissors' : 'bi bi-files'" class="me-1"></i>
+        {{ clipboard.paths.length }} elemento{{ clipboard.paths.length !== 1 ? 's' : '' }}
+        {{ clipboard.mode === 'move' ? 'para mover' : 'para copiar' }}
+      </span>
+      <small class="text-muted">Ve a la carpeta destino y pulsa Pegar</small>
+      <button class="btn btn-sm btn-primary ms-auto" @click="pasteClipboard" :disabled="pasting">
+        <span v-if="pasting" class="spinner-border spinner-border-sm me-1"></span>
+        <i v-else class="bi bi-clipboard-check me-1"></i>
+        Pegar aquí
+      </button>
+      <button class="btn btn-sm btn-outline-secondary" @click="clipboard = null">Cancelar</button>
     </div>
 
     <div class="card">
@@ -99,7 +127,7 @@
                 <th style="width:36px">
                   <input
                     type="checkbox"
-                    class="form-check-input"
+                    class="form-check-input fm-check"
                     :checked="allSelected"
                     :indeterminate.prop="someSelected"
                     @change="toggleAll"
@@ -118,7 +146,7 @@
                 <td>
                   <input
                     type="checkbox"
-                    class="form-check-input"
+                    class="form-check-input fm-check"
                     :checked="selected.has(entry.path)"
                     @change="toggleSelect(entry)"
                   >
@@ -139,7 +167,7 @@
                 <td>{{ formatDate(entry.modified_at) }}</td>
                 <td><code>{{ entry.permissions }}</code></td>
                 <td class="text-end">
-                  <div class="btn-group btn-group-sm">
+                  <div class="btn-group btn-group-sm fm-actions">
                     <button
                       v-if="entry.type === 'file' && isEditable(entry)"
                       class="btn btn-outline-primary"
@@ -167,6 +195,12 @@
                     >
                       <span v-if="extracting === entry.path" class="spinner-border spinner-border-sm"></span>
                       <i v-else class="bi bi-file-zip"></i>
+                    </button>
+                    <button class="btn btn-outline-primary" title="Mover a otra carpeta" @click="cutEntry(entry)">
+                      <i class="bi bi-scissors"></i>
+                    </button>
+                    <button class="btn btn-outline-primary" title="Copiar a otra carpeta" @click="copyEntry(entry)">
+                      <i class="bi bi-files"></i>
                     </button>
                     <button class="btn btn-outline-secondary" title="Renombrar" @click="renameEntry(entry)">
                       <i class="bi bi-input-cursor-text"></i>
@@ -240,9 +274,9 @@
           <tbody>
             <tr v-for="(label, key) in { owner: 'Propietario', group: 'Grupo', other: 'Otros' }" :key="key">
               <td class="text-start fw-semibold ps-2">{{ label }}</td>
-              <td><input type="checkbox" v-model="chmodBits[key].r" class="form-check-input"></td>
-              <td><input type="checkbox" v-model="chmodBits[key].w" class="form-check-input"></td>
-              <td><input type="checkbox" v-model="chmodBits[key].x" class="form-check-input"></td>
+              <td><input type="checkbox" v-model="chmodBits[key].r" class="form-check-input fm-check"></td>
+              <td><input type="checkbox" v-model="chmodBits[key].w" class="form-check-input fm-check"></td>
+              <td><input type="checkbox" v-model="chmodBits[key].x" class="form-check-input fm-check"></td>
             </tr>
           </tbody>
         </table>
@@ -354,6 +388,91 @@ export default {
         store.showNotification(`Eliminados con ${errors} error${errors !== 1 ? 'es' : ''}`, 'warning')
       }
       await loadFiles()
+    }
+
+    // — Portapapeles (mover / copiar) —
+    // Guarda { mode: 'move'|'copy', paths: [...], domainId, from } hasta que se
+    // pega o se cancela. Se navega libremente entre carpetas mientras tanto.
+    const clipboard = ref(null)
+    const pasting = ref(false)
+    const compressing = ref(false)
+
+    const setClipboard = (mode, paths) => {
+      if (!paths.length) return
+      clipboard.value = {
+        mode,
+        paths,
+        domainId: selectedDomainId.value,
+        from: currentPath.value,
+      }
+      selected.value = new Set()
+      store.showNotification(
+        `${paths.length} elemento${paths.length !== 1 ? 's' : ''} listo${paths.length !== 1 ? 's' : ''} para ${mode === 'move' ? 'mover' : 'copiar'}. Abre la carpeta destino y pulsa "Pegar aquí".`,
+        'info'
+      )
+    }
+
+    const cutSelection  = () => setClipboard('move', [...selected.value])
+    const copySelection = () => setClipboard('copy', [...selected.value])
+    const cutEntry      = (entry) => setClipboard('move', [entry.path])
+    const copyEntry     = (entry) => setClipboard('copy', [entry.path])
+
+    const pasteClipboard = async () => {
+      const cb = clipboard.value
+      if (!cb) return
+      // El portapapeles es por dominio: los endpoints resuelven origen y destino
+      // contra el mismo public_html, así que no se puede pegar en otro dominio.
+      if (String(cb.domainId) !== String(selectedDomainId.value)) {
+        store.showNotification('No se puede pegar en otro dominio. Vuelve al dominio de origen.', 'warning')
+        return
+      }
+      pasting.value = true
+      try {
+        const call = cb.mode === 'move' ? api.moveDomainEntries : api.copyDomainEntries
+        const result = await call.call(api, cb.domainId, cb.paths, currentPath.value, false)
+        const done = (result?.moved ?? result?.copied ?? []).length
+        const errors = result?.errors ?? []
+
+        if (done) {
+          store.showNotification(
+            `${done} elemento${done !== 1 ? 's' : ''} ${cb.mode === 'move' ? 'movido' : 'copiado'}${done !== 1 ? 's' : ''}`,
+            errors.length ? 'warning' : 'success'
+          )
+        }
+        if (errors.length) {
+          const detail = errors.map(e => `${e.name}: ${e.error}`).join('\n')
+          store.showNotification(`${errors.length} sin ${cb.mode === 'move' ? 'mover' : 'copiar'} — ${detail}`, 'warning')
+        }
+        // Solo se vacía el portapapeles si todo salió bien: si algo falló, el
+        // usuario puede corregir (otra carpeta) y reintentar sin volver a marcar.
+        if (!errors.length) clipboard.value = null
+        await loadFiles()
+      } catch (error) {
+        store.showNotification(`Error al pegar: ${error.message}`, 'danger')
+      } finally {
+        pasting.value = false
+      }
+    }
+
+    const compressSelection = async () => {
+      const paths = [...selected.value]
+      if (!paths.length) return
+      const suggested = paths.length === 1
+        ? `${(entries.value.find(e => e.path === paths[0])?.name || 'archivo').replace(/\.[^.]+$/, '')}.zip`
+        : 'archivos.zip'
+      const name = prompt('Nombre del archivo ZIP', suggested)
+      if (!name) return
+      compressing.value = true
+      try {
+        const result = await api.compressDomainEntries(selectedDomainId.value, paths, name, currentPath.value)
+        store.showNotification(`"${result.name}" creado (${result.files_added} archivos)`, 'success')
+        selected.value = new Set()
+        await loadFiles()
+      } catch (error) {
+        store.showNotification(`Error comprimiendo: ${error.message}`, 'danger')
+      } finally {
+        compressing.value = false
+      }
     }
 
     // — Editor —
@@ -661,6 +780,8 @@ export default {
       showChmod, savingChmod, chmodEntry, chmodBits, chmodOctal, openChmod, applyChmod,
       selected, bulkDeleting, allSelected, someSelected,
       toggleSelect, toggleAll, clearSelection, deleteSelected,
+      clipboard, pasting, compressing,
+      cutSelection, copySelection, cutEntry, copyEntry, pasteClipboard, compressSelection,
       formatSize, formatDate, isEditable, isArchive, isUnsupportedArchive, fileIcon,
     }
   },
@@ -699,6 +820,48 @@ export default {
   font-size: .875rem;
   font-weight: 500;
   color: var(--accent);
-  margin-right: auto;
 }
+
+/* Los checkboxes de la tabla van sueltos en su <td>, sin el wrapper
+   .form-check de Bootstrap que compensa el margin-left:-1.5em del compat.
+   Sin esto quedan desplazados fuera de la celda y no se ven. */
+.fm-check {
+  margin-left: 0 !important;
+  margin-top: 0 !important;
+  width: 1.05rem;
+  height: 1.05rem;
+  vertical-align: middle;
+}
+
+/* Acciones de fila compactas: caben más botones sin perder el icono. */
+.fm-actions .btn {
+  --btn-pad-y: .2rem;
+  padding: .2rem .4rem;
+  line-height: 1;
+}
+.fm-actions .btn i { font-size: .875rem; vertical-align: middle; }
+
+.bulk-bar .btn i { vertical-align: middle; }
+.bulk-sep {
+  width: 1px;
+  align-self: stretch;
+  background: color-mix(in srgb, var(--accent) 25%, transparent);
+  margin: 0 .15rem;
+}
+.fm-dest-list {
+  max-height: 46vh;
+  overflow-y: auto;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+}
+.fm-dest-item {
+  display: flex; align-items: center; gap: .5rem;
+  width: 100%; padding: .45rem .7rem;
+  background: none; border: 0; border-bottom: 1px solid var(--border);
+  text-align: left; cursor: pointer; font-size: .9rem;
+}
+.fm-dest-item:last-child { border-bottom: 0; }
+.fm-dest-item:hover { background: var(--surface-inset); }
+.fm-dest-item.is-current { color: var(--text-muted); cursor: default; }
+.fm-dest-item.is-current:hover { background: none; }
 </style>

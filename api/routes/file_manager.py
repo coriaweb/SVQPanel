@@ -84,6 +84,19 @@ class ChmodRequest(BaseModel):
     mode: str = Field(..., pattern=r"^[0-7]{3,4}$", description="Permisos en octal, p.ej. '644' o '755'")
 
 
+class TransferRequest(BaseModel):
+    """Mover o copiar varios elementos a una carpeta destino del mismo dominio."""
+    paths: List[str] = Field(..., min_length=1, max_length=500)
+    dest: str = Field("", description="Carpeta destino relativa; vacío = raíz de public_html")
+    overwrite: bool = Field(False, description="Si el destino ya existe, reemplazarlo")
+
+
+class CompressRequest(BaseModel):
+    paths: List[str] = Field(..., min_length=1, max_length=500)
+    dest: str = Field("", description="Carpeta donde dejar el ZIP; vacío = raíz de public_html")
+    name: str = Field(..., min_length=1, max_length=120, description="Nombre del ZIP resultante")
+
+
 def _check_enabled():
     if not FILE_MANAGER_ENABLED:
         raise HTTPException(
@@ -467,6 +480,286 @@ def extract_zip(
         "status": "success",
         "dest": _relative_path(root, dest_dir),
         "files_extracted": extracted_count,
+    }
+
+
+def _tree_size(target: str) -> int:
+    """Tamaño total en bytes de un archivo o de un árbol de carpetas.
+
+    No sigue symlinks: cuenta el enlace, no su destino (que puede estar fuera
+    del dominio o generar un bucle).
+    """
+    if os.path.islink(target) or os.path.isfile(target):
+        try:
+            return os.lstat(target).st_size
+        except OSError:
+            return 0
+    total = 0
+    for dirpath, _dirnames, filenames in os.walk(target, followlinks=False):
+        for fname in filenames:
+            try:
+                total += os.lstat(os.path.join(dirpath, fname)).st_size
+            except OSError:
+                continue
+    return total
+
+
+def _assert_inside(root: str, target: str, label: str = "elemento"):
+    """Aborta si 'target' (ya resuelto) cae fuera de la raíz del dominio.
+
+    _safe_join ya valida la ruta pedida, pero un symlink *dentro* del dominio
+    puede apuntar fuera: al mover/copiar/comprimir seguiríamos ese enlace y
+    sacaríamos (o meteríamos) datos ajenos al dominio.
+    """
+    real = os.path.realpath(target)
+    if os.path.commonpath([root, real]) != root:
+        raise HTTPException(
+            status_code=400,
+            detail=f"El {label} apunta fuera del dominio y no se puede procesar",
+        )
+
+
+def _escaping_links_ignore(root: str):
+    """Callback 'ignore' para copytree: omite symlinks que apunten fuera del dominio.
+
+    Sin esto, copiar una carpeta que contenga un enlace a /etc o al home de otro
+    cliente reproduciría ese enlace en el destino, dejando datos ajenos
+    alcanzables desde el public_html.
+    """
+    def _ignore(dirpath: str, names: list[str]) -> set[str]:
+        skipped = set()
+        for name in names:
+            full = os.path.join(dirpath, name)
+            if not os.path.islink(full):
+                continue
+            if os.path.commonpath([root, os.path.realpath(full)]) != root:
+                skipped.add(name)
+        return skipped
+    return _ignore
+
+
+def _unique_destination(dest_dir: str, name: str) -> str:
+    """Devuelve una ruta libre en dest_dir para 'name' añadiendo ' (copia N)'.
+
+    Se usa cuando el destino ya existe y NO se pidió sobreescribir: así una copia
+    en la misma carpeta (el caso típico de "duplicar archivo") no falla.
+    """
+    base, ext = os.path.splitext(name)
+    # Los .tar.gz y compañía llevan doble extensión: conservarla entera.
+    if base.lower().endswith(".tar"):
+        base, ext = base[:-4], ".tar" + ext
+    candidate = os.path.join(dest_dir, name)
+    index = 1
+    while os.path.exists(candidate):
+        suffix = " (copia)" if index == 1 else f" (copia {index})"
+        candidate = os.path.join(dest_dir, f"{base}{suffix}{ext}")
+        index += 1
+    return candidate
+
+
+def _chown_tree(domain: Domain, target: str):
+    """Aplica el owner del dominio a un elemento y, si es carpeta, a su contenido."""
+    _apply_domain_owner(domain, target)
+    if not os.path.isdir(target):
+        return
+    for dirpath, _dirnames, filenames in os.walk(target):
+        _apply_domain_owner(domain, dirpath)
+        for fname in filenames:
+            _apply_domain_owner(domain, os.path.join(dirpath, fname))
+
+
+def _prepare_transfer(domain: Domain, payload: TransferRequest):
+    """Valida origen/destino comunes a mover y copiar. Devuelve (root, dest_dir)."""
+    root = os.path.realpath(domain.public_html)
+    dest_dir = _safe_join(root, payload.dest)
+    if not os.path.isdir(dest_dir):
+        raise HTTPException(status_code=404, detail="La carpeta destino no existe")
+    return root, dest_dir
+
+
+@router.post("/file-manager/domains/{domain_id}/move", tags=["File Manager"])
+def move_entries(
+    domain_id: int,
+    payload: TransferRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_auth),
+):
+    """Mueve uno o varios elementos a otra carpeta del mismo dominio."""
+    _check_enabled()
+    domain = _get_domain_or_404(domain_id, db, current_user)
+    root, dest_dir = _prepare_transfer(domain, payload)
+
+    moved: list[str] = []
+    errors: list[dict] = []
+
+    for rel_path in payload.paths:
+        name = os.path.basename(rel_path.rstrip("/"))
+        try:
+            source = _safe_join(root, rel_path)
+            if not os.path.exists(source):
+                raise HTTPException(status_code=404, detail="No encontrado")
+            _assert_inside(root, source, "origen")
+            if os.path.dirname(source) == dest_dir:
+                raise HTTPException(status_code=400, detail="Ya está en esa carpeta")
+            # Mover una carpeta dentro de sí misma destruiría el árbol.
+            if os.path.isdir(source) and os.path.commonpath([source, dest_dir]) == source:
+                raise HTTPException(status_code=400, detail="No se puede mover una carpeta dentro de sí misma")
+
+            destination = os.path.join(dest_dir, name)
+            if os.path.exists(destination):
+                if not payload.overwrite:
+                    raise HTTPException(status_code=409, detail="Ya existe en el destino")
+                if os.path.isdir(destination):
+                    shutil.rmtree(destination)
+                else:
+                    os.remove(destination)
+
+            shutil.move(source, destination)
+            _chown_tree(domain, destination)
+            moved.append(_relative_path(root, destination))
+        except HTTPException as exc:
+            errors.append({"path": rel_path, "name": name, "error": exc.detail})
+
+    return {"status": "success", "moved": moved, "errors": errors}
+
+
+@router.post("/file-manager/domains/{domain_id}/copy", tags=["File Manager"])
+def copy_entries(
+    domain_id: int,
+    payload: TransferRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_auth),
+):
+    """Copia uno o varios elementos a otra carpeta del mismo dominio.
+
+    Si el destino ya existe y no se pidió sobreescribir, se crea "nombre (copia)"
+    en vez de fallar: así se puede duplicar dentro de la misma carpeta.
+    """
+    _check_enabled()
+    domain = _get_domain_or_404(domain_id, db, current_user)
+    root, dest_dir = _prepare_transfer(domain, payload)
+
+    _, _, max_copy_mb = get_upload_limits(db)
+    max_copy_bytes = max_copy_mb * 1024 * 1024
+
+    copied: list[str] = []
+    errors: list[dict] = []
+
+    for rel_path in payload.paths:
+        name = os.path.basename(rel_path.rstrip("/"))
+        try:
+            source = _safe_join(root, rel_path)
+            if not os.path.exists(source):
+                raise HTTPException(status_code=404, detail="No encontrado")
+            _assert_inside(root, source, "origen")
+            # Copiar una carpeta dentro de sí misma se realimenta sin fin.
+            if os.path.isdir(source) and os.path.commonpath([source, dest_dir]) == source:
+                raise HTTPException(status_code=400, detail="No se puede copiar una carpeta dentro de sí misma")
+
+            if _tree_size(source) > max_copy_bytes:
+                raise HTTPException(status_code=413, detail=f"Supera el límite de {max_copy_mb} MB")
+
+            destination = os.path.join(dest_dir, name)
+            if os.path.exists(destination):
+                if payload.overwrite:
+                    if os.path.isdir(destination):
+                        shutil.rmtree(destination)
+                    else:
+                        os.remove(destination)
+                else:
+                    destination = _unique_destination(dest_dir, name)
+
+            if os.path.isdir(source):
+                shutil.copytree(source, destination, symlinks=True, ignore=_escaping_links_ignore(root))
+            else:
+                shutil.copy2(source, destination)
+            _chown_tree(domain, destination)
+            copied.append(_relative_path(root, destination))
+        except HTTPException as exc:
+            errors.append({"path": rel_path, "name": name, "error": exc.detail})
+        except OSError as exc:
+            errors.append({"path": rel_path, "name": name, "error": str(exc)})
+
+    return {"status": "success", "copied": copied, "errors": errors}
+
+
+@router.post("/file-manager/domains/{domain_id}/compress", tags=["File Manager"])
+def compress_entries(
+    domain_id: int,
+    payload: CompressRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_auth),
+):
+    """Comprime en un .zip uno o varios elementos del dominio."""
+    _check_enabled()
+    domain = _get_domain_or_404(domain_id, db, current_user)
+    root = os.path.realpath(domain.public_html)
+    dest_dir = _safe_join(root, payload.dest)
+    if not os.path.isdir(dest_dir):
+        raise HTTPException(status_code=404, detail="La carpeta destino no existe")
+
+    name = _safe_child_name(payload.name)
+    if not name.lower().endswith(".zip"):
+        name += ".zip"
+    zip_path = _safe_join(dest_dir, name)
+    if os.path.exists(zip_path):
+        raise HTTPException(status_code=409, detail=f"Ya existe un archivo llamado '{name}'")
+
+    # Mismo tope que al extraer: evita llenar el disco del cliente de una tacada.
+    _, _, max_zip_mb = get_upload_limits(db)
+    max_zip_bytes = max_zip_mb * 1024 * 1024
+
+    sources: list[str] = []
+    for rel_path in payload.paths:
+        source = _safe_join(root, rel_path)
+        if not os.path.exists(source):
+            raise HTTPException(status_code=404, detail=f"No encontrado: {rel_path}")
+        _assert_inside(root, source, "elemento")
+        sources.append(source)
+
+    total = sum(_tree_size(src) for src in sources)
+    if total > max_zip_bytes:
+        raise HTTPException(status_code=413, detail=f"El contenido a comprimir supera el límite de {max_zip_mb} MB")
+
+    added = 0
+    try:
+        with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as zf:
+            for source in sources:
+                base = os.path.basename(source)
+                if os.path.isfile(source):
+                    zf.write(source, base)
+                    added += 1
+                    continue
+                for dirpath, dirnames, filenames in os.walk(source, followlinks=False):
+                    # No descender por enlaces a carpetas que salgan del dominio.
+                    dirnames[:] = [
+                        d for d in dirnames
+                        if os.path.commonpath([root, os.path.realpath(os.path.join(dirpath, d))]) == root
+                    ]
+                    for fname in filenames:
+                        full = os.path.join(dirpath, fname)
+                        # El propio ZIP vive dentro del árbol: no incluirlo en sí mismo.
+                        if os.path.realpath(full) == zip_path:
+                            continue
+                        # zf.write() sigue los symlinks: un enlace a /etc/passwd
+                        # metería su contenido real en un ZIP descargable.
+                        if os.path.islink(full) and \
+                                os.path.commonpath([root, os.path.realpath(full)]) != root:
+                            continue
+                        arcname = os.path.join(base, os.path.relpath(full, source))
+                        zf.write(full, arcname)
+                        added += 1
+    except OSError as exc:
+        if os.path.exists(zip_path):
+            os.remove(zip_path)
+        raise HTTPException(status_code=500, detail=f"Error creando el ZIP: {exc}")
+
+    _apply_domain_owner(domain, zip_path)
+    return {
+        "status": "success",
+        "path": _relative_path(root, zip_path),
+        "name": name,
+        "files_added": added,
     }
 
 

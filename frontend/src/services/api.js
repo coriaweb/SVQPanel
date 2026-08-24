@@ -264,6 +264,18 @@ class APIClient {
     return this.post(`/api/file-manager/domains/${domainId}/chmod`, { path, mode })
   }
 
+  moveDomainEntries(domainId, paths, dest = '', overwrite = false) {
+    return this.post(`/api/file-manager/domains/${domainId}/move`, { paths, dest, overwrite })
+  }
+
+  copyDomainEntries(domainId, paths, dest = '', overwrite = false) {
+    return this.post(`/api/file-manager/domains/${domainId}/copy`, { paths, dest, overwrite })
+  }
+
+  compressDomainEntries(domainId, paths, name, dest = '') {
+    return this.post(`/api/file-manager/domains/${domainId}/compress`, { paths, dest, name })
+  }
+
   async downloadDomainFile(domainId, path) {
     const response = await fetch(
       `/api/file-manager/domains/${domainId}/download?path=${encodeURIComponent(path)}`,
