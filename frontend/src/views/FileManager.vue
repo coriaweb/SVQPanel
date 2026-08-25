@@ -7,10 +7,19 @@
           <input class="form-check-input" type="checkbox" id="overwriteCheck" v-model="uploadOverwrite">
           <label class="form-check-label small text-muted" for="overwriteCheck">Sobreescribir</label>
         </div>
-        <button class="btn btn-outline-secondary" @click="loadFiles" :disabled="!selectedDomainId || loading">
+        <button
+          class="btn btn-outline-secondary"
+          title="Actualizar el listado de archivos"
+          @click="loadFiles"
+          :disabled="!selectedDomainId || loading"
+        >
           <i class="bi bi-arrow-clockwise"></i>
         </button>
-        <label class="btn btn-primary mb-0" :class="{ disabled: !selectedDomainId || uploadProgress !== null }">
+        <label
+          class="btn btn-primary mb-0"
+          title="Subir archivos desde tu equipo a la carpeta actual"
+          :class="{ disabled: !selectedDomainId || uploadProgress !== null }"
+        >
           <span v-if="uploadProgress !== null" class="spinner-border spinner-border-sm me-1" role="status"></span>
           <i v-else class="bi bi-upload"></i>
           {{ uploadProgress !== null ? 'Subiendo…' : 'Subir' }}
@@ -54,15 +63,33 @@
         <option value="">Selecciona un dominio</option>
         <option v-for="domain in domains" :key="domain.id" :value="domain.id">{{ domain.domain_name }}</option>
       </select>
-      <div class="input-group" style="flex:1">
-        <button class="btn btn-outline-secondary" @click="goUp" :disabled="!currentPath">
+      <div class="input-group fm-path-group">
+        <button
+          class="btn btn-outline-secondary"
+          title="Subir a la carpeta superior"
+          @click="goUp"
+          :disabled="!currentPath"
+        >
           <i class="bi bi-arrow-up"></i>
         </button>
-        <span class="form-control font-monospace" style="background:var(--surface-inset)">{{ breadcrumb }}</span>
-        <button class="btn btn-outline-primary" @click="createFolder" :disabled="!selectedDomainId">
-          <i class="bi bi-folder-plus"></i>
-        </button>
+        <span class="form-control font-monospace fm-path" :title="`Carpeta actual: ${breadcrumb}`">{{ breadcrumb }}</span>
       </div>
+      <button
+        class="btn btn-outline-primary"
+        title="Crear una carpeta nueva aquí"
+        @click="createFolder"
+        :disabled="!selectedDomainId"
+      >
+        <i class="bi bi-folder-plus me-1"></i> Carpeta
+      </button>
+      <button
+        class="btn btn-outline-primary"
+        title="Crear un archivo vacío aquí (index.php, .htaccess…)"
+        @click="createFile"
+        :disabled="!selectedDomainId"
+      >
+        <i class="bi bi-file-earmark-plus me-1"></i> Archivo
+      </button>
     </div>
 
     <!-- Barra de acciones en lote -->
@@ -178,7 +205,7 @@
                     <button
                       v-if="entry.type === 'file' && isEditable(entry)"
                       class="btn btn-outline-primary"
-                      title="Editar"
+                      :title="`Editar ${entry.name}`"
                       @click="editFile(entry)"
                     >
                       <i class="bi bi-pencil"></i>
@@ -186,7 +213,7 @@
                     <button
                       v-if="entry.type === 'file'"
                       class="btn btn-outline-success"
-                      title="Descargar"
+                      :title="`Descargar ${entry.name}`"
                       @click="downloadFile(entry)"
                     >
                       <i class="bi bi-download"></i>
@@ -203,19 +230,19 @@
                       <span v-if="extracting === entry.path" class="spinner-border spinner-border-sm"></span>
                       <i v-else class="bi bi-file-zip"></i>
                     </button>
-                    <button class="btn btn-outline-primary" title="Mover a otra carpeta" @click="cutEntry(entry)">
+                    <button class="btn btn-outline-primary" :title="`Mover ${entry.name} a otra carpeta`" @click="cutEntry(entry)">
                       <i class="bi bi-scissors"></i>
                     </button>
-                    <button class="btn btn-outline-primary" title="Copiar a otra carpeta" @click="copyEntry(entry)">
+                    <button class="btn btn-outline-primary" :title="`Copiar ${entry.name} a otra carpeta`" @click="copyEntry(entry)">
                       <i class="bi bi-files"></i>
                     </button>
-                    <button class="btn btn-outline-secondary" title="Renombrar" @click="renameEntry(entry)">
+                    <button class="btn btn-outline-secondary" :title="`Renombrar ${entry.name}`" @click="renameEntry(entry)">
                       <i class="bi bi-input-cursor-text"></i>
                     </button>
-                    <button class="btn btn-outline-secondary" title="Permisos" @click="openChmod(entry)">
+                    <button class="btn btn-outline-secondary" :title="`Cambiar permisos de ${entry.name} (actual: ${entry.permissions})`" @click="openChmod(entry)">
                       <i class="bi bi-lock"></i>
                     </button>
-                    <button class="btn btn-outline-danger" title="Eliminar" @click="deleteEntry(entry)">
+                    <button class="btn btn-outline-danger" :title="`Eliminar ${entry.name}`" @click="deleteEntry(entry)">
                       <i class="bi bi-trash"></i>
                     </button>
                   </div>
@@ -587,6 +614,35 @@ export default {
       }
     }
 
+    const createFile = async () => {
+      const name = prompt('Nombre del archivo nuevo (ej. index.php, .htaccess, robots.txt)')
+      if (!name) return
+      const clean = name.trim()
+      if (!clean) return
+      if (clean.includes('/') || clean.includes('\\')) {
+        store.showNotification('El nombre no puede contener "/" ni "\\"', 'warning')
+        return
+      }
+      // El endpoint de escritura sobreescribe: comprobamos antes para no
+      // vaciar sin avisar un archivo que ya exista en esta carpeta.
+      if (entries.value.some(e => e.name.toLowerCase() === clean.toLowerCase())) {
+        store.showNotification(`Ya existe "${clean}" en esta carpeta`, 'warning')
+        return
+      }
+      const path = currentPath.value ? `${currentPath.value}/${clean}` : clean
+      try {
+        await api.writeDomainFile(selectedDomainId.value, path, '')
+        store.showNotification(`Archivo "${clean}" creado`, 'success')
+        await loadFiles()
+        // Si es editable, abrir el editor directamente: crear un archivo vacío
+        // casi siempre es el paso previo a escribir en él.
+        const created = entries.value.find(e => e.path === path)
+        if (created && isEditable(created)) editFile(created)
+      } catch (error) {
+        store.showNotification(`Error creando archivo: ${error.message}`, 'danger')
+      }
+    }
+
     const uploadFiles = async (event) => {
       const files = event.target.files
       if (!files?.length) return
@@ -786,7 +842,7 @@ export default {
 
     return {
       domains, entries, selectedDomainId, currentPath, breadcrumb, loading, disabled,
-      loadFiles, changeDomain, openDirectory, goUp, createFolder,
+      loadFiles, changeDomain, openDirectory, goUp, createFolder, createFile,
       uploadProgress, uploadFileNames, uploadOverwrite, uploadFiles,
       showEditor, editingPath, editorContent, saving,
       editorWrap, editingLang, editorStats,
@@ -807,6 +863,18 @@ export default {
 <style scoped>
 .sv-view { display: flex; flex-direction: column; gap: 16px; }
 .fm-toolbar { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+
+/* La ruta ocupaba todo el ancho (flex:1) y se veía enorme mostrando solo "/".
+   Ahora crece con el contenido y solo se estira si la ruta es larga. */
+.fm-path-group { flex: 0 1 auto; min-width: 0; max-width: 100%; }
+.fm-path {
+  background: var(--surface-inset);
+  width: auto;
+  min-width: 8rem;
+  max-width: 42rem;
+  overflow-x: auto;
+  white-space: nowrap;
+}
 .file-editor {
   min-height: 60vh;
   resize: vertical;
