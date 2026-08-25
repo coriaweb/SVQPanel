@@ -124,11 +124,60 @@ def _job_response(job: BackupJob, db: Session) -> BackupJobResponse:
     return resp
 
 
+def _redact_foreign_job(resp: BackupJobResponse) -> BackupJobResponse:
+    """Oculta los datos del ADMIN en un job que el cliente solo ve de rebote.
+
+    Un backup global del admin aparece en la lista de cada cliente para que pueda
+    restaurar SU parte, pero sin esto le llegaba el job entero: el keyID de S3 en
+    claro, el bucket, el endpoint, los hosts/rutas SFTP y —lo más llamativo— el
+    tamaño de la última copia, que es el volumen AGREGADO de todos los clientes
+    del servidor (un cliente podía deducir cuánto ocupan los demás).
+
+    Se conserva solo lo que necesita para identificar el job y entender qué
+    cubre: nombre, contenido (web/BD/correo), tipo de destino y programación.
+    """
+    resp.last_record_size_mb = None    # volumen agregado de TODOS los clientes
+
+    # Destino: se deja el tipo (local/sftp/s3) para la etiqueta de la UI, pero
+    # no las coordenadas ni las credenciales.
+    resp.local_path    = ""
+    resp.sftp_host     = None
+    resp.sftp_user     = None
+    resp.sftp_path     = None
+    resp.sftp_key_path = None
+    resp.s3_endpoint   = None
+    resp.s3_region     = None
+    resp.s3_bucket     = None
+    resp.s3_prefix     = None
+    resp.s3_access_key = None          # ⚠ el keyID viajaba en claro
+    return resp
+
+
 def _record_response(rec: BackupRecord) -> BackupRecordResponse:
     resp = BackupRecordResponse.model_validate(rec)
     resp.size_mb = round((rec.size_bytes or 0) / 1048576, 2)
     if rec.finished_at and rec.started_at:
         resp.duration_seconds = int((rec.finished_at - rec.started_at).total_seconds())
+    return resp
+
+
+def _redact_foreign_record(resp: BackupRecordResponse) -> BackupRecordResponse:
+    """Oculta de una ejecución del ADMIN lo que es de todos los clientes.
+
+    El log de un backup global lista TODOS los dominios del servidor con su
+    dueño ("── adarajas.es (pablocon) ──"), así que entregárselo a un cliente
+    equivale a darle la cartera de clientes entera. Los contadores y el
+    backup_path (que incluye bucket y rutas internas) son igualmente del
+    conjunto, no suyos.
+    """
+    resp.log_output        = None
+    resp.error_message     = None   # puede citar dominios/BDs de otros
+    resp.backup_path       = None   # bucket + ruta interna del destino
+    resp.size_bytes        = 0
+    resp.size_mb           = None
+    resp.files_transferred = 0
+    resp.files_total       = 0
+    resp.db_count          = 0
     return resp
 
 
@@ -451,7 +500,7 @@ async def list_backup_jobs(
         elif _job_covers_user(j, current_user, db):
             resp = _job_response(j, db)
             resp.managed_by_admin = True   # el cliente no puede editar/borrar
-            out.append(resp)
+            out.append(_redact_foreign_job(resp))
     return out
 
 
@@ -523,7 +572,10 @@ async def recent_activity(
     out = []
     for r in records:
         job = jobs_by_id.get(r.job_id)
-        resp = _record_response(r).model_dump()
+        rec_resp = _record_response(r)
+        if job and not current_user.is_admin and job.user_id != current_user.id:
+            rec_resp = _redact_foreign_record(rec_resp)
+        resp = rec_resp.model_dump()
         resp["job_name"] = job.name if job else "?"
         out.append(resp)
     return out
@@ -537,7 +589,11 @@ async def get_backup_job(
 ):
     job = _get_job_or_404(job_id, db)
     _check_view_access(current_user, job, db)
-    return _job_response(job, db)
+    resp = _job_response(job, db)
+    if not current_user.is_admin and job.user_id != current_user.id:
+        resp.managed_by_admin = True
+        resp = _redact_foreign_job(resp)
+    return resp
 
 
 @router.put("/backups/{job_id}", response_model=BackupJobResponse)
