@@ -217,6 +217,7 @@ def run_backup(job: Dict[str, Any], username: str, domain: str,
                 mounts.append(dst)
 
         # 3) BBDD → staging/databases/{nombre}.sql (dumps directos)
+        failed_dumps: List[str] = []
         if databases:
             dbdir = os.path.join(staging, "databases")
             os.makedirs(dbdir, exist_ok=True)
@@ -225,9 +226,36 @@ def run_backup(job: Dict[str, Any], username: str, domain: str,
                 out_sql = os.path.join(dbdir, f"{name}.sql")
                 if _dump_database(name, out_sql, result["log"]):
                     result["db_count"] += 1
+                else:
+                    failed_dumps.append(name)
+                    # No dejar un .sql a medias dentro del snapshot: parecería
+                    # una copia válida al restaurar.
+                    if os.path.exists(out_sql):
+                        try:
+                            os.remove(out_sql)
+                        except OSError:
+                            pass
+
+        # Si NINGUNA de las BDs pedidas se pudo volcar, esto es un fallo aunque
+        # el staging tenga contenido: sin esto el job se marcaba "success" con
+        # db_count=0 (el dir databases/ vacío ya basta para que no esté vacío)
+        # y el cliente creía tener copia de sus BDs sin tenerla.
+        if databases and result["db_count"] == 0:
+            result["status"] = "failed"
+            result["error"] = (
+                "No se pudo volcar ninguna base de datos: "
+                + ", ".join(failed_dumps[:5])
+            )
+            return result
 
         if not os.listdir(staging):
-            result["status"] = "failed"
+            # No es un fallo: simplemente este dominio no aporta nada a la copia.
+            # Caso típico en un backup global de solo-BD: las BDs del cliente se
+            # vuelcan junto a su PRIMER dominio (no se duplican por dominio), así
+            # que los demás se quedan sin contenido y hay que omitirlos, no darlos
+            # por fallidos — si no, el job entero se marcaba "Fallido" pese a estar
+            # la copia completa.
+            result["status"] = "skipped"
             result["error"] = "Nada que respaldar (sin archivos, correo ni BBDD)"
             return result
 
@@ -255,6 +283,13 @@ def run_backup(job: Dict[str, Any], username: str, domain: str,
              "--prune"], env, timeout=1800, global_opts=opts)
         if rc2 == 0:
             result["log"].append(f"Retención aplicada: conservando {keep} copias")
+
+        # Copia buena, pero alguna BD se quedó fuera: no lo ocultamos.
+        if failed_dumps:
+            result["log"].append(
+                "AVISO: no se pudieron volcar estas BBDD: "
+                + ", ".join(failed_dumps[:5])
+            )
 
         result["status"] = "success"
         return result

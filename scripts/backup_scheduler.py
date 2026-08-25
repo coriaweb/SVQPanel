@@ -202,6 +202,13 @@ def _run_job(job_id: int):
         any_failed = False
         last_repo = None
 
+        # Mismo criterio que el backup manual: las BDs se resuelven por DUEÑO,
+        # no por domain_id (que casi siempre está vacío). Ver el docstring de
+        # databases_for_domain() en api/routes/backups.py.
+        from api.routes.backups import databases_for_domain
+        is_global = not job.domain_id
+        seen_owner_ids: set = set()
+
         for domain, owner in (domains_to_backup or []):
             username = owner.username if owner else "root"
             domain_name = domain.domain_name
@@ -209,11 +216,8 @@ def _run_job(job_id: int):
             mail_path = f"/home/{username}/mail/{domain_name}" if job.include_mail else None
             databases = []
             if job.include_databases:
-                dbs = db.query(ClientDatabase).filter(
-                    ClientDatabase.domain_id == domain.id,
-                    ClientDatabase.is_active == True  # noqa
-                ).all()
-                databases = [{"db_name": d.db_name} for d in dbs]
+                databases = databases_for_domain(
+                    db, domain, owner, is_global, seen_owner_ids)
 
             all_log.append(f"── {domain_name} ({username}) ──")
             res = restic_manager.run_backup(
@@ -227,6 +231,9 @@ def _run_job(job_id: int):
             last_repo = res.get("repo")
             if res["status"] == "failed":
                 any_failed = True
+            elif res["status"] == "skipped":
+                # Sin contenido propio; no invalida la copia (ver restic_manager).
+                all_log.append(f"omitido {domain_name}: {res['error']}")
 
         record.status            = "failed" if any_failed else "success"
         record.backup_path       = last_repo

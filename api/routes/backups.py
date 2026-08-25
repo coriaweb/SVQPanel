@@ -16,6 +16,7 @@ from datetime import datetime
 from typing import Optional, List
 
 from fastapi import APIRouter, Depends, HTTPException, status, BackgroundTasks
+from sqlalchemy import or_
 from sqlalchemy.orm import Session
 
 from api.models.database import get_db, SessionLocal
@@ -201,6 +202,46 @@ def _domains_for_job(job: BackupJob, db: Session) -> list:
     return result
 
 
+def databases_for_domain(db: Session, domain, owner, is_global: bool,
+                         seen_owner_ids: set) -> list:
+    """
+    BDs a respaldar junto con `domain`. Devuelve [{"db_name": ...}, ...].
+
+    Por qué no basta con filtrar por ClientDatabase.domain_id: ese campo es
+    OPCIONAL (nullable) y está vacío en la gran mayoría de las BDs — el
+    importador de Hestia no lo rellena y en el alta manual es un desplegable
+    que casi nadie toca. Filtrando solo por él, el backup no encontraba nada
+    y fallaba con "Nada que respaldar" aunque el cliente tuviera BDs. El dato
+    fiable es el dueño (user_id, NOT NULL), así que partimos de ahí.
+
+    - Job global (todos los dominios): todas las BDs del dueño, UNA sola vez.
+      `seen_owner_ids` evita duplicarlas cuando el dueño tiene varios dominios
+      (si no, la misma BD se volcaría en cada uno de ellos).
+    - Job de un dominio concreto: las BDs de ese dominio MÁS las del dueño que
+      no estén asignadas a ninguno (las "sueltas"), que de otro modo no las
+      respaldaría nadie. No se cuelan las de otras webs del mismo cliente.
+    """
+    if not owner:
+        return []
+
+    q = db.query(ClientDatabase).filter(
+        ClientDatabase.user_id == owner.id,
+        ClientDatabase.is_active == True,  # noqa: E712
+    )
+
+    if is_global:
+        if owner.id in seen_owner_ids:
+            return []
+        seen_owner_ids.add(owner.id)
+    else:
+        q = q.filter(or_(
+            ClientDatabase.domain_id == domain.id,
+            ClientDatabase.domain_id.is_(None),
+        ))
+
+    return [{"db_name": d.db_name} for d in q.all()]
+
+
 def _job_covers_user(job: BackupJob, user: User, db: Session) -> bool:
     """True si el backup del job incluye algún dominio del usuario `user`.
     Se usa para que un CLIENTE vea/restaure los backups (incluidos los creados
@@ -273,6 +314,11 @@ def _execute_backup(job_id: int, record_id: int, force_full: bool):
         if not domains_to_backup:
             all_log.append("WARN: no hay dominios que respaldar para este job")
 
+        # Alcance de las BDs: en un job global cada dueño aporta sus BDs una
+        # sola vez (aunque tenga varios dominios). Ver databases_for_domain().
+        is_global = not job.domain_id
+        seen_owner_ids: set = set()
+
         for domain, owner in domains_to_backup:
             username    = owner.username if owner else "root"
             domain_name = domain.domain_name
@@ -287,13 +333,8 @@ def _execute_backup(job_id: int, record_id: int, force_full: bool):
             )
             databases = []
             if job.include_databases:
-                dbs = (
-                    db.query(ClientDatabase)
-                    .filter(ClientDatabase.domain_id == domain.id,
-                            ClientDatabase.is_active == True)  # noqa: E712
-                    .all()
-                )
-                databases = [{"db_name": d.db_name} for d in dbs]
+                databases = databases_for_domain(
+                    db, domain, owner, is_global, seen_owner_ids)
 
             all_log.append(f"── {domain_name} ({username}) ──")
             res = restic_manager.run_backup(
@@ -308,6 +349,10 @@ def _execute_backup(job_id: int, record_id: int, force_full: bool):
             if res["status"] == "failed":
                 any_failed = True
                 all_log.append(f"ERROR {domain_name}: {res['error']}")
+            elif res["status"] == "skipped":
+                # Sin contenido propio (p. ej. sus BDs ya se copiaron con otro
+                # dominio del mismo dueño). No invalida la copia.
+                all_log.append(f"omitido {domain_name}: {res['error']}")
 
         record.status            = "failed" if any_failed else "success"
         record.backup_path       = last_path
