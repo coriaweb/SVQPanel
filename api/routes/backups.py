@@ -682,7 +682,19 @@ async def _test_connection(job_id, current_user, db):
     _check_access(current_user, job)
     username, domain_name, _, _ = _owner_and_paths(job, db)
     if not domain_name:
-        return {"status": "error", "ok": False, "message": "El job no tiene dominio asociado"}
+        # Job global ("Todos los dominios"): no hay un dominio fijo, pero el
+        # destino se puede probar igual usando el primero que respalde — lo que
+        # se valida es el repositorio (credenciales, endpoint, red), no el
+        # dominio. Sin esto, "Probar conexión" era inutilizable en los jobs
+        # globales, justo donde más falta hace comprobarlo antes de las 3am.
+        pairs = _domains_for_job(job, db)
+        if pairs:
+            first_domain, first_owner = pairs[0]
+            domain_name = first_domain.domain_name
+            username = first_owner.username if first_owner else "root"
+    if not domain_name:
+        return {"status": "error", "ok": False,
+                "message": "El job no respalda ningún dominio todavía"}
     try:
         from scripts import restic_manager
         ok, message = restic_manager.test_connection(_job_to_config(job), username, domain_name)
