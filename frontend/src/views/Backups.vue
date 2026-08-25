@@ -128,7 +128,12 @@
                           :disabled="runningJobId === job.id" @click="openRestore(job)">
                     <i class="bi bi-arrow-counterclockwise"></i>
                   </button>
-                  <button class="bk-iconbtn" title="Historial" @click="openHistory(job)">
+                  <!-- Historial: solo en jobs propios. El de un backup global del
+                       admin es del SERVIDOR entero (logs con los dominios y BDs de
+                       todos los clientes), asi que no se muestra: el boton siempre
+                       daba "No tienes permiso sobre este backup". Restaurar si se
+                       deja: ahi el backend limita al cliente a sus dominios. -->
+                  <button v-if="!job.managed_by_admin" class="bk-iconbtn" title="Historial" @click="openHistory(job)">
                     <i class="bi bi-clock-history"></i>
                   </button>
                   <button v-if="!job.managed_by_admin" class="bk-iconbtn" title="Editar" @click="openEdit(job)">
