@@ -16,12 +16,27 @@ from fastapi import HTTPException
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from api.routes.file_manager import (  # noqa: E402
+    TransferRequest,
     _assert_inside,
     _escaping_links_ignore,
     _safe_join,
     _tree_size,
     _unique_destination,
 )
+
+
+class _FakeDomain:
+    """Lo mínimo que _resolve_dest_domain mira de un dominio."""
+    def __init__(self, domain_id, user_id, public_html=""):
+        self.id = domain_id
+        self.user_id = user_id
+        self.public_html = public_html
+
+
+class _FakeUser:
+    def __init__(self, user_id, role):
+        self.id = user_id
+        self.role = role
 
 
 @pytest.fixture
@@ -168,3 +183,87 @@ def test_unique_destination_respeta_tar_gz(tmp_path):
 def test_unique_destination_libre_devuelve_el_nombre(tmp_path):
     resultado = _unique_destination(str(tmp_path), "nuevo.txt")
     assert os.path.basename(resultado) == "nuevo.txt"
+
+
+# ── Mover/copiar entre dominios: solo del mismo propietario ───────────────
+
+def _resolve(dest_domain_id, source_domain, current_user, visible):
+    """Llama a _resolve_dest_domain con un _get_domain_or_404 simulado.
+
+    'visible' son los dominios que el usuario puede ver segun su rol; si el
+    destino no esta, se simula el 404 que devolveria la consulta filtrada.
+    """
+    payload = TransferRequest(paths=["x"], dest="", dest_domain_id=dest_domain_id)
+
+    def fake_get(domain_id, db, user):
+        for d in visible:
+            if d.id == domain_id:
+                return d
+        raise HTTPException(status_code=404, detail="Dominio no encontrado o sin permisos")
+
+    import api.routes.file_manager as fm
+    original = fm._get_domain_or_404
+    fm._get_domain_or_404 = fake_get
+    try:
+        return fm._resolve_dest_domain(payload, source_domain, None, current_user)
+    finally:
+        fm._get_domain_or_404 = original
+
+
+def test_sin_dest_domain_usa_el_de_origen():
+    origen = _FakeDomain(1, user_id=7)
+    user = _FakeUser(7, "user")
+    assert _resolve(None, origen, user, [origen]) is origen
+
+
+def test_mismo_dominio_explicito_usa_el_de_origen():
+    origen = _FakeDomain(1, user_id=7)
+    user = _FakeUser(7, "user")
+    assert _resolve(1, origen, user, [origen]) is origen
+
+
+def test_cliente_puede_mover_entre_sus_dos_dominios():
+    """El caso del cliente con dos dominios suyos: debe funcionar."""
+    origen = _FakeDomain(1, user_id=7)
+    destino = _FakeDomain(2, user_id=7)
+    user = _FakeUser(7, "user")
+    assert _resolve(2, origen, user, [origen, destino]) is destino
+
+
+def test_reseller_no_puede_cruzar_entre_dos_clientes_distintos():
+    """Un reseller VE ambos dominios, pero son de clientes distintos: 403.
+
+    Cada dominio corre bajo su propio usuario del sistema; cruzarlos mezclaria
+    cuentas que el aislamiento PHP mantiene separadas.
+    """
+    origen = _FakeDomain(1, user_id=10)   # cliente A
+    destino = _FakeDomain(2, user_id=11)  # cliente B
+    reseller = _FakeUser(5, "reseller")
+    with pytest.raises(HTTPException) as exc:
+        _resolve(2, origen, reseller, [origen, destino])
+    assert exc.value.status_code == 403
+
+
+def test_reseller_si_puede_entre_dominios_del_mismo_cliente():
+    origen = _FakeDomain(1, user_id=10)
+    destino = _FakeDomain(2, user_id=10)
+    reseller = _FakeUser(5, "reseller")
+    assert _resolve(2, origen, reseller, [origen, destino]) is destino
+
+
+def test_admin_si_puede_cruzar_entre_cuentas():
+    origen = _FakeDomain(1, user_id=10)
+    destino = _FakeDomain(2, user_id=11)
+    admin = _FakeUser(1, "admin")
+    assert _resolve(2, origen, admin, [origen, destino]) is destino
+
+
+def test_dominio_destino_ajeno_da_404_no_403():
+    """Si el usuario ni siquiera ve el destino, corta antes de mirar el dueño."""
+    origen = _FakeDomain(1, user_id=7)
+    ajeno = _FakeDomain(99, user_id=42)
+    user = _FakeUser(7, "user")
+    with pytest.raises(HTTPException) as exc:
+        _resolve(99, origen, user, [origen])   # 'ajeno' no es visible
+    assert exc.value.status_code == 404
+    assert ajeno.user_id == 42  # el dominio existe, pero no para este usuario

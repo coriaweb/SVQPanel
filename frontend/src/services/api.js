@@ -264,12 +264,20 @@ class APIClient {
     return this.post(`/api/file-manager/domains/${domainId}/chmod`, { path, mode })
   }
 
-  moveDomainEntries(domainId, paths, dest = '', overwrite = false) {
-    return this.post(`/api/file-manager/domains/${domainId}/move`, { paths, dest, overwrite })
+  /**
+   * Mueve elementos. `destDomainId` permite mover a OTRO dominio del mismo
+   * propietario; null/omitido = misma carpeta del dominio de origen.
+   */
+  moveDomainEntries(domainId, paths, dest = '', overwrite = false, destDomainId = null) {
+    return this.post(`/api/file-manager/domains/${domainId}/move`, {
+      paths, dest, overwrite, dest_domain_id: destDomainId,
+    })
   }
 
-  copyDomainEntries(domainId, paths, dest = '', overwrite = false) {
-    return this.post(`/api/file-manager/domains/${domainId}/copy`, { paths, dest, overwrite })
+  copyDomainEntries(domainId, paths, dest = '', overwrite = false, destDomainId = null) {
+    return this.post(`/api/file-manager/domains/${domainId}/copy`, {
+      paths, dest, overwrite, dest_domain_id: destDomainId,
+    })
   }
 
   compressDomainEntries(domainId, paths, name, dest = '') {

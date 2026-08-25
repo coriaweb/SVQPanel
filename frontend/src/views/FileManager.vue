@@ -99,8 +99,15 @@
         <i :class="clipboard.mode === 'move' ? 'bi bi-scissors' : 'bi bi-files'" class="me-1"></i>
         {{ clipboard.paths.length }} elemento{{ clipboard.paths.length !== 1 ? 's' : '' }}
         {{ clipboard.mode === 'move' ? 'para mover' : 'para copiar' }}
+        <span v-if="clipboardIsCrossDomain" class="fw-normal text-muted">
+          desde <code>{{ clipboard.domainName }}</code>
+        </span>
       </span>
-      <small class="text-muted">Ve a la carpeta destino y pulsa Pegar</small>
+      <small class="text-muted">
+        {{ clipboardIsCrossDomain
+          ? 'Se pegará en el dominio que estás viendo ahora'
+          : 'Ve a la carpeta destino —o a otro dominio tuyo— y pulsa Pegar' }}
+      </small>
       <button class="btn btn-sm btn-primary ms-auto" @click="pasteClipboard" :disabled="pasting">
         <span v-if="pasting" class="spinner-border spinner-border-sm me-1"></span>
         <i v-else class="bi bi-clipboard-check me-1"></i>
@@ -397,17 +404,24 @@ export default {
     const pasting = ref(false)
     const compressing = ref(false)
 
+    // True cuando lo copiado viene de un dominio distinto al que se está viendo.
+    const clipboardIsCrossDomain = computed(() =>
+      !!clipboard.value && String(clipboard.value.domainId) !== String(selectedDomainId.value)
+    )
+
     const setClipboard = (mode, paths) => {
       if (!paths.length) return
+      const dom = domains.value.find(d => String(d.id) === String(selectedDomainId.value))
       clipboard.value = {
         mode,
         paths,
         domainId: selectedDomainId.value,
+        domainName: dom?.domain_name || '',
         from: currentPath.value,
       }
       selected.value = new Set()
       store.showNotification(
-        `${paths.length} elemento${paths.length !== 1 ? 's' : ''} listo${paths.length !== 1 ? 's' : ''} para ${mode === 'move' ? 'mover' : 'copiar'}. Abre la carpeta destino y pulsa "Pegar aquí".`,
+        `${paths.length} elemento${paths.length !== 1 ? 's' : ''} listo${paths.length !== 1 ? 's' : ''} para ${mode === 'move' ? 'mover' : 'copiar'}. Abre la carpeta destino —incluso de otro dominio tuyo— y pulsa "Pegar aquí".`,
         'info'
       )
     }
@@ -420,22 +434,24 @@ export default {
     const pasteClipboard = async () => {
       const cb = clipboard.value
       if (!cb) return
-      // El portapapeles es por dominio: los endpoints resuelven origen y destino
-      // contra el mismo public_html, así que no se puede pegar en otro dominio.
-      if (String(cb.domainId) !== String(selectedDomainId.value)) {
-        store.showNotification('No se puede pegar en otro dominio. Vuelve al dominio de origen.', 'warning')
-        return
-      }
       pasting.value = true
       try {
+        // La operación se pide siempre sobre el dominio de ORIGEN; el destino
+        // viaja en el cuerpo. Si es otro dominio, el backend exige que sea del
+        // mismo propietario (403 en caso contrario).
+        const crossDomain = String(cb.domainId) !== String(selectedDomainId.value)
         const call = cb.mode === 'move' ? api.moveDomainEntries : api.copyDomainEntries
-        const result = await call.call(api, cb.domainId, cb.paths, currentPath.value, false)
+        const result = await call.call(
+          api, cb.domainId, cb.paths, currentPath.value, false,
+          crossDomain ? selectedDomainId.value : null
+        )
         const done = (result?.moved ?? result?.copied ?? []).length
         const errors = result?.errors ?? []
 
         if (done) {
+          const desde = crossDomain ? ` desde ${cb.domainName}` : ''
           store.showNotification(
-            `${done} elemento${done !== 1 ? 's' : ''} ${cb.mode === 'move' ? 'movido' : 'copiado'}${done !== 1 ? 's' : ''}`,
+            `${done} elemento${done !== 1 ? 's' : ''} ${cb.mode === 'move' ? 'movido' : 'copiado'}${done !== 1 ? 's' : ''}${desde}`,
             errors.length ? 'warning' : 'success'
           )
         }
@@ -780,7 +796,7 @@ export default {
       showChmod, savingChmod, chmodEntry, chmodBits, chmodOctal, openChmod, applyChmod,
       selected, bulkDeleting, allSelected, someSelected,
       toggleSelect, toggleAll, clearSelection, deleteSelected,
-      clipboard, pasting, compressing,
+      clipboard, pasting, compressing, clipboardIsCrossDomain,
       cutSelection, copySelection, cutEntry, copyEntry, pasteClipboard, compressSelection,
       formatSize, formatDate, isEditable, isArchive, isUnsupportedArchive, fileIcon,
     }

@@ -85,10 +85,17 @@ class ChmodRequest(BaseModel):
 
 
 class TransferRequest(BaseModel):
-    """Mover o copiar varios elementos a una carpeta destino del mismo dominio."""
+    """Mover o copiar varios elementos a una carpeta destino.
+
+    El destino puede estar en OTRO dominio (``dest_domain_id``) siempre que sea
+    del mismo propietario; ver ``_resolve_dest_domain``.
+    """
     paths: List[str] = Field(..., min_length=1, max_length=500)
     dest: str = Field("", description="Carpeta destino relativa; vacío = raíz de public_html")
     overwrite: bool = Field(False, description="Si el destino ya existe, reemplazarlo")
+    dest_domain_id: Optional[int] = Field(
+        None, description="Dominio destino; vacío = el mismo dominio de origen"
+    )
 
 
 class CompressRequest(BaseModel):
@@ -568,13 +575,48 @@ def _chown_tree(domain: Domain, target: str):
             _apply_domain_owner(domain, os.path.join(dirpath, fname))
 
 
-def _prepare_transfer(domain: Domain, payload: TransferRequest):
-    """Valida origen/destino comunes a mover y copiar. Devuelve (root, dest_dir)."""
-    root = os.path.realpath(domain.public_html)
-    dest_dir = _safe_join(root, payload.dest)
+def _resolve_dest_domain(
+    payload: TransferRequest, source_domain: Domain, db: Session, current_user: User
+) -> Domain:
+    """Devuelve el dominio destino, validando que el usuario pueda escribir en él.
+
+    Mover entre dominios se permite solo cuando ambos son del MISMO propietario.
+    Cada dominio corre bajo su propio usuario del sistema (pool PHP-FPM aislado,
+    open_basedir propio), así que cruzar archivos entre dos cuentas distintas
+    mezclaría datos de clientes que el aislamiento mantiene separados. El admin
+    sí puede cruzar: es una operación legítima de administración (p.ej. mover un
+    sitio de una cuenta a otra al reasignar un cliente).
+    """
+    if payload.dest_domain_id is None or payload.dest_domain_id == source_domain.id:
+        return source_domain
+
+    # _get_domain_or_404 ya filtra por rol: si el usuario no puede ver el
+    # dominio destino, aquí recibe un 404 y no llega a escribir nada.
+    dest_domain = _get_domain_or_404(payload.dest_domain_id, db, current_user)
+
+    if current_user.role != "admin" and dest_domain.user_id != source_domain.user_id:
+        raise HTTPException(
+            status_code=403,
+            detail="Solo se puede mover o copiar entre dominios del mismo propietario",
+        )
+    return dest_domain
+
+
+def _prepare_transfer(
+    payload: TransferRequest, source_domain: Domain, db: Session, current_user: User
+):
+    """Valida origen/destino comunes a mover y copiar.
+
+    Devuelve (root_origen, dest_dir, dominio_destino). El destino puede estar en
+    otro dominio, por eso dest_dir se resuelve contra la raíz de ESE dominio.
+    """
+    root = os.path.realpath(source_domain.public_html)
+    dest_domain = _resolve_dest_domain(payload, source_domain, db, current_user)
+    dest_root = os.path.realpath(dest_domain.public_html)
+    dest_dir = _safe_join(dest_root, payload.dest)
     if not os.path.isdir(dest_dir):
         raise HTTPException(status_code=404, detail="La carpeta destino no existe")
-    return root, dest_dir
+    return root, dest_dir, dest_domain
 
 
 @router.post("/file-manager/domains/{domain_id}/move", tags=["File Manager"])
@@ -584,10 +626,12 @@ def move_entries(
     db: Session = Depends(get_db),
     current_user: User = Depends(require_auth),
 ):
-    """Mueve uno o varios elementos a otra carpeta del mismo dominio."""
+    """Mueve uno o varios elementos a otra carpeta, del mismo dominio o de otro
+    dominio del mismo propietario."""
     _check_enabled()
     domain = _get_domain_or_404(domain_id, db, current_user)
-    root, dest_dir = _prepare_transfer(domain, payload)
+    root, dest_dir, dest_domain = _prepare_transfer(payload, domain, db, current_user)
+    dest_root = os.path.realpath(dest_domain.public_html)
 
     moved: list[str] = []
     errors: list[dict] = []
@@ -615,8 +659,11 @@ def move_entries(
                     os.remove(destination)
 
             shutil.move(source, destination)
-            _chown_tree(domain, destination)
-            moved.append(_relative_path(root, destination))
+            # El chown va al dueño del DESTINO: si no, un archivo movido al
+            # dominio B quedaría con el owner de A y el pool PHP-FPM de B no
+            # podría escribirlo (y B tendría un archivo de otra cuenta dentro).
+            _chown_tree(dest_domain, destination)
+            moved.append(_relative_path(dest_root, destination))
         except HTTPException as exc:
             errors.append({"path": rel_path, "name": name, "error": exc.detail})
 
@@ -630,14 +677,16 @@ def copy_entries(
     db: Session = Depends(get_db),
     current_user: User = Depends(require_auth),
 ):
-    """Copia uno o varios elementos a otra carpeta del mismo dominio.
+    """Copia uno o varios elementos a otra carpeta, del mismo dominio o de otro
+    dominio del mismo propietario.
 
     Si el destino ya existe y no se pidió sobreescribir, se crea "nombre (copia)"
     en vez de fallar: así se puede duplicar dentro de la misma carpeta.
     """
     _check_enabled()
     domain = _get_domain_or_404(domain_id, db, current_user)
-    root, dest_dir = _prepare_transfer(domain, payload)
+    root, dest_dir, dest_domain = _prepare_transfer(payload, domain, db, current_user)
+    dest_root = os.path.realpath(dest_domain.public_html)
 
     _, _, max_copy_mb = get_upload_limits(db)
     max_copy_bytes = max_copy_mb * 1024 * 1024
@@ -673,8 +722,9 @@ def copy_entries(
                 shutil.copytree(source, destination, symlinks=True, ignore=_escaping_links_ignore(root))
             else:
                 shutil.copy2(source, destination)
-            _chown_tree(domain, destination)
-            copied.append(_relative_path(root, destination))
+            # Igual que en move: el owner es el del dominio destino.
+            _chown_tree(dest_domain, destination)
+            copied.append(_relative_path(dest_root, destination))
         except HTTPException as exc:
             errors.append({"path": rel_path, "name": name, "error": exc.detail})
         except OSError as exc:
