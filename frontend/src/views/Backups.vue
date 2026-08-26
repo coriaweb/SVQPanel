@@ -774,11 +774,16 @@ export default {
 
     const statusLabel = (s) => ({
       pending: 'Pendiente', running: 'En curso', success: 'Correcto',
+      // "Con avisos": la copia se hizo pero algo quedo fuera (p.ej. una BD que
+      // no se pudo volcar). Antes esto se marcaba "Correcto" y el aviso moria
+      // enterrado en el log.
+      partial: 'Con avisos',
       failed: 'Fallido', cancelled: 'Cancelado',
     }[s] || s)
 
     const statusClass = (s) => ({
       success: 'bk-status--ok', failed: 'bk-status--err', running: 'bk-status--run',
+      partial: 'bk-status--warn',
       pending: 'bk-status--idle', cancelled: 'bk-status--idle',
     }[s] || 'bk-status--idle')
 
@@ -939,7 +944,7 @@ export default {
     }
 
     const pollRecord = async (recordId) => {
-      const FINAL = ['success', 'failed', 'cancelled']
+      const FINAL = ['success', 'partial', 'failed', 'cancelled']
       for (let i = 0; i < 600; i++) {   // hasta ~20 min (2s * 600)
         await new Promise(r => setTimeout(r, 2000))
         let rec
@@ -962,6 +967,10 @@ export default {
         const final = await pollRecord(rec.id)
         if (final && final.status === 'success') {
           store.showNotification(`Backup "${job.name}" completado (${final.size_mb} MB)`, 'success')
+        } else if (final && final.status === 'partial') {
+          store.showNotification(
+            `Backup "${job.name}" completado con avisos: ${final.error_message || 'revisa el historial'}`,
+            'warning')
         } else if (final && final.status === 'failed') {
           store.showNotification(`Backup "${job.name}" falló: ${final.error_message || 'error desconocido'}`, 'danger')
         } else {
@@ -1274,6 +1283,7 @@ export default {
 .bk-status { display: inline-block; font-size: var(--fs-xs); font-weight: var(--fw-semibold); padding: 2px 9px; border-radius: var(--r-pill); }
 .bk-status--ok   { background: var(--success-bg); color: var(--success); }
 .bk-status--err  { background: var(--danger-bg); color: var(--danger); }
+.bk-status--warn { background: var(--warning-bg); color: var(--warning); }
 .bk-status--run  { background: var(--brand-50); color: var(--color-primary); }
 .bk-status--idle { background: var(--surface-inset); color: var(--text-muted); }
 .bk-sched { color: var(--success); }

@@ -182,7 +182,7 @@ def run_backup(job: Dict[str, Any], username: str, domain: str,
     sean predecibles."""
     result = {"status": "pending", "log": [], "snapshot_id": None,
               "size_bytes": 0, "files_total": 0, "db_count": 0, "error": None,
-              "repo": None}
+              "repo": None, "failed_dumps": []}
 
     ok, repo, msg = ensure_repo(job, username, domain)
     result["repo"] = repo
@@ -284,12 +284,23 @@ def run_backup(job: Dict[str, Any], username: str, domain: str,
         if rc2 == 0:
             result["log"].append(f"Retención aplicada: conservando {keep} copias")
 
-        # Copia buena, pero alguna BD se quedó fuera: no lo ocultamos.
+        # Copia buena, pero alguna BD se quedó fuera. Marcarlo como "success" a
+        # secas escondía el problema: el aviso quedaba enterrado en un log de
+        # decenas de líneas y en la lista de copias se leía "Correcto". Si el día
+        # de mañana falla el dump de una BD CON datos, hay que verlo sin abrir el
+        # detalle. Por eso el estado propio: "partial".
         if failed_dumps:
             result["log"].append(
                 "AVISO: no se pudieron volcar estas BBDD: "
                 + ", ".join(failed_dumps[:5])
             )
+            result["failed_dumps"] = list(failed_dumps)
+            result["status"] = "partial"
+            result["error"] = (
+                "No se pudieron volcar "
+                f"{len(failed_dumps)} BBDD: " + ", ".join(failed_dumps[:5])
+            )
+            return result
 
         result["status"] = "success"
         return result

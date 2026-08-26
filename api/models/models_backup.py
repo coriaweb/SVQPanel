@@ -120,7 +120,10 @@ class BackupRecord(Base):
     kind = Column(String(20), default="backup", nullable=False)
 
     # ── Estado ────────────────────────────────────────────────────────────────
-    # pending → running → success | failed | cancelled
+    # pending → running → success | partial | failed | cancelled
+    # "partial": la copia se hizo pero algo quedó fuera (típico: una BD que no se
+    # pudo volcar). Ni "success" —ocultaba el problema— ni "failed" —los archivos
+    # sí están—. El detalle va en error_message.
     status = Column(String(20), default="pending", nullable=False)
 
     # ── Información del backup ─────────────────────────────────────────────────

@@ -358,6 +358,8 @@ def _execute_backup(job_id: int, record_id: int, force_full: bool):
         total_files_total = 0
         total_db_count = 0
         any_failed = False
+        partial_domains: list[str] = []   # dominios cuya copia dejó BBDD fuera
+        failed_dumps_all: list[str] = []  # nombres de esas BBDD
         last_path = None
 
         if not domains_to_backup:
@@ -398,19 +400,39 @@ def _execute_backup(job_id: int, record_id: int, force_full: bool):
             if res["status"] == "failed":
                 any_failed = True
                 all_log.append(f"ERROR {domain_name}: {res['error']}")
+            elif res["status"] == "partial":
+                # Copia hecha pero con BBDD sin volcar: ni "Correcto" ni "Fallido".
+                partial_domains.append(domain_name)
+                failed_dumps_all.extend(res.get("failed_dumps") or [])
             elif res["status"] == "skipped":
                 # Sin contenido propio (p. ej. sus BDs ya se copiaron con otro
                 # dominio del mismo dueño). No invalida la copia.
                 all_log.append(f"omitido {domain_name}: {res['error']}")
 
-        record.status            = "failed" if any_failed else "success"
+        if any_failed:
+            record.status = "failed"
+        elif partial_domains:
+            record.status = "partial"
+        else:
+            record.status = "success"
         record.backup_path       = last_path
         record.size_bytes        = total_size
         record.files_transferred = total_files_total
         record.files_total       = total_files_total
         record.db_count          = total_db_count
         record.log_output        = "\n".join(all_log)[:50000]
-        record.error_message     = "Algunos dominios fallaron, revisa el log" if any_failed else None
+        if any_failed:
+            record.error_message = "Algunos dominios fallaron, revisa el log"
+        elif partial_domains:
+            record.error_message = (
+                f"Copia realizada, pero {len(failed_dumps_all)} BBDD no se "
+                f"pudieron volcar ({', '.join(failed_dumps_all[:5])}"
+                f"{'…' if len(failed_dumps_all) > 5 else ''}) en: "
+                f"{', '.join(partial_domains[:5])}"
+                f"{'…' if len(partial_domains) > 5 else ''}"
+            )
+        else:
+            record.error_message = None
         record.finished_at       = datetime.utcnow()
         job.last_run = datetime.utcnow()
         db.commit()

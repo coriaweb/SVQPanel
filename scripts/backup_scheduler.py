@@ -200,6 +200,8 @@ def _run_job(job_id: int):
         from scripts import restic_manager
         all_log, total_size, total_xf, total_xt, total_db = [], 0, 0, 0, 0
         any_failed = False
+        partial_domains: list[str] = []   # dominios cuya copia dejó BBDD fuera
+        failed_dumps_all: list[str] = []  # nombres de esas BBDD
         last_repo = None
 
         # Mismo criterio que el backup manual: las BDs se resuelven por DUEÑO,
@@ -231,18 +233,41 @@ def _run_job(job_id: int):
             last_repo = res.get("repo")
             if res["status"] == "failed":
                 any_failed = True
+            elif res["status"] == "partial":
+                # La copia se hizo, pero alguna BD no se pudo volcar. No es un
+                # fallo total (los archivos están), pero tampoco un "Correcto":
+                # hay que verlo en la lista sin abrir el detalle.
+                partial_domains.append(domain_name)
+                failed_dumps_all.extend(res.get("failed_dumps") or [])
             elif res["status"] == "skipped":
                 # Sin contenido propio; no invalida la copia (ver restic_manager).
                 all_log.append(f"omitido {domain_name}: {res['error']}")
 
-        record.status            = "failed" if any_failed else "success"
+        if any_failed:
+            record.status = "failed"
+        elif partial_domains:
+            record.status = "partial"
+        else:
+            record.status = "success"
         record.backup_path       = last_repo
         record.size_bytes        = total_size
         record.files_transferred = total_xt   # restic: archivos procesados
         record.files_total       = total_xt
         record.db_count          = total_db
         record.log_output        = "\n".join(all_log)[:50000]
-        record.error_message     = "Algunos dominios fallaron" if any_failed else None
+        if any_failed:
+            record.error_message = "Algunos dominios fallaron"
+        elif partial_domains:
+            # Concreto: qué BBDD y de qué dominios, para no tener que bucear el log.
+            record.error_message = (
+                f"Copia realizada, pero {len(failed_dumps_all)} BBDD no se "
+                f"pudieron volcar ({', '.join(failed_dumps_all[:5])}"
+                f"{'…' if len(failed_dumps_all) > 5 else ''}) en: "
+                f"{', '.join(partial_domains[:5])}"
+                f"{'…' if len(partial_domains) > 5 else ''}"
+            )
+        else:
+            record.error_message = None
         record.finished_at       = datetime.utcnow()
         job.last_run = datetime.utcnow()
         db.commit()
