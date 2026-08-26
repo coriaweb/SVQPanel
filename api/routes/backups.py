@@ -348,7 +348,7 @@ def _execute_backup(job_id: int, record_id: int, force_full: bool):
         db.commit()
 
         from scripts.utils import get_domain_root
-        from scripts import restic_manager
+        from scripts import restic_manager, worker_pool
         job_config = _job_to_config(job)
 
         domains_to_backup = _domains_for_job(job, db)
@@ -370,33 +370,36 @@ def _execute_backup(job_id: int, record_id: int, force_full: bool):
         is_global = not job.domain_id
         seen_owner_ids: set = set()
 
+        # Igual que el backup programado: resolver el trabajo EN SERIE (usa la
+        # sesión de SQLAlchemy y el set seen_owner_ids, que no son seguros entre
+        # hilos) y paralelizar solo la parte pesada.
+        tareas = []
         for domain, owner in domains_to_backup:
             username    = owner.username if owner else "root"
             domain_name = domain.domain_name
+            tareas.append({
+                "username": username,
+                "domain_name": domain_name,
+                "files_path": (get_domain_root(username, domain_name)
+                               if job.include_files else None),
+                "mail_path": (f"/home/{username}/mail/{domain_name}"
+                              if job.include_mail else None),
+                "databases": (databases_for_domain(db, domain, owner, is_global,
+                                                   seen_owner_ids)
+                              if job.include_databases else []),
+            })
 
-            files_path = (
-                get_domain_root(username, domain_name)
-                if job.include_files else None
-            )
-            mail_path = (
-                f"/home/{username}/mail/{domain_name}"
-                if job.include_mail else None
-            )
-            databases = []
-            if job.include_databases:
-                databases = databases_for_domain(
-                    db, domain, owner, is_global, seen_owner_ids)
+        workers = worker_pool.resolve_workers(getattr(job, "max_workers", None))
+        if workers > 1 and len(tareas) > 1:
+            all_log.append(f"Ejecutando en paralelo ({workers} a la vez)")
 
-            all_log.append(f"── {domain_name} ({username}) ──")
-            res = restic_manager.run_backup(
-                job_config, username, domain_name,
-                files_path=files_path, mail_path=mail_path, databases=databases,
-            )
+        for domain_name, res in worker_pool.run_tasks(job_config, tareas, workers):
+            all_log.append(f"── {domain_name} ──")
             all_log.extend([l for l in res["log"] if l])
             total_size        += res["size_bytes"]
             total_files_total += res["files_total"]
             total_db_count    += res["db_count"]
-            last_path          = res.get("repo")
+            last_path          = res.get("repo") or last_path
             if res["status"] == "failed":
                 any_failed = True
                 all_log.append(f"ERROR {domain_name}: {res['error']}")

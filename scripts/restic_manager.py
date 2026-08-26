@@ -107,11 +107,29 @@ def _sftp_opts(job: Dict[str, Any]) -> List[str]:
     return ["-o", "sftp.command=" + " ".join(cmd)]
 
 
+def _nice_prefix() -> List[str]:
+    """Prefijo para correr en segundo plano sin ahogar la máquina.
+
+    El backup nocturno comparte servidor con las webs de los clientes: si se
+    solapa con tráfico real, debe apartarse. `nice` baja la prioridad de CPU e
+    `ionice -c3` (idle) hace que solo use el disco cuando nadie más lo pide.
+    Si los binarios no están, se devuelve vacío y todo sigue igual que antes.
+    """
+    prefix: List[str] = []
+    ionice = shutil.which("ionice")
+    if ionice:
+        prefix += [ionice, "-c3"]
+    nice = shutil.which("nice")
+    if nice:
+        prefix += [nice, "-n", "10"]
+    return prefix
+
+
 def _run(args: List[str], env: dict, timeout: int = 3600,
          input_text: str = None, global_opts: List[str] = None) -> Tuple[int, str, str]:
     """Ejecuta restic con los args dados. `global_opts` son flags que van ANTES
     del subcomando (p. ej. -o sftp.command=...). Devuelve (rc, stdout, stderr)."""
-    cmd = [RESTIC_BIN] + (global_opts or []) + args
+    cmd = _nice_prefix() + [RESTIC_BIN] + (global_opts or []) + args
     try:
         r = subprocess.run(cmd, env=env, capture_output=True, text=True,
                            timeout=timeout, input=input_text)
@@ -276,11 +294,15 @@ def run_backup(job: Dict[str, Any], username: str, domain: str,
             result["error"] = (err or out)[:400]
             return result
 
-        # 5) Retención
+        # 5) Retención. El `forget` solo desmarca snapshots (barato); es el
+        #    `--prune` el que recorre el repo y reescribe packs para liberar
+        #    espacio, y eso es caro: con un repo por dominio se pagaba en CADA
+        #    dominio y en CADA copia. No hace falta a diario — los datos siguen
+        #    ahí hasta que se poda. El prune va aparte (prune_repo), semanal.
         keep = int(job.get("retention_copies") or 7)
         rc2, _, _ = _run(
-            ["forget", "--tag", f"domain:{domain}", "--keep-last", str(keep),
-             "--prune"], env, timeout=1800, global_opts=opts)
+            ["forget", "--tag", f"domain:{domain}", "--keep-last", str(keep)],
+            env, timeout=600, global_opts=opts)
         if rc2 == 0:
             result["log"].append(f"Retención aplicada: conservando {keep} copias")
 
@@ -315,6 +337,25 @@ def run_backup(job: Dict[str, Any], username: str, domain: str,
         for m in mounts:
             subprocess.run(["umount", m], capture_output=True, timeout=20)
         _rmtree_safe(staging)
+
+
+def prune_repo(job: Dict[str, Any], username: str, domain: str) -> Tuple[bool, str]:
+    """Poda el repo: libera de verdad el espacio de los snapshots olvidados.
+
+    Se separa del backup a propósito. `forget` (que sí corre en cada copia) solo
+    quita la etiqueta; `prune` recorre el repositorio entero y reescribe los
+    packs, que es la parte cara. Ejecutándolo aparte —semanalmente— el backup
+    diario deja de pagar ese coste por cada dominio.
+    """
+    ok, repo, msg = ensure_repo(job, username, domain)
+    if not ok:
+        return False, msg
+    env = _build_env(job, repo)
+    opts = _sftp_opts(job)
+    rc, out, err = _run(["prune"], env, timeout=7200, global_opts=opts)
+    if rc != 0:
+        return False, (err or out or "prune falló")[:300]
+    return True, "Repositorio podado"
 
 
 def _bind(src: str, dst: str) -> bool:
@@ -590,8 +631,8 @@ def _dump_database(db_name: str, out_sql: str, log: List[str]) -> bool:
               or "/usr/bin/mariadb-dump")
     user = os.getenv("MARIADB_ROOT_USER", "root")
     password = os.getenv("MARIADB_ROOT_PASSWORD", "")
-    cmd = [binary, "--single-transaction", "--quick", "--routines",
-           "--triggers", f"-u{user}"]
+    cmd = _nice_prefix() + [binary, "--single-transaction", "--quick", "--routines",
+                            "--triggers", f"-u{user}"]
     if password:
         cmd.append(f"-p{password}")
     cmd.append(db_name)

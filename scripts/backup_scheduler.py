@@ -21,6 +21,9 @@ import threading
 import time
 from datetime import datetime, timezone
 
+from scripts import worker_pool
+from scripts.worker_pool import run_tasks
+
 logger = logging.getLogger(__name__)
 
 _scheduler_started = False
@@ -211,26 +214,38 @@ def _run_job(job_id: int):
         is_global = not job.domain_id
         seen_owner_ids: set = set()
 
+        # 1) Preparar el trabajo EN SERIE. databases_for_domain() usa la sesión
+        #    de SQLAlchemy y acumula estado en seen_owner_ids; ni la sesión ni
+        #    ese set son seguros entre hilos, así que se resuelve todo aquí y a
+        #    los workers solo les llegan datos ya calculados.
+        tareas = []
         for domain, owner in (domains_to_backup or []):
             username = owner.username if owner else "root"
             domain_name = domain.domain_name
-            files_path = get_domain_root(username, domain_name) if job.include_files else None
-            mail_path = f"/home/{username}/mail/{domain_name}" if job.include_mail else None
-            databases = []
-            if job.include_databases:
-                databases = databases_for_domain(
-                    db, domain, owner, is_global, seen_owner_ids)
+            tareas.append({
+                "username": username,
+                "domain_name": domain_name,
+                "files_path": get_domain_root(username, domain_name) if job.include_files else None,
+                "mail_path": f"/home/{username}/mail/{domain_name}" if job.include_mail else None,
+                "databases": databases_for_domain(
+                    db, domain, owner, is_global, seen_owner_ids) if job.include_databases else [],
+            })
 
-            all_log.append(f"── {domain_name} ({username}) ──")
-            res = restic_manager.run_backup(
-                job_config, username, domain_name,
-                files_path=files_path, mail_path=mail_path, databases=databases,
-            )
+        # 2) Ejecutar. Cada dominio tiene su propio repo restic y su propio
+        #    staging, así que no compiten por ningún recurso compartido.
+        workers = worker_pool.resolve_workers(getattr(job, "max_workers", None))
+        if workers > 1 and len(tareas) > 1:
+            all_log.append(f"Ejecutando en paralelo ({workers} a la vez)")
+        resultados = run_tasks(job_config, tareas, workers)
+
+        # 3) Agregar resultados (en serie, sin condiciones de carrera).
+        for domain_name, res in resultados:
+            all_log.append(f"── {domain_name} ──")
             all_log.extend([l for l in res["log"] if l])
             total_size += res["size_bytes"]
             total_xt   += res["files_total"]
             total_db   += res["db_count"]
-            last_repo = res.get("repo")
+            last_repo = res.get("repo") or last_repo
             if res["status"] == "failed":
                 any_failed = True
             elif res["status"] == "partial":
