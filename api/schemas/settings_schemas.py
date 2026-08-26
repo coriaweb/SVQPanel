@@ -25,6 +25,8 @@ class SettingsUpdate(BaseModel):
     max_upload_mb: Optional[int] = Field(None, ge=1, le=2048)
     max_text_file_mb: Optional[int] = Field(None, ge=1, le=100)
     max_extract_mb: Optional[int] = Field(None, ge=1, le=5120)
+    # 0/None = automatico segun los recursos del servidor
+    backup_max_workers: Optional[int] = Field(None, ge=0, le=8)
     panel_hostname: Optional[str] = Field(None, max_length=255)
     force_https: Optional[bool] = None
     timezone: Optional[str] = Field(None, max_length=64)
@@ -87,6 +89,7 @@ class SettingsResponse(BaseModel):
     max_upload_mb: int = 100
     max_text_file_mb: int = 2
     max_extract_mb: int = 500
+    backup_max_workers: Optional[int] = None
     panel_hostname: Optional[str] = None
     ssl_panel_enabled: bool = False
     ssl_panel_expires: Optional[datetime] = None

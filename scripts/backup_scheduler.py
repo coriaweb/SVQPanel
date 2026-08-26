@@ -233,7 +233,11 @@ def _run_job(job_id: int):
 
         # 2) Ejecutar. Cada dominio tiene su propio repo restic y su propio
         #    staging, así que no compiten por ningún recurso compartido.
-        workers = worker_pool.resolve_workers(getattr(job, "max_workers", None))
+        # Ajuste global del servidor (Ajustes → Archivos); 0/NULL = automatico.
+        from api.models.models_settings import Settings
+        _st = db.query(Settings).filter(Settings.id == 1).first()
+        workers = worker_pool.resolve_workers(
+            getattr(_st, "backup_max_workers", None) if _st else None)
         if workers > 1 and len(tareas) > 1:
             all_log.append(f"Ejecutando en paralelo ({workers} a la vez)")
         resultados = run_tasks(job_config, tareas, workers)

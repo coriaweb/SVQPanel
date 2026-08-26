@@ -426,6 +426,28 @@
             </div>
           </div>
         </div>
+
+        <div class="card">
+          <div class="card-header"><i class="bi bi-hdd-stack me-2"></i> Copias de seguridad - Rendimiento</div>
+          <div class="card-body">
+            <div class="row g-3">
+              <div class="col-md-4">
+                <label class="form-label">Dominios a la vez</label>
+                <select v-model.number="form.backup_max_workers" class="form-select">
+                  <option :value="0">Automático (recomendado)</option>
+                  <option v-for="n in 8" :key="n" :value="n">
+                    {{ n === 1 ? '1 (uno detrás de otro)' : `${n} a la vez` }}
+                  </option>
+                </select>
+                <div class="form-text">
+                  En automático se ajusta solo según los núcleos, la memoria libre
+                  y la carga del servidor en ese momento, para no ralentizar las
+                  webs de los clientes mientras se hace la copia.
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
       </div>
 
       <!-- PHP Versions Management -->
@@ -1652,6 +1674,7 @@ export default {
       max_upload_mb: 2048,
       max_text_file_mb: 2,
       max_extract_mb: 5120,
+      backup_max_workers: 0,   // 0 = automatico segun recursos del servidor
       pwd_min_length: 12,
       pwd_require_upper: true,
       pwd_require_lower: true,
@@ -1763,6 +1786,7 @@ export default {
         form.max_upload_mb = data.max_upload_mb || 2048
         form.max_text_file_mb = data.max_text_file_mb || 2
         form.max_extract_mb = data.max_extract_mb || 5120
+        form.backup_max_workers = data.backup_max_workers || 0
         // Política de contraseñas
         form.pwd_min_length = data.pwd_min_length ?? 12
         form.pwd_require_upper = data.pwd_require_upper ?? true
@@ -1793,6 +1817,7 @@ export default {
           max_upload_mb: form.max_upload_mb,
           max_text_file_mb: form.max_text_file_mb,
           max_extract_mb: form.max_extract_mb,
+          backup_max_workers: form.backup_max_workers || null,
           pwd_min_length: form.pwd_min_length,
           pwd_require_upper: form.pwd_require_upper,
           pwd_require_lower: form.pwd_require_lower,

@@ -704,9 +704,10 @@ def _run_migrations():
         "ALTER TABLE backup_jobs ADD COLUMN IF NOT EXISTS schedule_hour    VARCHAR(20) NOT NULL DEFAULT '2'",
         "ALTER TABLE backup_jobs ADD COLUMN IF NOT EXISTS schedule_day     VARCHAR(20) NOT NULL DEFAULT '*'",
         "ALTER TABLE backup_jobs ADD COLUMN IF NOT EXISTS schedule_weekday VARCHAR(20) NOT NULL DEFAULT '*'",
-        # Paralelismo: dominios a copiar a la vez. NULL = automático según los
-        # recursos del servidor (scripts/worker_pool.py).
-        "ALTER TABLE backup_jobs ADD COLUMN IF NOT EXISTS max_workers INTEGER",
+        # Paralelismo de las copias: cuántos dominios a la vez. NULL/0 = automático
+        # según CPU, RAM y carga (scripts/worker_pool.py). Es ajuste del SERVIDOR
+        # (Ajustes → Archivos), no de cada job: no tiene sentido por cliente.
+        "ALTER TABLE settings ADD COLUMN IF NOT EXISTS backup_max_workers INTEGER",
         # Destino S3 / compatible (AWS S3, Backblaze B2, Wasabi, MinIO…)
         "ALTER TABLE backup_jobs ADD COLUMN IF NOT EXISTS s3_endpoint   VARCHAR(255)",
         "ALTER TABLE backup_jobs ADD COLUMN IF NOT EXISTS s3_region     VARCHAR(64)",

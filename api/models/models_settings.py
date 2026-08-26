@@ -39,6 +39,11 @@ class Settings(Base):
     max_text_file_mb = Column(Integer, default=2)            # MB máximo para editar en el panel
     max_extract_mb = Column(Integer, default=5120)           # MB máximo para extraer ZIPs
 
+    # Copias de seguridad: cuántos dominios se procesan a la vez. NULL/0 =
+    # automático según CPU, RAM y carga del servidor (scripts/worker_pool.py).
+    # Es un ajuste del SERVIDOR, no de cada backup: lo aplican todos los jobs.
+    backup_max_workers = Column(Integer, nullable=True)
+
     # SSL del propio panel
     panel_hostname = Column(String(255), nullable=True)       # Hostname del panel (ej: panel.midominio.com)
     ssl_panel_enabled = Column(Boolean, default=False)        # SSL emitido y activo para el panel

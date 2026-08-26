@@ -389,7 +389,11 @@ def _execute_backup(job_id: int, record_id: int, force_full: bool):
                               if job.include_databases else []),
             })
 
-        workers = worker_pool.resolve_workers(getattr(job, "max_workers", None))
+        # Ajuste global del servidor (Ajustes → Archivos); 0/NULL = automatico.
+        from api.models.models_settings import Settings
+        _st = db.query(Settings).filter(Settings.id == 1).first()
+        workers = worker_pool.resolve_workers(
+            getattr(_st, "backup_max_workers", None) if _st else None)
         if workers > 1 and len(tareas) > 1:
             all_log.append(f"Ejecutando en paralelo ({workers} a la vez)")
 

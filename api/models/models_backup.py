@@ -79,10 +79,6 @@ class BackupJob(Base):
 
     # ── Retención ─────────────────────────────────────────────────────────────
     retention_copies = Column(Integer, default=7, nullable=False)  # cuántas copias conservar
-    # Dominios a copiar a la vez. NULL/0 = automático según CPU, RAM y carga del
-    # servidor (ver scripts/worker_pool.py). Se deja ajustable porque el panel
-    # corre desde VPS de 2 cores hasta máquinas grandes.
-    max_workers = Column(Integer, nullable=True)
 
     # ── Programación automática ───────────────────────────────────────────────
     schedule_enabled = Column(Boolean, default=False, nullable=False)
