@@ -427,27 +427,6 @@
           </div>
         </div>
 
-        <div class="card">
-          <div class="card-header"><i class="bi bi-hdd-stack me-2"></i> Copias de seguridad - Rendimiento</div>
-          <div class="card-body">
-            <div class="row g-3">
-              <div class="col-md-4">
-                <label class="form-label">Dominios a la vez</label>
-                <select v-model.number="form.backup_max_workers" class="form-select">
-                  <option :value="0">Automático (recomendado)</option>
-                  <option v-for="n in 8" :key="n" :value="n">
-                    {{ n === 1 ? '1 (uno detrás de otro)' : `${n} a la vez` }}
-                  </option>
-                </select>
-                <div class="form-text">
-                  En automático se ajusta solo según los núcleos, la memoria libre
-                  y la carga del servidor en ese momento, para no ralentizar las
-                  webs de los clientes mientras se hace la copia.
-                </div>
-              </div>
-            </div>
-          </div>
-        </div>
       </div>
 
       <!-- PHP Versions Management -->
@@ -894,6 +873,31 @@
               <i v-else class="bi bi-shield-check me-1"></i>
               {{ wl.enabled ? 'Aplicar whitelist' : 'Desactivar whitelist' }}
             </button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Rendimiento de las copias de seguridad -->
+      <div class="sv-full" v-show="tab==='sistema'">
+        <div class="card">
+          <div class="card-header"><i class="bi bi-hdd-stack me-2"></i> Copias de seguridad - Rendimiento</div>
+          <div class="card-body">
+            <div class="row g-3">
+              <div class="col-md-4">
+                <label class="form-label">Dominios a la vez</label>
+                <select v-model.number="form.backup_max_workers" class="form-select">
+                  <option :value="0">Automático (recomendado)</option>
+                  <option v-for="n in 8" :key="n" :value="n">
+                    {{ n === 1 ? '1 (uno detrás de otro)' : `${n} a la vez` }}
+                  </option>
+                </select>
+                <div class="form-text">
+                  En automático se ajusta solo según los núcleos, la memoria libre
+                  y la carga del servidor en ese momento, para no ralentizar las
+                  webs de los clientes mientras se hace la copia.
+                </div>
+              </div>
+            </div>
           </div>
         </div>
       </div>
