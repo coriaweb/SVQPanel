@@ -904,11 +904,16 @@ EOF
     # trae auth_username_format con '| username', que RECORTA el @dominio. Como los
     # buzones se indexan por email completo (passwd-file), la entrega LMTP del correo
     # ENTRANTE rebota con "550 User doesn't exist" → el servidor NO recibe correo de
-    # fuera. Forzamos %{user} (email completo) con un drop-in. (Igual que update 0062.)
+    # fuera. Forzamos el email completo con un drop-in. (Igual que updates 0062+0143.)
+    # ⚠️ CONSERVAR '| lower': normaliza a minúsculas. Sin él, un correo dirigido a
+    # "JOSE@DOMINIO.COM" rebota aunque el buzón exista en minúsculas (nos costó 175
+    # correos de clientes perdidos entre jul y ago de 2026 — ver update 0143).
     cat > "$D/99-svqpanel-lmtp.conf" <<'EOF'
 # SVQPanel: LMTP busca el buzon por EMAIL COMPLETO (no recortar el dominio).
+# | lower        → normaliza a minusculas (sin el, "JOSE@DOMINIO.COM" rebota).
+# SIN | username → 'username' recorta el @dominio y no entraria correo.
 protocol lmtp {
-  auth_username_format = %{user}
+  auth_username_format = %{user | lower}
 }
 EOF
 

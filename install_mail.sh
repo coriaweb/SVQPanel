@@ -461,11 +461,16 @@ fi
 # LMTP: el passwd-file indexa por email COMPLETO (user@dominio). El paquete de
 # Dovecot 2.4 mete en 20-lmtp.conf 'auth_username_format = %{user | username |
 # lower}', que recorta el dominio y rompe la entrega ('User doesn't exist' en
-# RCPT TO). Forzamos %{user} (email completo) en un dropin 99- que carga después.
+# RCPT TO). Forzamos el email completo en un dropin 99- que carga después.
+# ⚠️ CONSERVAR '| lower' (quitar SOLO 'username'): normaliza a minúsculas. Sin él,
+# un correo a "JOSE@DOMINIO.COM" rebota aunque el buzón exista en minúsculas —
+# 175 correos de clientes perdidos entre jul y ago 2026 (ver updates/0143).
 cat > /etc/dovecot/conf.d/99-svqpanel-lmtp.conf << 'DOVELMTPEOF'
 # SVQPanel: el LMTP debe buscar el buzón por email COMPLETO (no recortar dominio).
+# | lower        → normaliza a minusculas (sin el, "JOSE@DOMINIO.COM" rebota).
+# SIN | username → 'username' recorta el @dominio y no entraria correo.
 protocol lmtp {
-  auth_username_format = %{user}
+  auth_username_format = %{user | lower}
 }
 DOVELMTPEOF
 

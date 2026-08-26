@@ -91,14 +91,23 @@ fi
 # 3c) LMTP: el paquete de Dovecot 2.4 mete en 20-lmtp.conf un auth_username_format
 #      con 'username' que recorta el dominio → la entrega rebota con "User doesn't
 #      exist" (passwd-file indexa por email completo). CRÍTICO: rompe TODO el
-#      correo entrante. Forzamos %{user} en un dropin 99- que carga después.
+#      correo entrante. Forzamos el email completo en un dropin 99- que carga
+#      después.
+#      ⚠️ Quitar SOLO 'username', CONSERVANDO '| lower'. Este update originalmente
+#      ponía %{user} a secas y con ello se perdió la normalización a minúsculas:
+#      el correo a "JOSE@DOMINIO.COM" rebotaba aunque el buzón existiera en
+#      minúsculas (175 correos de clientes perdidos jul-ago 2026). Lo arregló el
+#      update 0143; aquí se deja ya correcto para servidores que se pongan al día
+#      desde cero y ejecuten este 0062 después.
 cat > /etc/dovecot/conf.d/99-svqpanel-lmtp.conf <<'EOF'
 # SVQPanel: el LMTP debe buscar el buzón por email COMPLETO (no recortar dominio).
+# | lower        → normaliza a minusculas (sin el, "JOSE@DOMINIO.COM" rebota).
+# SIN | username → 'username' recorta el @dominio y no entraria correo.
 protocol lmtp {
-  auth_username_format = %{user}
+  auth_username_format = %{user | lower}
 }
 EOF
-echo "  LMTP auth_username_format forzado a %{user} (fix entrada de correo)."
+echo "  LMTP auth_username_format forzado a %{user | lower} (fix entrada de correo)."
 
 # 4) SNI por dominio (mail_tls_manager) en 2.4: regenerar desde la BD si hay
 #    dominios con TLS. Si el manager no expone un punto simple, se regenera al
