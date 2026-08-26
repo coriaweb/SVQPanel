@@ -86,7 +86,39 @@ log "${YELLOW}→ Descargando cambios del repositorio...${NC}"
 cd "$PANEL_DIR"
 git fetch origin main --quiet
 BEFORE=$(git rev-parse HEAD)
-git pull origin main --quiet
+
+# El código del panel es del PRODUCTO: /opt/svqpanel no es sitio para editar a
+# mano. Si alguien parcheó en caliente (típico: subir un .py por scp para probar
+# algo), esos cambios bloqueaban el `git pull` con "Your local changes would be
+# overwritten by merge / Aborting" y el servidor se quedaba clavado en una
+# versión vieja SIN QUE NADIE SE ENTERARA: el cron fallaba cada noche y el panel
+# solo decía "hay actualizaciones disponibles". Igual que Hestia, la
+# actualización manda: se descartan los cambios locales y gana el repo.
+#
+# OJO: solo se toca lo RASTREADO por git. Nada de `git clean`, que se llevaría
+# .env (credenciales, SECRET_KEY), .ssh/ (clave del cluster DNS), venv/, logs/
+# y frontend/dist/ — tumbaría el panel entero.
+LOCAL_CHANGES=$(git status --porcelain --untracked-files=no)
+if [[ -n "$LOCAL_CHANGES" ]]; then
+    log "${YELLOW}  ⚠ Hay cambios locales en archivos del panel. Se descartan (gana el repo):${NC}"
+    echo "$LOCAL_CHANGES" | while read -r line; do
+        log "      $line"
+    done
+    # Copia de seguridad por si el cambio local era intencionado y hay que
+    # recuperarlo: sobrevive al reset y queda fuera del repo.
+    BACKUP_DIR="/var/backups/svqpanel-local-changes/$(date '+%Y%m%d-%H%M%S')"
+    if mkdir -p "$BACKUP_DIR" 2>/dev/null; then
+        git diff > "$BACKUP_DIR/local-changes.patch" 2>/dev/null || true
+        log "      (copia del diff en $BACKUP_DIR/local-changes.patch)"
+    fi
+    git reset --hard HEAD --quiet
+fi
+
+if ! git pull origin main --quiet; then
+    log "${RED}  ✗ No se pudieron descargar los cambios (git pull falló).${NC}"
+    log "${RED}    Revisa la conectividad o el estado del repo en $PANEL_DIR.${NC}"
+    exit 1
+fi
 AFTER=$(git rev-parse HEAD)
 VERSION_AFTER=$(cat "$PANEL_DIR/VERSION" 2>/dev/null || echo "desconocida")
 
