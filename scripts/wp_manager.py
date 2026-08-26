@@ -20,6 +20,7 @@ usuario se valida como slug seguro antes de pasarlo a wp-cli.
 """
 
 import json
+import logging
 import os
 import re
 import secrets
@@ -28,6 +29,8 @@ from typing import Dict, List, Optional, Tuple
 
 # Reutilizamos el ejecutor y la ruta de wp-cli del instalador (mismo patrón).
 from scripts.app_installer import _run, WPCLI_PATH
+
+logger = logging.getLogger(__name__)
 
 
 class WpError(RuntimeError):
@@ -357,6 +360,73 @@ def wp_cron_purge_raw_crontab(owner: str, docroot: str) -> None:
     if len(kept) != len(orig):
         new_cron = ("\n".join(kept) + "\n") if kept else ""
         _run(["crontab", "-u", owner, "-"], input_text=new_cron)
+
+
+def sync_wp_cron_php(domain, db, owner_username: str = None) -> bool:
+    """Sincroniza la versión de PHP del wp-cron con la del dominio.
+
+    El comando del CronJob se construye UNA VEZ al optimizar el wp-cron
+    (wp_cron_command usa domain.php_version). Si después se cambia el PHP del
+    dominio, el cron se quedaba con la versión vieja: además de ser incoherente,
+    si el PHP viejo ya no cumple el mínimo de WordPress el cron **falla en cada
+    ejecución** y el wp-cron del sitio deja de correr en silencio (con
+    DISABLE_WP_CRON=true no hay disparo por visitas que lo salve). Encima cron
+    envía el error por correo en cada intento y la cola de Postfix crece.
+    Caso real: pacobasallote.com quedó en php7.3 con el dominio en 8.4.
+
+    Devuelve True si cambió algo. No lanza: un fallo aquí no debe tumbar el
+    cambio de versión de PHP, que es la operación principal.
+    """
+    try:
+        from api.models.models_cron import CronJob
+        from api.models.models_user import User
+        from scripts.cron_manager import CronManager
+
+        job = (db.query(CronJob)
+                 .filter(CronJob.domain_id == domain.id,
+                         CronJob.comment == wp_cron_comment(domain.domain_name))
+                 .first())
+        if job is None:
+            return False  # este dominio no tiene el wp-cron optimizado
+
+        if not owner_username:
+            u = db.query(User).filter(User.id == domain.user_id).first()
+            owner_username = u.username if u else None
+        if not owner_username:
+            return False
+
+        # Conservar el docroot que ya tenía el cron (puede ser personalizado).
+        docroot = None
+        for tok in (job.command or "").split():
+            if tok.startswith("--path="):
+                docroot = tok.split("=", 1)[1]
+        if not docroot:
+            docroot = f"/home/{owner_username}/web/{domain.domain_name}/public_html"
+
+        nuevo = wp_cron_command(docroot, domain.php_version)
+        if job.command == nuevo:
+            return False
+
+        job.command = nuevo
+        db.commit()
+
+        # Regenerar la línea del crontab (remove + add con el comando nuevo).
+        cm = CronManager()
+        try:
+            cm.remove_cron(owner_username, job.id)
+        except Exception:
+            pass
+        cm.add_cron(username=owner_username, cron_id=job.id,
+                    minute=job.minute, hour=job.hour, day=job.day,
+                    month=job.month, weekday=job.weekday,
+                    command=job.command, comment=job.comment or "")
+        logger.info(f"wp-cron de {domain.domain_name} sincronizado a "
+                    f"php{domain.php_version}")
+        return True
+    except Exception as e:
+        logger.warning(f"No se pudo sincronizar el wp-cron de "
+                       f"{getattr(domain, 'domain_name', '?')}: {e}")
+        return False
 
 
 def wp_config_disable_cron(docroot: str, owner: str, disable: bool) -> None:

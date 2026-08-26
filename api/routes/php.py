@@ -401,6 +401,13 @@ async def update_domain_php(
         raise HTTPException(status_code=500,
             detail=f"Versión actualizada en BD pero falló la aplicación: {e}")
 
+    # Si el dominio tiene el wp-cron optimizado, su CronJob lleva el PHP con el
+    # que se creó. Sin esto se queda en la versión vieja y, si esa ya no cumple
+    # el mínimo de WordPress, el wp-cron del sitio deja de ejecutarse EN SILENCIO
+    # (con DISABLE_WP_CRON=true tampoco dispara por visitas).
+    from scripts import wp_manager as _wpm
+    _wpm.sync_wp_cron_php(domain, db)
+
     return {
         "status": "success",
         "data": {

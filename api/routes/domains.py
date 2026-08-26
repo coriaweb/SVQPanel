@@ -527,10 +527,12 @@ async def update_domain(
                 detail="Este dominio es solo correo/DNS (sin web): no tiene PHP que cambiar.",
             )
 
+        php_changed = False
         if domain_update.php_version is not None and domain_update.php_version != db_domain.php_version:
             # Change PHP version in system
             domain_manager.change_php_version(db_domain.domain_name, domain_update.php_version)
             db_domain.php_version = domain_update.php_version
+            php_changed = True
 
             # Recrear SIEMPRE el pool dedicado en la nueva versión (todos los
             # dominios tienen pool con el bloque de seguridad). write_pool hace
@@ -610,6 +612,14 @@ async def update_domain(
 
         db.commit()
         db.refresh(db_domain)
+
+        # Si cambió el PHP y el dominio tiene el wp-cron optimizado, su CronJob
+        # sigue con la versión vieja: si esa ya no cumple el mínimo de WordPress,
+        # el wp-cron deja de ejecutarse EN SILENCIO (con DISABLE_WP_CRON=true
+        # tampoco dispara por visitas).
+        if php_changed:
+            from scripts import wp_manager as _wpm
+            _wpm.sync_wp_cron_php(db_domain, db)
 
         # Regenerar vhost si cambió algún parámetro que afecta a nginx. Los
         # dominios solo correo/DNS no tienen vhost → nunca se regenera.
