@@ -299,12 +299,28 @@ def run_backup(job: Dict[str, Any], username: str, domain: str,
         #    espacio, y eso es caro: con un repo por dominio se pagaba en CADA
         #    dominio y en CADA copia. No hace falta a diario — los datos siguen
         #    ahí hasta que se poda. El prune va aparte (prune_repo), semanal.
+        #    Retención escalonada (abuelo/padre/hijo): --keep-last son las N
+        #    últimas copias, y --keep-weekly/monthly conservan además la más
+        #    reciente de cada semana/mes. Los niveles se SUMAN: restic conserva
+        #    un snapshot si alguna regla lo reclama. Sirve para el daño que se
+        #    descubre tarde (una corrupción de hace 3 semanas ya no está en las
+        #    7 diarias, pero sí en la copia semanal o mensual).
         keep = int(job.get("retention_copies") or 7)
-        rc2, _, _ = _run(
-            ["forget", "--tag", f"domain:{domain}", "--keep-last", str(keep)],
-            env, timeout=600, global_opts=opts)
+        weekly = int(job.get("retention_weekly") or 0)
+        monthly = int(job.get("retention_monthly") or 0)
+
+        args = ["forget", "--tag", f"domain:{domain}", "--keep-last", str(keep)]
+        desc = [f"{keep} copias"]
+        if weekly > 0:
+            args += ["--keep-weekly", str(weekly)]
+            desc.append(f"{weekly} semanales")
+        if monthly > 0:
+            args += ["--keep-monthly", str(monthly)]
+            desc.append(f"{monthly} mensuales")
+
+        rc2, _, _ = _run(args, env, timeout=600, global_opts=opts)
         if rc2 == 0:
-            result["log"].append(f"Retención aplicada: conservando {keep} copias")
+            result["log"].append("Retención aplicada: conservando " + " + ".join(desc))
 
         # Copia buena, pero alguna BD se quedó fuera. Marcarlo como "success" a
         # secas escondía el problema: el aviso quedaba enterrado en un log de

@@ -198,6 +198,8 @@ def _run_job(job_id: int):
             "s3_secret_key":     _decrypt_sftp_password(job.s3_secret_key),
             "restic_password":   _decrypt_sftp_password(job.restic_password),
             "retention_copies":  job.retention_copies,
+            "retention_weekly":  job.retention_weekly,
+            "retention_monthly": job.retention_monthly,
         }
 
         from scripts import restic_manager
@@ -290,6 +292,10 @@ def _run_job(job_id: int):
         record.finished_at       = datetime.utcnow()
         job.last_run = datetime.utcnow()
         db.commit()
+        # El historial no lo gobierna la retención de restic: hay que podarlo
+        # aparte o crece sin límite (~365 filas/año por job, con su log).
+        from api.routes.backups import _prune_records
+        _prune_records(db, job_id)
         logger.info("Backup programado job=%d status=%s", job_id, record.status)
 
     except Exception as exc:

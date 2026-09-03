@@ -216,6 +216,8 @@ def _job_to_config(job: BackupJob) -> dict:
         "s3_secret_key":     _decrypt(job.s3_secret_key) if job.s3_secret_key else None,
         "restic_password":   _decrypt(job.restic_password) if job.restic_password else None,
         "retention_copies":  job.retention_copies,
+        "retention_weekly":  job.retention_weekly,
+        "retention_monthly": job.retention_monthly,
     }
 
 
@@ -335,6 +337,31 @@ def _resolve_target(job: BackupJob, user: User, db: Session, domain_name: str = 
                         detail="Este backup cubre varios dominios; indica cuál con ?domain=")
 
 
+def _prune_records(db: Session, job_id: int, keep: int = 100) -> None:
+    """Deja solo los `keep` registros de historial más recientes de un job.
+
+    El historial (qué pasó cada noche) no tiene nada que ver con las copias
+    restaurables, que las gobierna la retención de restic. Sin esto crecía sin
+    límite: ~365 filas por job al año, cada una con su log_output de hasta 50 KB.
+    """
+    try:
+        ids = [
+            r.id for r in db.query(BackupRecord.id)
+            .filter(BackupRecord.job_id == job_id)
+            .order_by(BackupRecord.started_at.desc())
+            .offset(keep).all()
+        ]
+        if ids:
+            (db.query(BackupRecord)
+               .filter(BackupRecord.id.in_(ids))
+               .delete(synchronize_session=False))
+            db.commit()
+    except Exception:
+        # Nunca dar por fallida una copia buena por no poder limpiar el historial.
+        db.rollback()
+        logger.exception("No se pudo podar el historial del job %s", job_id)
+
+
 def _execute_backup(job_id: int, record_id: int, force_full: bool):
     """Ejecuta el backup y actualiza el BackupRecord. Corre en BackgroundTasks."""
     db = SessionLocal()
@@ -443,6 +470,7 @@ def _execute_backup(job_id: int, record_id: int, force_full: bool):
         record.finished_at       = datetime.utcnow()
         job.last_run = datetime.utcnow()
         db.commit()
+        _prune_records(db, job.id)
 
     except Exception as exc:
         rec = db.query(BackupRecord).filter(BackupRecord.id == record_id).first()

@@ -699,6 +699,9 @@ def _run_migrations():
         # IPv6 dedicada del panel
         "ALTER TABLE settings ADD COLUMN IF NOT EXISTS panel_ipv6 VARCHAR(50)",
         # Fase 15.3: programación automática de backups
+        # Retención escalonada (abuelo/padre/hijo); 0 = ese nivel no se conserva
+        "ALTER TABLE backup_jobs ADD COLUMN IF NOT EXISTS retention_weekly  INTEGER NOT NULL DEFAULT 0",
+        "ALTER TABLE backup_jobs ADD COLUMN IF NOT EXISTS retention_monthly INTEGER NOT NULL DEFAULT 0",
         "ALTER TABLE backup_jobs ADD COLUMN IF NOT EXISTS schedule_enabled BOOLEAN NOT NULL DEFAULT FALSE",
         "ALTER TABLE backup_jobs ADD COLUMN IF NOT EXISTS schedule_minute  VARCHAR(20) NOT NULL DEFAULT '0'",
         "ALTER TABLE backup_jobs ADD COLUMN IF NOT EXISTS schedule_hour    VARCHAR(20) NOT NULL DEFAULT '2'",

@@ -78,7 +78,13 @@ class BackupJob(Base):
     s3_secret_key = Column(String(500), nullable=True)   # cifrado con Fernet si está disponible
 
     # ── Retención ─────────────────────────────────────────────────────────────
-    retention_copies = Column(Integer, default=7, nullable=False)  # cuántas copias conservar
+    # Escalonada (abuelo/padre/hijo): además de las últimas N copias, se pueden
+    # conservar una por semana y una por mes. Protege del daño que se descubre
+    # tarde (una corrupción de hace 3 semanas ya no estaría en las 7 diarias).
+    # 0 = no conservar de ese nivel. Los niveles se suman, no se excluyen.
+    retention_copies  = Column(Integer, default=7, nullable=False)  # últimas N copias
+    retention_weekly  = Column(Integer, default=0, nullable=False)  # nº de semanas
+    retention_monthly = Column(Integer, default=0, nullable=False)  # nº de meses
 
     # ── Programación automática ───────────────────────────────────────────────
     schedule_enabled = Column(Boolean, default=False, nullable=False)

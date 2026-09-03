@@ -47,6 +47,9 @@ class BackupJobBase(BaseModel):
     restic_password: Optional[str] = Field(None, max_length=255)
 
     retention_copies: int = Field(7, ge=1, le=365)
+    # Retención escalonada: 0 = ese nivel no se conserva. Se suman a las N últimas.
+    retention_weekly:  int = Field(0, ge=0, le=520)   # ~10 años de semanas
+    retention_monthly: int = Field(0, ge=0, le=120)   # ~10 años de meses
 
     # Programación automática
     schedule_enabled: bool = False
@@ -96,7 +99,9 @@ class BackupJobUpdate(BaseModel):
     s3_prefix:        Optional[str] = Field(None, max_length=512)
     s3_access_key:    Optional[str] = Field(None, max_length=255)
     s3_secret_key:    Optional[str] = Field(None, max_length=500)
-    retention_copies: Optional[int] = Field(None, ge=1, le=365)
+    retention_copies:  Optional[int] = Field(None, ge=1, le=365)
+    retention_weekly:  Optional[int] = Field(None, ge=0, le=520)
+    retention_monthly: Optional[int] = Field(None, ge=0, le=120)
 
     schedule_enabled: Optional[bool] = None
     schedule_minute:  Optional[str]  = Field(None, max_length=20)

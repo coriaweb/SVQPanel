@@ -215,8 +215,24 @@
                 <div class="bk-field">
                   <label>Copias a conservar</label>
                   <input v-model.number="form.retention_copies" type="number" min="1" max="365" class="form-control form-control-sm" />
-                  <span class="bk-hint">Se eliminan las más antiguas (solo destino local).</span>
+                  <span class="bk-hint">Las últimas N copias. Se eliminan las más antiguas.</span>
                 </div>
+                <div class="bk-field">
+                  <label>Además, conservar una por semana</label>
+                  <input v-model.number="form.retention_weekly" type="number" min="0" max="520" class="form-control form-control-sm" />
+                  <span class="bk-hint">Nº de semanas. 0 = ninguna.</span>
+                </div>
+                <div class="bk-field">
+                  <label>Además, conservar una por mes</label>
+                  <input v-model.number="form.retention_monthly" type="number" min="0" max="120" class="form-control form-control-sm" />
+                  <span class="bk-hint">Nº de meses. 0 = ninguna.</span>
+                </div>
+                <p class="bk-hint" style="margin:.15rem 0 .35rem">
+                  Los tres niveles se <strong>suman</strong>. Ej.: 7 + 4 + 6 guarda la última
+                  semana día a día, un mes y medio por semanas y medio año por meses —
+                  útil si un problema se descubre semanas después. Ocupa poco: las copias
+                  comparten lo que no cambia.
+                </p>
                 <label class="bk-check" style="margin-top:.25rem">
                   <input type="checkbox" v-model="form.is_active" />
                   Backup activo
@@ -708,6 +724,8 @@ function emptyForm() {
     s3_access_key: '',
     s3_secret_key: '',
     retention_copies: 7,
+    retention_weekly: 0,
+    retention_monthly: 0,
     schedule_enabled: false,
     schedule_minute: '0',
     schedule_hour: '2',
@@ -854,6 +872,8 @@ export default {
         s3_access_key: job.s3_access_key || '',
         s3_secret_key: '',
         retention_copies: job.retention_copies,
+        retention_weekly: job.retention_weekly ?? 0,
+        retention_monthly: job.retention_monthly ?? 0,
         schedule_enabled: job.schedule_enabled || false,
         schedule_minute:  job.schedule_minute  || '0',
         schedule_hour:    job.schedule_hour    || '2',
