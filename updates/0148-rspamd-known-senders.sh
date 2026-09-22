@@ -48,7 +48,7 @@ CONF=/etc/rspamd/local.d/known_senders.conf
 # no se carga — probado en producción. Y groups.conf lo regenera entero el panel
 # desde la BD, así que el peso se añade también a BASE_WEIGHTS en
 # scripts/rspamd_tuning.py para que sobreviva a cada guardado de ajustes.
-GROUPS=/etc/rspamd/local.d/groups.conf
+SVQ_GROUPS=/etc/rspamd/local.d/groups.conf
 
 echo "→ 0148: activar known_senders (premiar remitentes conocidos)…"
 
@@ -106,25 +106,25 @@ rm -f /etc/rspamd/local.d/known_senders_group.conf 2>/dev/null || true
 
 WANT='  "UNKNOWN_SENDER" { weight = 0.00; }'
 
-if [ -f "$GROUPS" ] && grep -q 'UNKNOWN_SENDER' "$GROUPS"; then
+if [ -f "$SVQ_GROUPS" ] && grep -q 'UNKNOWN_SENDER' "$SVQ_GROUPS"; then
     echo "  · UNKNOWN_SENDER ya estaba neutralizado"
-elif [ -f "$GROUPS" ] && grep -q '^symbols {' "$GROUPS"; then
+elif [ -f "$SVQ_GROUPS" ] && grep -q '^symbols {' "$SVQ_GROUPS"; then
     # Insertar la línea justo después de 'symbols {', conservando los overrides
     # que el admin tenga. Con awk y no con sed: escapar saltos de linea en sed es fragil.
-    cp -a "$GROUPS" "${GROUPS}.bak-0148-$(date +%Y%m%d%H%M%S)"
-    awk -v want="$WANT" '{ print; if ($0 ~ /^symbols \{/) print want }'         "$GROUPS" > "${GROUPS}.tmp" && mv "${GROUPS}.tmp" "$GROUPS"
+    cp -a "$SVQ_GROUPS" "${SVQ_GROUPS}.bak-0148-$(date +%Y%m%d%H%M%S)"
+    awk -v want="$WANT" '{ print; if ($0 ~ /^symbols \{/) print want }'         "$SVQ_GROUPS" > "${SVQ_GROUPS}.tmp" && mv "${SVQ_GROUPS}.tmp" "$SVQ_GROUPS"
     echo "  · UNKNOWN_SENDER = 0.00 añadido (sin tocar los overrides del admin)"
 else
-    [ -f "$GROUPS" ] && cp -a "$GROUPS" "${GROUPS}.bak-0148-$(date +%Y%m%d%H%M%S)"
+    [ -f "$SVQ_GROUPS" ] && cp -a "$SVQ_GROUPS" "${SVQ_GROUPS}.bak-0148-$(date +%Y%m%d%H%M%S)"
     {
         echo "# SVQPanel — overrides de peso de símbolos (admin). NO editar a mano."
         echo "symbols {"
         echo "$WANT"
         echo "}"
-    } > "$GROUPS"
+    } > "$SVQ_GROUPS"
     echo "  · groups.conf creado con UNKNOWN_SENDER = 0.00"
 fi
-chmod 644 "$GROUPS"
+chmod 644 "$SVQ_GROUPS"
 
 # ── 3) Recargar y verificar que el módulo queda activo ────────────────────────
 if systemctl is-active --quiet rspamd 2>/dev/null; then
@@ -150,7 +150,7 @@ if systemctl is-active --quiet rspamd 2>/dev/null; then
     case "${UW:-?}" in
         0|0.0|0.00) echo "  ✓ UNKNOWN_SENDER neutralizado (no penaliza a los nuevos)" ;;
         ?)          echo "  ⚠ no se pudo leer el peso de UNKNOWN_SENDER" ;;
-        *)          echo "  ⚠ UNKNOWN_SENDER sigue en ${UW}: revisar $GROUPS" ;;
+        *)          echo "  ⚠ UNKNOWN_SENDER sigue en ${UW}: revisar $SVQ_GROUPS" ;;
     esac
 fi
 
