@@ -1319,6 +1319,22 @@ RSPAMDGREYEOF
     # Limpiar el nombre antiguo erróneo si existe de instalaciones previas.
     rm -f /etc/rspamd/local.d/greylisting.conf 2>/dev/null || true
 
+    # known_senders (ver update 0148): recuerda a los remitentes con los que ya se
+    # ha intercambiado correo y les BAJA la puntuación. Es lo contrario del
+    # greylisting: en vez de penalizar al desconocido, premia al conocido — así se
+    # reducen falsos positivos sin abrir ningún agujero.
+    # ⚠️ A PROPÓSITO no se define symbol_unknown: penalizar a quien escribe por
+    # primera vez repetiría el error del greylisting, y en hosting compartido el
+    # correo de un cliente nuevo o de una administración siempre viene de un
+    # remitente "desconocido".
+    cat > /etc/rspamd/local.d/known_senders.conf << 'RSPAMDKSEOF'
+# SVQPanel — known_senders. NO editar manualmente.
+enabled = true;
+max_senders = 100000;
+max_ttl = 30d;
+use_bloom = false;
+RSPAMDKSEOF
+
     # Umbrales de acción por defecto del panel: más estrictos que los de
     # fábrica de Rspamd (4/6/15). A 4+ puntos casi no hay correo legítimo (ir
     # a Junk es recuperable) y el rechazo a 10 deja margen para no rebotar
