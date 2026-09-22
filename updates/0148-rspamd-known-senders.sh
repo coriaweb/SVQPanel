@@ -86,27 +86,40 @@ KSEOF
 chmod 644 "$CONF"
 echo "  · known_senders.conf escrito"
 
-# ── 2) Peso del símbolo en groups.conf ───────────────────────────────────────
-# Formato IDÉNTICO al que genera el panel (_build_groups): symbols { "X" { ... } }.
-# Si ya hay overrides del admin, se le añade KNOWN_SENDER sin tocar los suyos.
+# ── 2) Neutralizar UNKNOWN_SENDER ────────────────────────────────────────────
+# Comprobado con `rspamc counters` en producción:
+#   KNOWN_SENDER    -1.0   ← el módulo ya trae el peso que queríamos. No tocar.
+#   UNKNOWN_SENDER   0.5   ← esto SÍ hay que quitarlo.
+#
+# Aunque no definamos symbol_unknown en known_senders.conf, Rspamd registra
+# igualmente UNKNOWN_SENDER con peso 0.5: penaliza a quien escribe por primera
+# vez, que es justo el error del greylisting que quitamos en el 0146. En hosting
+# compartido el correo de un cliente nuevo, un juzgado o una administración viene
+# siempre de un remitente desconocido.
+#
+# Se pone a 0.00 (no se puede "desregistrar" un símbolo, pero con peso cero no
+# suma nada). Va en groups.conf, que es de donde Rspamd lee los overrides de peso
+# — un fichero propio en local.d/ NO se carga: solo lee los de módulos conocidos.
+# Como el panel regenera groups.conf entero desde la BD, el símbolo está también
+# en BASE_WEIGHTS de scripts/rspamd_tuning.py para que sobreviva a cada guardado.
 rm -f /etc/rspamd/local.d/known_senders_group.conf 2>/dev/null || true
 
-if [ -f "$GROUPS" ] && grep -q 'KNOWN_SENDER' "$GROUPS"; then
-    echo "  · KNOWN_SENDER ya estaba en groups.conf"
+if [ -f "$GROUPS" ] && grep -q 'UNKNOWN_SENDER' "$GROUPS"; then
+    echo "  · UNKNOWN_SENDER ya estaba neutralizado"
 elif [ -f "$GROUPS" ] && grep -q '^symbols {' "$GROUPS"; then
     cp -a "$GROUPS" "${GROUPS}.bak-0148-$(date +%Y%m%d%H%M%S)"
     sed -i 's/^symbols {/symbols {
-  "KNOWN_SENDER" { weight = -1.00; }/' "$GROUPS"
-    echo "  · KNOWN_SENDER añadido a los overrides existentes"
+  "UNKNOWN_SENDER" { weight = 0.00; }/' "$GROUPS"
+    echo "  · UNKNOWN_SENDER = 0.00 añadido (sin tocar los overrides del admin)"
 else
     [ -f "$GROUPS" ] && cp -a "$GROUPS" "${GROUPS}.bak-0148-$(date +%Y%m%d%H%M%S)"
     cat > "$GROUPS" << 'GRPEOF'
 # SVQPanel — overrides de peso de símbolos (admin). NO editar a mano.
 symbols {
-  "KNOWN_SENDER" { weight = -1.00; }
+  "UNKNOWN_SENDER" { weight = 0.00; }
 }
 GRPEOF
-    echo "  · groups.conf creado con KNOWN_SENDER = -1.00"
+    echo "  · groups.conf creado con UNKNOWN_SENDER = 0.00"
 fi
 chmod 644 "$GROUPS"
 
@@ -126,13 +139,16 @@ if systemctl is-active --quiet rspamd 2>/dev/null; then
     else
         echo "  ⚠ Rspamd recargó pero known_senders no aparece como activo"
     fi
-    # Y que el peso está de verdad en la config efectiva (no basta con escribirlo:
-    # la 1ª versión lo puso en groups.conf y el panel lo había borrado).
-    if rspamadm configdump 2>/dev/null | grep -q 'KNOWN_SENDER'; then
-        echo "  ✓ peso KNOWN_SENDER presente en la config efectiva"
-    else
-        echo "  ⚠ KNOWN_SENDER no aparece en la config efectiva; revisar $GROUPS"
-    fi
+    # Verificar los pesos EFECTIVOS. Ojo: `rspamadm configdump` NO lista símbolos;
+    # hay que mirarlos con `rspamc counters` (me costó dos intentos descubrirlo).
+    KW=$(rspamc counters 2>/dev/null | grep -oP '\|\s*KNOWN_SENDER\s*\|\s*\K-?[0-9.]+' | head -1)
+    UW=$(rspamc counters 2>/dev/null | grep -oP '\|\s*UNKNOWN_SENDER\s*\|\s*\K-?[0-9.]+' | head -1)
+    echo "  · pesos efectivos: KNOWN_SENDER=${KW:-?}  UNKNOWN_SENDER=${UW:-?}"
+    case "${UW:-?}" in
+        0|0.0|0.00) echo "  ✓ UNKNOWN_SENDER neutralizado (no penaliza a los nuevos)" ;;
+        ?)          echo "  ⚠ no se pudo leer el peso de UNKNOWN_SENDER" ;;
+        *)          echo "  ⚠ UNKNOWN_SENDER sigue en ${UW}: revisar $GROUPS" ;;
+    esac
 fi
 
 echo "✓ 0148: known_senders activo (premia conocidos, no penaliza desconocidos)"

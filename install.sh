@@ -1334,14 +1334,15 @@ max_senders = 100000;
 max_ttl = 30d;
 use_bloom = false;
 RSPAMDKSEOF
-    # El peso va en groups.conf: Rspamd solo lee de local.d/ los ficheros de un
-    # módulo conocido, así que un fichero propio NO se cargaría. Mismo formato que
-    # genera el panel (_build_groups), y el peso está en BASE_WEIGHTS de
-    # scripts/rspamd_tuning.py para que sobreviva a cada guardado de ajustes.
+    # KNOWN_SENDER ya lo trae Rspamd con -1.0, no hay que fijarlo. Lo que SÍ hay
+    # que neutralizar es UNKNOWN_SENDER (viene con 0.5): penalizaría a quien
+    # escribe por primera vez, que es el error del greylisting. Va en groups.conf
+    # porque Rspamd solo lee de local.d/ los ficheros de un módulo conocido, y
+    # está en BASE_WEIGHTS de rspamd_tuning.py para sobrevivir a cada guardado.
     cat > /etc/rspamd/local.d/groups.conf << 'RSPAMDKSGEOF'
 # SVQPanel — overrides de peso de símbolos (admin). NO editar a mano.
 symbols {
-  "KNOWN_SENDER" { weight = -1.00; }
+  "UNKNOWN_SENDER" { weight = 0.00; }
 }
 RSPAMDKSGEOF
 

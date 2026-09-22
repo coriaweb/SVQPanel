@@ -303,7 +303,10 @@ def _write_atomic(path: str, content: str):
 #   -1.0 rescata correo legítimo que rozaba el umbral de Junk (4.0) sin blanquear
 #   spam real (6-8) ni tocar el de rechazo (10).
 BASE_WEIGHTS = {
-    "KNOWN_SENDER": -1.0,
+    # Rspamd ya registra KNOWN_SENDER con -1.0 por su cuenta, así que no hace
+    # falta fijarlo. UNKNOWN_SENDER sí: viene con 0.5 y penaliza a quien escribe
+    # por primera vez — el error del greylisting (0146). A 0.00 no suma nada.
+    "UNKNOWN_SENDER": 0.0,
 }
 
 
