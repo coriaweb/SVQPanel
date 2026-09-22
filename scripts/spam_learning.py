@@ -193,11 +193,17 @@ backend = "redis";
 # todos los clientes entrenan (más datos = aprende más rápido).
 # Autolearn: Rspamd aprende solo, aunque el cliente no marque nada:
 #   ham   = correos con score <= 0.5 (la inmensa mayoría del correo legítimo).
-#   spam  = correos con score >= 10  (spam claro).
+#   spam  = correos con score >= 6   (= el umbral de rechazo, ver abajo).
 # El umbral de ham se subió de -2 a 0.5 porque casi ningún correo legítimo baja
 # de -2 → el Bayes nunca aprendía ham y quedaba ciego (mucho spam, ~0 ham). Con
 # 0.5 el ham crece solo conforme entra correo normal y el filtro se equilibra.
-autolearn = [0.5, 10];
+# El de spam bajó de 10 a 6 con el update 0150: DEBE COINCIDIR CON EL UMBRAL DE
+# RECHAZO (actions.conf "reject"). Al bajar el rechazo a 6 (update 0149), los
+# correos de 6-10 pasaron a rechazarse sin llegar nunca a aprenderse: el Bayes
+# perdía de golpe el 59% de su alimentación de spam (33 de 56 casos medidos en
+# producción). Efecto: reconoce menos patrones → más spam se cuela con score
+# bajo. Si alguien vuelve a mover el umbral de rechazo, hay que mover este.
+autolearn = [0.5, 6];
 # min_learns: nº mínimo de mensajes aprendidos (de cada clase) antes de que el
 # Bayes empiece a puntuar. 20 para que sea útil pronto (con servidor en rodaje).
 min_learns = 20;
