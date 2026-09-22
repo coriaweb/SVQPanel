@@ -7,8 +7,15 @@
 #
 # Juzga por COMPORTAMIENTO SMTP, no por RBL — así pilla IPs "limpias" de un solo
 # uso (OVH/Scaleway) que las listas negras aún no tienen. Las RBL las sigue
-# haciendo Rspamd vía unbound (no se tocan). Los grandes (Gmail/Outlook) respetan
-# el protocolo → no les afecta; solo mete ~6s la 1ª vez a un remitente nuevo.
+# haciendo Rspamd vía unbound (no se tocan).
+#
+# ⚠️ CORRECCIÓN (updates 0145 y 0152): la frase original decía que "los grandes
+# respetan el protocolo → no les afecta". ERA FALSA. En enforce, postscreen
+# rechaza la 1ª conexión de CUALQUIER IP fuera de su caché, pase o no las
+# pruebas, y los deep protocol tests obligan a reintentar por diseño. Costó
+# correo perdido de PayPal, OVH, Netflix, Openbank y el Ayto. de Sevilla. Por eso
+# TODAS las acciones van hoy en "ignore": los tests se siguen haciendo y
+# cacheando, pero sin cortar la conexión.
 #
 # Idempotente, con validación (postfix check) y auto-reversión si algo falla.
 
@@ -60,12 +67,18 @@ if ! grep -q '^postscreen_greet_action' "$MAIN"; then
 postscreen_greet_action = ignore
 # 2s en vez del default ${stress?{2}:{6}}s: menos latencia por conexion (ver 0138).
 postscreen_greet_wait = 2s
+# Los tres tests de abajo son DEEP PROTOCOL TESTS: por diseno obligan al cliente
+# a REINTENTAR la entrega, porque para ejecutarlos hay que romper la sesion SMTP.
+# En enforce reintroducen el mismo "peaje de entrada" que el greet_action (30
+# rechazos en 2h medidos en produccion, incluido correo de Google). En ignore se
+# siguen ejecutando y cacheando, pero sin cortar la conexion. Ver update 0152.
+# El pregreet NO es deep test: se resuelve en la misma sesion y sigue cazando bots.
 postscreen_pipelining_enable = yes
-postscreen_pipelining_action = enforce
+postscreen_pipelining_action = ignore
 postscreen_non_smtp_command_enable = yes
-postscreen_non_smtp_command_action = enforce
+postscreen_non_smtp_command_action = ignore
 postscreen_bare_newline_enable = yes
-postscreen_bare_newline_action = enforce
+postscreen_bare_newline_action = ignore
 postscreen_dnsbl_action = ignore
 postscreen_dnsbl_sites =
 postscreen_access_list = permit_mynetworks
