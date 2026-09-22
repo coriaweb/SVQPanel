@@ -1347,15 +1347,20 @@ symbols {
 RSPAMDKSGEOF
 
     # Umbrales de acción por defecto del panel: más estrictos que los de
-    # fábrica de Rspamd (4/6/15). A 4+ puntos casi no hay correo legítimo (ir
-    # a Junk es recuperable) y el rechazo a 10 deja margen para no rebotar
-    # correo bueno. Mismo formato que scripts/rspamd_tuning.py (_build_actions):
-    # el admin puede cambiarlos luego desde la vista de ajuste antispam.
+    # fábrica de Rspamd (4/6/15). A 4+ puntos casi no hay correo legítimo y a
+    # Junk se puede ir sin drama (el usuario lo recupera y entrena el Bayes).
+    # El rechazo en 6.00 (update 0149): medido en producción, todo lo que cae
+    # entre 6 y 10 es spam inequívoco (dominios .store/.shop desechables,
+    # remitentes con nombre aleatorio) y no debe ocupar el Junk del cliente.
+    # ⚠️ Un rechazo es DEFINITIVO y no se recupera: conviene revisar los
+    # rechazos las primeras semanas por si cae algún legítimo.
+    # Mismo formato que scripts/rspamd_tuning.py (_build_actions): el admin
+    # puede cambiarlos luego desde la vista de ajuste antispam.
     cat > /etc/rspamd/local.d/actions.conf << 'RSPAMDACTEOF'
 # SVQPanel — umbrales de acción antispam (admin). NO editar a mano.
 "greylist" = 3.00;
 "add header" = 4.00;
-"reject" = 10.00;
+"reject" = 6.00;
 RSPAMDACTEOF
 
     # ── Resolver DNS propio para Rspamd (unbound) ─────────────────────────

@@ -64,7 +64,11 @@ RULE_MATCHES = {
 DEFAULT_ACTIONS = {
     "greylist": 3.0,
     "add header": 4.0,      # = "marcar como spam" (X-Spam: Yes)
-    "reject": 10.0,
+    # 6.0 y no 10.0 (update 0149): medido en produccion, TODO lo que cae entre 6
+    # y 10 es spam inequivoco (dominios .store/.shop desechables, remitentes con
+    # nombre aleatorio). No debe ocupar la carpeta de No deseado del cliente.
+    # OJO: un rechazo es definitivo y no se recupera, a diferencia de Junk.
+    "reject": 6.0,
 }
 # Límites de cordura para los umbrales (evitar que el admin se dispare en el pie).
 ACTION_BOUNDS = {
