@@ -11,10 +11,12 @@ from scripts import rspamd_tuning as rt
 
 
 def test_defaults_estrictos_v0221():
-    # Política v0.221.0: 3/4/10 (más estricto que el 4/6/15 de fábrica).
+    # Política v0.241.0: 3/4/6. El rechazo bajó de 10 a 6 (update 0149) porque
+    # todo lo medido en la franja 6-10 era spam inequívoco y no debe ocupar la
+    # carpeta de No deseado del cliente.
     assert rt.DEFAULT_ACTIONS["greylist"] == 3.0
     assert rt.DEFAULT_ACTIONS["add header"] == 4.0
-    assert rt.DEFAULT_ACTIONS["reject"] == 10.0
+    assert rt.DEFAULT_ACTIONS["reject"] == 6.0
 
 
 def test_defaults_mantienen_escalera():
@@ -36,5 +38,5 @@ def test_build_actions_formato():
     out = rt._build_actions(dict(rt.DEFAULT_ACTIONS))
     assert '"greylist" = 3.00;' in out
     assert '"add header" = 4.00;' in out
-    assert '"reject" = 10.00;' in out
+    assert '"reject" = 6.00;' in out
     assert "actions {" not in out
