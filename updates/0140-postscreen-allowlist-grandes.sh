@@ -60,6 +60,23 @@
 # y quitar la referencia en main.cf.
 set -e
 
+# ⚠️ UPDATE NEUTRALIZADO — lo deja sin efecto el 0147.
+#
+# Este update creaba una allowlist de rangos IP (Microsoft, Google, Amazon SES,
+# register.it, srv2.de, Sophos) para que no se les rechazara la primera conexión.
+# Partía de un diagnóstico incompleto: el problema no eran "las granjas que rotan
+# IP", sino que postscreen con greet_action = enforce rechazaba la primera
+# conexión de CUALQUIER IP fuera de su caché. Lo arregla el 0145 (greet_action =
+# ignore), y entonces esta lista deja de aportar y solo es deuda de mantenimiento.
+#
+# Se conserva el fichero por dos razones: el historial del diagnóstico (la
+# cabecera de abajo documenta cómo se midió) y para no romper la numeración. Pero
+# no hace nada: en un servidor nuevo crearía una lista que el 0147 borraría acto
+# seguido.
+echo "→ 0140: NEUTRALIZADO (la allowlist la retira el 0147; ver 0145)"
+exit 0
+
+
 MAIN=/etc/postfix/main.cf
 ALLOW=/etc/postfix/postscreen_access.cidr
 
