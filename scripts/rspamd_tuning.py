@@ -295,10 +295,25 @@ def _write_atomic(path: str, content: str):
     os.replace(tmp, path)
 
 
+# Pesos que el panel fija SIEMPRE, aunque el admin no haya tocado nada. Van aquí
+# porque Rspamd solo lee de local.d/ los ficheros que corresponden a un módulo
+# conocido: un groups.conf propio no se carga, y este fichero lo regenera el panel
+# entero en cada guardado (así que añadir el bloque a mano se pierde).
+#   KNOWN_SENDER: remitente con el que ya se ha intercambiado correo (update 0148).
+#   -1.0 rescata correo legítimo que rozaba el umbral de Junk (4.0) sin blanquear
+#   spam real (6-8) ni tocar el de rechazo (10).
+BASE_WEIGHTS = {
+    "KNOWN_SENDER": -1.0,
+}
+
+
 def _build_groups(weight_overrides: dict) -> str:
     lines = ["# SVQPanel — overrides de peso de símbolos (admin). NO editar a mano.",
              "symbols {"]
-    for name, w in sorted(weight_overrides.items()):
+    # Los del panel primero; si el admin ha tocado ese símbolo, su valor manda.
+    merged = dict(BASE_WEIGHTS)
+    merged.update(weight_overrides or {})
+    for name, w in sorted(merged.items()):
         if not re.match(r"^[A-Z0-9_]+$", name):
             continue
         lines.append(f'  "{name}" {{ weight = {float(w):.2f}; }}')
@@ -328,10 +343,10 @@ def apply(weight_overrides: dict | None, actions: dict | None) -> dict:
     prev_actions = _read(ACTIONS_FILE)
 
     if weight_overrides is not None:
-        if weight_overrides:
-            _write_atomic(GROUPS_FILE, _build_groups(weight_overrides))
-        elif os.path.exists(GROUPS_FILE):
-            os.remove(GROUPS_FILE)
+        # Siempre se escribe: aunque el admin no tenga overrides propios, el
+        # fichero debe conservar los BASE_WEIGHTS del panel (KNOWN_SENDER…).
+        # Borrarlo dejaría a Rspamd sin esos pesos.
+        _write_atomic(GROUPS_FILE, _build_groups(weight_overrides))
 
     if actions is not None:
         # Validar contra límites de cordura.

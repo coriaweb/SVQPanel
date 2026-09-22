@@ -1334,17 +1334,14 @@ max_senders = 100000;
 max_ttl = 30d;
 use_bloom = false;
 RSPAMDKSEOF
-    # El peso va en fichero propio y NO en groups.conf: ese lo regenera entero el
-    # panel desde la BD (rspamd_tuning.py) y borraría el bloque al primer guardado.
-    cat > /etc/rspamd/local.d/known_senders_group.conf << 'RSPAMDKSGEOF'
-# SVQPanel — peso de KNOWN_SENDER. NO editar manualmente.
-group "known_senders" {
-    symbols {
-        "KNOWN_SENDER" {
-            weight = -1.0;
-            description = "Remitente con el que ya se ha intercambiado correo";
-        }
-    }
+    # El peso va en groups.conf: Rspamd solo lee de local.d/ los ficheros de un
+    # módulo conocido, así que un fichero propio NO se cargaría. Mismo formato que
+    # genera el panel (_build_groups), y el peso está en BASE_WEIGHTS de
+    # scripts/rspamd_tuning.py para que sobreviva a cada guardado de ajustes.
+    cat > /etc/rspamd/local.d/groups.conf << 'RSPAMDKSGEOF'
+# SVQPanel — overrides de peso de símbolos (admin). NO editar a mano.
+symbols {
+  "KNOWN_SENDER" { weight = -1.00; }
 }
 RSPAMDKSGEOF
 
