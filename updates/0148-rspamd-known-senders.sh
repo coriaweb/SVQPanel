@@ -104,21 +104,24 @@ echo "  · known_senders.conf escrito"
 # en BASE_WEIGHTS de scripts/rspamd_tuning.py para que sobreviva a cada guardado.
 rm -f /etc/rspamd/local.d/known_senders_group.conf 2>/dev/null || true
 
+WANT='  "UNKNOWN_SENDER" { weight = 0.00; }'
+
 if [ -f "$GROUPS" ] && grep -q 'UNKNOWN_SENDER' "$GROUPS"; then
     echo "  · UNKNOWN_SENDER ya estaba neutralizado"
 elif [ -f "$GROUPS" ] && grep -q '^symbols {' "$GROUPS"; then
+    # Insertar la línea justo después de 'symbols {', conservando los overrides
+    # que el admin tenga. Con awk y no con sed: escapar saltos de linea en sed es fragil.
     cp -a "$GROUPS" "${GROUPS}.bak-0148-$(date +%Y%m%d%H%M%S)"
-    sed -i 's/^symbols {/symbols {
-  "UNKNOWN_SENDER" { weight = 0.00; }/' "$GROUPS"
+    awk -v want="$WANT" '{ print; if ($0 ~ /^symbols \{/) print want }'         "$GROUPS" > "${GROUPS}.tmp" && mv "${GROUPS}.tmp" "$GROUPS"
     echo "  · UNKNOWN_SENDER = 0.00 añadido (sin tocar los overrides del admin)"
 else
     [ -f "$GROUPS" ] && cp -a "$GROUPS" "${GROUPS}.bak-0148-$(date +%Y%m%d%H%M%S)"
-    cat > "$GROUPS" << 'GRPEOF'
-# SVQPanel — overrides de peso de símbolos (admin). NO editar a mano.
-symbols {
-  "UNKNOWN_SENDER" { weight = 0.00; }
-}
-GRPEOF
+    {
+        echo "# SVQPanel — overrides de peso de símbolos (admin). NO editar a mano."
+        echo "symbols {"
+        echo "$WANT"
+        echo "}"
+    } > "$GROUPS"
     echo "  · groups.conf creado con UNKNOWN_SENDER = 0.00"
 fi
 chmod 644 "$GROUPS"
