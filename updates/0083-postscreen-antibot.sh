@@ -67,17 +67,23 @@ if ! grep -q '^postscreen_greet_action' "$MAIN"; then
 postscreen_greet_action = ignore
 # 2s en vez del default ${stress?{2}:{6}}s: menos latencia por conexion (ver 0138).
 postscreen_greet_wait = 2s
-# Los tres tests de abajo son DEEP PROTOCOL TESTS: por diseno obligan al cliente
-# a REINTENTAR la entrega, porque para ejecutarlos hay que romper la sesion SMTP.
-# En enforce reintroducen el mismo "peaje de entrada" que el greet_action (30
-# rechazos en 2h medidos en produccion, incluido correo de Google). En ignore se
-# siguen ejecutando y cacheando, pero sin cortar la conexion. Ver update 0152.
-# El pregreet NO es deep test: se resuelve en la misma sesion y sigue cazando bots.
-postscreen_pipelining_enable = yes
+# Los tres tests de abajo son DEEP PROTOCOL TESTS: para ejecutarlos hay que
+# CORTAR la sesion SMTP en curso, lo que obliga al cliente a reintentar. Van en
+# enable = no, no basta con action = ignore:
+#   *_action = ignore  -> que hacer con el RESULTADO de la prueba
+#   *_enable = no      -> si la prueba SE HACE siquiera
+# Con enable = yes el corte se produce igual, antes de que action opine. Medido
+# en produccion con los dos servidores en paralelo (2h): el que los tenia en "no"
+# hizo 93 conexiones con 0 rechazos; el que los tenia en "yes" (con action=ignore)
+# hizo 51 conexiones y rechazo 10, entre ellas 4 intentos de HubSpot a un buzon
+# de cliente que nunca llegaron. Ver updates 0152 y 0153.
+# El pregreet NO es deep test (se resuelve en la misma sesion) y sigue activo: es
+# el que caza bots de verdad, 5 en esas mismas 2 horas.
+postscreen_pipelining_enable = no
 postscreen_pipelining_action = ignore
-postscreen_non_smtp_command_enable = yes
+postscreen_non_smtp_command_enable = no
 postscreen_non_smtp_command_action = ignore
-postscreen_bare_newline_enable = yes
+postscreen_bare_newline_enable = no
 postscreen_bare_newline_action = ignore
 postscreen_dnsbl_action = ignore
 postscreen_dnsbl_sites =
