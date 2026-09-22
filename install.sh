@@ -1334,6 +1334,19 @@ max_senders = 100000;
 max_ttl = 30d;
 use_bloom = false;
 RSPAMDKSEOF
+    # El peso va en fichero propio y NO en groups.conf: ese lo regenera entero el
+    # panel desde la BD (rspamd_tuning.py) y borraría el bloque al primer guardado.
+    cat > /etc/rspamd/local.d/known_senders_group.conf << 'RSPAMDKSGEOF'
+# SVQPanel — peso de KNOWN_SENDER. NO editar manualmente.
+group "known_senders" {
+    symbols {
+        "KNOWN_SENDER" {
+            weight = -1.0;
+            description = "Remitente con el que ya se ha intercambiado correo";
+        }
+    }
+}
+RSPAMDKSGEOF
 
     # Umbrales de acción por defecto del panel: más estrictos que los de
     # fábrica de Rspamd (4/6/15). A 4+ puntos casi no hay correo legítimo (ir

@@ -43,7 +43,12 @@
 set -e
 
 CONF=/etc/rspamd/local.d/known_senders.conf
-GROUPS=/etc/rspamd/local.d/groups.conf
+# ⚠️ El peso NO va en groups.conf: ese fichero lo REGENERA ENTERO el panel desde
+# la BD (scripts/rspamd_tuning.py, vista de ajuste antispam), así que cualquier
+# bloque añadido a mano se pierde en el siguiente guardado. Se detectó en
+# producción: el update lo escribió y el panel ya lo había borrado. Usamos un
+# fichero propio, que Rspamd carga igual y el panel no toca.
+WEIGHT=/etc/rspamd/local.d/known_senders_group.conf
 
 echo "→ 0148: activar known_senders (premiar remitentes conocidos)…"
 
@@ -68,7 +73,7 @@ cat > "$CONF" << 'KSEOF'
 # SVQPanel — known_senders. NO editar manualmente.
 #
 # Recuerda a los remitentes con los que ya se ha intercambiado correo y les baja
-# la puntuación (símbolo KNOWN_SENDER, peso negativo en groups.conf).
+# la puntuación (símbolo KNOWN_SENDER; su peso va en known_senders_group.conf).
 #
 # ⚠️ A PROPÓSITO no se define symbol_unknown: penalizar a quien escribe por
 # primera vez es el error del greylisting (ver update 0146). Aquí solo se premia
@@ -81,16 +86,13 @@ KSEOF
 chmod 644 "$CONF"
 echo "  · known_senders.conf escrito"
 
-# ── 2) Peso del símbolo ───────────────────────────────────────────────────────
-# groups.conf puede tener ya otros símbolos del panel: solo añadimos el nuestro
-# si no está, sin tocar el resto.
-if [ -f "$GROUPS" ] && grep -q 'KNOWN_SENDER' "$GROUPS"; then
-    echo "  · el peso de KNOWN_SENDER ya estaba definido"
-else
-    [ -f "$GROUPS" ] && cp -a "$GROUPS" "${GROUPS}.bak-0148-$(date +%Y%m%d%H%M%S)"
-    cat >> "$GROUPS" << 'GRPEOF'
-
-# ── SVQPanel: known_senders (update 0148) ──
+# ── 2) Peso del símbolo (fichero propio, no groups.conf) ──────────────────────
+cat > "$WEIGHT" << 'GRPEOF'
+# SVQPanel — peso de KNOWN_SENDER (update 0148). NO editar manualmente.
+#
+# Va aparte de groups.conf a propósito: ese lo regenera el panel desde la BD y
+# borraría este bloque en cuanto alguien guarde los ajustes de antispam.
+#
 # -1.0 rescata correo legítimo que rozaba el umbral de Junk (4.0) sin llegar a
 # blanquear spam real (6-8) ni afectar al umbral de rechazo (10).
 group "known_senders" {
@@ -102,7 +104,13 @@ group "known_senders" {
     }
 }
 GRPEOF
-    echo "  · peso KNOWN_SENDER = -1.0 añadido a groups.conf"
+chmod 644 "$WEIGHT"
+echo "  · peso KNOWN_SENDER = -1.0 (en $WEIGHT)"
+
+# Limpiar el bloque que la primera versión de este update dejó en groups.conf.
+if [ -f /etc/rspamd/local.d/groups.conf ] && grep -q 'SVQPanel: known_senders' /etc/rspamd/local.d/groups.conf; then
+    sed -i '/# ── SVQPanel: known_senders (update 0148) ──/,/^}$/d' /etc/rspamd/local.d/groups.conf
+    echo "  · limpiado el bloque antiguo de groups.conf"
 fi
 
 # ── 3) Recargar y verificar que el módulo queda activo ────────────────────────
@@ -111,7 +119,7 @@ if systemctl is-active --quiet rspamd 2>/dev/null; then
     sleep 2
     if ! systemctl is-active --quiet rspamd; then
         echo "  ✗ Rspamd no quedó activo tras recargar; revirtiendo"
-        rm -f "$CONF"
+        rm -f "$CONF" "$WEIGHT"
         systemctl restart rspamd 2>/dev/null || true
         exit 1
     fi
@@ -120,6 +128,13 @@ if systemctl is-active --quiet rspamd 2>/dev/null; then
         echo "  ✓ módulo known_senders CARGADO"
     else
         echo "  ⚠ Rspamd recargó pero known_senders no aparece como activo"
+    fi
+    # Y que el peso está de verdad en la config efectiva (no basta con escribirlo:
+    # la 1ª versión lo puso en groups.conf y el panel lo había borrado).
+    if rspamadm configdump 2>/dev/null | grep -q 'KNOWN_SENDER'; then
+        echo "  ✓ peso KNOWN_SENDER presente en la config efectiva"
+    else
+        echo "  ⚠ KNOWN_SENDER no aparece en la config efectiva; revisar $WEIGHT"
     fi
 fi
 
