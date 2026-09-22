@@ -311,6 +311,13 @@ BASE_WEIGHTS = {
     # falta fijarlo. UNKNOWN_SENDER sí: viene con 0.5 y penaliza a quien escribe
     # por primera vez — el error del greylisting (0146). A 0.00 no suma nada.
     "UNKNOWN_SENDER": 0.0,
+    # R_MIXED_CHARSET: el correo DECLARA un juego de caracteres que no coincide
+    # con su contenido (típico: charset=windows-1251 —cirílico— con texto en
+    # español). No es un descuido posible: es la huella de herramientas de envío
+    # masivo configuradas en otro idioma. Medido en producción (update 0151):
+    # 13 apariciones, 12 spam y 1 sola legítima (un Mailchimp con score 1.63).
+    # De 0.63 a 2.50: el legítimo sube a 3.50 y sigue entrando (Junk está en 4).
+    "R_MIXED_CHARSET": 2.5,
 }
 
 

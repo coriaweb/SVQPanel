@@ -1343,6 +1343,7 @@ RSPAMDKSEOF
 # SVQPanel — overrides de peso de símbolos (admin). NO editar a mano.
 symbols {
   "UNKNOWN_SENDER" { weight = 0.00; }
+  "R_MIXED_CHARSET" { weight = 2.50; }
 }
 RSPAMDKSGEOF
 
