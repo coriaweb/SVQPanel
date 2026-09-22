@@ -47,13 +47,17 @@ if ! grep -q '^postscreen_greet_action' "$MAIN"; then
     cat >> "$MAIN" << 'PSEOF'
 
 # ── SVQPanel: postscreen (portero anti-bot, tests de protocolo) ──
-# enforce rechaza a toda IP desconocida en su primera conexion (450 4.3.2). Eso es
-# greylisting: los emisores pequenos reintentan desde la misma IP y entran al 2o
-# intento, pero las granjas grandes (Microsoft/Google/Amazon SES) reintentan desde
-# otra IP cada vez y nunca salen del bucle → correo retrasado horas. La solucion NO
-# es bajar esta directiva (se probo en 0138 y 0139 y no funciono), sino eximir a
-# esas granjas via allowlist: lo hace el update 0140.
-postscreen_greet_action = enforce
+# ⚠️ ignore, NUNCA enforce. Con enforce, postscreen rechaza (450 4.3.2) la primera
+# conexion de toda IP que no tenga en cache, PASE O NO las pruebas: el veredicto se
+# registra DESPUES del rechazo. Medido en produccion durante un mes: 930 "PASS NEW"
+# y 953 rechazos — uno por uno, cada IP paga un peaje al entrar. Y como la cache
+# caduca a los 7d, quien escribe cada 8 dias lo paga SIEMPRE (la misma IP de PayPal:
+# rechazada el 5-sep, aceptada el 9-sep). Se perdio correo real de PayPal, OVH,
+# Openbank, Netflix, MailChannels y el Ayto. de Sevilla, con CERO entregas en un mes.
+# ignore NO desactiva la prueba: se sigue haciendo y cacheando, solo deja de
+# rechazar por no conocer la IP. Es el default de Postfix y lo que hacen cPanel,
+# Plesk, Mail-in-a-Box e iRedMail. Ver update 0145 para el historial completo.
+postscreen_greet_action = ignore
 # 2s en vez del default ${stress?{2}:{6}}s: menos latencia por conexion (ver 0138).
 postscreen_greet_wait = 2s
 postscreen_pipelining_enable = yes
