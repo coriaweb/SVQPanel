@@ -874,8 +874,9 @@ def _run_migrations():
         # Antivirus ClamAV por dominio de correo
         "ALTER TABLE mail_domains ADD COLUMN IF NOT EXISTS antivirus_enabled BOOLEAN NOT NULL DEFAULT FALSE",
         "ALTER TABLE mail_domains ADD COLUMN IF NOT EXISTS greylist_enabled BOOLEAN NOT NULL DEFAULT TRUE",
-        # Greylisting global del correo (servidor completo)
-        "ALTER TABLE settings ADD COLUMN IF NOT EXISTS greylisting_enabled BOOLEAN NOT NULL DEFAULT TRUE",
+        # Greylisting global del correo (servidor completo). DEFAULT FALSE: apagado
+        # de serie desde el update 0146 (no entregaba lo que difería; ver su cabecera).
+        "ALTER TABLE settings ADD COLUMN IF NOT EXISTS greylisting_enabled BOOLEAN NOT NULL DEFAULT FALSE",
         # Mover spam (X-Spam: Yes) a la carpeta Junk (global + por dominio)
         "ALTER TABLE settings ADD COLUMN IF NOT EXISTS spam_to_junk_enabled BOOLEAN NOT NULL DEFAULT TRUE",
         "ALTER TABLE mail_domains ADD COLUMN IF NOT EXISTS spam_to_junk_enabled BOOLEAN NOT NULL DEFAULT TRUE",

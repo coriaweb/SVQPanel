@@ -117,7 +117,9 @@ class Settings(Base):
 
     # Greylisting global del correo. True = activo (cada dominio puede excluirse
     # con MailDomain.greylist_enabled=False). False = desactivado para TODOS.
-    greylisting_enabled = Column(Boolean, default=True, nullable=False)
+    # Por defecto DESACTIVADO (ver update 0146): en producción no llegó a entregar
+    # ninguno de los correos que difirió, y el spam que frenaba ya caía por score.
+    greylisting_enabled = Column(Boolean, default=False, nullable=False)
 
     # Mover spam (X-Spam: Yes de Rspamd) a la carpeta Junk. True = activo (cada
     # dominio puede excluirse con MailDomain.spam_to_junk_enabled=False).

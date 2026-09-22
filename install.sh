@@ -1298,12 +1298,23 @@ RSPAMDMILTEREOF
 backend = "redis";
 RSPAMDBAYESEOF
 
-    # Greylisting activado. El módulo se llama 'greylist' → el fichero debe ser
-    # greylist.conf (greylisting.conf NO lo lee Rspamd). El panel lo activa/
-    # desactiva globalmente desde aquí (Settings.greylisting_enabled).
+    # Greylisting DESACTIVADO por defecto (ver update 0146). El módulo se llama
+    # 'greylist' → el fichero debe ser greylist.conf (greylisting.conf NO lo lee
+    # Rspamd). El panel lo activa/desactiva globalmente (Settings.greylisting_enabled)
+    # y cada dominio puede activarlo por su cuenta (MailDomain.greylist_enabled).
+    #
+    # POR QUÉ APAGADO: medido en producción durante un mes, de 23 correos
+    # greylisteados NINGUNO llegó a entregarse jamás. Un "retraso" que no termina
+    # no es un retraso, es un bloqueo silencioso — y con código 4.7.1 el remitente
+    # nunca recibe rebote y cree que lo envió. Además no aportaba detección: los
+    # 22 spams que frenó ya iban a Junk por su propia puntuación (6.5-7.9), y en
+    # cambio atrapó correo legítimo con score 4.33 e incluso 0.00 (limpio del todo).
+    # El greylisting es una técnica de 2003, anterior a Bayes y SPF/DKIM/DMARC;
+    # aquí ya hay 19 RBLs, Bayes, fuzzy (Pyzor/Razor), antivirus y CrowdSec.
+    # cPanel y Plesk tampoco lo traen activado de serie.
     cat > /etc/rspamd/local.d/greylist.conf << 'RSPAMDGREYEOF'
 # SVQPanel — greylisting global. NO editar manualmente.
-enabled = true;
+enabled = false;
 RSPAMDGREYEOF
     # Limpiar el nombre antiguo erróneo si existe de instalaciones previas.
     rm -f /etc/rspamd/local.d/greylisting.conf 2>/dev/null || true
