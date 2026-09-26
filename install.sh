@@ -3755,7 +3755,7 @@ Type=oneshot
 User=root
 WorkingDirectory=/opt/svqpanel
 ExecStart=/opt/svqpanel/venv/bin/python -m api.cli refresh_ssl_expires
-TimeoutStartSec=120
+TimeoutStartSec=600
 
 [Install]
 WantedBy=multi-user.target
@@ -4062,6 +4062,14 @@ echo -e "${YELLOW}Aplicando aislamiento PHP por dominio (open_basedir + tmp prop
 /opt/svqpanel/venv/bin/python -m api.cli migrate_php_pools --force && \
     echo -e "${GREEN}✓ Pools PHP-FPM con seguridad aplicados${NC}" || \
     echo -e "${YELLOW}⚠ migrate_php_pools tuvo incidencias (revisar logs)${NC}"
+echo ""
+
+# Deploy-hook de certbot: tras cada renovación regenera el mapa SNI de Postfix
+# (postmap -F incrusta el cert en el .db) y recarga Postfix/Dovecot/nginx/Apache.
+# Sin él, el correo sirve el certificado viejo hasta que caduca. (= updates/0154)
+/opt/svqpanel/venv/bin/python -m api.cli install_ssl_renewal_hook && \
+    echo -e "${GREEN}✓ Hook de renovación SSL instalado${NC}" || \
+    echo -e "${YELLOW}⚠ No se pudo instalar el hook de renovación SSL${NC}"
 echo ""
 
 # Proteger el Redis global (backend de Rspamd) con contraseña. Sin esto, el

@@ -195,6 +195,16 @@ def cmd_refresh_ssl_expires() -> int:
                 logger.info(f"  {d.domain_name:40s} expira {expiry.date()} ({days_left}d)")
         db.commit()
         logger.info(f"ssl_expires actualizado para {updated} dominios ({expiring_soon} próximos a vencer)")
+
+        # Mirar el disco no basta: el cert puede estar renovado y el servicio
+        # seguir sirviendo el viejo (Postfix con el mapa SNI sin regenerar).
+        for check in (_check_served_mail_certs, _check_renewals_failing):
+            try:
+                check(db)
+                db.commit()
+            except Exception as e:
+                logger.exception(f"{check.__name__} falló: {e}")
+                db.rollback()
         return 0
     except Exception as e:
         logger.exception(f"refresh_ssl_expires falló: {e}")
@@ -202,6 +212,105 @@ def cmd_refresh_ssl_expires() -> int:
         return 2
     finally:
         db.close()
+
+
+def _notify_admins_upsert(db, level, title, message, dedup_key):
+    """
+    Como _notify_all_admins, pero si ya hay un aviso NO leído con esa clave le
+    actualiza el texto (la lista de dominios afectados cambia de un día a otro).
+    """
+    from api.models.models_notification import Notification
+    pending = db.query(Notification).filter(
+        Notification.dedup_key == dedup_key,
+        Notification.is_read == False,  # noqa: E712
+    ).all()
+    for n in pending:
+        n.level, n.title, n.message = level, title, message
+    _notify_all_admins(db, level, title, message, dedup_key)
+
+
+def _check_served_mail_certs(db) -> None:
+    """
+    Compara el cert que SIRVEN Postfix/Dovecot para cada mail.{dominio} con el
+    de disco. Si hay desfase, lanza el deploy-hook (regenera SNI + recarga) y
+    vuelve a comprobar. Avisa a los admins: warning si se autocorrigió (señal de
+    que el hook no está actuando), danger si sigue mal.
+    """
+    from scripts.mail_tls_manager import served_cert_mismatches, run_renewal_hook
+
+    key = "mail_cert_desfase"
+    bad = served_cert_mismatches()
+    if not bad:
+        _notify_all_admins(db, None, None, None, key)
+        return
+
+    hosts = sorted({b["host"] for b in bad})
+    logger.warning(f"  CERT DE CORREO DESFASADO en {len(hosts)} host(s): {', '.join(hosts)} — regenerando SNI")
+    run_renewal_hook()
+    still = served_cert_mismatches()
+    if still:
+        left = sorted({f'{b["host"]}:{b["port"]}' for b in still})
+        logger.error(f"  siguen desfasados tras regenerar: {', '.join(left)}")
+        _notify_admins_upsert(
+            db, "danger", "Correo sirviendo certificados antiguos",
+            f"Postfix/Dovecot siguen presentando un certificado distinto al de "
+            f"disco en: {', '.join(left)}. Los clientes de correo pueden ver "
+            f"'certificado no de confianza'. Revisa /etc/postfix/svqpanel_sni y "
+            f"/etc/dovecot/conf.d/99-svqpanel-sni.conf.",
+            key)
+    else:
+        logger.info("  desfase corregido")
+        _notify_admins_upsert(
+            db, "warning", "Certificados de correo corregidos automáticamente",
+            f"Postfix/Dovecot servían un certificado antiguo en {len(hosts)} "
+            f"host(s) ({', '.join(hosts[:10])}{'…' if len(hosts) > 10 else ''}) y se "
+            f"han recargado. No debería pasar: revisa que exista el hook "
+            f"/etc/letsencrypt/renewal-hooks/deploy/svqpanel-reload.sh.",
+            key)
+
+
+def _check_renewals_failing(db, days: int = 14) -> None:
+    """
+    Certbot renueva a ~30 días del vencimiento. Un cert en disco con <= `days`
+    días significa que la renovación lleva semanas fallando (casi siempre porque
+    el DNS del dominio ya no apunta aquí). Mira TODOS los certs de
+    /etc/letsencrypt/live, no solo los dominios del panel (mail./webmail./staging.
+    tienen su propio cert).
+    """
+    import glob
+    import os
+    import subprocess
+
+    key = "ssl_renovacion_fallando"
+    now = datetime.utcnow()
+    failing = []
+    for cert in sorted(glob.glob("/etc/letsencrypt/live/*/cert.pem")):
+        name = os.path.basename(os.path.dirname(cert))
+        try:
+            r = subprocess.run(["/usr/bin/openssl", "x509", "-enddate", "-noout", "-in", cert],
+                               capture_output=True, text=True, timeout=10)
+            exp = datetime.strptime(r.stdout.split("=", 1)[1].strip(), "%b %d %H:%M:%S %Y %Z")
+        except Exception:
+            continue
+        left = (exp - now).days
+        if left <= days:
+            failing.append((left, name))
+
+    if not failing:
+        _notify_all_admins(db, None, None, None, key)
+        return
+
+    failing.sort()
+    detail = ", ".join(f"{n} ({'caducado' if d < 0 else f'{d}d'})" for d, n in failing)
+    logger.warning(f"  RENOVACIÓN SSL FALLANDO: {detail}")
+    _notify_admins_upsert(
+        db, "danger" if failing[0][0] < 3 else "warning",
+        f"{len(failing)} certificado(s) SSL no se renuevan",
+        f"Certbot no consigue renovarlos: {detail}. Suele ser que el DNS del "
+        f"dominio ya no apunta a este servidor (Cloudflare, cambio de hosting, "
+        f"registro borrado). Ver el motivo con: certbot renew --cert-name NOMBRE "
+        f"--dry-run. Si el dominio ya no se aloja aquí: certbot delete --cert-name NOMBRE.",
+        key)
 
 
 def _eval_quota_notifications(db, user, kind, used_mb, quota_mb):
@@ -2302,6 +2411,7 @@ def main():
     sub.add_parser("refresh_user_stats",   help="Recalcula disk + traffic por usuario")
     sub.add_parser("refresh_domain_stats", help="Recalcula disk_usage por dominio")
     sub.add_parser("refresh_ssl_expires",  help="Sincroniza fechas de expiración SSL desde certbot")
+    sub.add_parser("install_ssl_renewal_hook", help="Instala el deploy-hook de certbot (SNI de correo + recargas)")
     sub.add_parser("register_server_ips",  help="Registra las IPs del sistema en la BD (post-instalación)")
     sub.add_parser("dns_cluster_health",      help="Comprueba sincronización del cluster DNS y avisa a admins")
     sub.add_parser("run_scheduled_backups",   help="Ejecuta los backups programados cuyo cron coincide ahora")
@@ -2338,6 +2448,11 @@ def main():
         sys.exit(cmd_refresh_domain_stats())
     if args.cmd == "refresh_ssl_expires":
         sys.exit(cmd_refresh_ssl_expires())
+    if args.cmd == "install_ssl_renewal_hook":
+        from scripts.mail_tls_manager import install_renewal_hook
+        changed = install_renewal_hook()
+        print("✓ hook instalado" if changed else "· hook ya estaba al día")
+        sys.exit(0)
     if args.cmd == "register_server_ips":
         sys.exit(cmd_register_server_ips())
     if args.cmd == "dns_cluster_health":
