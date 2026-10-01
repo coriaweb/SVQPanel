@@ -28,6 +28,9 @@ echo "→ 0079: SSH + fail2ban estricto (baneo escalado para reincidentes)…"
 # ── 1 + 2. fail2ban: increment global + jail sshd estricta ──────────────────
 JAIL=/etc/fail2ban/jail.local
 if [ -f "$JAIL" ] && command -v fail2ban-client >/dev/null 2>&1; then
+    # Copia de seguridad: si tras editar la config no valida, se restaura (antes
+    # se escribía y luego se validaba, dejando el archivo roto y fail2ban caído).
+    cp -p "$JAIL" "$JAIL.svq-0079.bak"
     python3 - "$JAIL" <<'PYEOF'
 import re, sys
 p = sys.argv[1]
@@ -43,11 +46,19 @@ s = re.sub(
     r"\n\[DEFAULT\]\.[^\n]*\n(?:\s*(?:maxretry|findtime|bantime)\s*=.*\n)+",
     "\n", s)
 
+# Una sección termina en la siguiente línea que EMPIEZA por '[' (cabecera), no en
+# cualquier '['. Antes se usaba [^\[]* y un "[DEFAULT]" dentro de un COMENTARIO
+# cortaba la sección [sshd] a mitad: maxretry/findtime/bantime se insertaban en el
+# comentario y fail2ban no arrancaba en las instalaciones nuevas.
+def section_re(name):
+    return re.compile(rf"^\[{re.escape(name)}\][^\n]*\n(?:(?!\[)[^\n]*\n?)*",
+                      flags=re.MULTILINE)
+
 # --- [DEFAULT]: asegurar las directivas bantime.* (añadir o actualizar) ---
 def ensure_in_default(text, key, value):
     """Pone 'key = value' dentro del bloque [DEFAULT]. Si la clave ya existe la
     actualiza; si no, la inserta justo después de la línea 'ignoreip ='."""
-    m = re.search(r"^\[DEFAULT\][^\[]*", text, flags=re.MULTILINE | re.DOTALL)
+    m = section_re("DEFAULT").search(text)
     if not m:
         return text  # sin [DEFAULT] no tocamos nada
     block = m.group(0)
@@ -72,7 +83,7 @@ for k, v in (
     s = ensure_in_default(s, k, v)
 
 # --- [sshd]: maxretry 3, findtime 30m, bantime 12h ---
-m = re.search(r"^\[sshd\][^\[]*", s, flags=re.MULTILINE | re.DOTALL)
+m = section_re("sshd").search(s)
 if m:
     block = m.group(0)
     def setkv(b, key, value):
@@ -97,11 +108,13 @@ else:
 PYEOF
 
     # Validar antes de recargar para no dejar fail2ban caído.
-    if fail2ban-client -d >/dev/null 2>&1; then
+    if fail2ban-client -t >/dev/null 2>&1; then
+        rm -f "$JAIL.svq-0079.bak"
         systemctl restart fail2ban >/dev/null 2>&1 || true
         echo "  ✓ fail2ban recargado"
     else
-        echo "  ✗ fail2ban-client -d falló; revisa $JAIL (no se recargó)"
+        mv -f "$JAIL.svq-0079.bak" "$JAIL"
+        echo "  ✗ la config de fail2ban no valida tras editar; $JAIL restaurado (no se recargó)"
     fi
 else
     echo "  · fail2ban no gestionado por el panel; salto jail.local"

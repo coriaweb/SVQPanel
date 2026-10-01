@@ -186,6 +186,25 @@ _detect_server_ip() {
 }
 _INSTALL_SERVER_IP="$(_detect_server_ip)"
 
+# IPv4 a las que resuelve un hostname, SIN loopback. Si el hostname del panel es
+# el del propio servidor, /etc/hosts lo apunta a 127.0.1.1 y getent devolvía solo
+# eso → el install creía que el DNS no apuntaba aquí y no emitía el SSL. Si tras
+# filtrar no queda nada, pregunta al DNS público (dig, o DoH con curl: dig aún no
+# está instalado al principio del install).
+_resolve_public_ipv4() {
+    local h="$1" ips
+    ips="$(getent ahostsv4 "$h" 2>/dev/null | awk '{print $1}' | grep -vE '^127\.' | sort -u)"
+    if [[ -z "$ips" ]] && command -v dig >/dev/null 2>&1; then
+        ips="$(dig +short +time=3 +tries=1 A "$h" @1.1.1.1 2>/dev/null | grep -E '^[0-9.]+$' | sort -u)"
+    fi
+    if [[ -z "$ips" ]]; then
+        ips="$(curl -fsS --max-time 5 -H 'accept: application/dns-json' \
+               "https://cloudflare-dns.com/dns-query?name=${h}&type=A" 2>/dev/null \
+               | grep -oE '"data":"[0-9.]+"' | grep -oE '[0-9.]+' | sort -u)"
+    fi
+    echo "$ips"
+}
+
 if [[ "$UNATTENDED" == true || -n "${SVQ_HOSTNAME:-}" ]]; then
     _PANEL_HOSTNAME_INPUT="${SVQ_HOSTNAME:-}"
 else
@@ -205,10 +224,7 @@ if [[ -n "$_PANEL_HOSTNAME_INPUT" ]]; then
 
         # Comprobar que el DNS del hostname resuelve a la IP del servidor
         echo "  Comprobando DNS de $PANEL_HOSTNAME ..."
-        _RESOLVED_IPS="$(getent ahostsv4 "$PANEL_HOSTNAME" 2>/dev/null | awk '{print $1}' | sort -u)"
-        if [[ -z "$_RESOLVED_IPS" ]]; then
-            _RESOLVED_IPS="$(dig +short A "$PANEL_HOSTNAME" 2>/dev/null | grep -E '^[0-9.]+$')"
-        fi
+        _RESOLVED_IPS="$(_resolve_public_ipv4 "$PANEL_HOSTNAME")"
 
         if [[ -n "$_INSTALL_SERVER_IP" ]] && echo "$_RESOLVED_IPS" | grep -qx "$_INSTALL_SERVER_IP"; then
             PANEL_SSL_READY=true
@@ -381,8 +397,9 @@ if ! swapon --show | grep -q '/'; then
     swapon /swapfile
     grep -q '/swapfile' /etc/fstab || echo '/swapfile none swap sw 0 0' >> /etc/fstab
     # Usar swap solo cuando RAM > 90% ocupada (menor latencia en producción)
-    grep -q 'vm.swappiness' /etc/sysctl.conf || echo 'vm.swappiness=10' >> /etc/sysctl.conf
-    sysctl -p > /dev/null 2>&1
+    # Debian 13 ya no trae ni lee /etc/sysctl.conf: va a /etc/sysctl.d/.
+    echo 'vm.swappiness=10' > /etc/sysctl.d/90-svqpanel-swap.conf
+    sysctl -q -p /etc/sysctl.d/90-svqpanel-swap.conf > /dev/null 2>&1 || true
     echo -e "${GREEN}✓ Swap de 2 GB creado y activado${NC}\n"
 else
     echo -e "${GREEN}✓ Swap ya existe, no se recrea${NC}\n"
@@ -453,10 +470,8 @@ apt-get install -y -qq -o Dpkg::Options::="--force-confold" \
 # corre (ni crons de cliente ni tareas del panel). Habilitar + arrancar.
 systemctl enable --now cron 2>/dev/null || true
 
-# Wrapper de historial de cron (svq-cron-run) + cola en disco (1733): cada
-# ejecución de cron registra estado/duración/salida sin que el cliente toque BD.
-(cd /opt/svqpanel && /opt/svqpanel/venv/bin/python -c \
-  "from scripts.cron_manager import install_cron_wrapper; install_cron_wrapper()" 2>/dev/null) || true
+# El wrapper de historial de cron (svq-cron-run) NO se instala aquí: el repo aún
+# no está clonado. Lo instalan los updates 0052/0105 que el install aplica al final.
 
 echo -e "${GREEN}✓ Dependencias instaladas${NC}\n"
 
@@ -3083,7 +3098,9 @@ port     = ssh
 filter   = sshd
 # SSH es el blanco nº1 (miles de fallos/día de cientos de IPs). Política
 # estricta: 3 fallos en 30m → baneo inicial 12h, escalando (12h→24h→48h…→4sem)
-# para cualquier IP que reincida. El factor/maxtime los hereda del [DEFAULT].
+# para cualquier IP que reincida. El factor/maxtime los hereda de la sección DEFAULT.
+# (NO escribir nombres de sección entre corchetes en comentarios: hay scripts que
+# delimitan secciones por '[' y un corchete aquí corrompía el jail.local.)
 maxretry = 3
 findtime = 30m
 bantime  = 12h
@@ -4148,8 +4165,7 @@ echo ""
 # Sin esto, un DNS que propaga a mitad dejaba el panel en HTTP para siempre pese
 # a tener ya el registro correcto.
 if [[ "$PANEL_SSL_READY" != true && -n "$PANEL_HOSTNAME" && -n "$_INSTALL_SERVER_IP" ]]; then
-    _RECHECK_IPS="$(getent ahostsv4 "$PANEL_HOSTNAME" 2>/dev/null | awk '{print $1}' | sort -u)"
-    [[ -z "$_RECHECK_IPS" ]] && _RECHECK_IPS="$(dig +short A "$PANEL_HOSTNAME" 2>/dev/null | grep -E '^[0-9.]+$')"
+    _RECHECK_IPS="$(_resolve_public_ipv4 "$PANEL_HOSTNAME")"
     if echo "$_RECHECK_IPS" | grep -qx "$_INSTALL_SERVER_IP"; then
         PANEL_SSL_READY=true
         echo -e "${GREEN}✓ $PANEL_HOSTNAME ya resuelve a este servidor ($_INSTALL_SERVER_IP); se emitirá SSL.${NC}"
