@@ -166,8 +166,12 @@ def generate_apache_vhost(
         </FilesMatch>
     </IfModule>
 {readonly_block}{custom_block}{xmlrpc_block}
-    # Proteger ficheros sensibles aunque el .htaccess del cliente no lo haga
-    <FilesMatch "(^\\.|\\.(env|git|sql|bak|old|log|sh)$)">
+    # Proteger ficheros sensibles aunque el .htaccess del cliente no lo haga.
+    # .well-known (RFC 8615) queda fuera: si la ruta no existe en disco, Apache
+    # evalúa este FilesMatch contra "public_html/.well-known" ANTES del rewrite
+    # del .htaccess, y denegaba con 403 rutas virtuales que gestiona la app
+    # (p.ej. /.well-known/oauth-authorization-server de un plugin WordPress).
+    <FilesMatch "(^\\.(?!well-known$)|\\.(env|git|sql|bak|old|log|sh)$)">
         Require all denied
     </FilesMatch>
     # Anti-webshell: nunca ejecutar PHP subido a wp-content/uploads (WordPress).

@@ -234,6 +234,20 @@ def test_apache_vhost_protege_ficheros_sensibles():
     assert "env" in vhost and "git" in vhost
 
 
+def test_apache_vhost_no_deniega_well_known():
+    # Regresión: el FilesMatch de ocultos (^\.) denegaba /.well-known/* con 403
+    # (Apache lo evalúa contra "public_html/.well-known" si la ruta no existe),
+    # y rutas virtuales de WordPress (OAuth) nunca llegaban a index.php.
+    import re
+    vhost = generate_apache_vhost("ejemplo.com", "user1", "8.3")
+    m = re.search(r'<FilesMatch "([^"]*env\|git[^"]*)">', vhost)
+    assert m, "falta el FilesMatch de ficheros sensibles"
+    pat = re.compile(m.group(1))
+    assert not pat.search(".well-known"), ".well-known no debe denegarse"
+    for denegado in (".env", ".git", ".htaccess", ".user.ini", "dump.sql", "x.bak"):
+        assert pat.search(denegado), f"{denegado} debe seguir denegado"
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # Coherencia de firmas: los wrappers que delegan en regenerate_vhost deben
 # aceptar los mismos kwargs que se les pasan desde las rutas. Caza el bug
