@@ -49,9 +49,23 @@ _COALESCE_SECONDS = 1.5     # espera tras el último cambio antes de aplicar
 
 
 def _do_background_apply():
-    """Aplica el estado actual de las listas a nftables. Corre en un hilo."""
+    """Aplica el estado actual de las listas a nftables. Corre en un hilo.
+
+    ⚠️ _apply_lock NO es reentrante: nunca llamar a _schedule_apply() (que también
+    lo coge) teniéndolo cogido. Antes el finally lo hacía y el hilo se quedaba
+    esperándose a sí mismo con el lock cogido; el siguiente apply-status (async,
+    en el event loop) se bloqueaba en ese lock y con 1 worker el panel entero
+    moría. Pasaba al bloquear varios países seguidos (el 2º llega mientras el 1º
+    aplica → pending → reprogramación desde el finally).
+    """
     from api.models.database import SessionLocal
     with _apply_lock:
+        if _apply_state["applying"]:
+            # Ya hay una pasada en curso: no lanzar otra en paralelo (escribirían
+            # el mismo fichero nft a la vez). Queda pending y esa pasada, al
+            # terminar, reprograma otra con el estado más reciente.
+            _apply_state["pending"] = True
+            return
         _apply_state["applying"] = True
         _apply_state["pending"] = False
     db = SessionLocal()
@@ -85,9 +99,11 @@ def _do_background_apply():
         db.close()
         with _apply_lock:
             _apply_state["applying"] = False
-            # ¿Llegaron cambios mientras aplicábamos? Reprograma otra pasada.
-            if _apply_state["pending"]:
-                _schedule_apply()
+            again = _apply_state["pending"]
+        # ¿Llegaron cambios mientras aplicábamos? Reprograma otra pasada — FUERA
+        # del lock (_schedule_apply lo coge; dentro sería un deadlock).
+        if again:
+            _schedule_apply()
 
 
 def _schedule_apply():
@@ -393,10 +409,17 @@ async def geo_unblock(
 @router.get("/firewall/geo/apply-status")
 async def geo_apply_status(_: dict = Depends(require_admin)):
     """Estado de la aplicación a nftables en background (para que la UI muestre
-    'aplicando…' y avise cuando termina o si hubo error)."""
-    with _apply_lock:
+    'aplicando…' y avise cuando termina o si hubo error).
+
+    Corre en el event loop: NO esperar el lock sin límite (si algo lo retuviera,
+    congelaría el panel entero). Solo lee: si está ocupado, leemos sin él."""
+    got = _apply_lock.acquire(timeout=0.5)
+    try:
         return {
             "applying":        _apply_state["applying"] or _apply_state["pending"],
             "last_error":      _apply_state["last_error"],
             "last_applied_at": _apply_state["last_applied_at"],
         }
+    finally:
+        if got:
+            _apply_lock.release()
