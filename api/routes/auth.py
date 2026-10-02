@@ -26,7 +26,8 @@ from api.schemas.auth_schemas import (
     TwoFADisableRequest,
     TwoFAVerifyRequest,
 )
-from api.dependencies import get_current_user, require_auth
+from api.dependencies import (get_current_user, require_auth, require_admin_or_reseller,
+                              forbid_impersonation)
 from api.utils.auth_log import log_auth_failed, client_ip
 from api.utils.security_audit import log_audit
 from api.utils.secret import get_secret_key
@@ -212,7 +213,7 @@ async def logout(
 async def change_password(
     payload:      ChangePasswordRequest,
     http_request: Request,
-    user:         User    = Depends(require_auth),
+    user:         User    = Depends(forbid_impersonation),
     db:           Session = Depends(get_db),
 ):
     """
@@ -244,7 +245,7 @@ async def change_password(
 
 @router.get("/auth/2fa/setup", response_model=TwoFASetupResponse, tags=["2FA"])
 async def setup_2fa(
-    user: User    = Depends(require_auth),
+    user: User    = Depends(forbid_impersonation),
     db:   Session = Depends(get_db),
 ):
     """
@@ -292,7 +293,7 @@ async def setup_2fa(
 @router.post("/auth/2fa/enable", tags=["2FA"])
 async def enable_2fa(
     payload: TwoFAEnableRequest,
-    user:    User    = Depends(require_auth),
+    user:    User    = Depends(forbid_impersonation),
     db:      Session = Depends(get_db),
 ):
     """
@@ -330,7 +331,7 @@ async def enable_2fa(
 @router.post("/auth/2fa/disable", tags=["2FA"])
 async def disable_2fa(
     payload: TwoFADisableRequest,
-    user:    User    = Depends(require_auth),
+    user:    User    = Depends(forbid_impersonation),
     db:      Session = Depends(get_db),
 ):
     """
@@ -435,8 +436,74 @@ async def verify_2fa(
     }
 
 
+IMPERSONATION_HOURS = 2
+
+
+@router.post("/auth/impersonate/{user_id}", tags=["Authentication"])
+async def impersonate_user(
+    user_id: int,
+    request: Request,
+    actor:   User    = Depends(require_admin_or_reseller),
+    db:      Session = Depends(get_db),
+):
+    """"Entrar como cliente" (como el botón de HestiaCP).
+
+    Emite un JWT del cliente con la marca `imp` (= quién entró), válido
+    IMPERSONATION_HOURS. Admin: cualquier cuenta que no sea admin. Reseller:
+    solo sus clientes. get_current_user revalida la marca en cada petición, así
+    que si al que entró lo desactivan o el cliente deja de ser suyo, la sesión
+    muere. Para volver, el frontend restaura el token propio que guardó antes.
+    Entrar y salir queda en la auditoría a nombre de quien entró.
+    """
+    from api.utils.scope import get_managed_account_or_404, is_admin
+    if getattr(request.state, "impersonator_id", None):
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT,
+                            detail="Ya estás dentro de una cuenta. Vuelve a la tuya primero.")
+    target = get_managed_account_or_404(db, actor, user_id)
+    if target.id == actor.id or is_admin(target):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN,
+                            detail="No se puede entrar en esa cuenta")
+    if not target.is_active or getattr(target, "is_suspended", False):
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT,
+                            detail="La cuenta está desactivada o suspendida")
+
+    token = target.generate_token(
+        expires_hours=IMPERSONATION_HOURS,
+        extra_claims={"imp": actor.id, "imp_name": actor.username},
+    )
+    log_audit(db, user=actor, category="auth", action="impersonate",
+              target=target.username, request=request)
+    return {
+        "access_token": token,
+        "token_type":   "bearer",
+        "user_id":      target.id,
+        "username":     target.username,
+        "email":        target.email,
+        "role":         target.role,
+        "is_admin":     target.is_admin,
+        "impersonator": actor.username,
+    }
+
+
+@router.post("/auth/impersonate-end", tags=["Authentication"])
+async def impersonate_end(
+    request: Request,
+    user:    User    = Depends(require_auth),
+    db:      Session = Depends(get_db),
+):
+    """Registra en la auditoría la salida de una sesión "como cliente". El token
+    del cliente lo descarta el frontend al restaurar el suyo propio."""
+    imp_id = getattr(request.state, "impersonator_id", None)
+    if imp_id:
+        actor = db.query(User).filter(User.id == imp_id).first()
+        if actor:
+            log_audit(db, user=actor, category="auth", action="impersonate_end",
+                      target=user.username, request=request)
+    return {"status": "ok"}
+
+
 @router.post("/auth/refresh", tags=["Authentication"])
-async def refresh_token(user: User = Depends(require_auth)):
+async def refresh_token(request: Request, user: User = Depends(require_auth)):
     """Renueva el JWT de un usuario YA autenticado.
 
     El token dura 24 h y no se renovaba nunca: al cumplirse, la sesión se
@@ -458,8 +525,19 @@ async def refresh_token(user: User = Depends(require_auth)):
     if getattr(user, "is_suspended", False):
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN,
                             detail="Cuenta suspendida")
+    # Sesión "como cliente": se renueva CONSERVANDO la marca imp y su duración
+    # corta (si no, se convertiría en una sesión normal del cliente de 24 h).
+    imp_id = getattr(request.state, "impersonator_id", None)
+    if imp_id:
+        token = user.generate_token(
+            expires_hours=IMPERSONATION_HOURS,
+            extra_claims={"imp": imp_id,
+                          "imp_name": getattr(request.state, "impersonator_name", None)},
+        )
+    else:
+        token = user.generate_token()
     return {
-        "access_token": user.generate_token(),
+        "access_token": token,
         "token_type":   "bearer",
         "user_id":      user.id,
         "username":     user.username,

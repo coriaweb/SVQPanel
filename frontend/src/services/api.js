@@ -57,6 +57,12 @@ class APIClient {
         // mitad de trabajo y aparece el login "de la nada", que se lee como un fallo
         // del panel o como que su contraseña ha dejado de valer.
         if (response.status === 401 && !skipAuthRedirect) {
+          // Dentro de una cuenta de cliente ("entrar como"): si esa sesión
+          // caduca o se invalida, volver a la cuenta propia, no al login.
+          if (this.restoreImpersonationOrigin()) {
+            window.location.href = '/users'
+            throw new Error('La sesión como cliente ha terminado.')
+          }
           localStorage.removeItem('token')
           localStorage.removeItem('user')
           try { sessionStorage.setItem('sessionExpired', '1') } catch (e) { /* modo privado */ }
@@ -101,6 +107,43 @@ class APIClient {
 
   async delete(endpoint) {
     return this.request(endpoint, { method: 'DELETE' })
+  }
+
+  // ── Entrar como cliente (impersonación) ──────────────────────────────────
+  // Se guarda la sesión propia (token + user) en 'svq_imp_origin' y se pasa a
+  // la del cliente. "Volver" restaura la guardada. El token del cliente lleva
+  // la marca imp y el backend lo revalida en cada petición.
+  async impersonate(userId) {
+    const r = await this.post(`/api/auth/impersonate/${userId}`, {})
+    localStorage.setItem('svq_imp_origin', JSON.stringify({
+      token: localStorage.getItem('token'),
+      user:  JSON.parse(localStorage.getItem('user') || 'null'),
+    }))
+    localStorage.setItem('token', r.access_token)
+    localStorage.setItem('user', JSON.stringify({
+      id: r.user_id, username: r.username, email: r.email,
+      role: r.role, is_admin: r.is_admin, impersonator: r.impersonator,
+    }))
+    this.token = r.access_token
+    return r
+  }
+
+  /** Restaura la sesión propia guardada. true si había una que restaurar. */
+  restoreImpersonationOrigin() {
+    let origin = null
+    try { origin = JSON.parse(localStorage.getItem('svq_imp_origin') || 'null') } catch (e) { /* corrupto */ }
+    localStorage.removeItem('svq_imp_origin')
+    if (!origin?.token) return false
+    localStorage.setItem('token', origin.token)
+    localStorage.setItem('user', JSON.stringify(origin.user))
+    this.token = origin.token
+    return true
+  }
+
+  async endImpersonation() {
+    // Auditar la salida (con el token del cliente aún activo); si falla, da igual.
+    try { await this.request('/api/auth/impersonate-end', { method: 'POST', skipAuthRedirect: true, silent: true }) } catch (e) { /* nada */ }
+    return this.restoreImpersonationOrigin()
   }
 
   // Users

@@ -106,6 +106,39 @@ async def get_current_user(
             detail="Usuario no encontrado o inactivo"
         )
 
+    # Sesión de "entrar como cliente": el token lleva quién la abrió (imp). Se
+    # deja en request.state para auditar y para que /auth/refresh conserve la
+    # marca en vez de convertirla en una sesión normal del cliente.
+    if payload.get("imp"):
+        # Se revalida en CADA petición: si al admin/reseller que entró lo
+        # desactivan, o el cliente deja de ser suyo, la sesión muere al instante.
+        from api.utils.scope import can_manage_account
+        imp = db.query(User).filter(User.id == int(payload["imp"])).first()
+        if (not imp or not imp.is_active or getattr(imp, "is_suspended", False)
+                or not can_manage_account(imp, user)):
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="La sesión como cliente ya no es válida",
+            )
+        request.state.impersonator_id = imp.id
+        request.state.impersonator_name = imp.username
+
+    return user
+
+
+async def forbid_impersonation(
+    request: Request,
+    user: User = Depends(get_current_user),
+) -> User:
+    """Para acciones que NO deben hacerse "como cliente": crear API tokens (que
+    sobrevivirían a la sesión de 2 h y no se revalidan), tocar el 2FA o la
+    contraseña del cliente (podría dejarlo sin acceso). Las hace el propio
+    cliente desde su sesión."""
+    if getattr(request.state, "impersonator_id", None):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="No disponible al entrar como cliente: debe hacerlo el propio cliente",
+        )
     return user
 
 

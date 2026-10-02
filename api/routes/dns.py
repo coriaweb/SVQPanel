@@ -17,6 +17,7 @@ from api.schemas.dns_schemas import (
     DnsRecordCreate, DnsRecordUpdate, DnsRecordResponse,
 )
 from api.dependencies import require_auth, require_admin
+from api.utils.scope import is_admin, managed_user_ids, can_manage_owner
 from scripts.dns_manager import DNSManager
 from scripts.dns_validator import validate_record
 
@@ -26,11 +27,12 @@ router = APIRouter()
 # ──────────────────────── helpers de permisos ────────────────────────────────
 
 def _user_can_edit_zone(zone: DnsZone, current_user, db: Session) -> bool:
-    """True si el usuario puede editar esta zona (es admin o es propietario del dominio)"""
-    if current_user.role == "admin":
+    """True si el usuario puede editar esta zona: admin, el dueño del dominio o
+    el reseller de ese dueño (alcance común de api/utils/scope.py)."""
+    if is_admin(current_user):
         return True
     domain = db.query(Domain).filter(Domain.domain_name == zone.domain_name).first()
-    return domain is not None and domain.user_id == current_user.id
+    return domain is not None and can_manage_owner(db, current_user, domain.user_id)
 
 
 def _require_zone_access(zone: DnsZone, current_user, db: Session):
@@ -224,11 +226,12 @@ async def list_zones(
     db: Session = Depends(get_db)
 ):
     """Listar zonas DNS (admin ve todas, usuario solo las de sus dominios)"""
-    if current_user.role == "admin":
+    ids = managed_user_ids(db, current_user)
+    if ids is None:
         zones = db.query(DnsZone).order_by(DnsZone.domain_name).all()
     else:
-        # Solo zonas de dominios que pertenecen al usuario
-        user_domains = db.query(Domain.domain_name).filter(Domain.user_id == current_user.id).all()
+        # Solo zonas de dominios del usuario (o, si es reseller, también de sus clientes)
+        user_domains = db.query(Domain.domain_name).filter(Domain.user_id.in_(ids)).all()
         user_domain_names = [d.domain_name for d in user_domains]
         zones = db.query(DnsZone).filter(
             DnsZone.domain_name.in_(user_domain_names)
@@ -255,12 +258,12 @@ async def create_zone(
     """
     domain = db.query(Domain).filter(Domain.domain_name == data.domain_name).first()
 
-    if current_user.role != "admin":
-        # Usuario/reseller: solo sus propios dominios
-        if not domain or domain.user_id != current_user.id:
+    if not is_admin(current_user):
+        # Usuario: solo sus dominios. Reseller: los suyos y los de sus clientes.
+        if not domain or not can_manage_owner(db, current_user, domain.user_id):
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
-                detail="Solo puedes crear zonas DNS para tus propios dominios"
+                detail="Solo puedes crear zonas DNS para tus dominios (o los de tus clientes)"
             )
     else:
         # Admin: el dominio debe existir y pertenecer a un cliente (no a un admin)
@@ -464,6 +467,10 @@ async def get_zone(
         raise HTTPException(status_code=404, detail="Zona no encontrada")
 
     can_edit = _user_can_edit_zone(zone, current_user, db)
+    if not can_edit:
+        # Antes cualquier usuario autenticado podía LEER la zona (y todos sus
+        # registros) de otro cliente. 404 para no revelar que existe.
+        raise HTTPException(status_code=404, detail="Zona no encontrada")
     records = db.query(DnsRecord).filter(DnsRecord.zone_id == zone_id).all()
     return _zone_to_response(zone, records, can_edit=can_edit)
 

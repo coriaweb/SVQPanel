@@ -21,7 +21,7 @@ from sqlalchemy.orm import Session
 from api.models.database import get_db
 from api.models.models_user import User
 from api.models.models_api_token import ApiToken
-from api.dependencies import require_auth
+from api.dependencies import require_auth, forbid_impersonation
 
 router = APIRouter()
 
@@ -164,7 +164,7 @@ async def list_tokens(
 @router.post("/tokens", response_model=ApiTokenCreated, status_code=201, tags=["API Tokens"])
 async def create_token(
     payload: ApiTokenCreate,
-    current: User = Depends(require_auth),
+    current: User = Depends(forbid_impersonation),
     db: Session = Depends(get_db),
 ):
     """Crea un API token para el usuario actual. Devuelve el secreto en claro UNA

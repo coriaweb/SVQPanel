@@ -121,7 +121,7 @@
                   <span class="tb-avatar tb-avatar--lg">{{ userInitials }}</span>
                   <div>
                     <p class="tb-user__head-name">{{ currentUser?.username }}</p>
-                    <p class="tb-user__head-role">{{ currentUser?.is_admin ? 'Administrador' : 'Usuario' }}</p>
+                    <p class="tb-user__head-role">{{ roleLabel }}</p>
                   </div>
                 </div>
                 <div class="tb-menu-sep"></div>
@@ -147,6 +147,18 @@
 
       <!-- Contenido -->
       <main class="app-content">
+        <!-- Sesión "como cliente": siempre visible, con vuelta a la cuenta propia -->
+        <div v-if="impersonator" class="imp-banner">
+          <i class="bi bi-person-badge imp-banner__icon"></i>
+          <div class="imp-banner__text">
+            Estás dentro de la cuenta de <strong>{{ currentUser?.username }}</strong>
+            como <strong>{{ impersonator }}</strong>. Lo que hagas se aplica a esta cuenta.
+          </div>
+          <button class="imp-banner__btn" @click="endImpersonation" :disabled="leavingImp">
+            <i class="bi bi-box-arrow-left"></i> Volver a mi cuenta
+          </button>
+        </div>
+
         <!-- Aviso de licencia no válida (bloquea operaciones) -->
         <div v-if="licenseBad" class="lic-banner">
           <i class="bi bi-exclamation-octagon-fill lic-banner__icon"></i>
@@ -301,6 +313,7 @@ export default {
         id: 'admin', label: 'Administración',
         items: [
           { to: '/users',      label: 'Usuarios', icon: 'bi-people',      roles: ['admin'] },
+          { to: '/users',      label: 'Mis clientes', icon: 'bi-people',  roles: ['reseller'] },
           { to: '/plans',      label: 'Planes',   icon: 'bi-stack',       roles: ['admin', 'reseller'] },
           { to: '/server-ips', label: 'IPs',      icon: 'bi-hdd-network', roles: ['admin'] },
           { to: '/db-tuner',   label: 'Optimizar BD', icon: 'bi-speedometer', roles: ['admin'] },
@@ -336,6 +349,7 @@ export default {
       return item.roles.some((r) => {
         if (r === 'admin')    return u.is_admin
         if (r === 'notAdmin') return !u.is_admin
+        if (r === 'reseller') return u.role === 'reseller' && !u.is_admin
         return u.role === r
       })
     }
@@ -398,6 +412,22 @@ export default {
       `/api/branding/logo?v=${encodeURIComponent(store.branding?.version || '0')}`)
 
     const userInitials = computed(() => (currentUser.value?.username || '?').slice(0, 2).toUpperCase())
+    const roleLabel = computed(() => {
+      const u = currentUser.value || {}
+      if (u.is_admin || u.role === 'admin') return 'Administrador'
+      if (u.role === 'reseller') return 'Reseller'
+      return 'Usuario'
+    })
+
+    // ── Entrar como cliente: banda + volver ──
+    const impersonator = computed(() => currentUser.value?.impersonator || null)
+    const leavingImp = ref(false)
+    const endImpersonation = async () => {
+      leavingImp.value = true
+      await api.endImpersonation()
+      // Recarga completa: limpia todo el estado en memoria de la sesión del cliente.
+      window.location.assign('/users')
+    }
 
     const toastIcon = (type) => ({
       success: 'bi-check-circle-fill',
@@ -465,7 +495,8 @@ export default {
       store, route, router, notification, copiedToast, copyNotification, isAuthenticated, currentUser, theme,
       sidebarCollapsed, mobileMenuOpen, navigate, dropdownOpen, visibleGroups, isActive, currentBreadcrumb,
       isGroupCollapsed, toggleGroup,
-      userInitials, toastIcon, logout, openPalette, serverHostname,
+      userInitials, roleLabel, impersonator, leavingImp, endImpersonation,
+      toastIcon, logout, openPalette, serverHostname,
       brandName, brandLogoUrl,
       serverLoad, cpuCount, loadLevel,
       showBetaBanner, dismissBeta, licenseBad,
@@ -519,6 +550,32 @@ export default {
   padding: 7px 14px; border-radius: 8px; font-weight: 600; font-size: .85rem;
 }
 .lic-banner__btn:hover { background: #b91c1c; }
+
+/* Sesión "como cliente" (azul, fija arriba del contenido mientras dure) */
+.imp-banner {
+  position: sticky; top: 0; z-index: 20;
+  display: flex; align-items: center; gap: 12px;
+  padding: 10px 16px; margin-bottom: 18px;
+  border-radius: 12px;
+  background: linear-gradient(90deg, rgba(37,99,235,.16), rgba(37,99,235,.07));
+  border: 1px solid rgba(37,99,235,.45);
+  backdrop-filter: blur(6px);
+  color: var(--text);
+}
+.imp-banner__icon { font-size: 1.35rem; color: #2563eb; flex-shrink: 0; }
+.imp-banner__text { font-size: .9rem; line-height: 1.4; flex: 1; min-width: 0; }
+.imp-banner__text strong { color: #2563eb; }
+.imp-banner__btn {
+  flex-shrink: 0; display: inline-flex; align-items: center; gap: 6px;
+  background: #2563eb; color: #fff; border: none; cursor: pointer;
+  padding: 7px 14px; border-radius: 8px; font-weight: 600; font-size: .85rem;
+}
+.imp-banner__btn:hover { background: #1d4ed8; }
+.imp-banner__btn:disabled { opacity: .6; cursor: wait; }
+@media (max-width: 640px) {
+  .imp-banner { flex-wrap: wrap; }
+  .imp-banner__btn { width: 100%; justify-content: center; }
+}
 
 /* ══════════════════════════════════════════════════
    Shell

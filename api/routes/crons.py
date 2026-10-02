@@ -12,6 +12,7 @@ from api.models.models_cron import CronJob
 from api.models.models_domain import Domain
 from api.schemas.cron_schemas import CronJobCreate, CronJobUpdate, CronJobResponse
 from api.dependencies import require_auth, require_admin
+from api.utils.scope import managed_user_ids, can_manage_owner
 
 router = APIRouter()
 
@@ -23,8 +24,9 @@ def _get_cron_or_404(cron_id: int, db: Session) -> CronJob:
     return cron
 
 
-def _check_cron_access(current_user: User, cron: CronJob):
-    if not current_user.is_admin and cron.user_id != current_user.id:
+def _check_cron_access(current_user: User, cron: CronJob, db: Session):
+    # Admin: todos; reseller: los suyos y los de sus clientes; usuario: los suyos.
+    if not can_manage_owner(db, current_user, cron.user_id):
         raise HTTPException(status_code=403, detail="No tienes permiso para gestionar este cron")
 
 
@@ -57,12 +59,13 @@ async def list_crons(
     """Lista los crons del usuario actual. Admin: todos, o los de un usuario
     concreto si se pasa ?user_id=N (para filtrar por cliente en el panel)."""
     query = db.query(CronJob)
-    if current_user.is_admin:
-        if user_id is not None:
-            query = query.filter(CronJob.user_id == user_id)
-    else:
-        # Un usuario normal solo ve los suyos, pase lo que pase en ?user_id
-        query = query.filter(CronJob.user_id == current_user.id)
+    # Alcance común (admin todo; reseller él + sus clientes; usuario lo suyo).
+    # ?user_id solo acota DENTRO de ese alcance.
+    ids = managed_user_ids(db, current_user)
+    if ids is not None:
+        query = query.filter(CronJob.user_id.in_(ids))
+    if user_id is not None:
+        query = query.filter(CronJob.user_id == user_id)
     crons = query.order_by(CronJob.created_at.desc()).all()
     return [_cron_to_response(c, db) for c in crons]
 
@@ -145,7 +148,7 @@ async def get_cron(
     db: Session = Depends(get_db),
 ):
     cron = _get_cron_or_404(cron_id, db)
-    _check_cron_access(current_user, cron)
+    _check_cron_access(current_user, cron, db)
     return _cron_to_response(cron, db)
 
 
@@ -158,9 +161,14 @@ async def update_cron(
 ):
     """Actualiza un cron job."""
     cron = _get_cron_or_404(cron_id, db)
-    _check_cron_access(current_user, cron)
+    _check_cron_access(current_user, cron, db)
 
     updated = payload.model_dump(exclude_unset=True)
+    # Igual que al crear: el dominio asociado debe ser del dueño del cron.
+    if updated.get("domain_id") and not current_user.is_admin:
+        _dom = db.query(Domain).filter(Domain.id == updated["domain_id"]).first()
+        if not _dom or _dom.user_id != cron.user_id:
+            raise HTTPException(status_code=403, detail="Ese dominio no pertenece al dueño del cron")
     for field, value in updated.items():
         setattr(cron, field, value)
     cron.updated_at = datetime.utcnow()
@@ -202,7 +210,7 @@ async def delete_cron(
 ):
     """Elimina un cron job."""
     cron = _get_cron_or_404(cron_id, db)
-    _check_cron_access(current_user, cron)
+    _check_cron_access(current_user, cron, db)
 
     # Eliminar del crontab del sistema
     try:
@@ -227,7 +235,7 @@ async def toggle_cron(
 ):
     """Activa o desactiva un cron job."""
     cron = _get_cron_or_404(cron_id, db)
-    _check_cron_access(current_user, cron)
+    _check_cron_access(current_user, cron, db)
 
     cron.is_active = not cron.is_active
     cron.updated_at = datetime.utcnow()
@@ -261,7 +269,7 @@ async def run_cron_now(
     a su horario. Registra el historial (trigger='manual') y devuelve el resultado.
     Útil para probar un cron tras crearlo/migrarlo, igual que en Hestia."""
     cron = _get_cron_or_404(cron_id, db)
-    _check_cron_access(current_user, cron)
+    _check_cron_access(current_user, cron, db)
 
     owner = db.query(User).filter(User.id == cron.user_id).first()
     sys_user = _get_username_for_user(owner)
@@ -290,7 +298,7 @@ async def cron_runs(
     """Historial de las últimas ejecuciones de un cron (estado/duración/salida)."""
     from api.models.models_cron_run import CronRun
     cron = _get_cron_or_404(cron_id, db)
-    _check_cron_access(current_user, cron)
+    _check_cron_access(current_user, cron, db)
     runs = (db.query(CronRun)
             .filter(CronRun.cron_id == cron_id)
             .order_by(CronRun.started_at.desc()).all())

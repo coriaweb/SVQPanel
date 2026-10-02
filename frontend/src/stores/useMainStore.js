@@ -153,6 +153,8 @@ export const useMainStore = defineStore('main', () => {
     currentUser.value = null
     localStorage.removeItem('token')
     localStorage.removeItem('user')
+    // Cerrar sesión estando "dentro" de un cliente cierra también la propia.
+    localStorage.removeItem('svq_imp_origin')
   }
 
   return {

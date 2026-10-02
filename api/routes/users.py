@@ -10,6 +10,7 @@ from api.models.models_user import User
 from api.schemas.user_schemas import UserCreate, UserUpdate, UserResponse
 from api.dependencies import require_admin, require_auth, require_admin_or_reseller
 from api.utils.security_audit import log_audit
+from api.utils.scope import is_admin, can_manage_account, get_managed_account_or_404
 from scripts.user_manager import UserManager
 import logging
 
@@ -221,13 +222,11 @@ async def get_user(
     current_user: User = Depends(require_auth),
     db: Session = Depends(get_db)
 ):
-    """Obtener un usuario por ID. Admin puede ver cualquiera; usuario solo el suyo propio."""
-    # Un usuario normal solo puede ver su propia cuenta
-    if not current_user.is_admin and current_user.id != user_id:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="No tienes permiso para ver este usuario"
-        )
+    """Obtener un usuario por ID. Admin: cualquiera; reseller: él y sus clientes;
+    usuario: solo el suyo propio."""
+    if current_user.id != user_id:
+        # Admin o reseller sobre un cliente suyo (404 si no: no revelar cuentas ajenas)
+        get_managed_account_or_404(db, current_user, user_id)
     try:
         user = db.query(User).filter(User.id == user_id).first()
         if not user:
@@ -250,17 +249,26 @@ async def update_user(
     user_id: int,
     user_update: UserUpdate,
     request: Request,
-    current_user: User = Depends(require_admin),
+    current_user: User = Depends(require_admin_or_reseller),
     db: Session = Depends(get_db)
 ):
-    """Actualizar un usuario"""
+    """Actualizar un usuario. Admin: cualquiera. Reseller: solo sus clientes, y
+    sin poder cambiarles el rol (un cliente de reseller es siempre 'user')."""
     try:
-        db_user = db.query(User).filter(User.id == user_id).first()
-        if not db_user:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail="Usuario no encontrado"
-            )
+        if is_admin(current_user):
+            db_user = db.query(User).filter(User.id == user_id).first()
+            if not db_user:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail="Usuario no encontrado"
+                )
+        else:
+            db_user = get_managed_account_or_404(db, current_user, user_id)
+            if user_update.role is not None and user_update.role != "user":
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail="Un reseller no puede cambiar el rol de sus clientes",
+                )
 
         # No tocar la cuenta de otro admin (contraseña, rol, estado…).
         _guard_admin_target(current_user, db_user, "modificar")
@@ -359,19 +367,22 @@ async def update_user(
 async def delete_user(
     user_id: int,
     request: Request,
-    current_user: User = Depends(require_admin),
+    current_user: User = Depends(require_admin_or_reseller),
     db: Session = Depends(get_db)
 ):
-    """Eliminar un usuario"""
+    """Eliminar un usuario. Admin: cualquiera; reseller: solo sus clientes."""
     user_manager = UserManager()
 
     try:
-        db_user = db.query(User).filter(User.id == user_id).first()
-        if not db_user:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail="Usuario no encontrado"
-            )
+        if is_admin(current_user):
+            db_user = db.query(User).filter(User.id == user_id).first()
+            if not db_user:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail="Usuario no encontrado"
+                )
+        else:
+            db_user = get_managed_account_or_404(db, current_user, user_id)
 
         # Borrar un usuario PURGA todo su sistema (home, correo, BDs, vhosts) y
         # es irreversible: un admin no puede hacérselo a otro admin.
@@ -474,9 +485,7 @@ async def user_disk_usage(
         raise HTTPException(404, "Usuario no encontrado")
 
     # Permisos: el propio usuario, un admin, o el reseller padre
-    if not (current_user.is_admin
-            or current_user.id == db_user.id
-            or db_user.parent_id == current_user.id):
+    if current_user.id != db_user.id and not can_manage_account(current_user, db_user):
         raise HTTPException(403, "Sin permiso para ver este usuario")
 
     try:
@@ -497,13 +506,11 @@ async def user_disk_usage(
 @router.post("/users/{user_id}/apply-quota")
 async def apply_user_quota(
     user_id: int,
-    current_user: User = Depends(require_admin),
+    current_user: User = Depends(require_admin_or_reseller),
     db: Session = Depends(get_db),
 ):
     """Reaplica la cuota del usuario en el SO (útil tras activar cuotas o reparar)."""
-    db_user = db.query(User).filter(User.id == user_id).first()
-    if not db_user:
-        raise HTTPException(404, "Usuario no encontrado")
+    db_user = get_managed_account_or_404(db, current_user, user_id)
     try:
         from scripts.quota_manager import QuotaManager
         qm = QuotaManager()
@@ -522,14 +529,13 @@ async def apply_user_quota(
 @router.post("/users/{user_id}/suspend")
 async def suspend_user_endpoint(
     user_id: int,
-    current_user: User = Depends(require_admin),
+    current_user: User = Depends(require_admin_or_reseller),
     db: Session = Depends(get_db),
 ):
-    """[Admin] Suspende un usuario EN CASCADA: webs, correo, BDs, cuenta del
-    sistema (SSH/FTP) y acceso al panel. No borra nada; reversible."""
-    u = db.query(User).filter(User.id == user_id).first()
-    if not u:
-        raise HTTPException(404, "Usuario no encontrado")
+    """[Admin/reseller] Suspende un usuario EN CASCADA: webs, correo, BDs, cuenta
+    del sistema (SSH/FTP) y acceso al panel. No borra nada; reversible. Un
+    reseller solo puede suspender a sus clientes."""
+    u = get_managed_account_or_404(db, current_user, user_id)
     if u.is_admin or u.role == "admin":
         raise HTTPException(403, "No se puede suspender a un administrador")
     from scripts.suspend_manager import suspend_user
@@ -540,13 +546,11 @@ async def suspend_user_endpoint(
 @router.post("/users/{user_id}/unsuspend")
 async def unsuspend_user_endpoint(
     user_id: int,
-    current_user: User = Depends(require_admin),
+    current_user: User = Depends(require_admin_or_reseller),
     db: Session = Depends(get_db),
 ):
-    """[Admin] Reactiva un usuario suspendido (revierte la cascada)."""
-    u = db.query(User).filter(User.id == user_id).first()
-    if not u:
-        raise HTTPException(404, "Usuario no encontrado")
+    """[Admin/reseller] Reactiva un usuario suspendido (revierte la cascada)."""
+    u = get_managed_account_or_404(db, current_user, user_id)
     from scripts.suspend_manager import suspend_user
     res = suspend_user(u, suspend=False, db=db)
     return {"status": "ok", **res}

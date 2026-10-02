@@ -407,7 +407,11 @@ def create_database(
         )
     except OwnerAssignmentError as e:
         raise HTTPException(status_code=e.status_code, detail=str(e))
-    owner = requested_owner if requested_owner else current_user
+    # El dueño es el que RESOLVIÓ la política (owner_id), no el pedido en el body:
+    # para un usuario normal validate_owner_assignment devuelve SU id e ignora
+    # data.user_id. Antes se usaba requested_owner y un cliente podía crear BDs
+    # en la cuenta de otro cliente mandando su user_id.
+    owner = current_user if owner_id == current_user.id else requested_owner
 
     # ── Verificar límite ──────────────────────────────────────────────────────
     db_count = db.query(ClientDatabase).filter(ClientDatabase.user_id == owner.id).count()
@@ -439,7 +443,10 @@ def create_database(
         domain = db.query(Domain).filter(Domain.id == data.domain_id).first()
         if not domain:
             raise HTTPException(status_code=404, detail="Dominio no encontrado")
-        if domain.user_id != owner.id and current_user.role not in ["admin", "reseller"]:
+        # El dominio debe ser del dueño de la BD, o al menos gestionable por quien
+        # la crea (antes un reseller podía asociarla a dominios de cualquiera).
+        from api.utils.scope import can_manage_owner
+        if domain.user_id != owner.id and not can_manage_owner(db, current_user, domain.user_id):
             raise HTTPException(status_code=403, detail="Sin permisos para ese dominio")
 
     # ── Crear en MariaDB ──────────────────────────────────────────────────────

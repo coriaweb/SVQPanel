@@ -322,8 +322,11 @@ async def update_domain_php(
     if not domain:
         raise HTTPException(status_code=404, detail="Dominio no encontrado")
 
-    # Permisos: admin ve todo, reseller ve los suyos, user ve los suyos
-    if current_user.role == "user" and domain.user_id != current_user.id:
+    # Permisos: admin todo, reseller los suyos y los de sus clientes, user los suyos.
+    # (Antes solo se comprobaba al rol "user": un reseller podía cambiar el PHP de
+    # CUALQUIER dominio del servidor.)
+    from api.utils.scope import can_manage_owner
+    if not can_manage_owner(db, current_user, domain.user_id):
         raise HTTPException(status_code=403, detail="No tienes permisos sobre este dominio")
 
     # Verificar que PHP esté instalado y activo

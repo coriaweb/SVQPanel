@@ -102,7 +102,7 @@ class User(Base):
         except:
             return False
 
-    def generate_token(self, expires_hours: int = 24) -> str:
+    def generate_token(self, expires_hours: int = 24, extra_claims: dict = None) -> str:
         """Genera el JWT de sesión (24 h por defecto).
 
         `exp` se construye con datetime CONSCIENTE de zona (timezone.utc): con
@@ -121,6 +121,9 @@ class User(Base):
             "is_admin": self.is_admin,
             "exp": datetime.now(timezone.utc) + timedelta(hours=expires_hours)
         }
+        if extra_claims:
+            # p.ej. {"imp": id, "imp_name": username} en "entrar como cliente"
+            payload.update(extra_claims)
         return jwt.encode(payload, secret, algorithm="HS256")
 
     @staticmethod
@@ -137,27 +140,15 @@ class User(Base):
             raise ValueError("Token inválido")
 
     def can_manage_user(self, other_user: "User") -> bool:
-        """Verifica si puede editar otro usuario"""
-        if self.role == "admin":
+        """¿Puede gestionar los recursos de `other_user`? (sí mismo o, si es
+        reseller, sus clientes). Para la lógica completa por rol ver api/utils/scope.py."""
+        if self.role == "admin" or self.is_admin:
             return True
-        if self.role == "reseller":
-            # Reseller solo puede gestionar sus propios clientes (parent_id = self.id)
-            return other_user.parent_id == self.id
         if self.id == other_user.id:
             return True
-        return False
-
-    def can_manage_domain(self, domain: "Domain") -> bool:
-        """Verifica si puede editar un dominio"""
-        from api.models.models_domain import Domain
-        if self.role == "admin":
-            return True
-        if self.role == "reseller" and domain.user.role == "user":
-            # Reseller puede editar dominios de sus usuarios
-            return domain.user_id == self.id or domain.user.id in [u.id for u in self.users]
-        if self.role == "user":
-            # Usuario solo puede editar sus propios dominios
-            return domain.user_id == self.id
+        if self.role == "reseller":
+            # Reseller: además, sus propios clientes (parent_id = self.id)
+            return other_user.parent_id == self.id
         return False
 
     def __repr__(self):

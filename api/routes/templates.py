@@ -135,7 +135,8 @@ async def apply_template(
     domain = db.query(Domain).filter(Domain.id == domain_id).first()
     if not domain:
         raise HTTPException(status_code=404, detail="Dominio no encontrado")
-    if current_user.role != "admin" and domain.user_id != current_user.id:
+    from api.utils.scope import can_manage_owner
+    if not can_manage_owner(db, current_user, domain.user_id):
         raise HTTPException(status_code=403, detail="Sin permiso sobre este dominio")
 
     # Obtener propietario del dominio (username del sistema)

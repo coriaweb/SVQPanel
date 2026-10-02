@@ -19,6 +19,7 @@ from api.models.models_user import User
 from api.models.models_domain import Domain
 from api.schemas.domain_schemas import DomainCreate, DomainUpdate, DomainResponse
 from api.dependencies import require_admin, require_auth
+from api.utils.scope import managed_user_ids, can_manage_owner
 from scripts.domain_manager import DomainManager
 from scripts.domain_suspend_manager import DomainSuspendManager
 from scripts.utils import get_domain_root
@@ -37,15 +38,7 @@ def _get_owned_domain(domain_id: int, db: Session, current_user: User) -> Domain
     if not _dom:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Dominio no encontrado")
 
-    role = getattr(current_user, "role", None)
-    if role == "admin":
-        return _dom
-    if role == "reseller":
-        client_ids = [u.id for u in db.query(User.id).filter(User.parent_id == current_user.id).all()]
-        client_ids.append(current_user.id)
-        if _dom.user_id in client_ids:
-            return _dom
-    elif _dom.user_id == current_user.id:
+    if can_manage_owner(db, current_user, _dom.user_id):
         return _dom
 
     # No accesible → 404 (no filtramos existencia de dominios de otros)
@@ -115,12 +108,28 @@ async def create_domain(
         )
 
     try:
-        user = db.query(User).filter(User.id == domain.user_id).first()
-        if not user:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail="Usuario no encontrado"
+        # Seguridad: el propietario lo resuelve la política común (como BD y
+        # correo). Antes se cogía domain.user_id del body SIN mirar quién pedía:
+        # cualquier cliente podía crear dominios en la cuenta de otro cliente.
+        #   - usuario normal → siempre él mismo (se ignora el user_id del body);
+        #   - reseller → él o sus clientes; admin → cualquier cliente.
+        from api.utils.validators import validate_owner_assignment, OwnerAssignmentError
+        requested = db.query(User).filter(User.id == domain.user_id).first() if domain.user_id else None
+        try:
+            owner_id = validate_owner_assignment(
+                actor_role=getattr(current_user, "role", None),
+                actor_id=current_user.id,
+                actor_is_admin=bool(current_user.is_admin),
+                requested_user_id=domain.user_id,
+                owner_exists=requested is not None,
+                owner_is_admin=bool(requested.is_admin) if requested else False,
+                owner_parent_id=getattr(requested, "parent_id", None) if requested else None,
+                resource_label="el dominio",
             )
+        except OwnerAssignmentError as e:
+            raise HTTPException(status_code=e.status_code, detail=str(e))
+        user = current_user if owner_id == current_user.id else requested
+        domain.user_id = owner_id
 
         # Seguridad: separación administración / hosting. Un administrador NO
         # puede ser propietario de dominios — su cuenta corre como root del
@@ -330,24 +339,20 @@ async def list_domains(
     try:
         query = db.query(Domain)
 
-        # Filtrar según el rol
-        if current_user.role == "admin":
-            # Admin ve todos
-            if user_id is not None:
-                user = db.query(User).filter(User.id == user_id).first()
-                if not user:
-                    raise HTTPException(
-                        status_code=status.HTTP_404_NOT_FOUND,
-                        detail="Usuario no encontrado"
-                    )
-                query = query.filter(Domain.user_id == user_id)
-        elif current_user.role == "reseller":
-            # Reseller ve solo sus usuarios y dominios
-            # (por ahora, solo ve sus propios dominios - mejora futura)
-            query = query.filter(Domain.user_id == current_user.id)
-        else:
-            # User regular ve solo sus dominios
-            query = query.filter(Domain.user_id == current_user.id)
+        # Filtrar según el rol (alcance común: admin todo; reseller él + sus
+        # clientes; usuario solo lo suyo). ?user_id= acota a una cuenta concreta,
+        # siempre dentro de ese alcance.
+        ids = managed_user_ids(db, current_user)
+        if ids is not None:
+            query = query.filter(Domain.user_id.in_(ids))
+        if user_id is not None:
+            if ids is not None and user_id not in ids:
+                raise HTTPException(status_code=status.HTTP_404_NOT_FOUND,
+                                    detail="Usuario no encontrado")
+            if not db.query(User.id).filter(User.id == user_id).first():
+                raise HTTPException(status_code=status.HTTP_404_NOT_FOUND,
+                                    detail="Usuario no encontrado")
+            query = query.filter(Domain.user_id == user_id)
 
         domains = query.order_by(Domain.domain_name).offset(skip).limit(limit).all()
         return domains
@@ -430,8 +435,9 @@ async def get_wp_attack_alerts(
 
     # Dominios accesibles según rol (mismo criterio que list_domains).
     q = db.query(Domain).filter(Domain.is_active == True)  # noqa: E712
-    if current_user.role != "admin":
-        q = q.filter(Domain.user_id == current_user.id)
+    _ids = managed_user_ids(db, current_user)
+    if _ids is not None:
+        q = q.filter(Domain.user_id.in_(_ids))
     domains = q.all()
 
     # Mapa user_id → username (una consulta) para construir la ruta del log.
@@ -891,14 +897,8 @@ def _domain_owner_dir(domain: Domain, db: Session) -> str:
 
 
 def _check_access(current_user: User, domain: Domain, db: Session) -> None:
-    if current_user.role == "admin":
+    if can_manage_owner(db, current_user, domain.user_id):
         return
-    if domain.user_id == current_user.id:
-        return
-    if current_user.role == "reseller":
-        owner = db.query(User).filter(User.id == domain.user_id).first()
-        if owner and owner.parent_id == current_user.id:
-            return
     raise HTTPException(status_code=403, detail="No tienes acceso a este dominio")
 
 

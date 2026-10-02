@@ -60,7 +60,8 @@ const routes = [
     path: '/users',
     name: 'Users',
     component: Users,
-    meta: { requiresAuth: true, requiresAdmin: true }
+    // Reseller: ve y gestiona SUS clientes (la API ya filtra por parent_id).
+    meta: { requiresAuth: true, requiresAdminOrReseller: true }
   },
   {
     path: '/users/:id/account',
@@ -278,7 +279,8 @@ router.beforeEach((to, from, next) => {
   // Si la ruta requiere ser admin O ser el propio usuario (/users/:id/account)
   if (to.meta.requiresAdminOrOwn) {
     const ownId = parseInt(to.params.id)
-    if (!user.is_admin && user.id !== ownId) {
+    // Reseller: también las cuentas de sus clientes (el backend da 404 si no es suyo)
+    if (!user.is_admin && user.role !== 'reseller' && user.id !== ownId) {
       next('/dashboard')
       return
     }

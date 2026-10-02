@@ -3,12 +3,24 @@
     <!-- Cabecera page-head -->
     <div class="page-head">
       <div>
-        <h1 class="page-head__title">Usuarios</h1>
-        <p class="page-head__sub">{{ users.length }} {{ users.length === 1 ? 'usuario' : 'usuarios' }} en el panel</p>
+        <h1 class="page-head__title">{{ isReseller ? 'Mis clientes' : 'Usuarios' }}</h1>
+        <p class="page-head__sub" v-if="isReseller">
+          {{ users.length }} {{ users.length === 1 ? 'cuenta de cliente' : 'cuentas de cliente' }} ·
+          crea sus cuentas y entra en ellas para gestionar sus dominios, correo y bases de datos
+        </p>
+        <p class="page-head__sub" v-else>{{ users.length }} {{ users.length === 1 ? 'usuario' : 'usuarios' }} en el panel</p>
       </div>
-      <BaseButton variant="primary" size="sm" @click="openCreateForm">
-        <i class="bi bi-person-plus"></i> Crear usuario
-      </BaseButton>
+      <div class="us-head-actions">
+        <!-- Admin: ver la jerarquía de un reseller concreto -->
+        <select v-if="!isReseller && resellers.length" v-model="resellerFilter" class="form-select form-select-sm us-filter">
+          <option value="">Todos los usuarios</option>
+          <option value="direct">Sin reseller (directos)</option>
+          <option v-for="r in resellers" :key="r.id" :value="String(r.id)">Clientes de {{ r.username }}</option>
+        </select>
+        <BaseButton variant="primary" size="sm" @click="openCreateForm">
+          <i class="bi bi-person-plus"></i> {{ isReseller ? 'Crear cliente' : 'Crear usuario' }}
+        </BaseButton>
+      </div>
     </div>
 
     <!-- Aviso de cuotas: se ve SIN tener que revisar las 33 filas a mano -->
@@ -37,12 +49,14 @@
       </button>
     </div>
 
-    <BaseCard title="Usuarios del panel" icon="people" flush>
+    <BaseCard :title="isReseller ? 'Cuentas de tus clientes' : 'Usuarios del panel'" icon="people" flush>
       <div v-if="loading" class="us-center"><div class="spinner-border spinner-border-sm"></div></div>
 
       <EmptyState v-else-if="users.length === 0" icon="people"
-                  title="Sin usuarios"
-                  description="No hay usuarios creados aún. Crea el primero con «Crear usuario»." />
+                  :title="isReseller ? 'Aún no tienes clientes' : 'Sin usuarios'"
+                  :description="isReseller
+                    ? 'Crea la cuenta de tu primer cliente con «Crear cliente». Después pulsa «Entrar» para darle de alta sus dominios, correo y bases de datos.'
+                    : 'No hay usuarios creados aún. Crea el primero con «Crear usuario».'" />
 
       <div v-else class="us-table-wrap">
         <table class="us-table">
@@ -50,7 +64,8 @@
             <tr>
               <th>Usuario</th>
               <th>Plan</th>
-              <th>Rol</th>
+              <th v-if="!isReseller">Rol</th>
+              <th v-if="!isReseller">Reseller</th>
               <th>Dominios</th>
               <th style="min-width:160px">Disco</th>
               <th style="min-width:160px">Tráfico (mes)</th>
@@ -79,8 +94,17 @@
                 <span v-if="user.plan_name" class="us-tag us-tag--plan">{{ user.plan_name }}</span>
                 <span v-else class="us-muted">—</span>
               </td>
-              <td>
+              <td v-if="!isReseller">
                 <span class="us-tag" :class="roleTagClass(user.role)">{{ roleLabel(user.role) }}</span>
+              </td>
+              <td v-if="!isReseller" class="us-muted">
+                <template v-if="user.parent_id && usernameById[user.parent_id]">
+                  <i class="bi bi-diagram-2"></i> {{ usernameById[user.parent_id] }}
+                </template>
+                <template v-else-if="user.role === 'reseller'">
+                  {{ childCount(user.id) }} {{ childCount(user.id) === 1 ? 'cliente' : 'clientes' }}
+                </template>
+                <template v-else>—</template>
               </td>
               <td class="us-muted">
                 <i class="bi bi-globe2"></i>
@@ -108,6 +132,12 @@
               </td>
               <td class="us-right">
                 <div class="us-actions">
+                  <BaseButton v-if="canImpersonate(user)" variant="primary" size="sm"
+                              :disabled="impersonating === user.id"
+                              @click="impersonate(user)"
+                              title="Entrar en su cuenta para gestionar sus dominios, correo, BD…">
+                    <i class="bi bi-person-badge"></i> Entrar
+                  </BaseButton>
                   <BaseButton variant="secondary" size="sm" @click="goToAccount(user.id)" title="Gestionar cuenta">
                     <i class="bi bi-box-arrow-in-right"></i> Gestionar
                   </BaseButton>
@@ -219,11 +249,41 @@ export default {
       return { critical, warn, total: critical.length + warn.length }
     })
 
+    // ── Jerarquía (admin → reseller → clientes) ─────────────────────────
+    const me = computed(() => store.currentUser || {})
+    const isReseller = computed(() => me.value.role === 'reseller' && !me.value.is_admin)
+    const resellers = computed(() => users.value.filter((u) => u.role === 'reseller'))
+    const usernameById = computed(() =>
+      Object.fromEntries(users.value.map((u) => [u.id, u.username])))
+    const childCount = (id) => users.value.filter((u) => u.parent_id === id).length
+    const resellerFilter = ref('')
+
     const onlyAtRisk = ref(false)
-    const visibleUsers = computed(() =>
-      onlyAtRisk.value
-        ? users.value.filter((u) => quotaLevel(u) !== 'ok')
-        : users.value)
+    const visibleUsers = computed(() => {
+      let list = users.value
+      if (resellerFilter.value === 'direct') list = list.filter((u) => !u.parent_id)
+      else if (resellerFilter.value) list = list.filter((u) => String(u.parent_id) === resellerFilter.value)
+      return onlyAtRisk.value ? list.filter((u) => quotaLevel(u) !== 'ok') : list
+    })
+
+    // ── Entrar como cliente ──────────────────────────────────────────────
+    // Admin: en cualquier cuenta que no sea admin. Reseller: en sus clientes
+    // (su lista ya solo trae los suyos). El backend vuelve a comprobarlo.
+    const canImpersonate = (u) =>
+      !u.is_admin && u.role !== 'admin' && u.is_active && !u.is_suspended &&
+      u.id !== me.value.id
+    const impersonating = ref(null)
+    const impersonate = async (u) => {
+      impersonating.value = u.id
+      try {
+        await api.impersonate(u.id)
+        // Recarga completa: arranca el panel limpio con la sesión del cliente.
+        window.location.assign('/dashboard')
+      } catch (e) {
+        store.showNotification('No se pudo entrar en la cuenta: ' + (e.message || e), 'danger')
+        impersonating.value = null
+      }
+    }
 
     const roleTagClass = (role) => {
       switch (role) {
@@ -236,7 +296,7 @@ export default {
     const loadUsers = async () => {
       loading.value = true
       try {
-        const data = await api.getUsers(0, 100)
+        const data = await api.getUsers(0, 1000)
         users.value = Array.isArray(data) ? data : []
       } catch (error) {
         store.showNotification('Error al cargar usuarios', 'danger')
@@ -329,6 +389,8 @@ export default {
       deleteUserConfirm,
       suspendUser,
       unsuspendUser,
+      isReseller, resellers, usernameById, childCount, resellerFilter,
+      canImpersonate, impersonate, impersonating,
     }
   }
 }
@@ -339,6 +401,8 @@ export default {
 .page-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 1rem; margin-bottom: var(--sp-5); flex-wrap: wrap; }
 .page-head__title { font-size: 1.5rem; font-weight: var(--fw-bold, 700); margin: 0; letter-spacing: -.01em; }
 .page-head__sub { color: var(--text-muted); margin: .25rem 0 0; font-size: var(--fs-sm); }
+.us-head-actions { display: flex; align-items: center; gap: .5rem; flex-wrap: wrap; }
+.us-filter { width: auto; min-width: 190px; }
 
 .us-center { display: flex; justify-content: center; padding: var(--sp-6) 0; color: var(--text-muted); }
 .us-muted { color: var(--text-muted); font-size: var(--fs-sm); }

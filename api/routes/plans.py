@@ -19,6 +19,7 @@ from api.models.models_plan import Plan
 from api.schemas.plan_schemas import PlanCreate, PlanUpdate, PlanResponse
 from api.dependencies import get_current_user, require_admin
 from api.utils.security_audit import log_audit
+from api.utils.scope import can_manage_account
 
 
 router = APIRouter()
@@ -249,7 +250,9 @@ async def assign_plan_to_user(
     target = db.query(User).filter(User.id == user_id).first()
     if not target:
         raise HTTPException(status_code=404, detail="Usuario no encontrado")
-    if not actor.can_manage_user(target):
+    # can_manage_account (no can_manage_user): un reseller NO puede asignarse un
+    # plan a sí mismo — sería subirse sus propios límites. Solo a sus clientes.
+    if not can_manage_account(actor, target):
         raise HTTPException(status_code=403, detail="No puedes gestionar este usuario")
 
     plan = db.query(Plan).filter(Plan.id == plan_id).first()
@@ -292,7 +295,7 @@ async def unassign_plan_from_user(
     target = db.query(User).filter(User.id == user_id).first()
     if not target:
         raise HTTPException(status_code=404, detail="Usuario no encontrado")
-    if not actor.can_manage_user(target):
+    if not can_manage_account(actor, target):
         raise HTTPException(status_code=403, detail="No puedes gestionar este usuario")
 
     before = {"plan_id": target.plan_id, "plan_name": target.plan_name}

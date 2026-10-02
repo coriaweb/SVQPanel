@@ -87,7 +87,8 @@
     </div>
 
     <div class="row">
-      <div class="col-md-6 mb-3">
+      <!-- Rol: solo el admin lo elige (los clientes de un reseller son siempre "usuario") -->
+      <div class="col-md-6 mb-3" v-if="isAdmin">
         <label for="role" class="form-label">Rol</label>
         <select id="role" v-model="form.role" class="form-select">
           <option value="user">👤 Usuario</option>
@@ -95,6 +96,15 @@
           <option value="admin">🔑 Administrador</option>
         </select>
         <small class="text-muted">{{ roleDescription }}</small>
+      </div>
+      <!-- Admin creando un cliente: a qué reseller pertenece (jerarquía tipo Hestia) -->
+      <div class="col-md-6 mb-3" v-if="isAdmin && !isEditing && form.role === 'user' && !parentId">
+        <label for="parent" class="form-label">Reseller</label>
+        <select id="parent" v-model="form.parent_id" class="form-select">
+          <option :value="null">— Ninguno (cliente directo) —</option>
+          <option v-for="r in resellers" :key="r.id" :value="r.id">{{ r.username }}</option>
+        </select>
+        <small class="text-muted">El reseller podrá gestionar esta cuenta y entrar en ella.</small>
       </div>
       <div class="col-md-6 mb-3">
         <label for="plan_id" class="form-label">Plan</label>
@@ -198,12 +208,25 @@ export default {
       disk_quota_mb:       props.user?.disk_quota_mb ?? 1024,
       plan_id:             props.user?.plan_id     ?? null,
       is_active:           props.user?.is_active   ?? true,
+      parent_id:           null,
+    })
+
+    const isAdmin = computed(() => {
+      const u = store.currentUser || {}
+      return !!u.is_admin || u.role === 'admin'
     })
 
     const plans = ref([])
+    const resellers = ref([])
     onMounted(async () => {
       try { plans.value = await api.getPlans() }
       catch (e) { /* ignorar: usuario sin permisos para planes */ }
+      if (isAdmin.value && !isEditing.value) {
+        try {
+          const all = await api.getUsers(0, 1000)
+          resellers.value = (all || []).filter((u) => u.role === 'reseller')
+        } catch (e) { /* sin lista: se crea como cliente directo */ }
+      }
     })
 
     const roleDescription = computed(() => ({
@@ -234,10 +257,11 @@ export default {
             email:         form.value.email,
             first_name:    form.value.first_name,
             last_name:     form.value.last_name,
-            role:          form.value.role,
             domains_limit: form.value.domains_limit,
             is_active:     form.value.is_active,
           }
+          // El rol solo lo cambia el admin (un reseller recibiría 403)
+          if (isAdmin.value) payload.role = form.value.role
           // Solo enviar cuota si el usuario no tiene plan (con plan la fija el plan)
           if (!form.value.plan_id) {
             payload.disk_quota_mb = form.value.disk_quota_mb
@@ -262,10 +286,12 @@ export default {
             first_name:    form.value.first_name,
             last_name:     form.value.last_name,
             password:      form.value.password,
-            role:          form.value.role,
+            role:          isAdmin.value ? form.value.role : 'user',
             domains_limit: form.value.domains_limit,
             is_active:     form.value.is_active,
-            ...(props.parentId ? { parent_id: props.parentId } : {})
+            ...(props.parentId ? { parent_id: props.parentId }
+              : (isAdmin.value && form.value.role === 'user' && form.value.parent_id
+                  ? { parent_id: form.value.parent_id } : {}))
           })
           userId = created?.id
           if (userId && form.value.plan_id) {
@@ -285,7 +311,7 @@ export default {
       form, loading, isEditing,
       showPasswordChange, passwordError,
       roleDescription, handleSubmit,
-      plans,
+      plans, resellers, isAdmin,
     }
   }
 }
