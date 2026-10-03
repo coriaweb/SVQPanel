@@ -454,11 +454,21 @@ async def impersonate_user(
     que si al que entró lo desactivan o el cliente deja de ser suyo, la sesión
     muere. Para volver, el frontend restaura el token propio que guardó antes.
     Entrar y salir queda en la auditoría a nombre de quien entró.
+
+    Si ya se está DENTRO de una cuenta (p.ej. el admin dentro de un reseller y
+    pulsa "Entrar" en un cliente de ese reseller) NO se anida: se CAMBIA de
+    cuenta. La sesión nueva queda a nombre de quien entró al principio (el
+    admin) y el permiso se comprueba contra ÉL, no contra la cuenta en la que
+    está: así el admin se mueve por todo el servidor, pero nadie gana alcance
+    encadenando sesiones.
     """
     from api.utils.scope import get_managed_account_or_404, is_admin
-    if getattr(request.state, "impersonator_id", None):
-        raise HTTPException(status_code=status.HTTP_409_CONFLICT,
-                            detail="Ya estás dentro de una cuenta. Vuelve a la tuya primero.")
+    imp_id = getattr(request.state, "impersonator_id", None)
+    if imp_id:
+        actor = db.query(User).filter(User.id == imp_id).first()
+        if not actor:
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED,
+                                detail="La sesión como cliente ya no es válida")
     target = get_managed_account_or_404(db, actor, user_id)
     if target.id == actor.id or is_admin(target):
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN,

@@ -115,10 +115,15 @@ class APIClient {
   // la marca imp y el backend lo revalida en cada petición.
   async impersonate(userId) {
     const r = await this.post(`/api/auth/impersonate/${userId}`, {})
-    localStorage.setItem('svq_imp_origin', JSON.stringify({
-      token: localStorage.getItem('token'),
-      user:  JSON.parse(localStorage.getItem('user') || 'null'),
-    }))
+    // Si ya estábamos dentro de otra cuenta (admin → reseller → su cliente), se
+    // CAMBIA de cuenta: se conserva la sesión ORIGINAL guardada (la del admin),
+    // para que "Volver a mi cuenta" lleve a ella y no a la cuenta intermedia.
+    if (!localStorage.getItem('svq_imp_origin')) {
+      localStorage.setItem('svq_imp_origin', JSON.stringify({
+        token: localStorage.getItem('token'),
+        user:  JSON.parse(localStorage.getItem('user') || 'null'),
+      }))
+    }
     localStorage.setItem('token', r.access_token)
     localStorage.setItem('user', JSON.stringify({
       id: r.user_id, username: r.username, email: r.email,

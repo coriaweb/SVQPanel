@@ -267,16 +267,40 @@ def test_impersonando_no_se_crean_api_tokens_ni_2fa(db):
     assert run(forbid_impersonation(req2, me)).id == 3
 
 
-def test_no_se_anida_la_impersonacion(db):
-    """Un admin dentro de un reseller no puede saltar a un cliente de este."""
+def test_admin_dentro_de_un_reseller_cambia_a_su_cliente(db):
+    """Admin → reseller → "Entrar" en un cliente del reseller: NO se anida, se
+    cambia de cuenta y la sesión nueva sigue a nombre del ADMIN."""
     from api.routes.auth import impersonate_user
     from api.dependencies import get_current_user
     tok = run(impersonate_user(2, _Req(), actor=U(db, 1), db=db))["access_token"]
     req = _Req()
     res = run(get_current_user(req, _auth(tok), db))
+    out = run(impersonate_user(3, req, actor=res, db=db))
+    p = User.verify_token(out["access_token"])
+    assert p["sub"] == "3" and p["imp"] == 1          # dentro de cli1, a nombre del admin
+    assert out["impersonator"] == "admin"
+    # y el admin también puede saltar desde ahí a un cliente de OTRO reseller
+    req2 = _Req()
+    cli = run(get_current_user(req2, _auth(out["access_token"]), db))
+    out2 = run(impersonate_user(5, req2, actor=cli, db=db))
+    assert User.verify_token(out2["access_token"])["imp"] == 1
+
+
+def test_cambiar_de_cuenta_no_da_mas_alcance(db):
+    """Encadenar sesiones no amplía permisos: se comprueba contra quien entró
+    al principio. Un reseller dentro de su cliente no salta a clientes ajenos
+    (y un cliente no tiene ni el endpoint: require_admin_or_reseller)."""
+    from api.routes.auth import impersonate_user
+    from api.dependencies import get_current_user
+    # Simulamos (por diseño no ocurre vía UI) una sesión del reseller R dentro
+    # de una cuenta reseller ajena: el permiso se mide contra R, no contra R2.
+    tok = U(db, 4).generate_token(1, extra_claims={"imp": 2, "imp_name": "res1"})
+    U(db, 4).parent_id = 2; db.commit()             # R2 "cliente" de R para que la sesión valga
+    req = _Req()
+    r2 = run(get_current_user(req, _auth(tok), db))
     with pytest.raises(HTTPException) as e:
-        run(impersonate_user(3, req, actor=res, db=db))
-    assert e.value.status_code == 409
+        run(impersonate_user(5, req, actor=r2, db=db))   # cli2 es de R2, no de R
+    assert e.value.status_code == 404
 
 
 def test_refresh_conserva_la_marca(db):
