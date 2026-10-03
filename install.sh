@@ -3730,6 +3730,32 @@ systemctl enable --now svqpanel-user-stats.timer >/dev/null 2>&1 || true
 
 echo -e "${GREEN}✓ systemd timer: svqpanel-user-stats.timer (horario)${NC}"
 
+# ─── Sincronizar cuotas de disco en cada arranque ───────────────────────────
+# Las cuotas ext4 se activan en el PRIMER REINICIO (hook del initramfs). Las
+# cuentas creadas antes quedaban con su límite solo en BD (setquota no podía
+# aplicarlo). Este oneshot reaplica todas las cuotas y marca el correo con su
+# project id en cada arranque → tras el primer reinicio todo queda aplicado
+# sin intervención. Idempotente (lo mismo lo instala updates/0158).
+cat > /etc/systemd/system/svqpanel-quota-sync.service << 'QSYNCEOF'
+[Unit]
+Description=SVQPanel — reaplica las cuotas de disco de todas las cuentas
+After=local-fs.target postgresql.service
+Wants=postgresql.service
+
+[Service]
+Type=oneshot
+User=root
+WorkingDirectory=/opt/svqpanel
+ExecStart=/opt/svqpanel/venv/bin/python -m api.cli sync_quotas
+TimeoutStartSec=600
+
+[Install]
+WantedBy=multi-user.target
+QSYNCEOF
+systemctl daemon-reload
+systemctl enable svqpanel-quota-sync.service >/dev/null 2>&1 || true
+echo -e "${GREEN}✓ systemd: svqpanel-quota-sync.service (reaplica cuotas en cada arranque)${NC}"
+
 # ─── Timer cada 4h para recalcular disk_usage por dominio ────────────────────
 cat > /etc/systemd/system/svqpanel-domain-stats.service << 'DSTEOF'
 [Unit]
@@ -4381,4 +4407,16 @@ if [[ "$INSTALL_MAIL" == true ]]; then
 fi
 if [[ "$INSTALL_ROUNDCUBE" == true ]]; then
     echo "  • Roundcube: los tokens de autologin caducan en 60 segundos (uso único)"
+fi
+
+# Lo ÚLTIMO que se ve: las cuotas de disco (feature ext4 interno) solo se
+# activan al reiniciar. Sin reinicio, los límites de disco de los planes son
+# solo informativos. Tras el reinicio, svqpanel-quota-sync los aplica todos.
+_QMOUNT="/"; mountpoint -q /home 2>/dev/null && _QMOUNT="/home"
+if ! quotaon -p -u "$_QMOUNT" 2>/dev/null | grep -q "is on"; then
+    echo -e "\n${RED}╔════════════════════════════════════════════════════════════╗${NC}"
+    echo -e "${RED}║  ⚠  REINICIA EL SERVIDOR PARA ACTIVAR LAS CUOTAS DE DISCO   ║${NC}"
+    echo -e "${RED}╚════════════════════════════════════════════════════════════╝${NC}"
+    echo "  Hasta reiniciar, los límites de disco de los planes NO se aplican."
+    echo "  Tras el reinicio se aplican solos a todas las cuentas:   reboot"
 fi

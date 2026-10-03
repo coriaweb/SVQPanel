@@ -358,6 +358,77 @@ def _eval_quota_notifications(db, user, kind, used_mb, quota_mb):
         clear_notification(db, user.id, key100)
 
 
+def cmd_sync_quotas() -> int:
+    """
+    Reaplica en el SO la cuota de disco de TODAS las cuentas (no admin) y marca
+    sus carpetas de correo con el project id (= uid) para que el correo cuente.
+
+    Por qué existe: las cuotas ext4 se activan en el PRIMER REINICIO tras el
+    install (hook del initramfs: el feature project solo se activa con el FS
+    desmontado). Las cuentas creadas antes de ese reinicio guardaban su límite
+    en BD pero setquota no podía aplicarlo → quedaban SIN límite real hasta que
+    alguien pulsara "aplicar cuota" una a una. Corre en cada arranque
+    (svqpanel-quota-sync.service). Idempotente.
+
+    Limitación: los ficheros de correo creados ANTES de activar el project quota
+    no aceptan chattr -p (inodos previos al feature); esas carpetas se avisan y
+    hay que reescribir su maildir (ver updates/0053).
+    """
+    import os
+    import pwd
+    import subprocess
+    from scripts.quota_manager import QuotaManager
+
+    qm = QuotaManager()
+    if not qm.is_quota_active():
+        print(f"· Cuotas no activas en {qm.mount}: nada que sincronizar "
+              "(se activan tras el primer reinicio del servidor)")
+        return 0
+
+    db = SessionLocal()
+    applied, failed, tagged, untagged = 0, [], 0, []
+    try:
+        for u in db.query(User).all():
+            if u.is_admin or u.role == "admin":
+                continue
+            try:
+                uid = pwd.getpwnam(u.username).pw_uid
+            except KeyError:
+                continue  # sin usuario de sistema (cuenta a medio crear/borrar)
+            try:
+                qm.set_quota(u.username, u.disk_quota_mb or 0)
+                applied += 1
+            except Exception as e:
+                failed.append(f"{u.username}: {e}")
+
+            mail_root = f"/home/{u.username}/mail"
+            if not os.path.isdir(mail_root):
+                continue
+            for name in sorted(os.listdir(mail_root)):
+                d = os.path.join(mail_root, name)
+                if not os.path.isdir(d):
+                    continue
+                cur = subprocess.run(["lsattr", "-pd", d], capture_output=True, text=True)
+                if cur.returncode == 0 and cur.stdout.split()[:1] == [str(uid)]:
+                    continue  # ya marcada
+                r = subprocess.run(["chattr", "-p", str(uid), "+P", d],
+                                   capture_output=True, text=True)
+                if r.returncode == 0:
+                    tagged += 1
+                else:
+                    untagged.append(d)
+    finally:
+        db.close()
+
+    print(f"✓ Cuotas aplicadas: {applied} cuentas · correo marcado: {tagged} carpetas")
+    for f in failed:
+        print(f"  ✗ {f}")
+    for d in untagged:
+        print(f"  ⚠ {d}: no admite el project id (creada antes de activar las cuotas); "
+              "su correo no cuenta en el disco hasta reescribir el maildir")
+    return 1 if failed else 0
+
+
 def cmd_refresh_user_stats() -> int:
     """
     Para cada usuario con home_dir definido, recalcula disk_used_mb y
@@ -2409,6 +2480,7 @@ def main():
     p_refresh.add_argument("--force", action="store_true", help="Refresca todas, ignorar interval")
 
     sub.add_parser("refresh_user_stats",   help="Recalcula disk + traffic por usuario")
+    sub.add_parser("sync_quotas",          help="Reaplica las cuotas de disco de todas las cuentas en el SO (+ marca el correo)")
     sub.add_parser("refresh_domain_stats", help="Recalcula disk_usage por dominio")
     sub.add_parser("refresh_ssl_expires",  help="Sincroniza fechas de expiración SSL desde certbot")
     sub.add_parser("install_ssl_renewal_hook", help="Instala el deploy-hook de certbot (SNI de correo + recargas)")
@@ -2444,6 +2516,8 @@ def main():
         sys.exit(cmd_refresh_ip_lists(force=args.force))
     if args.cmd == "refresh_user_stats":
         sys.exit(cmd_refresh_user_stats())
+    if args.cmd == "sync_quotas":
+        sys.exit(cmd_sync_quotas())
     if args.cmd == "refresh_domain_stats":
         sys.exit(cmd_refresh_domain_stats())
     if args.cmd == "refresh_ssl_expires":
