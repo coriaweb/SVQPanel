@@ -568,6 +568,15 @@ class APIClient {
   setMailGreylist(domainId, enabled) {
     return this.post(`/api/mail/domains/${domainId}/greylist?enabled=${enabled ? 'true' : 'false'}`, {})
   }
+  getMailRouting(domainId) {
+    return this.get(`/api/mail/domains/${domainId}/routing`)
+  }
+  setMailRouting(domainId, mode) {
+    return this.put(`/api/mail/domains/${domainId}/routing`, { mode })
+  }
+  getMailRoutingStatus(domainId) {
+    return this.get(`/api/mail/domains/${domainId}/routing/status`)
+  }
   getGlobalGreylisting() {
     return this.get('/api/mail/greylisting')
   }

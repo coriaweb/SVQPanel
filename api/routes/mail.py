@@ -205,6 +205,7 @@ def _mail_domain_to_dict(md: MailDomain, current_user, counts: dict = None) -> d
         "max_mailboxes": md.max_mailboxes,
         "send_limit_hour": getattr(md, "send_limit_hour", 1000),
         "antivirus_enabled": bool(getattr(md, "antivirus_enabled", False)),
+        "mail_routing":  getattr(md, "mail_routing", None) or "local",
         "mailbox_count": n_mailboxes,
         "alias_count":   n_aliases,
         # Tamaño total del correo de este dominio (suma de todos sus buzones).
@@ -1475,6 +1476,69 @@ async def set_mail_greylist(domain_id: int, enabled: bool = True,
     _rebuild_rspamd(db)
     return {"status": "success", "domain": md.domain_name,
             "enabled": md.greylist_enabled}
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Enrutado del correo: local / remoto (MX fuera: Google, M365…)
+# ─────────────────────────────────────────────────────────────────────────────
+# Síncronos a propósito (def, no async): el chequeo de MX lanza varios `dig` y
+# con un solo worker de uvicorn bloquearía el panel entero.
+
+class MailRoutingUpdate(_BM):
+    mode: str = _F(..., pattern="^(local|remote)$")
+
+
+@router.get("/mail/domains/{domain_id}/routing")
+def get_mail_routing(domain_id: int, current_user=Depends(require_auth),
+                     db: Session = Depends(get_db)):
+    """Modo de enrutado del dominio (el de la BD y el efectivo en Postfix)."""
+    _require_mail_enabled()
+    md = _get_mail_domain_or_404(domain_id, db)
+    _require_edit(md, current_user)
+    mode = getattr(md, "mail_routing", None) or "local"
+    effective = None
+    try:
+        from scripts.mail_manager import MailManager
+        effective = MailManager().get_mail_routing(md.domain_name)
+    except Exception:
+        pass  # sin root (desarrollo): solo el valor de la BD
+    return {"domain": md.domain_name, "mode": mode, "effective": effective,
+            "in_sync": effective in (None, mode)}
+
+
+@router.put("/mail/domains/{domain_id}/routing")
+def set_mail_routing(domain_id: int, body: MailRoutingUpdate,
+                     current_user=Depends(require_auth),
+                     db: Session = Depends(get_db)):
+    """Cambia el enrutado: 'local' (se entrega aquí) o 'remote' (sale a su MX).
+
+    No borra buzones ni correo: en remoto siguen accesibles por IMAP/webmail y
+    los alias se apartan para restaurarse intactos al volver a local."""
+    _require_mail_enabled()
+    md = _get_mail_domain_or_404(domain_id, db)
+    _require_edit(md, current_user)
+    try:
+        from scripts.mail_manager import MailManager
+        res = MailManager().set_mail_routing(md.domain_name, body.mode)
+    except PermissionError:
+        raise HTTPException(403, "Se necesitan privilegios root")
+    except Exception as e:
+        logger.exception(f"Error cambiando el enrutado de {md.domain_name}")
+        raise HTTPException(500, f"No se pudo cambiar el enrutado: {e}")
+    md.mail_routing = body.mode
+    db.commit()
+    return {"status": "success", "domain": md.domain_name, "mode": body.mode,
+            "aliases_moved": res.get("aliases_moved", 0)}
+
+
+@router.get("/mail/domains/{domain_id}/routing/status")
+def get_mail_routing_status(domain_id: int, current_user=Depends(require_auth),
+                            db: Session = Depends(get_db)):
+    """Comprueba en DNS público si el MX del dominio cuadra con su enrutado."""
+    md = _get_mail_domain_or_404(domain_id, db)
+    _require_edit(md, current_user)
+    from scripts.mail_deliverability import check_mx_routing
+    return check_mx_routing(md.domain_name, getattr(md, "mail_routing", None) or "local")
 
 
 @router.get("/mail/greylisting")

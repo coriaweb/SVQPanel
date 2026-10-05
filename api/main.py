@@ -880,6 +880,8 @@ def _run_migrations():
         # Mover spam (X-Spam: Yes) a la carpeta Junk (global + por dominio)
         "ALTER TABLE settings ADD COLUMN IF NOT EXISTS spam_to_junk_enabled BOOLEAN NOT NULL DEFAULT TRUE",
         "ALTER TABLE mail_domains ADD COLUMN IF NOT EXISTS spam_to_junk_enabled BOOLEAN NOT NULL DEFAULT TRUE",
+        # Enrutado del correo del dominio: local (se entrega aquí) / remote (MX fuera)
+        "ALTER TABLE mail_domains ADD COLUMN IF NOT EXISTS mail_routing VARCHAR(8) NOT NULL DEFAULT 'local'",
         # Ajustes antispam del admin (pesos de símbolos + umbrales + reglas)
         "ALTER TABLE settings ADD COLUMN IF NOT EXISTS rspamd_overrides TEXT",
         # Umbrales por dominio: NULL = hereda el global del admin. Los que tienen

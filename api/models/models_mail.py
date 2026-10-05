@@ -100,6 +100,13 @@ class MailDomain(Base):
     # rechazo de spam claro se mantiene. Solo aplica si está activo a nivel global.
     spam_to_junk_enabled  = Column(Boolean, default=True, nullable=False)
 
+    # ── Enrutado del correo entrante (tipo "MX routing" de CWP) ────────────
+    # "local"  (default) = este servidor es el destino del correo del dominio.
+    # "remote" = el correo está fuera (Google, M365…): Postfix no lo trata como
+    #            local y lo que se envíe al dominio desde aquí sale hacia su MX.
+    # Los buzones no se borran. Ver MailManager.set_mail_routing().
+    mail_routing          = Column(String(8), default="local", nullable=False)
+
     # ── Timestamps ────────────────────────────────────────────────────────
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)

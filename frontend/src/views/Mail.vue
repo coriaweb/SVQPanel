@@ -271,6 +271,11 @@
                   <span v-else class="sv-badge" :class="md.is_active ? 'sv-badge--on' : 'sv-badge--off'">
                     {{ md.is_active ? 'Activo' : 'Inactivo' }}
                   </span>
+                  <span v-if="md.mail_routing === 'remote'" class="sv-badge sv-badge--off"
+                        style="margin-left:.3rem"
+                        title="El correo de este dominio está en otro proveedor: este servidor lo envía a su MX">
+                    <i class="bi bi-box-arrow-up-right"></i> Correo externo
+                  </span>
                 </td>
                 <td style="text-align:right">
                   <div style="display:flex;gap:6px;justify-content:flex-end">
@@ -805,6 +810,60 @@
 
           <!-- ── TAB: Ajustes ── -->
           <div v-if="activeTab === 'settings'" style="display:flex;flex-direction:column;gap:1.5rem">
+
+            <!-- Enrutado del correo (local / remoto) -->
+            <div>
+              <h6 style="font-weight:600;font-size:.95rem;margin-bottom:.6rem">
+                <i class="bi bi-signpost-split" style="color:var(--ac)"></i> Dónde se recibe el correo
+              </h6>
+              <p style="font-size:.83rem;color:var(--text-muted);margin-bottom:.8rem">
+                Si el correo de este dominio está en <strong>otro proveedor</strong> (Google Workspace,
+                Microsoft 365…) y aquí solo tienes la web, ponlo en <strong>Remoto</strong>: así lo que se
+                envíe a <code>@{{ selectedDomain.domain_name }}</code> desde este servidor (formularios de la
+                web, avisos, otros buzones) sale hacia su proveedor real en vez de quedarse en un buzón local
+                que nadie mira. No se borra nada: los buzones y su correo se conservan y puedes volver a Local
+                cuando quieras.
+              </p>
+              <div style="display:flex;gap:1.2rem;flex-wrap:wrap;align-items:center;margin-bottom:.8rem">
+                <label class="form-check" style="display:flex;align-items:center;gap:.4rem;cursor:pointer">
+                  <input class="form-check-input" type="radio" name="mail-routing" value="local"
+                         :checked="routing.mode === 'local'" :disabled="routingSaving"
+                         @change="changeRouting('local', $event)" />
+                  <span><strong>Local</strong> — el correo se recibe en este servidor</span>
+                </label>
+                <label class="form-check" style="display:flex;align-items:center;gap:.4rem;cursor:pointer">
+                  <input class="form-check-input" type="radio" name="mail-routing" value="remote"
+                         :checked="routing.mode === 'remote'" :disabled="routingSaving"
+                         @change="changeRouting('remote', $event)" />
+                  <span><strong>Remoto</strong> — el correo está en otro proveedor</span>
+                </label>
+                <span v-if="routingSaving" class="spinner-border spinner-border-sm"></span>
+              </div>
+              <div v-if="routing.in_sync === false" class="sv-alert sv-alert--warn" style="margin-bottom:.8rem;font-size:.83rem">
+                <i class="bi bi-exclamation-triangle"></i>
+                El servidor tiene aplicado <strong>{{ routing.effective === 'remote' ? 'Remoto' : 'Local' }}</strong>
+                y el panel dice <strong>{{ routing.mode === 'remote' ? 'Remoto' : 'Local' }}</strong>.
+                Vuelve a elegir la opción para sincronizarlo.
+              </div>
+              <button class="sv-btn sv-btn--sm" :disabled="routingChecking" @click="checkRouting">
+                <span v-if="routingChecking" class="spinner-border spinner-border-sm"></span>
+                <i v-else class="bi bi-search"></i> Comprobar MX
+              </button>
+              <div v-if="routingStatus" class="sv-alert" style="margin-top:.8rem;font-size:.83rem"
+                   :class="routingStatus.ok ? 'sv-alert--success' : 'sv-alert--warn'">
+                <i class="bi" :class="routingStatus.ok ? 'bi-check-circle' : 'bi-exclamation-triangle'"></i>
+                {{ routingStatus.message }}
+                <div v-if="routingStatus.mx.length" style="margin-top:.5rem;display:flex;flex-direction:column;gap:.2rem">
+                  <div v-for="m in routingStatus.mx" :key="m.host">
+                    MX {{ m.priority }} <code>{{ m.host }}</code>
+                    <span style="color:var(--text-muted)">{{ m.ips.join(', ') || 'sin IP' }}</span>
+                    <strong v-if="m.is_local"> · este servidor</strong>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div style="border-top:1px solid var(--border)"></div>
 
             <!-- Configuración general -->
             <div>
@@ -1771,6 +1830,7 @@ export default {
         if (!spamSettings.value.spam_tag_threshold) {
           await loadSpamSettings(selectedDomain.value.id)
         }
+        await loadRouting(selectedDomain.value.id)
         await loadMailTls(selectedDomain.value.id)
         await loadAntivirus(selectedDomain.value.id)
       }
@@ -2176,6 +2236,56 @@ export default {
       try { greylist.value = await api.getMailGreylist(domainId) } catch { /* */ }
       // Estado de 'mover spam a Junk' del dominio.
       try { spamJunk.value = await api.getMailSpamToJunk(domainId) } catch { /* */ }
+    }
+
+    // ── Enrutado del correo (local / remoto) ──
+    const routing         = ref({ mode: 'local', effective: null, in_sync: true })
+    const routingSaving   = ref(false)
+    const routingChecking = ref(false)
+    const routingStatus   = ref(null)
+
+    const loadRouting = async (domainId) => {
+      routingStatus.value = null
+      try { routing.value = await api.getMailRouting(domainId) } catch { /* */ }
+    }
+
+    const changeRouting = async (mode, ev) => {
+      const dom = selectedDomain.value.domain_name
+      const msg = mode === 'remote'
+        ? `¿Pasar el correo de "${dom}" a REMOTO?\n\nEste servidor dejará de recibir correo para ${dom}: ` +
+          `lo que se le envíe desde aquí saldrá hacia su MX (Google, Microsoft 365…). Los buzones y su ` +
+          `correo se conservan y siguen accesibles por webmail/IMAP. Sus alias y reenvíos quedan en pausa ` +
+          `hasta volver a Local.`
+        : `¿Volver a recibir el correo de "${dom}" en este servidor (LOCAL)?\n\nAsegúrate de que su MX ` +
+          `apunta aquí, o el correo de fuera seguirá llegando al proveedor anterior.`
+      if (!confirm(msg)) {
+        if (ev?.target) ev.target.checked = false
+        return
+      }
+      routingSaving.value = true
+      try {
+        await api.setMailRouting(selectedDomain.value.id, mode)
+        routing.value = { mode, effective: mode, in_sync: true }
+        selectedDomain.value.mail_routing = mode
+        const md = mailDomains.value.find(d => d.id === selectedDomain.value.id)
+        if (md) md.mail_routing = mode
+        routingStatus.value = null
+        store.showNotification(
+          mode === 'remote' ? 'Correo en remoto: se envía a su MX' : 'Correo en local: se recibe aquí',
+          'success')
+      } catch (e) {
+        if (ev?.target) ev.target.checked = false
+        store.showNotification('Error: ' + (e.message || e), 'danger')
+      } finally { routingSaving.value = false }
+    }
+
+    const checkRouting = async () => {
+      routingChecking.value = true
+      try {
+        routingStatus.value = await api.getMailRoutingStatus(selectedDomain.value.id)
+      } catch (e) {
+        store.showNotification('Error: ' + (e.message || e), 'danger')
+      } finally { routingChecking.value = false }
     }
 
     const toggleGreylist = async (enabled) => {
@@ -2712,6 +2822,7 @@ export default {
       openNewDomain, createDomain, saveSettings,
       loadSpamSettings, saveSpamSettings,
       greylist, greylistSaving, toggleGreylist,
+      routing, routingSaving, routingChecking, routingStatus, changeRouting, checkRouting,
       spamJunk, spamJunkSaving, toggleSpamJunk,
       globalGreylist, globalGreylistSaving, toggleGlobalGreylist,
       globalSpamJunk, globalSpamJunkSaving, toggleGlobalSpamJunk,

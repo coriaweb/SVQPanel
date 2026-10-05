@@ -42,6 +42,13 @@ class MailManager(SystemManager):
     # SMTP relay (smarthost): credenciales y relayhost por remitente.
     RELAY_PASSWORD_MAP    = "svqpanel_relay_passwd"   # "[host]:port  user:pass"
     RELAY_SENDER_MAP      = "svqpanel_relay_sender"   # "@dominio  [host]:port"
+    # Enrutado de correo REMOTO (el MX del dominio está fuera: Google, M365…).
+    # Ninguno de los dos es un mapa que cargue main.cf: son estado nuestro.
+    #   - REMOTE_DOMAINS_MAP: "dominio  remote" → dominios que NO se entregan aquí.
+    #   - PARKED_ALIAS_MAP:   entradas de virtual_alias de esos dominios, apartadas
+    #     mientras están en remoto (para devolverlas intactas al volver a local).
+    REMOTE_DOMAINS_MAP    = "svqpanel_remote_domains"
+    PARKED_ALIAS_MAP      = "svqpanel_parked_alias"
     POSTFIX_MAIN_CF       = "/etc/postfix/main.cf"
     POSTFIX_MASTER_CF     = "/etc/postfix/master.cf"
     _MASTER_START = "# BEGIN SVQPANEL_SMTP_BIND"
@@ -138,13 +145,38 @@ class MailManager(SystemManager):
         self.execute_command(["postmap", self._map_path(map_name)])
         logger.info(f"postmap: {map_name} actualizado")
 
+    @staticmethod
+    def _key_domain(key):
+        """Dominio de una clave de mapa: 'info@dom' / '@dom' → 'dom'; 'dom' → 'dom'."""
+        return str(key).rsplit("@", 1)[-1].strip().rstrip(".").lower()
+
+    def _remote_domains(self):
+        return set(self._read_map(self.REMOTE_DOMAINS_MAP))
+
     def _map_set(self, map_name, key, value):
+        # Dominio en enrutado REMOTO: no debe volver a entrar en los mapas que
+        # hacen que Postfix lo trate como local. Un alias/reenvío creado mientras
+        # tanto se aparta (se activará al volver a local) en vez de aplicarse.
+        if map_name in ("virtual_domains", "virtual_alias") \
+                and self._key_domain(key) in self._remote_domains():
+            if map_name == "virtual_alias":
+                parked = self._read_map(self.PARKED_ALIAS_MAP)
+                parked[key] = value
+                self._write_map(self.PARKED_ALIAS_MAP, parked)
+            return
         entries = self._read_map(map_name)
         entries[key] = value
         self._write_map(map_name, entries)
         self._postmap(map_name)
 
     def _map_remove(self, map_name, key):
+        if map_name == "virtual_alias":
+            self._parked_remove(lambda k: k == key)
+        elif map_name == "virtual_domains":
+            # Borrar el dominio de correo también le quita la marca de remoto.
+            remote = self._read_map(self.REMOTE_DOMAINS_MAP)
+            if remote.pop(self._key_domain(key), None) is not None:
+                self._write_map(self.REMOTE_DOMAINS_MAP, remote)
         entries = self._read_map(map_name)
         if key in entries:
             del entries[key]
@@ -153,8 +185,10 @@ class MailManager(SystemManager):
 
     def _map_remove_by_domain(self, map_name, domain_name):
         """Elimina todas las entradas de un dominio de un mapa"""
-        entries = self._read_map(map_name)
         suffix = f"@{domain_name}"
+        if map_name == "virtual_alias":
+            self._parked_remove(lambda k: k.endswith(suffix))
+        entries = self._read_map(map_name)
         keys_to_remove = [k for k in entries
                           if k.endswith(suffix) or k == f"@{domain_name}"]
         if not keys_to_remove:
@@ -163,6 +197,15 @@ class MailManager(SystemManager):
             del entries[k]
         self._write_map(map_name, entries)
         self._postmap(map_name)
+
+    def _parked_remove(self, match):
+        """Quita del mapa de alias apartados las claves que cumplan `match`."""
+        parked = self._read_map(self.PARKED_ALIAS_MAP)
+        keys = [k for k in parked if match(k)]
+        if keys:
+            for k in keys:
+                del parked[k]
+            self._write_map(self.PARKED_ALIAS_MAP, parked)
 
     # ─────────────────────────────────────────────────────────────────────
     # Dovecot passwd-file
@@ -396,6 +439,76 @@ class MailManager(SystemManager):
         return {"success": True}
 
     # ─────────────────────────────────────────────────────────────────────
+    # Enrutado del correo: local / remoto (tipo "MX routing" de CWP)
+    # ─────────────────────────────────────────────────────────────────────
+
+    def set_mail_routing(self, domain_name, mode):
+        """Cambia dónde se entrega el correo DIRIGIDO al dominio.
+
+        - "local":  este servidor es el destino (virtual_mailbox_domains). Lo que
+          se envíe a info@dominio DESDE el servidor (formularios PHP, otros
+          buzones…) se entrega en el buzón local, apunte donde apunte el MX.
+        - "remote": el correo del dominio está FUERA (Google, M365…). Se saca el
+          dominio de virtual_domains y se apartan sus alias, así Postfix consulta
+          el MX y lo envía fuera como cualquier servidor de Internet.
+
+        No borra nada: buzones, Maildirs y usuarios de Dovecot quedan intactos
+        (el cliente sigue pudiendo entrar por IMAP al correo antiguo) y al volver
+        a "local" se restauran los alias tal cual estaban. DKIM sigue firmando:
+        el correo del dominio puede seguir SALIENDO de aquí. Idempotente.
+        """
+        dom = domain_name.strip().rstrip(".").lower()
+        if mode not in ("local", "remote"):
+            raise ValueError("mode debe ser 'local' o 'remote'")
+
+        remote = self._read_map(self.REMOTE_DOMAINS_MAP)
+        aliases = self._read_map("virtual_alias")
+        parked = self._read_map(self.PARKED_ALIAS_MAP)
+        suffix = f"@{dom}"
+
+        if mode == "remote":
+            remote[dom] = "remote"
+            self._write_map(self.REMOTE_DOMAINS_MAP, remote)
+            moved = {k: v for k, v in aliases.items() if k.lower().endswith(suffix)}
+            if moved:
+                parked.update(moved)
+                self._write_map(self.PARKED_ALIAS_MAP, parked)
+                for k in moved:
+                    del aliases[k]
+                self._write_map("virtual_alias", aliases)
+                self._postmap("virtual_alias")
+            vdom = self._read_map("virtual_domains")
+            if vdom.pop(dom, None) is not None:
+                self._write_map("virtual_domains", vdom)
+                self._postmap("virtual_domains")
+        else:
+            # Primero quitar la marca: si no, _map_set volvería a apartarlo.
+            if remote.pop(dom, None) is not None:
+                self._write_map(self.REMOTE_DOMAINS_MAP, remote)
+            moved = {k: v for k, v in parked.items() if k.lower().endswith(suffix)}
+            if moved:
+                aliases.update(moved)
+                self._write_map("virtual_alias", aliases)
+                self._postmap("virtual_alias")
+                for k in moved:
+                    del parked[k]
+                self._write_map(self.PARKED_ALIAS_MAP, parked)
+            self._map_set("virtual_domains", dom, "OK")
+
+        self._reload_postfix()
+        # Un dominio en remoto sigue siendo NUESTRO como remitente: SRS no debe
+        # reescribir sus formularios (sync_srs_excludes ya lo incluye).
+        self.sync_srs_excludes()
+        logger.info(f"Enrutado de correo de {dom}: {mode} "
+                    f"({len(moved)} alias {'apartados' if mode == 'remote' else 'restaurados'})")
+        return {"success": True, "domain": dom, "mode": mode, "aliases_moved": len(moved)}
+
+    def get_mail_routing(self, domain_name):
+        """Modo efectivo en Postfix ('local' | 'remote'), leído del disco."""
+        dom = domain_name.strip().rstrip(".").lower()
+        return "remote" if dom in self._remote_domains() else "local"
+
+    # ─────────────────────────────────────────────────────────────────────
     # SRS — exclusión de dominios locales
     # ─────────────────────────────────────────────────────────────────────
 
@@ -434,6 +547,11 @@ class MailManager(SystemManager):
                         locals_.append(dom)
         except FileNotFoundError:
             pass
+        # Dominios con el correo en remoto: ya no están en virtual_domains, pero
+        # sus formularios y notificaciones siguen saliendo de este servidor.
+        for dom in sorted(self._remote_domains()):
+            if dom and dom not in locals_:
+                locals_.append(dom)
 
         exclude_value = ",".join(locals_)
 

@@ -189,6 +189,7 @@ class MailDomainResponse(BaseModel):
     max_mailboxes:  int
     send_limit_hour: int           = 1000
     antivirus_enabled: bool        = False
+    mail_routing:   str            = "local"
     mailbox_count:  int            = 0
     alias_count:    int            = 0
     created_at:     Optional[datetime] = None
@@ -210,6 +211,7 @@ class MailDomainListItem(BaseModel):
     catch_all:     Optional[str] = None
     max_mailboxes: int
     antivirus_enabled: bool       = False
+    mail_routing:  str           = "local"
     mailbox_count: int           = 0
     alias_count:   int           = 0
     mail_used_mb:  int           = 0

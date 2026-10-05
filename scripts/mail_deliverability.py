@@ -278,6 +278,86 @@ def diagnose(server_ipv4=None, server_ipv6=None):
     }
 
 
+def _server_ips():
+    """IPs globales configuradas en el servidor (v4 + v6, incluidas las dedicadas)."""
+    ips = set()
+    for line in _run(["ip", "-o", "addr", "show", "scope", "global"]).splitlines():
+        parts = line.split()
+        if "inet" in parts or "inet6" in parts:
+            idx = parts.index("inet") if "inet" in parts else parts.index("inet6")
+            if idx + 1 < len(parts):
+                ips.add(parts[idx + 1].split("/")[0].lower())
+    return ips
+
+
+def _dig_short(rtype, name):
+    fqdn = name if name.endswith(".") else name + "."
+    for resolver in _PUBLIC_RESOLVERS:
+        out = _run(["dig", "+short", rtype, fqdn, f"@{resolver}"])
+        lines = [l.strip() for l in out.splitlines()
+                 if l.strip() and not l.startswith(";")]
+        if lines:
+            return lines
+    return []
+
+
+def check_mx_routing(domain, mode):
+    """¿El MX público del dominio cuadra con su enrutado (local/remoto)?
+
+    Consulta el MX en resolvers públicos y mira si alguno de sus hosts resuelve
+    a una IP de ESTE servidor. Es orientativo: si delante hay una pasarela
+    antispam (p. ej. Proxmox Mail Gateway) que reenvía aquí, el MX parecerá
+    externo y aun así lo correcto es "local"; por eso se avisa, no se cambia solo.
+    """
+    domain = domain.strip().rstrip(".").lower()
+    local_ips = _server_ips()
+    mx_hosts = []
+    for line in _dig_short("MX", domain):
+        parts = line.split()
+        if len(parts) >= 2:
+            try:
+                prio = int(parts[0])
+            except ValueError:
+                continue
+            mx_hosts.append((prio, parts[1].rstrip(".").lower()))
+    mx_hosts.sort()
+
+    mx = []
+    for prio, host in mx_hosts:
+        ips = [ip for ip in (_dig_short("A", host) + _dig_short("AAAA", host))
+               if re.match(r"^[0-9a-fA-F:.]+$", ip)]
+        mx.append({"priority": prio, "host": host, "ips": ips,
+                   "is_local": any(ip.lower() in local_ips for ip in ips)})
+
+    points_here = any(m["is_local"] for m in mx)
+    if not mx:
+        verdict, ok = "no_mx", False
+        message = ("El dominio no tiene registro MX publicado (o no se pudo "
+                   "resolver). Nadie de fuera puede enviarle correo.")
+    elif mode == "local" and points_here:
+        verdict, ok = "ok", True
+        message = "El MX apunta a este servidor y el correo se entrega aquí. Todo cuadra."
+    elif mode == "remote" and not points_here:
+        verdict, ok = "ok", True
+        message = ("El MX apunta fuera y este servidor envía el correo del dominio "
+                   "a ese MX. Todo cuadra.")
+    elif mode == "local":
+        verdict, ok = "mismatch_should_remote", False
+        message = (f"El MX apunta a {mx[0]['host']}, que no es este servidor. Con el "
+                   "enrutado en Local, lo que se envíe al dominio DESDE aquí (formularios "
+                   "de la web, otros buzones) se queda en el buzón local y no llega a "
+                   "su correo real. Cámbialo a Remoto, salvo que ese MX sea una pasarela "
+                   "antispam que reenvía a este servidor.")
+    else:
+        verdict, ok = "mismatch_should_local", False
+        message = ("El MX apunta a este servidor pero el enrutado está en Remoto: el "
+                   "correo que llegue de fuera para el dominio se rechazará (relay "
+                   "denied). Cámbialo a Local.")
+
+    return {"domain": domain, "mode": mode, "mx": mx, "points_here": points_here,
+            "verdict": verdict, "ok": ok, "message": message}
+
+
 def _extract_p(txt):
     """Saca el valor de p= (clave pública) de un TXT DKIM, normalizado."""
     m = re.search(r"p=([A-Za-z0-9+/=]+)", txt or "")
