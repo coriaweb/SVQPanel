@@ -80,7 +80,8 @@ async def toggle_ssl(
             # Prioridad: email del body → email del usuario en BD → error
             raw_email = (body.email or "").strip() or (current_user.email or "").strip()
             email = _validate_acme_email(raw_email)
-            ssl_manager.create_ssl_with_email(domain.domain_name, email)
+            ssl_manager.create_ssl_with_email(domain.domain_name, email,
+                                            include_www=not domain.is_subdomain)
             expiry = datetime.utcnow() + timedelta(days=90)
             domain.ssl_enabled    = True
             domain.ssl_expires    = expiry
@@ -235,7 +236,8 @@ async def create_ssl(
 
         raw_email = (getattr(ssl, 'email', None) or "").strip() or (current_user.email or "").strip()
         email = _validate_acme_email(raw_email)
-        ssl_manager.create_ssl_with_email(domain.domain_name, email)
+        ssl_manager.create_ssl_with_email(domain.domain_name, email,
+                                            include_www=not domain.is_subdomain)
 
         expiry_date = datetime.utcnow() + timedelta(days=90)
         domain.ssl_enabled     = True
@@ -346,7 +348,8 @@ async def create_ssl(
         email = (getattr(ssl, 'email', None) or "").strip() or (current_user.email or "").strip()
         if not email or "@" not in email or email.endswith("@example.com"):
             raise ValueError("Se necesita un email válido para Let's Encrypt.")
-        ssl_manager.create_ssl_with_email(ssl.domain_name, email)
+        ssl_manager.create_ssl_with_email(ssl.domain_name, email,
+                                          include_www=not domain.is_subdomain)
 
         # Set expiry date (Let's Encrypt certs expire in 90 days)
         expiry_date = datetime.utcnow() + timedelta(days=90)

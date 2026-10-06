@@ -156,6 +156,11 @@
           <label>Email de destino <span class="mon-hint">(vacío = email del admin)</span></label>
           <input v-model="cfg.notify_email" type="email" class="form-control form-control-sm"
                  placeholder="alertas@tudominio.com">
+          <div v-if="cfg.effective_email_ok === false" class="alert alert-warning py-2 px-3 mt-2 mb-0 small">
+            <i class="bi bi-exclamation-triangle"></i>
+            Las alertas van a <code>{{ cfg.effective_email || '(ninguno)' }}</code>, que no puede
+            recibir correo: solo las verás en la campana del panel. Pon aquí una dirección real.
+          </div>
         </div>
 
         <div class="mon-alert-rules">

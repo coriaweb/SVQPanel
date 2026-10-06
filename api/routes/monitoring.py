@@ -121,9 +121,15 @@ class AlertConfigUpdate(BaseModel):
     ssl_days_before: Optional[int]  = None
 
 
-def _cfg_dict(cfg: AlertConfig) -> dict:
+def _cfg_dict(cfg: AlertConfig, db: Session) -> dict:
+    from scripts.alerts_manager import alert_destination, is_deliverable_email
+    dest = alert_destination(db)
     return {
         "notify_email":    cfg.notify_email or "",
+        # Destino real (el configurado o el del admin) y si puede recibir correo:
+        # la UI avisa si las alertas van a parar a admin@localhost.
+        "effective_email":    dest,
+        "effective_email_ok": is_deliverable_email(dest),
         "disk_enabled":    cfg.disk_enabled,
         "disk_warn_pct":   cfg.disk_warn_pct,
         "disk_crit_pct":   cfg.disk_crit_pct,
@@ -139,7 +145,7 @@ def _cfg_dict(cfg: AlertConfig) -> dict:
 
 @router.get("/monitoring/alerts/config")
 async def get_alerts_config(current_user=Depends(require_admin), db: Session = Depends(get_db)):
-    return _cfg_dict(_get_cfg(db))
+    return _cfg_dict(_get_cfg(db), db)
 
 
 @router.put("/monitoring/alerts/config")
@@ -148,12 +154,17 @@ async def update_alerts_config(
     current_user=Depends(require_admin),
     db: Session = Depends(get_db),
 ):
+    from scripts.alerts_manager import is_deliverable_email
+    email = (data.notify_email or "").strip()
+    if email and not is_deliverable_email(email):
+        raise HTTPException(422, f"'{email}' no puede recibir correo. Usa una dirección real "
+                                 "(o déjalo vacío para usar el email del admin).")
     cfg = _get_cfg(db)
     for field, value in data.model_dump(exclude_unset=True).items():
         setattr(cfg, field, value)
     db.commit()
     db.refresh(cfg)
-    return _cfg_dict(cfg)
+    return _cfg_dict(cfg, db)
 
 
 # ── Eventos de alerta ─────────────────────────────────────────────────────

@@ -296,6 +296,15 @@ def _check_renewals_failing(db, days: int = 14) -> None:
         if left <= days:
             failing.append((left, name))
 
+    # Email además de la campana: el aviso in-app estuvo semanas sin leer
+    # mientras caducaban 8 certs (oct 2026). Deduplicado por cert y estado.
+    try:
+        from scripts.alerts_manager import notify_ssl_renewals_failing
+        notify_ssl_renewals_failing(db, failing)
+    except Exception as e:
+        logger.warning(f"  no se pudo enviar el email de renovaciones fallidas: {e}")
+        db.rollback()
+
     if not failing:
         _notify_all_admins(db, None, None, None, key)
         return
@@ -1271,6 +1280,55 @@ def cmd_clean_orphan_vhosts(yes: bool = False) -> int:
     if not yes:
         print("\nRe-ejecuta con --yes para borrarlos y recargar el webserver.")
     return 0
+
+
+def cmd_fix_subdomain_www_certs(dry_run: bool = False) -> int:
+    """
+    Reemite SIN www.<sub> los certs de subdominios (y staging) que lo llevan.
+
+    El panel añadía www.{dominio} a cualquier cert si resolvía al emitir, también
+    en subdominios (comodín DNS o el DNS del hosting anterior en una migración).
+    Certbot renueva con la lista de SAN guardada: si www.<sub> deja de existir,
+    falla la renovación ENTERA y el cert caduca (socios.zococoria.es, sep 2026).
+    El vhost de un subdominio no sirve www, así que quitarlo no pierde nada.
+    Idempotente: un cert sin www.<sub> no se toca.
+    """
+    import os
+    from scripts.ssl_manager import SSLManager
+
+    db = SessionLocal()
+    try:
+        subs = db.query(Domain).filter(Domain.is_subdomain == True).all()  # noqa: E712
+        mgr = SSLManager()
+        fixed = failed = 0
+        for d in subs:
+            name = d.domain_name
+            cert = f"/etc/letsencrypt/live/{name}/cert.pem"
+            if not os.path.exists(cert):
+                continue
+            sans = mgr._cert_domains(cert)
+            www = f"www.{name}"
+            if www not in sans:
+                continue
+            wanted = [s for s in sans if s != www] or [name]
+            logger.info(f"  {name}: cert con {www} → reemitir con {wanted}")
+            if dry_run:
+                continue
+            cmd = [mgr._get_certbot_path(), "certonly", "--nginx",
+                   "--cert-name", name, "--non-interactive", "--agree-tos"]
+            for s in wanted:
+                cmd += ["-d", s]
+            rc, out = mgr._run_certbot(cmd)
+            if rc == 0:
+                fixed += 1
+                logger.info(f"  {name}: reemitido sin www")
+            else:
+                failed += 1
+                logger.error(f"  {name}: certbot falló: {out[-500:]}")
+        logger.info(f"fix_subdomain_www_certs: {fixed} reemitidos, {failed} fallidos")
+        return 0
+    finally:
+        db.close()
 
 
 def cmd_migrate_canonical_domain(dry_run: bool = False) -> int:
@@ -2472,6 +2530,10 @@ def main():
         help="Aplica el dominio canónico (forzar www por defecto) a dominios existentes; defensivo si www no resuelve")
     p_canon.add_argument("--dry-run", action="store_true", help="Solo muestra qué haría")
 
+    p_wwwc = sub.add_parser("fix_subdomain_www_certs",
+        help="Reemite sin www.<sub> los certs de subdominios que lo llevan (rompía la renovación)")
+    p_wwwc.add_argument("--dry-run", action="store_true", help="Solo muestra qué haría")
+
     p_orphan = sub.add_parser("clean_orphan_vhosts",
         help="Detecta/elimina vhosts huérfanos de nginx/Apache (root o logs inexistentes)")
     p_orphan.add_argument("--yes", action="store_true", help="Borrar de verdad (sin esto solo muestra)")
@@ -2556,6 +2618,8 @@ def main():
         sys.exit(cmd_clean_orphan_vhosts(yes=args.yes))
     if args.cmd == "migrate_canonical_domain":
         sys.exit(cmd_migrate_canonical_domain(dry_run=args.dry_run))
+    if args.cmd == "fix_subdomain_www_certs":
+        sys.exit(cmd_fix_subdomain_www_certs(dry_run=args.dry_run))
     if args.cmd == "backfill_dns_ipv6":
         sys.exit(cmd_backfill_dns_ipv6(dry_run=args.dry_run))
     if args.cmd == "harden_tls":

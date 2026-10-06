@@ -142,10 +142,15 @@ class SSLManager(SystemManager):
             raise
 
     def create_ssl_with_email(self, domain_name: str, email: str,
-                              extra_domains: list = None, line_cb=None) -> dict:
+                              extra_domains: list = None, line_cb=None,
+                              include_www: bool = True) -> dict:
         """
         Igual que create_ssl pero con email configurable y SANs extra opcionales.
         line_cb (opcional): recibe cada línea de salida de certbot en vivo.
+        include_www=False para SUBDOMINIOS (y staging): su vhost no sirve www y,
+        si www.<sub> resolvía al emitir (comodín, DNS del hosting anterior),
+        entraba en el cert y la renovación fallaba ENTERA cuando dejaba de
+        existir (certbot renueva con la lista de SAN guardada).
         """
         if not validate_domain(domain_name):
             raise ValueError(f"Invalid domain: {domain_name}")
@@ -157,14 +162,17 @@ class SSLManager(SystemManager):
             self._validate_dns(domain_name)
 
             domains = [domain_name]
-            try:
-                self._validate_dns(f"www.{domain_name}", timeout=3)
-                domains.append(f"www.{domain_name}")
-            except ValueError:
-                logger.info(f"www.{domain_name} no resuelve, omitiendo SAN")
+            if include_www:
+                try:
+                    self._validate_dns(f"www.{domain_name}", timeout=3)
+                    domains.append(f"www.{domain_name}")
+                except ValueError:
+                    logger.info(f"www.{domain_name} no resuelve, omitiendo SAN")
 
             certbot_path = self._get_certbot_path()
-            cmd = [certbot_path, "certonly", "--nginx"]
+            # --cert-name fija el lineage: sin él, quitar el www de un cert que
+            # lo tenía crea "{dominio}-0001" en vez de reemitir el bueno.
+            cmd = [certbot_path, "certonly", "--nginx", "--cert-name", domain_name]
             for d in domains:
                 cmd += ["-d", d]
             for d in (extra_domains or []):

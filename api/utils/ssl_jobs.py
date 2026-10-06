@@ -127,7 +127,8 @@ def run_web_issue(domain_id: int, email: str, hsts: bool = False) -> None:
         job_step(kind, domain_id, 1)
         mgr.create_ssl_with_email(
             domain.domain_name, email,
-            line_cb=lambda l: job_line(kind, domain_id, l))
+            line_cb=lambda l: job_line(kind, domain_id, l),
+            include_www=not domain.is_subdomain)
 
         # Paso 2: BD + vhost. Al emitir por primera vez se activa force_https
         # (el formulario de emisión no ofrece esa opción; se ajusta después

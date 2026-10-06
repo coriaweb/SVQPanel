@@ -36,25 +36,47 @@ def _get_or_create_alert_config(db):
     return cfg
 
 
+def is_deliverable_email(addr: str) -> bool:
+    """
+    ¿Puede llegar un correo a esta dirección? El admin del install nace con
+    admin@localhost: las alertas se "enviaban" (email_sent=True) por el relay
+    a una dirección que no existe y nadie se enteraba de nada.
+    """
+    addr = (addr or "").strip().lower()
+    if addr.count("@") != 1:
+        return False
+    dom = addr.split("@", 1)[1]
+    if "." not in dom:
+        return False
+    return not dom.endswith((".local", ".localhost", ".invalid", ".localdomain"))
+
+
+def alert_destination(db) -> str:
+    """Email al que van las alertas: el configurado o, si está vacío, el del admin."""
+    from api.models.models_user import User
+    cfg = _get_or_create_alert_config(db)
+    to = (cfg.notify_email or "").strip()
+    if not to:
+        admin = db.query(User).filter(User.role == "admin", User.is_active == True).first()  # noqa: E712
+        to = (admin.email if admin else "").strip()
+    return to
+
+
 def _notify_email(db, subject, body):
     """Envía el email de alerta al destino configurado (o al admin)."""
     try:
         from scripts.panel_mailer import send_panel_email
         from api.routes.settings import get_or_create_settings
-        from api.models.models_user import User
 
         settings = get_or_create_settings(db)
         if not settings.panel_smtp_enabled:
             logger.info("SMTP del panel no activo; alerta solo in-app: %s", subject)
             return False
 
-        cfg = _get_or_create_alert_config(db)
-        to = (cfg.notify_email or "").strip()
-        if not to:
-            admin = db.query(User).filter(User.role == "admin", User.is_active == True).first()  # noqa: E712
-            to = (admin.email if admin else "").strip()
-        if not to or "@" not in to:
-            logger.info("Sin email de destino para alertas")
+        to = alert_destination(db)
+        if not is_deliverable_email(to):
+            logger.warning("Email de destino de alertas no válido (%r); alerta solo in-app: %s",
+                           to, subject)
             return False
 
         send_panel_email(db, to=to, subject=subject, body_text=body, settings=settings)
@@ -216,20 +238,84 @@ def _check_ssl(db, cfg):
         Domain.ssl_enabled == True,  # noqa: E712
         Domain.ssl_expires.isnot(None),
     ).all()
-    seen_keys = set()
     for d in domains:
+        # Clave distinta para "caducado": con una sola clave, el aviso de "expira
+        # en N días" quedaba abierto y el día que caducaba no se volvía a avisar.
         key = f"ssl:{d.domain_name}"
-        seen_keys.add(key)
+        key_exp = f"ssl:{d.domain_name}:expired"
         if d.ssl_expires and d.ssl_expires <= soon:
             days = (d.ssl_expires - datetime.utcnow()).days
             if days < 0:
                 _fire(db, "ssl", "critical", d.domain_name,
-                      f"Certificado SSL de {d.domain_name} EXPIRADO", key)
+                      f"Certificado SSL de {d.domain_name} EXPIRADO", key_exp)
             else:
+                _resolve(db, key_exp)
                 _fire(db, "ssl", "warning", d.domain_name,
                       f"SSL de {d.domain_name} expira en {days} días", key)
         else:
             _resolve(db, key)
+            _resolve(db, key_exp)
+
+
+def notify_ssl_renewals_failing(db, failing) -> bool:
+    """
+    Email de resumen de los certs que certbot no consigue renovar (los detecta
+    el ssl-check diario mirando TODO /etc/letsencrypt/live, también mail./
+    webmail./staging., que _check_ssl no ve). failing = [(días, nombre), ...].
+
+    Sin spam diario: un AlertEvent abierto por cert y estado (fallando /
+    caducado). Solo se manda email si aparece alguno nuevo, incluido el paso
+    de "fallando" a "caducado"; los que ya no fallan se resuelven.
+    """
+    from api.models.models_metrics import AlertEvent
+
+    now = datetime.utcnow()
+    wanted = {}
+    for days, name in failing:
+        state = "expired" if days < 0 else "failing"
+        wanted[f"ssl_renew:{name}:{state}"] = (days, name, state)
+
+    open_evs = db.query(AlertEvent).filter(
+        AlertEvent.kind == "ssl_renew", AlertEvent.resolved_at.is_(None)).all()
+    for ev in open_evs:
+        if ev.dedup_key not in wanted:
+            ev.resolved_at = now
+    open_keys = {ev.dedup_key for ev in open_evs}
+
+    new = []
+    for key, (days, name, state) in wanted.items():
+        if key in open_keys:
+            continue
+        msg = (f"Certificado SSL de {name} CADUCADO y sin renovar" if state == "expired"
+               else f"Certificado SSL de {name} no se renueva (caduca en {days} días)")
+        ev = AlertEvent(kind="ssl_renew", level="critical" if state == "expired" else "warning",
+                        target=name, message=msg, dedup_key=key, created_at=now)
+        db.add(ev)
+        new.append(ev)
+    db.commit()
+    if not new:
+        return False
+
+    lines = "\n".join(
+        f"  - {n}: {'CADUCADO' if d < 0 else f'caduca en {d} días'}"
+        for d, n in sorted(failing))
+    expired = sum(1 for d, _ in failing if d < 0)
+    subject = (f"[SVQPanel] {'⛔' if expired else '⚠'} {len(failing)} certificado(s) SSL "
+               f"no se renuevan" + (f" ({expired} caducados)" if expired else ""))
+    body = (
+        "Certbot no consigue renovar estos certificados:\n\n"
+        f"{lines}\n\n"
+        "Suele ser que el DNS del nombre ya no apunta a este servidor (Cloudflare,\n"
+        "cambio de hosting, registro borrado) o que el certificado incluye un nombre\n"
+        "que ya no existe. Ver el motivo con:\n"
+        "  certbot renew --cert-name NOMBRE --dry-run\n"
+        "Si el dominio ya no se aloja aquí: certbot delete --cert-name NOMBRE\n"
+    )
+    sent = _notify_email(db, subject, body)
+    for ev in new:
+        ev.email_sent = sent
+    db.commit()
+    return sent
 
 
 def evaluate_alerts(db, stats: dict) -> int:
