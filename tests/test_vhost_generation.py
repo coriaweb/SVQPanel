@@ -37,7 +37,7 @@ def test_nginx_modo_apache_con_ipv6_conserva_proxy():
                                 ipv6="2001:db8::1")
     assert "proxy_pass http://127.0.0.1:8181" in cfg
     assert "fastcgi_pass" not in cfg
-    assert "2001:db8::1" in cfg, "la IPv6 debe ir en server_name"
+    assert "2001:db8::1" not in cfg, "la IPv6 literal NO va en server_name"
 
 
 def test_nginx_modo_puro_usa_fastcgi():
@@ -60,10 +60,13 @@ def test_nginx_listen_generico_no_atado_a_ip():
     assert "listen 185.10.10.10:80" not in cfg, "no atar el listen a la IP"
 
 
-def test_nginx_ipv6_en_server_name_no_default_server():
+def test_nginx_ipv6_no_en_server_name_ni_default_server():
+    # La IPv6 literal en server_name nunca coincidía (el Host llega con
+    # corchetes) y solo daba "conflicting server name"; se escucha en [::].
     cfg = generate_nginx_config("ejemplo.com", "user1", "8.3",
                                 ipv6="2001:db8::abcd")
-    assert "2001:db8::abcd" in cfg
+    assert "2001:db8::abcd" not in cfg
+    assert "listen [::]:80;" in cfg
     # No debe declararse default_server (ese rol es del vhost de bienvenida)
     assert "default_server" not in cfg
 

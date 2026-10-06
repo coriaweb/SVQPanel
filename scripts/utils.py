@@ -434,9 +434,8 @@ def _generate_redirect_config(
     ipv4: Optional[str] = None,
 ) -> str:
     """Genera un vhost nginx que redirige permanentemente (301) a redirect_to."""
+    # Sin la IPv6 literal en server_name: nunca coincidía (ver generate_nginx_config).
     server_names = f"{domain} www.{domain}"
-    if ipv6:
-        server_names += f" {ipv6}"
 
     # IPv4: escuchar genérico (listen 80), NO atado a una IP concreta. Atarlo a
     # la IP (listen 185.x.x.x:80) en un servidor de una sola IP hace que ESE
@@ -445,7 +444,7 @@ def _generate_redirect_config(
     # El enrutado lo hace server_name; la IP solo importaría con multi-IP real.
     ipv4_listen_http  = "80"
     ipv4_listen_https = "443"
-    # IPv6: escuchar en [::]:80 y enrutar por server_name (incluye la IPv6). NO
+    # IPv6: escuchar en [::]:80 y enrutar por server_name. NO
     # default_server (ese rol es del vhost de bienvenida; duplicarlo da 404).
     ipv6_listen_http  = "listen [::]:80;"
     ipv6_listen_https = "listen [::]:443 ssl;"
@@ -654,15 +653,17 @@ def generate_nginx_config(
                 bot_lines.append(f'    if ($http_user_agent ~* "{safe}") {{ return 444; }}')
     bots_block = "\n" + "\n".join(bot_lines) + "\n"
 
-    # server_name incluye IPv6 cuando está asignada (para acceso por IP directa).
     # Un SUBDOMINIO (gestion.zococoria.es) NO lleva www. (nadie usa
     # www.gestion.zococoria.es) ni redirección canónica: se sirve tal cual.
     if is_subdomain:
         server_names = domain
     else:
         server_names = f"{domain} www.{domain}"
-    if ipv6:
-        server_names += f" {ipv6}"   # nginx acepta IPv6 sin corchetes en server_name
+    # La IPv6 del dominio NO va en server_name. Se puso para servir la web en
+    # http://[ipv6]/, pero nunca coincidía: el navegador manda "Host: [ipv6]"
+    # (con corchetes) y nginx lo mandaba al vhost por defecto igualmente. Solo
+    # producía "conflicting server name" en nginx -t con IPv6 repetidas entre
+    # dominios. El tráfico IPv6 por nombre lo enruta server_name (oct 2026).
 
     # Redirección al dominio canónico (www / non-www). Vacío si 'none'/None o si
     # es un subdominio (no aplica el concepto www).
@@ -698,8 +699,7 @@ def generate_nginx_config(
     # El enrutado lo hace server_name; la IP solo importaría con multi-IP real.
     ipv4_listen_http  = "80"
     ipv4_listen_https = "443"
-    # IPv6: escuchar en [::]:80 (todas) y enrutar por server_name (que incluye la
-    # IPv6 literal). NO default_server: ese rol es del vhost de bienvenida
+    # IPv6: escuchar en [::]:80 (todas) y enrutar por server_name. NO default_server: ese rol es del vhost de bienvenida
     # (svqpanel-welcome); duplicarlo aquí roba el tráfico IPv6 y da 404.
     ipv6_listen_http  = "listen [::]:80;"
     ipv6_listen_https = "listen [::]:443 ssl;"
