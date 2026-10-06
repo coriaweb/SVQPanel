@@ -9,7 +9,7 @@
 Hay un **servidor de test real** para probar cambios. Sus credenciales (SSH, BD,
 admin del panel, rutas, comandos de despliegue) están en **`SERVER_CREDENTIALS.md`**
 (en la raíz del repo, en `.gitignore`, nunca se sube). Si necesitas probar algo en
-un servidor real, usa ese archivo. Flujo: subir archivos por scp/sshpass →
+un servidor real, usa ese archivo. Flujo: subir archivos por scp/pscp (PuTTY) →
 `systemctl restart svqpanel` (backend) y/o `npm run build` en `frontend/` (UI).
 
 ## 🔢 REGLA IMPORTANTE: actualizar VERSION en cada cambio
@@ -189,39 +189,13 @@ subtítulo), usar componentes de `components/ui/`, estilos con variables de toke
 
 ## 📋 Estado del Proyecto
 
-### Fase 1 ✅ COMPLETA
-- `install.sh`: Script instalación para Debian 12/13
-- Estructura base Python/FastAPI
-- Modelos SQLAlchemy (User, Domain)
-- Documentación
+Panel en producción. Las áreas funcionales (usuarios, dominios, PHP-FPM, SSL,
+DNS/cluster, correo, MariaDB de clientes, backups, WordPress, frontend Vue 3)
+están implementadas; las secciones de arriba documentan las que tienen reglas
+propias.
 
-### Fase 2 ✅ COMPLETA
-
-- Rutas API FastAPI: usuarios, dominios, PHP, SSL, IPv6, DNS, correo
-- Autenticación JWT (Bearer token)
-- Validaciones Pydantic
-
-### Fase 3 ✅ COMPLETA
-
-- Scripts Python para operaciones reales del SO
-- Nginx, PHP-FPM, certbot, BIND9, Postfix/Dovecot/Rspamd
-
-### Fase 10 ✅ COMPLETA — MariaDB para clientes
-
-- Doble BD: PostgreSQL (panel) + MariaDB (clientes)
-- `api/models/models_client_db.py` — modelo ClientDatabase
-- `api/schemas/database_schemas.py` — schemas Pydantic
-- `api/routes/databases.py` — CRUD + operaciones MariaDB reales
-- `install.sh` — sección MariaDB 11.4 LTS (instalación opcional)
-
-### Fase 4 ✅ COMPLETA — Frontend Vue 3 (Gestión de Bases de Datos)
-
-- `frontend/src/views/Databases.vue` — vista principal con tabla de BDs
-- `frontend/src/components/DatabaseForm.vue` — formulario para crear/editar
-- `frontend/src/services/databaseService.js` — llamadas a API `/api/databases`
-- Componentes Modal, tabla con acciones (editar, cambiar password, eliminar)
-- Integración con router y menú principal
-- Soporte para admin/reseller y usuarios finales
+- Doble BD: PostgreSQL (panel) + MariaDB (clientes: `models_client_db.py`,
+  `routes/databases.py`, sección MariaDB 11.4 LTS opcional en `install.sh`).
 
 ## 🔧 Tecnología Stack
 
@@ -230,7 +204,7 @@ subtítulo), usar componentes de `components/ui/`, estilos con variables de toke
 - **ORM**: SQLAlchemy
 - **SO Soportado**: Debian 13 (trixie) o superior (Debian 12 ya no se soporta; actualizar con `scripts/dist_upgrade_debian13.sh`)
 - **Webservers**: Nginx y/o Apache
-- **PHP**: 7.4, 8.0, 8.1, 8.2, 8.3
+- **PHP**: 7.3 – 8.5 (lista válida en `install.sh`, `VALID_VERSIONS`)
 
 ## 📁 Estructura de Archivos
 
@@ -239,19 +213,11 @@ SVQPanel/
 ├── api/
 │   ├── main.py                  # App FastAPI principal
 │   ├── models/
-│   │   ├── models_database.py   # Configuración PostgreSQL
+│   │   ├── database.py          # Configuración PostgreSQL
 │   │   ├── models_user.py       # Modelo User (SQLAlchemy)
 │   │   └── models_domain.py     # Modelo Domain (SQLAlchemy)
-│   ├── routes/                  # (A CREAR)
-│   │   ├── users.py             # CRUD usuarios
-│   │   ├── domains.py           # CRUD dominios
-│   │   ├── php.py               # Gestión versiones PHP
-│   │   ├── ssl.py               # Certificados SSL
-│   │   └── ipv6.py              # Asignación IPv6
-│   └── schemas/                 # (A CREAR)
-│       ├── user_schemas.py      # Pydantic models
-│       ├── domain_schemas.py    # Pydantic models
-│       └── ...
+│   ├── routes/                  # Un APIRouter por área (users, domains, dns, mail, ssl…)
+│   └── schemas/                 # Schemas Pydantic por área
 ├── config/
 │   └── config.py                # Variables globales (PANEL_NAME, VERSION)
 ├── install.sh                   # Script instalación
@@ -267,7 +233,6 @@ SVQPanel/
 ```
 DATABASE_URL=postgresql://panel_user:panel_password_123@localhost/panel_db
 PANEL_NAME=SVQPanel
-PANEL_VERSION=0.1.0
 PANEL_HOST=127.0.0.1
 PANEL_PORT=8001
 DEBUG=False
@@ -288,7 +253,7 @@ SECRET_KEY=tu_secreto_aqui
 **Domain** (dominios alojados)
 - id, user_id, domain_name
 - public_html (ruta física)
-- php_version (7.4-8.3)
+- php_version
 - ssl_enabled, ssl_certificate, ssl_key, ssl_expires
 - ipv4, ipv6
 - is_active, disk_usage
@@ -359,37 +324,25 @@ GET    /api/domains/{id}/ipv6  → Ver IPv6
 }
 ```
 
-## 🔐 Autenticación (Phase 2)
+## 🔐 Autenticación
 
-- Token simple (header: Authorization: Bearer <token>)
-- Validación en endpoints protegidos
-- A mejorar en futuras fases
+- JWT Bearer (`Authorization: Bearer <token>`), 2FA TOTP opcional.
+- API tokens por usuario (`models_api_token.py`): heredan rol/alcance del dueño.
 
-## 🧪 Testing (Próximo)
+## 🧪 Testing
 
-- Tests unitarios para rutas
-- Tests de integración con BD
-- Coverage mínimo 80%
+- `pytest` sobre `tests/`; CI en `.github/workflows/ci.yml` en cada push/PR.
 
 ## 📦 Dependencias
 
-```
-fastapi==0.104.1
-uvicorn==0.24.0
-sqlalchemy==2.0.23
-psycopg2-binary==2.9.9
-pydantic==2.5.0
-python-dotenv==1.0.0
-```
+Fuente de verdad: `requirements.txt`. Ojo al pin `sqlalchemy<2.1` (2.1 cambia
+`postgresql://` a psycopg v3, no instalado).
 
 ## 🚀 Cómo ejecutar
 
 ```bash
 # Instalar dependencias
 pip install -r requirements.txt
-
-# O con uv (recomendado)
-uv sync
 
 # Ejecutar servidor
 python api/main.py
@@ -401,20 +354,8 @@ uvicorn api.main:app --reload --host 0.0.0.0 --port 8001
 La documentación interactiva (Swagger) estará en:
 `http://localhost:8001/docs`
 
-## 📖 Notas Importantes
-
-1. **Sin ejecutar comandos SO aún**: Las rutas devuelven JSON, sin ejecutar `adduser`, `nginx`, etc
-2. **Modelos de BD listos**: Ya existen User y Domain en SQLAlchemy
-3. **Importar modelos correctamente**: `from api.models.models_user import User`
-4. **main.py comentado**: Las rutas importadas están comentadas, descomenta al crear
-
 ## 🔗 Links Útiles
 
 - [FastAPI Docs](https://fastapi.tiangolo.com/)
 - [SQLAlchemy Docs](https://docs.sqlalchemy.org/)
 - [Pydantic Docs](https://docs.pydantic.dev/)
-
----
-
-**Última actualización**: 2026-05-24  
-**Fase actual**: 2 (Rutas API)
