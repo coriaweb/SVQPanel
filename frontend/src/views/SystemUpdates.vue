@@ -200,7 +200,8 @@
             {{ packages.length === 1 ? 'paquete disponible' : 'paquetes disponibles' }}
           </span>
           <BaseButton v-if="packages.length" variant="primary" size="sm"
-                      :loading="upgrading && upgradingPkg === 'all'" @click="upgradeAll">
+                      :loading="upgrading && upgradingPkg === 'all'"
+                      :disabled="upgrading || repairing" @click="upgradeAll">
             <i class="bi bi-cloud-arrow-up"></i> Actualizar todo
           </BaseButton>
         </div>
@@ -230,7 +231,7 @@
                 <td class="su-right">
                   <BaseButton variant="ghost" size="sm"
                               :loading="upgrading && upgradingPkg === pkg.name"
-                              :disabled="upgrading"
+                              :disabled="upgrading || repairing"
                               @click="upgradePkg(pkg.name)">
                     Actualizar
                   </BaseButton>
@@ -243,7 +244,7 @@
 
       <!-- Log de salida del proceso -->
       <div v-if="upgradeLog" class="su-log-wrap">
-        <h6 class="su-log-title">Salida del proceso</h6>
+        <h6 class="su-log-title">Salida del proceso{{ (upgrading || repairing) ? ' (en vivo)' : '' }}</h6>
         <pre class="su-log">{{ upgradeLog }}</pre>
       </div>
     </BaseCard>
@@ -441,8 +442,32 @@ export default {
       }
     }
 
-    onMounted(() => { loadVersions(); loadPanelUpdate(); loadComponents() })
-    onUnmounted(stopPanelPoll)
+    // Si al entrar hay un apt corriendo (se recargó la página a mitad), retomar
+    // el seguimiento en la pestaña de actualizaciones.
+    const resumeJob = async () => {
+      try {
+        const st = await api.getUpdatesJob()
+        if (!st || !st.running) return
+        activeTab.value = 'updates'
+        const repair = st.kind === 'repair'
+        if (repair) repairing.value = true
+        else { upgrading.value = true; upgradingPkg.value = st.package || 'all' }
+        statusMsg.value = repair ? 'Reparando el gestor de paquetes en el servidor…'
+                                 : 'Hay una actualización en curso en el servidor…'
+        const data = await waitJob()
+        if (repair) {
+          repairing.value = false
+          statusMsg.value = data && data.success ? 'Gestor de paquetes reparado.' : 'La reparación terminó con errores. Revisa la salida.'
+          statusError.value = !(data && data.success)
+        } else {
+          await finishUpgrade(data, st.package)
+          upgrading.value = false; upgradingPkg.value = ''
+        }
+      } catch (e) { /* endpoint no disponible: nada que retomar */ }
+    }
+
+    onMounted(() => { loadVersions(); loadPanelUpdate(); loadComponents(); resumeJob() })
+    onUnmounted(() => { stopPanelPoll(); stopJobPoll() })
 
     const checkUpdates = async () => {
       checking.value  = true
@@ -465,6 +490,28 @@ export default {
     const upgradeAll = () => runUpgrade(null)
     const upgradePkg = (name) => runUpgrade(name)
 
+    // apt corre en segundo plano en el servidor (scripts/apt_runner.py): aquí
+    // solo se arranca y se sigue su salida hasta que termina. Así no hay límite
+    // de tiempo y aguanta los reinicios de PostgreSQL/panel que provoca apt.
+    let jobPoll = null
+    const stopJobPoll = () => { if (jobPoll) { clearTimeout(jobPoll); jobPoll = null } }
+    const waitJob = () => new Promise((resolve) => {
+      let fails = 0
+      const tick = async () => {
+        try {
+          const st = await api.getUpdatesJob()
+          fails = 0
+          upgradeLog.value = st.output || ''
+          if (!st.running) { resolve(st); return }
+        } catch (e) {
+          // El panel puede caerse unos segundos (reinicio de PostgreSQL): reintentar
+          if (++fails > 150) { resolve(null); return }
+        }
+        jobPoll = setTimeout(tick, 2000)
+      }
+      jobPoll = setTimeout(tick, 1000)
+    })
+
     const runUpgrade = async (pkg) => {
       upgrading.value    = true
       upgradingPkg.value = pkg || 'all'
@@ -473,24 +520,9 @@ export default {
       upgradeLog.value   = ''
       dpkgInterrupted.value = false
       try {
-        const data = await api.runSystemUpgrade(pkg || null)
-        upgradeLog.value  = (data.stdout || '') + (data.stderr ? '\n--- stderr ---\n' + data.stderr : '')
-        if (data.success) {
-          statusMsg.value   = pkg ? `Paquete "${pkg}" actualizado.` : 'Sistema actualizado.'
-          statusError.value = false
-          await checkUpdates()
-        } else if (data.dpkg_interrupted) {
-          // Caso recuperable: ofrecer reparación en vez de error en crudo
-          dpkgInterrupted.value = true
-        } else if (data.blocked_removal || data.blocked_downgrade) {
-          statusMsg.value = 'No se ha actualizado: hacerlo obligaba a ' +
-            (data.blocked_removal ? 'DESINSTALAR otros paquetes' : 'bajar de versión otros paquetes') +
-            '. No se ha tocado nada. Suele deberse a un repositorio desfasado; revísalo antes de forzarlo.'
-          statusError.value = true
-        } else {
-          statusMsg.value   = 'El proceso terminó con errores. Revisa la salida.'
-          statusError.value = true
-        }
+        await api.runSystemUpgrade(pkg || null)
+        statusMsg.value = 'Actualizando en el servidor… puede tardar varios minutos. No hace falta que esperes en esta página.'
+        await finishUpgrade(await waitJob(), pkg)
       } catch (e) {
         statusError.value = true
         statusMsg.value   = 'Error durante la actualización: ' + (e.message || String(e))
@@ -500,18 +532,48 @@ export default {
       }
     }
 
+    const finishUpgrade = async (data, pkg) => {
+      if (!data) {
+        statusMsg.value   = 'Se perdió el contacto con el panel. La actualización sigue en el servidor: vuelve a esta página en unos minutos.'
+        statusError.value = true
+        return
+      }
+      if (data.success) {
+        // checkUpdates() limpia mensaje y salida: primero recargar, luego informar
+        await checkUpdates()
+        statusMsg.value   = pkg ? `Paquete "${pkg}" actualizado.` : 'Sistema actualizado.'
+        statusError.value = false
+        upgradeLog.value  = data.output || ''
+      } else if (data.dpkg_interrupted) {
+        // Caso recuperable: ofrecer reparación en vez de error en crudo
+        dpkgInterrupted.value = true
+      } else if (data.blocked_removal || data.blocked_downgrade) {
+        statusMsg.value = 'No se ha actualizado: hacerlo obligaba a ' +
+          (data.blocked_removal ? 'DESINSTALAR otros paquetes' : 'bajar de versión otros paquetes') +
+          '. No se ha tocado nada. Suele deberse a un repositorio desfasado; revísalo antes de forzarlo.'
+        statusError.value = true
+      } else {
+        statusMsg.value   = 'El proceso terminó con errores. Revisa la salida.'
+        statusError.value = true
+      }
+    }
+
     const repairDpkg = async () => {
       repairing.value = true
       statusMsg.value = ''
       statusError.value = false
+      upgradeLog.value = ''
       try {
-        const data = await api.repairDpkg()
-        upgradeLog.value = (data.stdout || '') + (data.stderr ? '\n--- stderr ---\n' + data.stderr : '')
+        await api.repairDpkg()
+        statusMsg.value = 'Reparando el gestor de paquetes en el servidor…'
+        const data = await waitJob()
+        if (!data) throw new Error('se perdió el contacto con el panel; la reparación sigue en el servidor')
         if (data.success) {
           dpkgInterrupted.value = false
+          await checkUpdates()
           statusMsg.value   = 'Gestor de paquetes reparado. Ya puedes aplicar las actualizaciones.'
           statusError.value = false
-          await checkUpdates()
+          upgradeLog.value  = data.output || ''
         } else {
           statusMsg.value   = 'La reparación terminó con errores. Revisa la salida.'
           statusError.value = true

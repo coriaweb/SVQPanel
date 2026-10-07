@@ -279,105 +279,48 @@ def run_system_upgrade(
     current_user=Depends(require_admin),
 ):
     """
-    Ejecuta apt-get upgrade para un paquete concreto (body.package)
-    o para todos los paquetes si no se especifica.
+    Lanza en segundo plano apt-get upgrade (todo) o la actualización de un
+    paquete (body.package). Devuelve al instante; la UI sigue el progreso con
+    GET /system/updates/job.
 
-    Siempre no interactivo y conservando los conffiles locales (confdef+confold):
-    el panel modifica /etc/nginx/nginx.conf, y si el paquete nuevo trae otra
-    versión, dpkg preguntaba qué hacer; sin terminal leía EOF, abortaba y dejaba
-    dpkg a medias. `def` (no async): apt puede tardar minutos y con async
-    bloqueaba el único worker.
+    En segundo plano (scripts/apt_runner.py, systemd-run) y no dentro de la
+    petición: con timeout=300 una actualización grande (64 paquetes) se cortaba
+    a mitad y dejaba dpkg roto, y el reinicio de PostgreSQL acababa la petición
+    en "Error interno del servidor". Siempre no interactivo y conservando los
+    conffiles locales (confdef+confold); un paquete suelto usa --no-remove.
     """
-    import subprocess
     import re
-    import os
-    import shutil
+    from scripts import apt_runner
 
-    package = (body or {}).get("package", "").strip()
-    try:
-        # Buscar apt-get en el sistema
-        apt_get_path = shutil.which("apt-get") or "/usr/bin/apt-get"
-
-        if package:
-            # Validar: solo caracteres seguros para nombre de paquete
-            if not re.match(r'^[a-zA-Z0-9._+\-]+$', package):
-                raise HTTPException(status_code=400, detail="Nombre de paquete inválido")
-
-        # Detección de root
-        is_root = os.getuid() == 0
-
-        dpkg_opts = ["-o", "Dpkg::Options::=--force-confdef",
-                     "-o", "Dpkg::Options::=--force-confold"]
-        if package:
-            # --no-remove: si actualizar este paquete obliga a DESINSTALAR otros,
-            # apt aborta. Visto en producción: actualizar mysql-common desde un
-            # repo viejo de MariaDB 11.4 quería quitar mariadb-server entero.
-            cmd = [apt_get_path, "install", "--only-upgrade", "--no-remove", "-y",
-                   *dpkg_opts, package]
-        else:
-            cmd = [apt_get_path, "upgrade", "-y", *dpkg_opts]
-        if not is_root:
-            cmd = ["sudo", "-E"] + cmd
-
-        env = {**os.environ, "DEBIAN_FRONTEND": "noninteractive"}
-        result = subprocess.run(cmd, capture_output=True, text=True, timeout=300,
-                                env=env, stdin=subprocess.DEVNULL)
-        stderr = result.stderr or ""
-        # Detectar el caso "dpkg interrumpido": apt no puede continuar hasta que
-        # se ejecute 'dpkg --configure -a'. La UI ofrece un botón de reparar.
-        dpkg_interrupted = "dpkg was interrupted" in stderr or "dpkg --configure -a" in stderr
-        # apt se negó por seguridad (--no-remove / sin --allow-downgrades): no se tocó nada
-        blocked_removal = "remove is disabled" in stderr
-        blocked_downgrade = "without --allow-downgrades" in stderr
-        return {
-            "blocked_removal": blocked_removal,
-            "blocked_downgrade": blocked_downgrade,
-            "success":   result.returncode == 0,
-            "package":   package or "all",
-            "stdout":    result.stdout[-4000:] if result.stdout else "",
-            "stderr":    stderr[-2000:],
-            "returncode": result.returncode,
-            "dpkg_interrupted": dpkg_interrupted,
-        }
-    except HTTPException:
-        raise
-    except subprocess.TimeoutExpired:
-        raise HTTPException(status_code=504, detail="Tiempo de espera agotado (apt-get)")
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Error actualizando: {str(e)}")
+    package = ((body or {}).get("package") or "").strip()
+    if package and not re.match(r'^[a-zA-Z0-9._+\-]+$', package):
+        raise HTTPException(status_code=400, detail="Nombre de paquete inválido")
+    res = apt_runner.start("upgrade", package or None)
+    if not res.get("started"):
+        raise HTTPException(status_code=409, detail=res.get("error") or "No se pudo lanzar apt")
+    return {"status": "started", **res}
 
 
 @router.post("/system/updates/repair-dpkg")
 def repair_dpkg(current_user=Depends(require_admin)):
     """
-    Repara un dpkg en estado interrumpido ejecutando 'dpkg --configure -a'.
-    Caso típico: una actualización previa se cortó a medias y bloquea apt con el
-    error "dpkg was interrupted, you must manually run 'dpkg --configure -a'".
-    Es una operación segura e idempotente (solo termina de configurar paquetes
-    ya descargados).
+    Repara un dpkg en estado interrumpido ('dpkg --configure -a', conservando
+    conffiles). Caso típico: una actualización previa se cortó a medias. Segura
+    e idempotente. También en segundo plano: ver GET /system/updates/job.
     """
-    import subprocess
-    import os
-    import shutil
+    from scripts import apt_runner
 
-    try:
-        dpkg_path = shutil.which("dpkg") or "/usr/bin/dpkg"
-        is_root = os.getuid() == 0
-        base = [dpkg_path, "--force-confdef", "--force-confold", "--configure", "-a"]
-        cmd = base if is_root else ["sudo", "-E"] + base
-        env = {**os.environ, "DEBIAN_FRONTEND": "noninteractive"}
-        result = subprocess.run(cmd, capture_output=True, text=True, timeout=300,
-                                env=env, stdin=subprocess.DEVNULL)
-        return {
-            "success":    result.returncode == 0,
-            "stdout":     (result.stdout or "")[-4000:],
-            "stderr":     (result.stderr or "")[-2000:],
-            "returncode": result.returncode,
-        }
-    except subprocess.TimeoutExpired:
-        raise HTTPException(status_code=504, detail="Tiempo de espera agotado (dpkg --configure -a)")
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Error reparando dpkg: {str(e)}")
+    res = apt_runner.start("repair")
+    if not res.get("started"):
+        raise HTTPException(status_code=409, detail=res.get("error") or "No se pudo lanzar dpkg")
+    return {"status": "started", **res}
+
+
+@router.get("/system/updates/job")
+def system_updates_job(current_user=Depends(require_admin)):
+    """Estado del trabajo de apt/dpkg en curso o del último (salida incluida)."""
+    from scripts import apt_runner
+    return apt_runner.status()
 
 
 # ─────────────────────────────────────────────────────────────────────────────

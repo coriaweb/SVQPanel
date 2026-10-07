@@ -1370,6 +1370,10 @@ class APIClient {
   repairDpkg() {
     return this.post('/api/system/updates/repair-dpkg', {})
   }
+  // Estado del trabajo de apt/dpkg en segundo plano (upgrade o repair)
+  getUpdatesJob() {
+    return this.request('/api/system/updates/job', { method: 'GET', silent: true })
+  }
 
   // Auto-actualización del PANEL (git pull + build + restart)
   checkPanelUpdate() {
