@@ -274,13 +274,19 @@ async def get_system_updates(
 
 
 @router.post("/system/updates/upgrade")
-async def run_system_upgrade(
+def run_system_upgrade(
     body: dict = {},
     current_user=Depends(require_admin),
 ):
     """
     Ejecuta apt-get upgrade para un paquete concreto (body.package)
     o para todos los paquetes si no se especifica.
+
+    Siempre no interactivo y conservando los conffiles locales (confdef+confold):
+    el panel modifica /etc/nginx/nginx.conf, y si el paquete nuevo trae otra
+    versión, dpkg preguntaba qué hacer; sin terminal leía EOF, abortaba y dejaba
+    dpkg a medias. `def` (no async): apt puede tardar minutos y con async
+    bloqueaba el único worker.
     """
     import subprocess
     import re
@@ -300,18 +306,18 @@ async def run_system_upgrade(
         # Detección de root
         is_root = os.getuid() == 0
 
+        dpkg_opts = ["-o", "Dpkg::Options::=--force-confdef",
+                     "-o", "Dpkg::Options::=--force-confold"]
         if package:
-            if is_root:
-                cmd = [apt_get_path, "install", "--only-upgrade", "-y", package]
-            else:
-                cmd = ["sudo", apt_get_path, "install", "--only-upgrade", "-y", package]
+            cmd = [apt_get_path, "install", "--only-upgrade", "-y", *dpkg_opts, package]
         else:
-            if is_root:
-                cmd = [apt_get_path, "upgrade", "-y", "-o", "Dpkg::Options::=--force-confold"]
-            else:
-                cmd = ["sudo", apt_get_path, "upgrade", "-y", "-o", "Dpkg::Options::=--force-confold"]
+            cmd = [apt_get_path, "upgrade", "-y", *dpkg_opts]
+        if not is_root:
+            cmd = ["sudo", "-E"] + cmd
 
-        result = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
+        env = {**os.environ, "DEBIAN_FRONTEND": "noninteractive"}
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=300,
+                                env=env, stdin=subprocess.DEVNULL)
         stderr = result.stderr or ""
         # Detectar el caso "dpkg interrumpido": apt no puede continuar hasta que
         # se ejecute 'dpkg --configure -a'. La UI ofrece un botón de reparar.
@@ -333,7 +339,7 @@ async def run_system_upgrade(
 
 
 @router.post("/system/updates/repair-dpkg")
-async def repair_dpkg(current_user=Depends(require_admin)):
+def repair_dpkg(current_user=Depends(require_admin)):
     """
     Repara un dpkg en estado interrumpido ejecutando 'dpkg --configure -a'.
     Caso típico: una actualización previa se cortó a medias y bloquea apt con el
@@ -348,10 +354,11 @@ async def repair_dpkg(current_user=Depends(require_admin)):
     try:
         dpkg_path = shutil.which("dpkg") or "/usr/bin/dpkg"
         is_root = os.getuid() == 0
-        base = [dpkg_path, "--configure", "-a"]
-        cmd = base if is_root else ["sudo"] + base
+        base = [dpkg_path, "--force-confdef", "--force-confold", "--configure", "-a"]
+        cmd = base if is_root else ["sudo", "-E"] + base
         env = {**os.environ, "DEBIAN_FRONTEND": "noninteractive"}
-        result = subprocess.run(cmd, capture_output=True, text=True, timeout=300, env=env)
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=300,
+                                env=env, stdin=subprocess.DEVNULL)
         return {
             "success":    result.returncode == 0,
             "stdout":     (result.stdout or "")[-4000:],
