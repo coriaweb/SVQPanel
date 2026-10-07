@@ -58,12 +58,48 @@ COMPOSER_PATH = "/usr/local/bin/composer"
 # ─────────────────────────────────────────────────────────────────────────────
 # Helpers
 # ─────────────────────────────────────────────────────────────────────────────
+_DOCROOT_DOMAIN_RE = re.compile(r"^/home/[^/]+/web/([^/]+)/")
+
+
+def _wpcli_php(cmd: list) -> Optional[str]:
+    """Binario php{ver} del dominio para una llamada a wp-cli, o None.
+
+    wp-cli arranca con `#!/usr/bin/env php` = el PHP CLI por defecto del
+    sistema, que NO tiene por qué ser el del sitio ni tener sus extensiones.
+    Visto en producción: PHP por defecto 8.4 sin mysqli, sitio en 8.5 → wp-cli
+    no conectaba a la BD y el panel decía "No hay un WordPress operativo" con
+    la web funcionando. La versión se toma del pool PHP-FPM dedicado del
+    dominio (lo que de verdad ejecuta la web).
+    """
+    path = next((a[len("--path="):] for a in cmd if isinstance(a, str)
+                 and a.startswith("--path=")), "")
+    m = _DOCROOT_DOMAIN_RE.match(path.rstrip("/") + "/")
+    if not m:
+        return None
+    try:
+        from scripts import php_ini_manager
+        ver = php_ini_manager.has_pool(m.group(1))
+    except Exception:  # noqa: BLE001
+        return None
+    if ver:
+        php = shutil.which(f"php{ver}")
+        if php:
+            return php
+    return None
+
+
 def _run(cmd, cwd=None, as_user=None, timeout=600, input_text=None, env=None):
     """Ejecuta un comando (lista, sin shell). Devuelve (rc, stdout, stderr).
 
     env: por defecto _SYS_ENV. Se pasa a `sudo` con env_keep vía prefijo
     VAR=valor para que las variables sobrevivan al cambio de usuario (sudo
-    limpia el entorno; -H solo ajusta HOME)."""
+    limpia el entorno; -H solo ajusta HOME).
+
+    Si el comando es wp-cli, se lanza con el PHP del dominio (ver _wpcli_php)."""
+    if cmd and cmd[0] == WPCLI_PATH:
+        php = _wpcli_php(cmd)
+        if php:
+            cmd = [php] + list(cmd)
     run_env = env or _SYS_ENV
     if as_user:
         # sudo sanea el entorno al cambiar de usuario; para forzar variables
