@@ -388,6 +388,30 @@
       </BaseCard>
 
       <!-- ===== Recursos del pool PHP-FPM (tarjeta propia) ===== -->
+      <BaseCard v-show="tab === 'php'" title="Funciones de sistema" icon="terminal">
+        <template #actions>
+          <StatusBadge :status="domain.php_hardening_relaxed ? 'warning' : 'active'"
+                       :label="domain.php_hardening_relaxed ? 'Permitidas' : 'Bloqueadas'" />
+        </template>
+        <p class="dd-muted">
+          Por seguridad, PHP no puede ejecutar programas del servidor desde este dominio (<code>exec</code>,
+          <code>system</code>, <code>shell_exec</code>, <code>passthru</code>, <code>proc_open</code>, <code>popen</code>).
+          Son las funciones que usa casi todo el malware para tomar el control de una web hackeada.
+        </p>
+        <p class="dd-muted">
+          Permítelas <strong>solo si una aplicación legítima lo necesita</strong> y lo indica en sus requisitos (algunas
+          herramientas de copias, conversores de imágenes o vídeo, Nextcloud con ciertas apps…). El aislamiento del sitio
+          (<code>open_basedir</code>) se mantiene siempre y el cambio afecta únicamente a este dominio.
+        </p>
+        <div class="adv-actions">
+          <BaseButton :variant="domain.php_hardening_relaxed ? 'primary' : 'subtle'"
+                      :icon="domain.php_hardening_relaxed ? 'shield-lock' : 'unlock'"
+                      :loading="hardeningSaving" @click="toggleHardening">
+            {{ domain.php_hardening_relaxed ? 'Volver a bloquearlas (recomendado)' : 'Permitir funciones de sistema' }}
+          </BaseButton>
+        </div>
+      </BaseCard>
+
       <BaseCard v-show="tab === 'php'" title="Recursos del pool PHP-FPM" icon="cpu">
         <div class="fpm-block">
           <p class="dd-muted" style="margin:0 0 1rem">
@@ -546,12 +570,76 @@ define('WP_REDIS_PATH', '{{ redisStatus.socket }}');</pre>
         </div>
       </BaseCard>
 
-      <!-- ===== IPv6 ===== -->
+      <!-- ===== Red: IPv4 + IPv6 ===== -->
+      <BaseCard v-show="tab === 'ipv6'" title="IPv4" icon="hdd-network">
+        <p class="dd-muted">
+          IP por la que responde la web de este dominio. Por defecto usa la <strong>IP principal del servidor</strong>,
+          compartida con el resto de dominios, que es lo normal. Una IP <strong>dedicada</strong> solo hace falta en casos
+          concretos: una reputación de correo propia, separar un cliente del resto o requisitos de un proveedor externo.
+        </p>
+        <p class="dd-muted">
+          Al cambiarla se regenera la configuración web, el correo del dominio pasa a salir por esa IP y los registros
+          <code>A</code> de su zona DNS que apuntaban a la IP anterior pasan a la nueva (los que apuntan a otras IPs no se tocan).
+        </p>
+        <div class="adv-field">
+          <select class="svq-input" v-model="ipv4Sel" :disabled="ipv4Saving">
+            <option :value="null">IP principal del servidor{{ domain.server_ipv4 ? ` (${domain.server_ipv4})` : '' }} — compartida</option>
+            <option v-for="ip in serverIps" :key="ip.address" :value="ip.address">
+              {{ ip.address }}{{ ip.note ? ' — ' + ip.note : '' }}
+            </option>
+          </select>
+        </div>
+        <div class="adv-actions">
+          <BaseButton variant="primary" icon="check2" :loading="ipv4Saving"
+                      :disabled="(ipv4Sel || null) === (domain.ipv4 || null)" @click="saveIpv4">Aplicar</BaseButton>
+          <small v-if="!serverIps.length" class="dd-muted">El servidor no tiene IPs adicionales registradas (Administración → IPs).</small>
+        </div>
+      </BaseCard>
+
       <BaseCard v-show="tab === 'ipv6'" title="IPv6" icon="diagram-3">
         <IPv6Manager :domain="domain" @reload="reloadDomain" />
       </BaseCard>
 
-      <!-- ===== Bots ===== -->
+      <!-- ===== Protección: límite de peticiones + bots ===== -->
+      <BaseCard v-show="tab === 'bots'" title="Límite de peticiones por IP" icon="speedometer2">
+        <template #actions>
+          <StatusBadge :status="domain.rate_limit_enabled ? 'active' : 'none'"
+                       :label="domain.rate_limit_enabled ? `${domain.rate_limit_rps || 10}/s` : 'Off'" />
+        </template>
+        <p class="dd-muted">
+          Frena a una misma IP que hace demasiadas peticiones seguidas: bots que rastrean la web a lo bruto,
+          scripts que prueban contraseñas o formularios, o un ataque que intenta saturar la web. Cuando una IP se pasa
+          del ritmo, recibe un error <code>429</code> durante unos segundos; los visitantes normales no lo notan.
+        </p>
+        <ul class="dd-muted rl-tips">
+          <li><strong>¿Cuándo activarlo?</strong> Si la web va lenta por tráfico raro, ves muchas visitas de la misma IP en
+            Estadísticas o recibes ataques. Si todo va bien, no es necesario.</li>
+          <li><strong>La ráfaga</strong> son las peticiones extra que se permiten de golpe: una página carga a la vez imágenes,
+            CSS y JS, así que no la pongas muy baja o la web se verá a medias.</li>
+          <li><strong>Ojo con las oficinas:</strong> muchas personas detrás de la misma IP (una empresa, un colegio) cuentan
+            como una sola. Si el cliente es así, usa el perfil «Tienda o web con mucho tráfico».</li>
+          <li>Para WordPress, la protección específica de <code>wp-login.php</code> y <code>xmlrpc.php</code> está en la
+            pestaña WordPress.</li>
+        </ul>
+        <div class="rl-presets">
+          <button v-for="p in rlPresets" :key="p.key" type="button" class="rl-preset"
+                  :class="{ on: rlForm.enabled && rlForm.rps === p.rps && rlForm.burst === p.burst }"
+                  @click="rlForm.enabled = true; rlForm.rps = p.rps; rlForm.burst = p.burst">
+            <strong>{{ p.label }}</strong><span>{{ p.rps }} pet./s · ráfaga {{ p.burst }}</span><small>{{ p.desc }}</small>
+          </button>
+        </div>
+        <label class="adv-switch"><input type="checkbox" v-model="rlForm.enabled" /> Limitar peticiones en este dominio</label>
+        <div v-if="rlForm.enabled" class="rl-fields">
+          <label>Peticiones por segundo por IP
+            <input type="number" min="1" max="1000" class="svq-input" v-model.number="rlForm.rps" /></label>
+          <label>Ráfaga tolerada
+            <input type="number" min="0" max="1000" class="svq-input" v-model.number="rlForm.burst" /></label>
+        </div>
+        <div class="adv-actions">
+          <BaseButton variant="primary" icon="check2" :loading="rlSaving" :disabled="!rlChanged" @click="saveRateLimit">Guardar y aplicar</BaseButton>
+        </div>
+      </BaseCard>
+
       <BaseCard v-show="tab === 'bots'" title="Bloqueo de Bots" icon="robot">
         <p class="text-muted small mb-4">
           Bloquea user-agents maliciosos específicamente para este dominio (HTTP 444).
@@ -775,6 +863,28 @@ define('WP_REDIS_PATH', '{{ redisStatus.socket }}');</pre>
         </template>
       </BaseCard>
 
+      <!-- ===== Avanzado: redirección y raíz de documentos ===== -->
+      <BaseCard v-show="tab === 'advanced'" title="Redirección y raíz de documentos" icon="signpost-split">
+        <label class="adv-switch"><input type="checkbox" v-model="redirForm.enabled" /> Redirigir este dominio a otra web (301 permanente)</label>
+        <div v-if="redirForm.enabled" class="adv-field">
+          <input class="svq-input" type="url" v-model="redirForm.url" placeholder="https://otro-dominio.com" />
+          <small class="dd-muted">El dominio responderá con un 301 a esta URL en todas sus rutas (útil al cambiar de dominio:
+            buscadores y enlaces antiguos pasan al nuevo). La web de este dominio deja de servirse mientras esté activa.</small>
+        </div>
+        <div v-else class="adv-field">
+          <label class="adv-label"><i class="bi bi-folder2-open"></i> Raíz de documentos personalizada <span class="dd-muted">(opcional)</span></label>
+          <input class="svq-input mono" type="text" v-model="redirForm.docroot"
+                 :placeholder="`/home/usuario/web/${domain.domain_name}/app/public`" />
+          <small class="dd-muted">Carpeta desde la que se sirve la web, en ruta absoluta. Vacío = la normal,
+            <code>{{ domain.public_html }}</code>. Solo hace falta si la aplicación se sirve desde una subcarpeta propia
+            (si es Laravel, Symfony o similar, es mejor aplicar su plantilla).</small>
+        </div>
+        <div v-if="redirError" class="adv-error"><i class="bi bi-exclamation-triangle"></i> {{ redirError }}</div>
+        <div class="adv-actions">
+          <BaseButton variant="primary" icon="check2" :loading="redirSaving" :disabled="!redirChanged" @click="saveRedirect">Guardar y aplicar</BaseButton>
+        </div>
+      </BaseCard>
+
       <!-- ===== Avanzado: plantilla web ===== -->
       <BaseCard v-show="tab === 'advanced'" title="Plantilla web" icon="layout-text-window-reverse">
         <p class="dd-muted">
@@ -996,8 +1106,8 @@ export default {
       { key: 'overview', label: 'Resumen', icon: 'grid-1x2' },
       { key: 'ssl',      label: 'SSL',     icon: 'shield-lock' },
       { key: 'php',      label: 'PHP',     icon: 'filetype-php' },
-      { key: 'ipv6',     label: 'IPv6',    icon: 'diagram-3' },
-      { key: 'bots',     label: 'Bots',    icon: 'robot' },
+      { key: 'ipv6',     label: 'Red',     icon: 'hdd-network' },
+      { key: 'bots',     label: 'Protección', icon: 'shield-check' },
       { key: 'stats',    label: 'Estadísticas', icon: 'bar-chart' },
       { key: 'git',      label: 'Git',     icon: 'git' },
       { key: 'composer', label: 'Composer',icon: 'box-seam' },
@@ -1144,7 +1254,120 @@ location @maintenance {
       authEnabled.value = !!domain.value?.httpauth_enabled
       authUser.value = domain.value?.httpauth_user || ''
       authPass.value = ''
+      // Tarjetas que antes vivían en "Editar dominio"
+      ipv4Sel.value = domain.value?.ipv4 || null
+      redirForm.value = {
+        enabled: !!domain.value?.redirect_to,
+        url:     domain.value?.redirect_to || '',
+        docroot: domain.value?.custom_docroot || '',
+      }
+      redirError.value = ''
+      rlForm.value = {
+        enabled: !!domain.value?.rate_limit_enabled,
+        rps:     domain.value?.rate_limit_rps   || 10,
+        burst:   domain.value?.rate_limit_burst ?? 20,
+      }
     }
+
+    // ── Red: IPv4 dedicada o compartida ──
+    const serverIps = ref([])
+    const ipv4Sel = ref(null)
+    const ipv4Saving = ref(false)
+    let _ipsLoaded = false
+    const loadServerIps = async () => {
+      if (_ipsLoaded) return
+      try {
+        const data = (await api.getServerIps()) || []
+        serverIps.value = data.filter(ip => !ip.is_ipv6 && ip.is_active && ip.address !== domain.value?.server_ipv4)
+        _ipsLoaded = true
+      } catch { serverIps.value = [] }
+    }
+    const saveIpv4 = async () => {
+      const target = ipv4Sel.value || null
+      const label = target || `la IP principal del servidor${domain.value.server_ipv4 ? ' (' + domain.value.server_ipv4 + ')' : ''}`
+      if (!confirm(`¿Pasar ${domain.value.domain_name} a ${label}?\n\nSe regenera la web, el correo del dominio sale por esa IP y sus registros A de DNS que apuntaban a la IP anterior se actualizan.`)) return
+      ipv4Saving.value = true
+      try {
+        await api.updateDomain(domainId.value, { ipv4: target })
+        store.showNotification('IPv4 del dominio actualizada', 'success')
+        await reloadDomain()
+      } catch (e) { store.showNotification('Error: ' + e.message, 'danger') }
+      finally { ipv4Saving.value = false }
+    }
+
+    // ── Redirección y raíz de documentos ──
+    const redirForm = ref({ enabled: false, url: '', docroot: '' })
+    const redirSaving = ref(false)
+    const redirError = ref('')
+    const redirChanged = computed(() => {
+      const d = domain.value || {}
+      const url = redirForm.value.enabled ? redirForm.value.url.trim() : ''
+      const dr  = redirForm.value.enabled ? '' : redirForm.value.docroot.trim()
+      return url !== (d.redirect_to || '') || dr !== (d.custom_docroot || '')
+    })
+    const saveRedirect = async () => {
+      redirError.value = ''
+      const url = redirForm.value.url.trim()
+      const dr  = redirForm.value.docroot.trim()
+      if (redirForm.value.enabled) {
+        if (!url) { redirError.value = 'Introduce la URL de destino.'; return }
+        if (!/^https?:\/\//i.test(url)) { redirError.value = 'La URL debe empezar por http:// o https://'; return }
+      } else if (dr) {
+        if (!dr.startsWith('/')) { redirError.value = 'Debe ser una ruta absoluta (empieza por /).'; return }
+        if (dr.includes('..')) { redirError.value = 'La ruta no puede contener "..".'; return }
+      }
+      if (redirForm.value.enabled &&
+          !confirm(`¿Redirigir ${domain.value.domain_name} a ${url}?\n\nLa web de este dominio dejará de servirse mientras la redirección esté activa.`)) return
+      redirSaving.value = true
+      try {
+        await api.updateDomain(domainId.value, {
+          redirect_to:    redirForm.value.enabled ? url : '',
+          custom_docroot: redirForm.value.enabled ? '' : dr,
+        })
+        store.showNotification('Redirección y raíz de documentos aplicadas', 'success')
+        await reloadDomain()
+      } catch (e) { redirError.value = e.message || 'No se pudo aplicar' }
+      finally { redirSaving.value = false }
+    }
+
+    // ── Límite de peticiones por IP ──
+    const rlPresets = [
+      { key: 'normal', label: 'Web normal (recomendado)', rps: 10, burst: 20, desc: 'Webs corporativas, blogs, WordPress.' },
+      { key: 'high',   label: 'Tienda o web con mucho tráfico', rps: 20, burst: 50, desc: 'WooCommerce, mucho AJAX o oficinas con IP compartida.' },
+      { key: 'strict', label: 'Bajo ataque', rps: 3, burst: 10, desc: 'Temporal: corta en seco a quien abuse.' },
+    ]
+    const rlForm = ref({ enabled: false, rps: 10, burst: 20 })
+    const rlSaving = ref(false)
+    const rlChanged = computed(() => {
+      const d = domain.value || {}
+      if (rlForm.value.enabled !== !!d.rate_limit_enabled) return true
+      return rlForm.value.enabled &&
+        (rlForm.value.rps !== (d.rate_limit_rps || 10) || rlForm.value.burst !== (d.rate_limit_burst ?? 20))
+    })
+    const saveRateLimit = async () => {
+      rlSaving.value = true
+      try {
+        await api.setDomainRateLimit(domainId.value, rlForm.value.enabled, rlForm.value.rps, rlForm.value.burst)
+        store.showNotification(rlForm.value.enabled ? 'Límite de peticiones activado' : 'Límite de peticiones desactivado', 'success')
+        await reloadDomain()
+      } catch (e) { store.showNotification('Error: ' + e.message, 'danger') }
+      finally { rlSaving.value = false }
+    }
+
+    // ── PHP: funciones de sistema ──
+    const hardeningSaving = ref(false)
+    const toggleHardening = async () => {
+      const relax = !domain.value.php_hardening_relaxed
+      if (relax && !confirm('¿Permitir las funciones de sistema (exec, shell_exec…) en este dominio?\n\nHazlo solo si una aplicación legítima lo necesita: es lo que aprovecha el malware si la web se infecta.')) return
+      hardeningSaving.value = true
+      try {
+        await api.setDomainPhpHardening(domainId.value, relax)
+        store.showNotification(relax ? 'Funciones de sistema permitidas' : 'Funciones de sistema bloqueadas', 'success')
+        await reloadDomain()
+      } catch (e) { store.showNotification('Error: ' + e.message, 'danger') }
+      finally { hardeningSaving.value = false }
+    }
+    watch(tab, (t) => { if (t === 'ipv6') loadServerIps() })
     const saveCustomConfig = async () => {
       advSaving.value = true; advError.value = ''
       try {
@@ -1823,6 +2046,10 @@ location @maintenance {
       downloading, downloadSite, suspend, unsuspend, remove, goFiles,
       advNginx, advApache, advSaving, advError, saveCustomConfig,
       templates, tplSelected, tplApplying, tplError, templateCategories, tplPreview, tplPhp, applyTemplate,
+      serverIps, ipv4Sel, ipv4Saving, saveIpv4,
+      redirForm, redirSaving, redirError, redirChanged, saveRedirect,
+      rlPresets, rlForm, rlSaving, rlChanged, saveRateLimit,
+      hardeningSaving, toggleHardening,
       showNginxEx, showApacheEx, nginxExamples, apacheExamples, insertExample,
       authEnabled, authUser, authPass, authSaving, authError, saveHttpauth,
       statsUrl, statsLoading, statsError, loadStats,
@@ -1880,6 +2107,19 @@ location @maintenance {
 .kv__v { color: var(--text); font-size: var(--fs-sm); font-weight: var(--fw-medium); text-align: right; word-break: break-all; }
 .kv__link { margin-left: var(--sp-2); font-weight: var(--fw-normal, 400); color: var(--color-primary); text-decoration: none; }
 .kv__link:hover { text-decoration: underline; }
+/* Límite de peticiones por IP (pestaña Protección) */
+.rl-tips { margin: 0 0 var(--sp-4); padding-left: 1.1rem; display: flex; flex-direction: column; gap: .35rem; }
+.rl-presets { display: grid; grid-template-columns: repeat(3, 1fr); gap: var(--sp-3); margin-bottom: var(--sp-4); }
+@media (max-width: 760px) { .rl-presets { grid-template-columns: 1fr; } }
+.rl-preset { display: flex; flex-direction: column; gap: 2px; text-align: left; padding: var(--sp-3);
+  border: 1px solid var(--border); border-radius: var(--radius-md, 10px); background: var(--surface-2);
+  color: var(--text); cursor: pointer; transition: border-color .15s, background .15s; }
+.rl-preset:hover { border-color: var(--border-strong); }
+.rl-preset.on { border-color: var(--color-primary); background: color-mix(in srgb, var(--color-primary) 12%, var(--surface-2)); }
+.rl-preset span { font-size: var(--fs-sm); font-family: var(--font-mono); }
+.rl-preset small { color: var(--text-muted); font-size: var(--fs-xs); }
+.rl-fields { display: grid; grid-template-columns: repeat(2, minmax(0, 220px)); gap: var(--sp-3); margin: var(--sp-3) 0; }
+.rl-fields label { display: flex; flex-direction: column; gap: 4px; font-size: var(--fs-sm); color: var(--text-muted); }
 .kv__tag { margin-left: var(--sp-2); font-weight: var(--fw-normal, 400); color: var(--text-muted); font-size: var(--fs-xs); }
 
 .dd-actions-row { display: flex; gap: var(--sp-2); }

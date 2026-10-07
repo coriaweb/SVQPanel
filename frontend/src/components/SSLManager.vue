@@ -32,7 +32,20 @@
         <div class="ssl-meta-row"><span>Emisor</span><span>{{ ssl.cert_info?.issuer || "Let's Encrypt" }}</span></div>
         <div class="ssl-meta-row"><span>Dominio</span><span class="mono">{{ domain.domain_name }}</span></div>
         <div v-if="ssl.cert_info?.sans?.length" class="ssl-meta-row"><span>SANs</span><span class="mono">{{ ssl.cert_info.sans.join(', ') }}</span></div>
+        <div v-if="ssl.cert_info?.not_before" class="ssl-meta-row"><span>Válido desde</span><span>{{ formatDate(ssl.cert_info.not_before) }}</span></div>
+        <div v-if="ssl.cert_info?.signature_alg" class="ssl-meta-row"><span>Algoritmo</span><span class="mono">{{ ssl.cert_info.signature_alg }}</span></div>
+        <div v-if="ssl.cert_info?.key_size" class="ssl-meta-row"><span>Clave</span><span>{{ ssl.cert_info.key_type ? ssl.cert_info.key_type + ' · ' : '' }}{{ ssl.cert_info.key_size }} bits</span></div>
         <div class="ssl-meta-row"><span>Auto-renovación</span><span>Habilitada (certbot.timer)</span></div>
+      </div>
+      <div v-if="ssl.cert_info?.pem" class="ssl-pem">
+        <button type="button" class="ssl-pem__toggle" @click="showPem = !showPem">
+          <i class="bi" :class="showPem ? 'bi-chevron-down' : 'bi-chevron-right'"></i>
+          {{ showPem ? 'Ocultar certificado (PEM)' : 'Ver certificado (PEM)' }}
+        </button>
+        <template v-if="showPem">
+          <pre class="ssl-pem__code mono">{{ ssl.cert_info.pem }}</pre>
+          <button type="button" class="ssl-pem__toggle" @click="copyPem"><i class="bi bi-clipboard"></i> {{ pemCopied ? 'Copiado' : 'Copiar' }}</button>
+        </template>
       </div>
 
       <!-- Opciones SSL -->
@@ -168,6 +181,13 @@ export default {
     const forceHttps = ref(false)
     const hsts = ref(false)
     const email = ref('')
+    const showPem = ref(false)
+    const pemCopied = ref(false)
+    const copyPem = async () => {
+      try { await navigator.clipboard.writeText(ssl.value?.cert_info?.pem || '') } catch { /* http sin portapapeles */ }
+      pemCopied.value = true
+      setTimeout(() => { pemCopied.value = false }, 1500)
+    }
 
     // Dominio canónico (www / non-www / none)
     const canonical = ref(props.domain.canonical_domain || 'www')
@@ -335,6 +355,7 @@ export default {
       forceHttps, hsts, email, issueJob, stepState,
       canonical, savingCanonical, canonicalOptions, setCanonical,
       createSSL, renewSSL, revokeSSL, saveToggle, formatDate,
+      showPem, pemCopied, copyPem,
     }
   }
 }
@@ -342,6 +363,11 @@ export default {
 
 <style scoped>
 .ssl-active { display: flex; flex-direction: column; gap: 1rem; }
+.ssl-pem { display: flex; flex-direction: column; align-items: flex-start; gap: .5rem; }
+.ssl-pem__toggle { background: none; border: none; padding: 0; color: var(--text-muted); font-size: var(--fs-sm); cursor: pointer; display: inline-flex; gap: .35rem; align-items: center; }
+.ssl-pem__toggle:hover { color: var(--text); }
+.ssl-pem__code { width: 100%; max-height: 220px; overflow: auto; white-space: pre-wrap; word-break: break-all; margin: 0;
+  padding: .75rem; border-radius: var(--radius-md, 8px); background: var(--surface-2, var(--bg-subtle)); border: 1px solid var(--border); font-size: 11px; }
 
 .ssl-badge {
   display: flex; align-items: center; gap: .75rem;

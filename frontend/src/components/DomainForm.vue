@@ -89,7 +89,7 @@
       </div>
     </div>
 
-    <div class="mb-3" v-if="isWebDomain">
+    <div class="mb-3" v-if="isWebDomain && !isEditing">
       <label class="form-label">Versión PHP</label>
       <select v-model="form.php_version" class="form-select" :required="isWebDomain">
         <option value="">Selecciona versión</option>
@@ -113,8 +113,9 @@
     <!-- IPs del servidor (creación y edición). No aplica a solo correo/DNS: la
          IPv4/IPv6 de aquí son para que NGINX escuche en ellas (el vhost), y un
          dominio sin web no tiene vhost. Para publicar un AAAA en la zona se hace
-         desde la vista DNS; el correo usa la IPv6 global del servidor. -->
-    <template v-if="isWebDomain">
+         desde la vista DNS; el correo usa la IPv6 global del servidor.
+         Solo al CREAR: en un dominio existente se cambian en su ficha (pestaña Red). -->
+    <template v-if="isWebDomain && !isEditing">
     <hr class="my-3" />
     <p class="fw-semibold mb-2 text-muted small text-uppercase">
       <i class="bi bi-hdd-network me-1"></i> Direcciones IP
@@ -172,60 +173,22 @@
     </div>
     </template>
 
-    <!-- Redirección y docroot (solo al editar dominios con web) -->
-    <template v-if="isEditing && isWebDomain">
-      <hr class="my-3" />
-      <p class="fw-semibold mb-2 text-muted small text-uppercase">
-        <i class="bi bi-arrow-right-circle me-1"></i> Redirección y raíz de documentos
-      </p>
-
-      <div class="mb-2 form-check">
-        <input id="redirect_enabled" v-model="form.redirect_enabled" type="checkbox" class="form-check-input" />
-        <label for="redirect_enabled" class="form-check-label">
-          Redirigir este dominio a otra URL (301 permanente)
-        </label>
-      </div>
-      <div v-if="form.redirect_enabled" class="mb-3 ps-4">
-        <label class="form-label small mb-1">URL de destino</label>
-        <input
-          v-model="form.redirect_to"
-          type="url"
-          class="form-control"
-          :class="{ 'is-invalid': redirectError }"
-          placeholder="https://otro-dominio.com"
-        />
-        <div v-if="redirectError" class="invalid-feedback">{{ redirectError }}</div>
-        <div class="form-text">El dominio responderá con HTTP 301 a esta URL en todas las rutas.</div>
-      </div>
-
-      <div class="mb-3" v-if="!form.redirect_enabled">
-        <label class="form-label small mb-1">
-          Raíz de documentos personalizada
-          <span class="text-muted fw-normal">(opcional)</span>
-        </label>
-        <input
-          v-model="form.custom_docroot"
-          type="text"
-          class="form-control"
-          :class="{ 'is-invalid': docrootError }"
-          placeholder="/home/usuario/web/dominio/app/public"
-        />
-        <div v-if="docrootError" class="invalid-feedback">{{ docrootError }}</div>
-        <div class="form-text">
-          Ruta absoluta en el servidor. Dejar vacío para usar
-          <code>/home/usuario/web/dominio/public_html</code> (por defecto).
-        </div>
-      </div>
-    </template>
-
     <!-- Plantilla web: solo al CREAR. Para un dominio existente se aplica desde
          su ficha (pestaña Avanzado), que valida y revierte si algo falla. -->
     <template v-if="isWebDomain && isEditing">
     <hr class="my-3" />
-    <p class="small text-muted mb-3">
-      <i class="bi bi-layout-text-window-reverse me-1"></i>
-      La plantilla web se cambia desde la ficha del dominio, pestaña <strong>Avanzado</strong>.
-    </p>
+    <div class="small text-muted mb-3">
+      <i class="bi bi-info-circle me-1"></i>
+      El resto de ajustes del dominio están en su <strong>ficha</strong> (pulsa el nombre del dominio):
+      <ul class="mb-0 mt-1">
+        <li><strong>PHP</strong>: versión, php.ini, recursos y funciones de sistema.</li>
+        <li><strong>SSL</strong>: certificado, HTTPS forzado y HSTS.</li>
+        <li><strong>Red</strong>: IPv4 dedicada e IPv6.</li>
+        <li><strong>Protección</strong>: límite de peticiones por IP y bloqueo de bots.</li>
+        <li><strong>Avanzado</strong>: plantilla web, redirección, raíz de documentos y directivas.</li>
+        <li><strong>Resumen</strong>: caché de página.</li>
+      </ul>
+    </div>
     </template>
     <template v-if="isWebDomain && !isEditing">
     <hr class="my-3" />
@@ -277,73 +240,6 @@
     </div>
     </template>
 
-    <!-- Rendimiento (solo al editar dominios con web) -->
-    <template v-if="isEditing && isWebDomain">
-      <hr class="my-3" />
-      <p class="fw-semibold mb-2 text-muted small text-uppercase">Rendimiento</p>
-
-      <div class="mb-2 form-check">
-        <input id="fcgi_cache" v-model="form.fastcgi_cache_enabled" type="checkbox" class="form-check-input" />
-        <label for="fcgi_cache" class="form-check-label">
-          <i class="bi bi-lightning-charge me-1"></i> Habilitar caché FastCGI (NGINX)
-        </label>
-      </div>
-      <div v-if="form.fastcgi_cache_enabled" class="mb-3 ps-4">
-        <label class="form-label small mb-1">Duración de la caché (minutos)</label>
-        <input
-          v-model.number="form.fastcgi_cache_ttl_minutes"
-          type="number" min="1" max="1440"
-          class="form-control form-control-sm"
-          style="max-width:160px"
-        />
-        <div class="form-text">Tiempo que NGINX cachea las respuestas PHP. Ej: 2, 30, 60.</div>
-      </div>
-
-      <hr class="my-3" />
-      <p class="fw-semibold mb-2 text-muted small text-uppercase">Protección anti-abuso</p>
-
-      <div class="mb-2 form-check">
-        <input id="rate_limit" v-model="form.rate_limit_enabled" type="checkbox" class="form-check-input" />
-        <label for="rate_limit" class="form-check-label">
-          <i class="bi bi-shield-exclamation me-1"></i> Limitar peticiones por IP (NGINX)
-        </label>
-      </div>
-      <div v-if="form.rate_limit_enabled" class="mb-3 ps-4">
-        <div class="row g-2" style="max-width:360px">
-          <div class="col">
-            <label class="form-label small mb-1">Peticiones/seg por IP</label>
-            <input v-model.number="form.rate_limit_rps" type="number" min="1" max="1000"
-                   class="form-control form-control-sm" />
-          </div>
-          <div class="col">
-            <label class="form-label small mb-1">Ráfaga tolerada</label>
-            <input v-model.number="form.rate_limit_burst" type="number" min="0" max="1000"
-                   class="form-control form-control-sm" />
-          </div>
-        </div>
-        <div class="form-text">
-          Si una IP supera el ritmo, NGINX responde 429. Protege ante ataques o scripts abusivos
-          sin afectar al tráfico normal. Ej: 10 req/s, ráfaga 20.
-        </div>
-      </div>
-
-      <hr class="my-3" />
-      <p class="fw-semibold mb-2 text-muted small text-uppercase">Seguridad PHP</p>
-
-      <div class="mb-2 form-check">
-        <input id="php_hardening" v-model="form.php_hardening_relaxed" type="checkbox" class="form-check-input" />
-        <label for="php_hardening" class="form-check-label">
-          <i class="bi bi-terminal me-1"></i> Permitir funciones de sistema (exec, shell_exec…)
-        </label>
-      </div>
-      <div class="form-text ps-4">
-        Por seguridad, este dominio bloquea funciones PHP peligrosas (exec, system, shell_exec,
-        passthru, proc_open, popen) que usan la mayoría de los malware. Actívalo solo si una
-        aplicación legítima las necesita. El aislamiento del sitio (open_basedir) se mantiene
-        siempre. Afecta únicamente a este dominio.
-      </div>
-    </template>
-
     <!-- Opciones extras (solo en creación) -->
     <template v-if="!isEditing">
       <hr class="my-3" />
@@ -366,94 +262,6 @@
       </div>
     </template>
 
-    <!-- ── Sección SSL (solo en edición de dominios con web) ─────────────── -->
-    <template v-if="isEditing && isWebDomain">
-      <hr class="my-3" />
-      <p class="fw-semibold mb-2 text-muted small text-uppercase">
-        <i class="bi bi-shield-lock me-1"></i> SSL / HTTPS
-      </p>
-
-      <div class="mb-2 form-check">
-        <input id="ssl_enabled" v-model="ssl.enabled" type="checkbox" class="form-check-input" />
-        <label for="ssl_enabled" class="form-check-label">
-          Habilitar SSL (Let's Encrypt) para este dominio
-        </label>
-      </div>
-
-      <div class="ps-4">
-        <template v-if="ssl.enabled">
-          <div class="mb-2 form-check">
-            <input id="force_https" v-model="ssl.force_https" type="checkbox" class="form-check-input" />
-            <label for="force_https" class="form-check-label">
-              Redirección automática HTTP → HTTPS
-            </label>
-          </div>
-          <div class="mb-3 form-check">
-            <input id="hsts_enabled" v-model="ssl.hsts_enabled" type="checkbox" class="form-check-input" />
-            <label for="hsts_enabled" class="form-check-label">
-              Activar HSTS <small class="text-muted">(Strict-Transport-Security)</small>
-            </label>
-          </div>
-
-          <!-- Email para certbot — siempre visible cuando SSL activo -->
-          <div class="mb-3">
-            <label class="form-label small fw-semibold">
-              Email para Let's Encrypt <span class="text-danger">*</span>
-            </label>
-            <input v-model="ssl.email" type="email" class="form-control form-control-sm"
-              placeholder="admin@tudominio.com" />
-            <div class="form-text" style="font-size:11px;color:var(--text-muted)">
-              <i class="bi bi-info-circle me-1"></i>
-              Let's Encrypt lo usa para notificaciones de renovación. Debe ser un email real.
-            </div>
-          </div>
-
-          <!-- Info del certificado existente -->
-          <div v-if="ssl.cert_info" class="mb-3">
-            <ul class="list-unstyled small bg-light rounded p-2 mb-1">
-              <li><strong>Expedido a:</strong> {{ ssl.cert_info.issued_to }}</li>
-              <li v-if="ssl.cert_info.sans?.length">
-                <strong>SANs:</strong> {{ ssl.cert_info.sans.join(', ') }}
-              </li>
-              <li><strong>Válido desde:</strong> {{ ssl.cert_info.not_before }}</li>
-              <li><strong>Válido hasta:</strong>
-                <span :class="isCertExpiringSoon(ssl.cert_info.not_after) ? 'text-danger fw-semibold' : ''">
-                  {{ ssl.cert_info.not_after }}
-                </span>
-              </li>
-              <li><strong>Algoritmo:</strong> {{ ssl.cert_info.signature_alg }}</li>
-              <li v-if="ssl.cert_info.key_size"><strong>Tamaño clave:</strong> {{ ssl.cert_info.key_size }} bits</li>
-              <li><strong>Emisor:</strong> {{ ssl.cert_info.issuer }}</li>
-            </ul>
-            <button type="button" class="btn btn-link btn-sm p-0 text-secondary"
-              @click="ssl.showCert = !ssl.showCert">
-              {{ ssl.showCert ? 'Ocultar certificado PEM' : 'Mostrar certificado PEM' }}
-            </button>
-            <pre v-if="ssl.showCert"
-              class="mt-2 small bg-dark text-light p-2 rounded"
-              style="max-height:200px;overflow:auto;white-space:pre-wrap;">{{ ssl.cert_info.pem }}</pre>
-          </div>
-        </template>
-
-        <div class="d-flex gap-2 flex-wrap">
-          <button v-if="ssl.enabled || ssl.cert_info" type="button" class="btn btn-sm"
-            :class="ssl.enabled ? 'btn-success' : 'btn-outline-danger'"
-            @click="applySSL"
-            :disabled="sslLoading || (ssl.enabled && !ssl.email)"
-            :title="(ssl.enabled && !ssl.email) ? 'Introduce un email para continuar' : ''">
-            <span v-if="sslLoading" class="spinner-border spinner-border-sm me-1"></span>
-            <template v-if="ssl.enabled">
-              {{ ssl.cert_info ? 'Actualizar SSL' : "Activar SSL (Let's Encrypt)" }}
-            </template>
-            <template v-else>Desactivar SSL</template>
-          </button>
-          <span v-if="sslMessage" :class="sslError ? 'text-danger small align-self-center' : 'text-success small align-self-center'">
-            {{ sslMessage }}
-          </span>
-        </div>
-      </div>
-    </template>
-    <!-- ── Fin sección SSL ────────────────────────────────────────────────── -->
 
     <div class="d-flex gap-2 mt-3">
       <button type="submit" class="btn btn-primary" :disabled="loading">
@@ -513,12 +321,6 @@ export default {
       user_id:     props.domain?.user_id     || (isAdminOrReseller.value ? '' : store.currentUser?.id),
       php_version: props.domain?.php_version || '',
       is_active:   props.domain?.is_active   ?? true,
-      fastcgi_cache_enabled:     props.domain?.fastcgi_cache_enabled     ?? false,
-      fastcgi_cache_ttl_minutes: props.domain?.fastcgi_cache_ttl_minutes ?? 60,
-      rate_limit_enabled: props.domain?.rate_limit_enabled ?? false,
-      rate_limit_rps:     props.domain?.rate_limit_rps     ?? 10,
-      rate_limit_burst:   props.domain?.rate_limit_burst   ?? 20,
-      php_hardening_relaxed: props.domain?.php_hardening_relaxed ?? false,
       dns_enabled:  false,
       mail_enabled: false,
       // Solo correo/DNS: el dominio no se aloja aquí (web en otro servidor).
@@ -527,19 +329,11 @@ export default {
       is_subdomain: false,
       sub_label:    '',
       parent_name:  '',
-      selected_template_id: props.domain?.applied_template_id ?? null,
-      // Redirección y docroot (Fase 16)
-      redirect_enabled: !!(props.domain?.redirect_to),
-      redirect_to:      props.domain?.redirect_to    || '',
-      custom_docroot:   props.domain?.custom_docroot || '',
-      // IPv4 dedicada
-      ipv4: props.domain?.ipv4 || null,
-      // IPv6 (solo en creación, opcional)
-      ipv6: props.domain?.ipv6 || null,
+      selected_template_id: null,
+      // IPs (solo en creación; en un dominio existente, ficha → Red)
+      ipv4: null,
+      ipv6: null,
     })
-
-    const redirectError = ref('')
-    const docrootError  = ref('')
 
     // ── Subdominios: dominios padre candidatos (los que NO son subdominios) ──
     const parentCandidates = ref([])
@@ -642,85 +436,12 @@ export default {
     // ── Submit ─────────────────────────────────────────────────────────────
 
     const handleSubmit = async () => {
-      // Validaciones de redirección y docroot antes de enviar
-      redirectError.value = ''
-      docrootError.value  = ''
-
-      if (isEditing.value) {
-        if (form.value.redirect_enabled) {
-          const url = form.value.redirect_to.trim()
-          if (!url) {
-            redirectError.value = 'Introduce la URL de destino.'
-            return
-          }
-          if (!/^https?:\/\//i.test(url)) {
-            redirectError.value = 'La URL debe empezar por http:// o https://'
-            return
-          }
-        }
-        if (!form.value.redirect_enabled && form.value.custom_docroot.trim()) {
-          const dr = form.value.custom_docroot.trim()
-          if (!dr.startsWith('/')) {
-            docrootError.value = 'Debe ser una ruta absoluta (empieza por /).'
-            return
-          }
-          if (dr.includes('..')) {
-            docrootError.value = 'La ruta no puede contener "..".'
-            return
-          }
-        }
-      }
-
       loading.value = true
       try {
         if (isEditing.value) {
-          await api.updateDomain(props.domain.id, {
-            php_version: form.value.php_version,
-            is_active:   form.value.is_active,
-            ipv4:        form.value.ipv4 || null,
-            ipv6:        form.value.ipv6 || null,
-            redirect_to:    form.value.redirect_enabled ? form.value.redirect_to.trim() : '',
-            custom_docroot: !form.value.redirect_enabled ? form.value.custom_docroot.trim() : '',
-          })
-          // Caché FastCGI: solo si cambió. (Antes se saltaba si el dominio TENÍA
-          // plantilla —selected_template_id venía precargado— y el cambio de caché
-          // de un dominio con plantilla no se guardaba nunca.)
-          const prevEnabled = props.domain.fastcgi_cache_enabled ?? false
-          const prevTtl     = props.domain.fastcgi_cache_ttl_minutes ?? 60
-          const cacheChanged =
-            form.value.fastcgi_cache_enabled !== prevEnabled ||
-            (form.value.fastcgi_cache_enabled && form.value.fastcgi_cache_ttl_minutes !== prevTtl)
-          if (cacheChanged) {
-            await api.setDomainCache(
-              props.domain.id,
-              form.value.fastcgi_cache_enabled,
-              form.value.fastcgi_cache_ttl_minutes,
-            )
-          }
-          // Rate limit: solo si cambió respecto al estado original (reescribe el vhost)
-          const prevRl      = props.domain.rate_limit_enabled ?? false
-          const prevRps     = props.domain.rate_limit_rps     ?? 10
-          const prevBurst   = props.domain.rate_limit_burst   ?? 20
-          const rlChanged =
-            form.value.rate_limit_enabled !== prevRl ||
-            (form.value.rate_limit_enabled &&
-              (form.value.rate_limit_rps !== prevRps || form.value.rate_limit_burst !== prevBurst))
-          if (rlChanged) {
-            await api.setDomainRateLimit(
-              props.domain.id,
-              form.value.rate_limit_enabled,
-              form.value.rate_limit_rps,
-              form.value.rate_limit_burst,
-            )
-          }
-          // Hardening PHP: solo si cambió (reescribe el pool + vhost)
-          const prevHardening = props.domain.php_hardening_relaxed ?? false
-          if (form.value.php_hardening_relaxed !== prevHardening) {
-            await api.setDomainPhpHardening(
-              props.domain.id,
-              form.value.php_hardening_relaxed,
-            )
-          }
+          // El resto de ajustes (PHP, IPs, SSL, caché, redirección, límite de
+          // peticiones, funciones de sistema) se cambian en la ficha del dominio.
+          await api.updateDomain(props.domain.id, { is_active: form.value.is_active })
           store.showNotification('Dominio actualizado correctamente', 'success')
         } else {
           const userId = isAdminOrReseller.value
@@ -779,68 +500,9 @@ export default {
       }
     }
 
-    // ── SSL ────────────────────────────────────────────────────────────────
-
-    const ssl = ref({
-      enabled:      props.domain?.ssl_enabled  ?? false,
-      force_https:  props.domain?.force_https   ?? false,
-      hsts_enabled: props.domain?.hsts_enabled  ?? false,
-      email:        '',
-      cert_info:    null,
-      showCert:     false,
-    })
-    const sslLoading = ref(false)
-    const sslMessage = ref('')
-    const sslError   = ref(false)
-
-    const loadSSL = async () => {
-      if (!props.domain?.id) return
-      try {
-        const data = await api.getDomainSSL(props.domain.id)
-        ssl.value.enabled      = data.ssl_enabled      ?? ssl.value.enabled
-        ssl.value.force_https  = data.force_https      ?? ssl.value.force_https
-        ssl.value.hsts_enabled = data.hsts_enabled     ?? ssl.value.hsts_enabled
-        ssl.value.cert_info    = data.cert_info        || null
-      } catch { /* silencioso */ }
-    }
-
-    const isCertExpiringSoon = (dateStr) => {
-      if (!dateStr) return false
-      const expDate = new Date(dateStr)
-      const now = new Date()
-      const diffDays = (expDate - now) / (1000 * 60 * 60 * 24)
-      return diffDays < 15
-    }
-
-    const applySSL = async () => {
-      sslMessage.value = ''
-      sslError.value   = false
-      sslLoading.value = true
-      try {
-        const payload = {
-          enabled:      ssl.value.enabled,
-          force_https:  ssl.value.force_https,
-          hsts_enabled: ssl.value.hsts_enabled,
-        }
-        if (ssl.value.enabled && !ssl.value.cert_info && ssl.value.email) {
-          payload.email = ssl.value.email
-        }
-        await api.toggleDomainSSL(props.domain.id, payload)
-        sslMessage.value = ssl.value.enabled ? 'SSL activado correctamente.' : 'SSL desactivado.'
-        // Recargar info del cert
-        await loadSSL()
-      } catch (e) {
-        sslError.value   = true
-        sslMessage.value = 'Error: ' + (e.message || 'No se pudo aplicar SSL')
-      } finally {
-        sslLoading.value = false
-      }
-    }
-
     onMounted(async () => {
       await Promise.all([loadUsers(), loadPHPVersions(), loadTemplates(), loadServerIps(),
                          isEditing.value ? Promise.resolve() : loadParentCandidates()])
-      if (isEditing.value) loadSSL()
       // Si la versión guardada no está en la lista, seleccionar la primera disponible
       if (form.value.php_version && !availablePhpVersions.value.includes(form.value.php_version)) {
         form.value.php_version = availablePhpVersions.value[0] || '8.2'
@@ -855,11 +517,8 @@ export default {
       templates, templateCategories, templatesByCategory,
       selectedTemplate, parsedPhpOverrides,
       serverIps, ipv6Enabled, ipv6Suggestions, ipv6Loading, _uid,
-      redirectError, docrootError, parentCandidates,
+      parentCandidates,
       handleSubmit,
-      // SSL
-      ssl, sslLoading, sslMessage, sslError,
-      applySSL, isCertExpiringSoon,
     }
   }
 }
