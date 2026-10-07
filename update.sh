@@ -61,9 +61,18 @@ fi
 ###############################################################################
 # Guardia: evitar ejecuciones simultáneas
 ###############################################################################
+# Un lock cuyo PID ya no existe es HUÉRFANO (la ejecución murió sin pasar por
+# el trap: p.ej. la mató el restart de svqpanel cuando se lanzaba desde el botón
+# como hijo del servicio). Antes bloqueaba TODAS las actualizaciones siguientes,
+# cron incluido, para siempre.
 if [[ -f "$LOCK_FILE" ]]; then
-    log "${YELLOW}⚠ Otra instancia ya está corriendo (lock: $LOCK_FILE). Saliendo.${NC}"
-    exit 0
+    LOCK_PID=$(cat "$LOCK_FILE" 2>/dev/null)
+    if [[ -n "$LOCK_PID" ]] && kill -0 "$LOCK_PID" 2>/dev/null; then
+        log "${YELLOW}⚠ Otra instancia ya está corriendo (lock: $LOCK_FILE, PID $LOCK_PID). Saliendo.${NC}"
+        exit 0
+    fi
+    log "${YELLOW}⚠ Lock huérfano (PID ${LOCK_PID:-?} ya no existe). Se elimina y se continúa.${NC}"
+    rm -f "$LOCK_FILE"
 fi
 trap 'rm -f "$LOCK_FILE"' EXIT
 echo $$ > "$LOCK_FILE"

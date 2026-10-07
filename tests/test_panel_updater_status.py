@@ -43,6 +43,14 @@ def test_completado_y_lock_huerfano(monkeypatch, tmp_path):
     assert st["failed"] is False
 
 
+def test_tail_incluye_lineas_sin_cabecera(monkeypatch, tmp_path):
+    text = LOG + "[2026-10-07 15:29:41] ⚠ Otra instancia ya está corriendo. Saliendo.\n"
+    _patch(monkeypatch, tmp_path, text)
+    st = panel_updater.status()
+    assert "Otra instancia" in st["tail"][-1]
+    assert len(st["tail"]) <= 5
+
+
 def test_fallo_y_sin_log(monkeypatch, tmp_path):
     _patch(monkeypatch, tmp_path, LOG + "[2026-10-07 14:48:01]   ✗ 0200-x FALLÓ\n")
     assert panel_updater.status()["failed"] is True

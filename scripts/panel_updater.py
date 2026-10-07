@@ -129,7 +129,7 @@ def status() -> dict:
     Barato (sin git): lee el lock y el final del log. `steps` son solo las
     líneas con fecha de la ejecución en curso/última (sin la salida de npm).
     """
-    steps = []
+    steps, tail = [], []
     try:
         with open(UPDATE_LOG, "rb") as f:
             f.seek(0, os.SEEK_END)
@@ -139,6 +139,9 @@ def status() -> dict:
         start = max((i for i, l in enumerate(lines) if _RUN_HEADER in l), default=None)
         if start is not None:
             steps = [l for l in lines[start:] if l.startswith("[")]
+        # Últimas líneas con fecha aunque no sean de una ejecución completa
+        # (p.ej. "Otra instancia ya está corriendo", que sale sin cabecera)
+        tail = [l for l in lines if l.startswith("[")][-5:]
     except FileNotFoundError:
         pass
     joined = "\n".join(steps)
@@ -149,6 +152,7 @@ def status() -> dict:
         "completed": "=== Update completado" in joined,
         "failed": "✗" in joined,
         "steps": steps[-20:],
+        "tail": tail,
     }
 
 

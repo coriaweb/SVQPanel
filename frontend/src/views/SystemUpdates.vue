@@ -358,7 +358,15 @@ export default {
           const finished = !st.running && (seenRunning || isNewRun || Date.now() - t0 > 20000)
           if (finished) {
             panelUpdating.value = false
-            if (!isNewRun || st.failed || !st.completed) {
+            if (!isNewRun) {
+              // update.sh no llegó a empezar una ejecución (p.ej. lock de otra
+              // instancia): enseñar las últimas líneas del log, que dicen por qué
+              panelSteps.value = st.tail || []
+              panelError.value = true
+              panelMsg.value = 'La actualización no llegó a arrancar. Últimas líneas del log:'
+              return
+            }
+            if (st.failed || !st.completed) {
               panelError.value = true
               panelMsg.value = 'La actualización terminó con errores. Revisa los pasos de abajo.'
               return
