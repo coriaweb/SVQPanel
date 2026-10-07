@@ -325,8 +325,11 @@ class CpanelBackup:
 
     def analyze(self) -> Dict:
         user = self.analyze_user()
+        base = os.path.basename(os.path.normpath(self.root or ""))
         return {
             "system": "cpanel",
+            # La raíz del backup es cpmove-USUARIO/
+            "username": base[len("cpmove-"):].lower() if base.startswith("cpmove-") else "",
             "user": {
                 "contact": user.get("CONTACTEMAIL", ""),
                 "fname": "",

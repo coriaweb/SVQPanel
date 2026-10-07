@@ -529,6 +529,7 @@ async def migration_analyze(
         "status": "success",
         "data": {
             "system": manifest["system"],
+            "username": manifest.get("username", ""),
             "user": manifest["user"],
             "web": _clean(manifest["web"]),
             "db": _clean(manifest["db"]),

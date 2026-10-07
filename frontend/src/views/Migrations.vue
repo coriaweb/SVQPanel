@@ -443,7 +443,13 @@ export default {
         // Si vamos a crear cliente nuevo, prerellenar nombre/email del backup
         // (solo si el admin no los ha escrito ya).
         if (targetUserId.value === '__new__') {
-          if (!newUser.value.username) newUser.value.username = (r.data.system || '').toLowerCase()
+          // Usuario de la cuenta de origen (NO r.data.system: eso es el tipo de
+          // panel, "hestia"/"vesta"/"cpanel", y acababa como nombre del cliente).
+          if (!newUser.value.username) {
+            const fromFile = ((file.value && file.value.name) || '').match(/^([a-z0-9][a-z0-9_-]*)\.\d{4}-\d{2}-\d{2}/i)
+            newUser.value.username = ((source.value === 'ssh' && ssh.value.hestia_user.trim()) ||
+              r.data.username || (fromFile && fromFile[1]) || '').toLowerCase()
+          }
           if (!newUser.value.email) newUser.value.email = r.data.user?.contact || ''
         }
         // Clonar las zonas DNS para edición local (registros + estado abierto).

@@ -646,12 +646,26 @@ class HestiaBackup:
                     return os.path.join(d, base)
         return None
 
+    def guess_username(self) -> str:
+        """Usuario de Hestia del backup, para proponer el nombre del cliente nuevo.
+
+        No viene en user.conf. v-backup-user nombra el fichero
+        `{usuario}.{AAAA-MM-DD_hh-mm-ss}.tar`; algunos backups anidan todo bajo
+        `./{usuario}/`. Cadena vacía si no se deduce (p.ej. el .tar temporal del
+        origen SSH: ahí la UI usa el usuario que se pidió exportar).
+        """
+        if getattr(self, "root", None) and self.tmpdir and \
+                os.path.normpath(self.root) != os.path.normpath(self.tmpdir):
+            return os.path.basename(os.path.normpath(self.root)).lower()
+        return username_from_backup_name(os.path.basename(self.tar_path))
+
     # ── manifiesto completo ────────────────────────────────────────────────────
     def analyze(self) -> Dict:
         """Manifiesto del backup (sin tocar el sistema)."""
         user = self.analyze_user()
         return {
             "system": self.system,
+            "username": self.guess_username(),
             "user": {
                 "contact": user.get("CONTACT", ""),
                 "fname": user.get("FNAME", ""),
@@ -664,6 +678,15 @@ class HestiaBackup:
             "dns": self.analyze_dns(),
             "cron": self.analyze_cron(),
         }
+
+
+_BACKUP_NAME_RE = re.compile(r"^([a-z0-9][a-z0-9_-]*)\.\d{4}-\d{2}-\d{2}", re.I)
+
+
+def username_from_backup_name(name: str) -> str:
+    """'obradormarilo.2026-10-07_16-40-01.tar' → 'obradormarilo'; '' si no encaja."""
+    m = _BACKUP_NAME_RE.match(name or "")
+    return m.group(1).lower() if m else ""
 
 
 def installed_php_versions() -> List[str]:
