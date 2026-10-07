@@ -412,6 +412,53 @@ def _proxy_cache_block(domain: str, ttl_minutes: int, sec_headers: str = "") -> 
 """
 
 
+_SOLO_NGINX_RE = re.compile(r"[ \t]*# >>> solo-nginx[^\n]*\n.*?[ \t]*# <<< solo-nginx[^\n]*\n?", re.S)
+_ROOT_LOCATION_RE = re.compile(r"^\s*location\s+/\s*\{", re.M)
+
+
+def template_extra_for_mode(extra: Optional[str], proxy_to_apache: bool) -> Optional[str]:
+    """Reglas de plantilla según el modo del servidor.
+
+    Lo que va entre `# >>> solo-nginx` y `# <<< solo-nginx` solo aplica en modo
+    nginx puro: en Apache+Nginx ese trabajo ya lo hace el .htaccess de la app
+    (rewrites, PATH_INFO…) y hacerlo también en el front lo duplicaría o, peor,
+    se saltaría Apache. En modo nginx se quitan solo las marcas.
+    """
+    if not extra:
+        return extra
+    if proxy_to_apache:
+        return _SOLO_NGINX_RE.sub("", extra)
+    return re.sub(r"[ \t]*# (?:>>>|<<<) solo-nginx[^\n]*\n?", "", extra)
+
+
+def template_owns_root_location(extra: Optional[str]) -> bool:
+    """¿La plantilla define su propio `location /`? Entonces sustituye al del panel."""
+    return bool(extra and _ROOT_LOCATION_RE.search(extra))
+
+
+def upload_mb_from_php(php_ini_overrides: Optional[str], default: int = 64) -> int:
+    """MB para client_max_body_size a partir del PHP del dominio.
+
+    Antes nginx tenía siempre 64 MB: aunque el dominio subiera
+    upload_max_filesize/post_max_size (Nextcloud 16G, Moodle 256M…), nginx cortaba
+    con 413 antes de llegar a PHP. Toma el mayor de los dos; nunca baja de `default`.
+    """
+    import json as _json
+    try:
+        vals = _json.loads(php_ini_overrides) if php_ini_overrides else {}
+    except (ValueError, TypeError):
+        vals = {}
+    best = default
+    for key in ("upload_max_filesize", "post_max_size"):
+        m = re.match(r"^\s*(\d+)\s*([KMG]?)\s*$", str(vals.get(key, "")), re.I)
+        if not m:
+            continue
+        n, unit = int(m.group(1)), m.group(2).upper()
+        mb = n * 1024 if unit == "G" else (max(1, n // 1024) if unit == "K" else n)
+        best = max(best, mb)
+    return best
+
+
 def _skip_cache_block() -> str:
     """Variable $skip_cache compartida por http/https — se evalúa a nivel server."""
     return """
@@ -420,6 +467,9 @@ def _skip_cache_block() -> str:
     if ($request_method = POST)              { set $skip_cache 1; }
     if ($query_string != "")                 { set $skip_cache 1; }
     if ($request_uri ~* "/wp-admin/|/xmlrpc.php|wp-.*\\.php|/feed/|/sitemap(_index)?\\.xml") { set $skip_cache 1; }
+    # WooCommerce: carrito, pago y cuenta nunca desde caché (el primer visitante aún
+    # no tiene cookie de sesión). Slugs por defecto en inglés y en español.
+    if ($request_uri ~* "/(cart|checkout|my-account|carrito|finalizar-compra|mi-cuenta)/|/wc-api/|/wp-json/wc/") { set $skip_cache 1; }
     if ($http_cookie ~* "comment_author|wordpress_[a-f0-9]+|wp-postpass|wordpress_no_cache|wordpress_logged_in|woocommerce_items_in_cart|woocommerce_cart_hash|wp_woocommerce_session") {
         set $skip_cache 1;
     }
@@ -678,6 +728,8 @@ def generate_nginx_config(
 
     # Inyección dentro del server{}: primero la plantilla, luego las directivas
     # personalizadas del dominio (pueden complementar/sobrescribir a la plantilla).
+    template_nginx_extra = template_extra_for_mode(template_nginx_extra, proxy_to_apache)
+    tpl_owns_root = template_owns_root_location(template_nginx_extra)
     tpl_extra = ("\n" + template_nginx_extra.rstrip()) if template_nginx_extra else ""
     if custom_nginx_config and custom_nginx_config.strip():
         tpl_extra += "\n    # ── Directivas personalizadas del dominio ──\n" + custom_nginx_config.rstrip() + "\n"
@@ -792,6 +844,10 @@ def generate_nginx_config(
             )
         app_block_http = _proxy_loc(pcache_http)
         app_block_ssl  = _proxy_loc(pcache_ssl)
+        if tpl_owns_root:
+            # La plantilla sirve el sitio ella misma (SPA estática, proxy a Node…):
+            # su `location /` sustituye al proxy a Apache (si no, duplicate location).
+            app_block_http = app_block_ssl = ""
     else:
         # Cache de navegador para estáticos: CSS/JS/imágenes/fuentes con expires
         # largo (acelera la web en visitas repetidas; el navegador no los re-pide).
@@ -804,11 +860,16 @@ def generate_nginx_config(
             "    }\n\n"
         )
         # Bloque clásico nginx: estáticos cacheados + location / con try_files + PHP.
-        app_block_http = (
-            static_cache +
+        # Si la plantilla trae su propio `location /` (SPA, proxy a Node…), el del
+        # panel se omite: dos `location /` en el mismo server = duplicate location.
+        root_loc = "" if tpl_owns_root else (
             f"    location / {{{rl_directive}\n"
             f"{readonly_block}        try_files $uri $uri/ /index.php?$query_string;\n"
             f"    }}\n\n"
+        )
+        app_block_http = (
+            static_cache +
+            root_loc +
             f"    location ~ \\.php$ {{\n"
             f"        try_files $uri =404;\n"
             f"        fastcgi_pass php_{backend_name};\n"
@@ -819,9 +880,7 @@ def generate_nginx_config(
         )
         app_block_ssl = (
             static_cache +
-            f"    location / {{{rl_directive}\n"
-            f"{readonly_block}        try_files $uri $uri/ /index.php?$query_string;\n"
-            f"    }}\n\n"
+            root_loc +
             f"    location ~ \\.php$ {{\n"
             f"        try_files $uri =404;\n"
             f"        fastcgi_pass php_{backend_name};\n"

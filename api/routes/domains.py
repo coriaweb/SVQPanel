@@ -1376,6 +1376,7 @@ async def set_domain_php_config(
     """
     import json
     from scripts import php_ini_manager as phpini
+    from scripts.utils import upload_mb_from_php
 
     overrides = payload.get("overrides") or {}
     if not isinstance(overrides, dict):
@@ -1434,6 +1435,9 @@ async def set_domain_php_config(
             security_headers_enabled=domain.security_headers_enabled or False,
             http3_enabled=domain.http3_enabled or False,
             canonical_domain=domain.canonical_domain or "www",
+            # Los overrides nuevos aún no están en BD: el límite de subida de nginx
+            # se calcula de ellos (si no, iría un cambio por detrás).
+            upload_max_mb=upload_mb_from_php(json.dumps(overrides) if overrides else None),
         )
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error regenerando vhost: {e}")

@@ -31,10 +31,23 @@ logger = logging.getLogger(__name__)
 # ─────────────────────────────────────────────────────────────────────────────
 
 BUILTIN_TEMPLATES = [
+    # ─────────────────────────────────────────────────────────────────────────
+    # Criterio (oct 2026): una plantilla SOLO añade lo propio de la aplicación.
+    # Nada de lo que el panel ya da por su cuenta: cabeceras de seguridad (tarjeta
+    # propia), caché de navegador de estáticos, bloqueo de .env/.git/.svn/backups
+    # y de PHP en wp-content/uploads, .well-known de CalDAV/CardDAV,
+    # client_max_body_size (sale del PHP del dominio), protección de xmlrpc y
+    # wp-login. Y nada que choque con él: ni `location /` (salvo apps que no son
+    # PHP y sirven el sitio ellas mismas: sustituye al del panel), ni fastcgi_pass
+    # (en Apache+Nginx se saltaría Apache y sus .htaccess), ni `location =` exacto
+    # sobre rutas que el panel protege con regex (el exacto gana y anula la
+    # protección). Lo que solo hace falta sin Apache va entre
+    # `# >>> solo-nginx` / `# <<< solo-nginx` (en Apache+Nginx lo hace el .htaccess).
+    # ─────────────────────────────────────────────────────────────────────────
     {
         "name": "WordPress",
         "slug": "wordpress",
-        "description": "WordPress y WooCommerce. Caché FastCGI activada, bypass automático para admin/usuarios logueados.",
+        "description": "WordPress y WooCommerce: más memoria, subidas de 64 MB, más campos por formulario (menús grandes, WooCommerce), caché de página activada y bloqueo de los ficheros que revelan la configuración o la versión.",
         "category": "cms",
         "fastcgi_cache_default": True,
         "php_ini_overrides": json.dumps({
@@ -42,39 +55,19 @@ BUILTIN_TEMPLATES = [
             "upload_max_filesize": "64M",
             "post_max_size":       "64M",
             "max_execution_time":  "120",
+            "max_input_vars":      "3000",
         }),
         "nginx_extra": """
-    # ── WordPress — seguridad y rutas sensibles ─────────────────────────
-    add_header X-Content-Type-Options "nosniff" always;
-    add_header X-Frame-Options "SAMEORIGIN" always;
-    add_header Referrer-Policy "strict-origin-when-cross-origin" always;
-
-    location = /wp-login.php {
-        # Limitar intentos de login (requiere ngx_http_limit_req_module)
-        # limit_req zone=login burst=5 nodelay;
-        fastcgi_pass $phpfpm_backend;
-        fastcgi_index index.php;
-        fastcgi_param SCRIPT_FILENAME $document_root$fastcgi_script_name;
-        include fastcgi_params;
-    }
-
-    location ~* /wp-config\.php        { deny all; }
-    location ~* /xmlrpc\.php           { deny all; }
-    location = /wp-cron.php            { allow 127.0.0.1; deny all; }
-    location ~* ^/wp-content/uploads/.*\\.php$ { deny all; }
-    location ~* ^/wp-includes/.*\\.php { deny all; return 403; }
-
-    location ~* \\.(js|css|png|jpg|jpeg|gif|ico|svg|woff2|woff|ttf|eot)$ {
-        expires 30d;
-        add_header Cache-Control "public, immutable";
-        log_not_found off;
-    }
+    # ── WordPress ───────────────────────────────────────────────────────
+    # La configuración y los ficheros que delatan la versión no se sirven nunca
+    # (si PHP fallara, wp-config.php se descargaría en texto plano). ^/+ cubre //.
+    location ~* ^/+(wp-config\\.php|wp-config-sample\\.php|readme\\.html|license\\.txt)$ { deny all; }
 """,
     },
     {
         "name": "WordPress Multisite",
         "slug": "wordpress-multisite",
-        "description": "WordPress Multisite (subdirectorio). Incluye reglas de rewrite para subsitios.",
+        "description": "WordPress Multisite (subdirectorios): lo mismo que WordPress más las reglas de rutas de los subsitios cuando el servidor es solo nginx (con Apache las pone su .htaccess).",
         "category": "cms",
         "fastcgi_cache_default": True,
         "php_ini_overrides": json.dumps({
@@ -82,31 +75,25 @@ BUILTIN_TEMPLATES = [
             "upload_max_filesize": "64M",
             "post_max_size":       "64M",
             "max_execution_time":  "120",
+            "max_input_vars":      "3000",
         }),
         "nginx_extra": """
-    # ── WordPress Multisite ──────────────────────────────────────────────
-    add_header X-Content-Type-Options "nosniff" always;
-    add_header X-Frame-Options "SAMEORIGIN" always;
-
-    location ~* /wp-config\.php        { deny all; }
-    location ~* /xmlrpc\.php           { deny all; }
-    location ~* ^/wp-content/uploads/sites/[0-9]+/.*\\.php$ { deny all; }
-
-    location ~* ^(/[^/]+)?/files/(.*) {
-        try_files /wp-content/blogs.dir/$blogid/$uri /wp-includes/ms-files.php?file=$2 =404;
-        access_log off; log_not_found off; expires max;
+    # ── WordPress Multisite (subdirectorios) ────────────────────────────
+    location ~* ^/+(wp-config\\.php|wp-config-sample\\.php|readme\\.html|license\\.txt)$ { deny all; }
+    # >>> solo-nginx
+    # /subsitio/wp-admin, /subsitio/wp-*.php → los del núcleo (lo que hace el .htaccess)
+    if (!-e $request_filename) {
+        rewrite ^/[_0-9a-zA-Z-]+(/wp-admin)$ $1/ permanent;
+        rewrite ^/[_0-9a-zA-Z-]+(/wp-.*) $1 last;
+        rewrite ^/[_0-9a-zA-Z-]+(/.*\\.php)$ $1 last;
     }
-    location ~* \\.(js|css|png|jpg|jpeg|gif|ico|woff2)$ {
-        expires 30d;
-        add_header Cache-Control "public, immutable";
-        log_not_found off;
-    }
+    # <<< solo-nginx
 """,
     },
     {
         "name": "Laravel",
         "slug": "laravel",
-        "description": "Laravel (y otros frameworks Symfony-style). Sirve desde /public. Sin caché FastCGI (Laravel gestiona la suya propia).",
+        "description": "Laravel: sirve desde /public (el resto del proyecto, .env incluido, queda fuera de la web) y no ejecuta PHP dentro de /storage (ficheros subidos por los usuarios).",
         "category": "framework",
         "fastcgi_cache_default": False,
         "docroot_subdir": "public",
@@ -118,27 +105,15 @@ BUILTIN_TEMPLATES = [
         }),
         "nginx_extra": """
     # ── Laravel ─────────────────────────────────────────────────────────
-    add_header X-Content-Type-Options "nosniff" always;
-    add_header X-Frame-Options "SAMEORIGIN" always;
-
-    # Bloquear acceso a directorios internos de Laravel
-    location ~* ^/storage/.*\\.php$ { deny all; }
-    location ~* ^/vendor/.*\\.php$ { deny all; }
-    location ~* ^/bootstrap/.*\\.php$ { deny all; }
-    location = /artisan { deny all; }
-    location ~* /\\.env { deny all; }
-
-    location ~* \\.(js|css|png|jpg|jpeg|gif|ico|svg|woff2)$ {
-        expires 30d;
-        add_header Cache-Control "public, immutable";
-        access_log off;
-    }
+    # public/storage enlaza a storage/app/public (subidas de usuarios): un .php
+    # subido ahí no debe poder ejecutarse.
+    location ~* ^/+storage/.*\\.php$ { deny all; }
 """,
     },
     {
         "name": "Drupal",
         "slug": "drupal",
-        "description": "Drupal 9/10. Incluye reglas de rewrite clean URLs y protección de rutas sensibles.",
+        "description": "Drupal 9/10/11: más memoria y tiempo para actualizaciones, y bloqueo de los ficheros internos (módulos, plantillas, YAML, carpeta privada, vendor).",
         "category": "cms",
         "fastcgi_cache_default": False,
         "php_ini_overrides": json.dumps({
@@ -148,34 +123,18 @@ BUILTIN_TEMPLATES = [
             "max_execution_time":  "180",
         }),
         "nginx_extra": """
-    # ── Drupal ─────────────────────────────────────────────────────────
-    add_header X-Content-Type-Options "nosniff" always;
-    add_header X-Frame-Options "SAMEORIGIN" always;
-
-    location ~* \\.(txt|log)$           { deny all; }
-    location ~* ^/sites/.*/private/     { return 403; }
-    location ~* ^/core/authorize\\.php  { return 403; }
-    location = /update.php              { allow 127.0.0.1; deny all; }
-    location ~* ^/sites/.*/files/styles/ {
-        try_files $uri @rewrite;
-    }
-    location @rewrite {
-        rewrite ^/(.*)$ /index.php?q=$1;
-    }
-    location ~* ^/.+\\.php(/|$) {
-        fastcgi_split_path_info ^(.+?\\.php)(/.*)$;
-        fastcgi_pass $phpfpm_backend;
-        fastcgi_index index.php;
-        fastcgi_param SCRIPT_FILENAME $document_root$fastcgi_script_name;
-        fastcgi_param PATH_INFO $fastcgi_path_info;
-        include fastcgi_params;
-    }
+    # ── Drupal ──────────────────────────────────────────────────────────
+    # Código y configuración interna (lo que bloquea el .htaccess de Drupal)
+    location ~* \\.(engine|inc|install|make|module|profile|po|theme|twig|tpl(\\.php)?|xtmpl|ya?ml)$ { deny all; }
+    location ~* ^/+(vendor|core/(scripts|tests))/ { deny all; }
+    location ~* ^/+sites/[^/]+/private/ { deny all; }
+    location ~* ^/+sites/[^/]+/files/.*\\.php$ { deny all; }
 """,
     },
     {
         "name": "Nextcloud",
         "slug": "nextcloud",
-        "description": "Nextcloud. Bloquea /data y /config, soporta .well-known (CalDAV/CardDAV), subidas grandes y rewrite del front controller.",
+        "description": "Nextcloud: subidas de hasta 16 GB, más memoria y tiempo, bloqueo de /data, /config y rutas internas, y las cabeceras que exige su comprobación de seguridad.",
         "category": "other",
         "fastcgi_cache_default": False,
         "php_ini_overrides": json.dumps({
@@ -188,46 +147,28 @@ BUILTIN_TEMPLATES = [
         }),
         "nginx_extra": """
     # ── Nextcloud ───────────────────────────────────────────────────────
-    add_header Referrer-Policy "no-referrer" always;
-    add_header X-Content-Type-Options "nosniff" always;
-    add_header X-Frame-Options "SAMEORIGIN" always;
-    add_header X-Permitted-Cross-Domain-Policies "none" always;
+    # Cabeceras propias de Nextcloud (las generales están en "Headers de seguridad")
     add_header X-Robots-Tag "noindex, nofollow" always;
-    add_header X-XSS-Protection "1; mode=block" always;
-
-    client_max_body_size 16G;
-    fastcgi_buffers 64 4K;
-
-    # .well-known para descubrimiento de servicios (CalDAV/CardDAV/webfinger)
-    location = /.well-known/carddav  { return 301 /remote.php/dav; }
-    location = /.well-known/caldav   { return 301 /remote.php/dav; }
-    location ^~ /.well-known {
-        location = /.well-known/webfinger   { return 301 /index.php/.well-known/webfinger; }
-        location = /.well-known/nodeinfo    { return 301 /index.php/.well-known/nodeinfo; }
-        return 301 /index.php$request_uri;
-    }
-
-    # Rutas que nunca deben servirse / ejecutarse
-    location ~ ^/(?:build|tests|config|lib|3rdparty|templates|data)(?:$|/)  { return 404; }
-    location ~ ^/(?:\\.|autotest|occ|issue|indie|db_|console)              { return 404; }
-    location ~ ^/(?:\\.htaccess|data|config|db_structure\\.xml|README) { deny all; }
-
-    location ~ \\.(?:css|js|mjs|svg|gif|png|jpg|ico|wasm|tflite|map)$ {
-        try_files $uri /index.php$request_uri;
-        expires 6M;
-        access_log off;
-    }
-    location ~ \\.woff2?$ {
+    add_header X-Permitted-Cross-Domain-Policies "none" always;
+    # Rutas que nunca deben servirse ni ejecutarse
+    location ~ ^/+(?:build|tests|config|lib|3rdparty|templates|data)(?:$|/) { return 404; }
+    location ~ ^/+(?:\\.|autotest|occ|issue|indie|db_|console)              { return 404; }
+    location ~ ^/+(?:README|db_structure\\.xml)                               { return 404; }
+    # >>> solo-nginx
+    # Recursos de apps que no existen como fichero → los genera index.php
+    location ~ \\.(?:css|js|mjs|svg|gif|png|jpg|ico|wasm|tflite|map|woff2?)$ {
         try_files $uri /index.php$request_uri;
         expires 7d;
         access_log off;
     }
+    fastcgi_buffers 64 4K;
+    # <<< solo-nginx
 """,
     },
     {
         "name": "PrestaShop",
         "slug": "prestashop",
-        "description": "PrestaShop 8. Front controller, URLs amigables, protección de config/install y assets cacheados.",
+        "description": "PrestaShop 8: más memoria y tiempo para el back office e importaciones, y bloqueo de la configuración, el instalador, los logs y las plantillas de correo.",
         "category": "ecommerce",
         "fastcgi_cache_default": False,
         "php_ini_overrides": json.dumps({
@@ -235,37 +176,20 @@ BUILTIN_TEMPLATES = [
             "upload_max_filesize": "64M",
             "post_max_size":       "64M",
             "max_execution_time":  "180",
+            "max_input_vars":      "5000",
         }),
         "nginx_extra": """
     # ── PrestaShop 8 ────────────────────────────────────────────────────
-    add_header X-Content-Type-Options "nosniff" always;
-    add_header X-Frame-Options "SAMEORIGIN" always;
-
-    # Rutas sensibles / instalador (el instalador se borra tras instalar)
-    location ~* /config/.*\\.inc\\.php$   { deny all; }
-    location ~* /app/config/.*\\.ya?ml$   { deny all; }
-    location ~* ^/(?:install|install-dev)(?:$|/) { deny all; }
-    location ~* ^/(?:\\.|app/logs|var/logs|translations|mails) { deny all; }
-
-    # Front controller: PrettyURLs → index.php (el back office se sirve por su
-    # propio index.php dentro del directorio admin renombrado, no necesita regla).
-    location / {
-        try_files $uri $uri/ /index.php$is_args$args;
-    }
-
-    # Assets estáticos cacheados
-    location ~* \\.(jpg|jpeg|png|gif|ico|css|js|mjs|woff2?|svg|webp)$ {
-        try_files $uri =404;
-        expires 30d;
-        add_header Cache-Control "public, immutable";
-        access_log off;
-    }
+    location ~* ^/+config/.*\\.inc\\.php$ { deny all; }
+    location ~* ^/+app/config/.*\\.ya?ml$ { deny all; }
+    location ~* ^/+(?:install|install-dev)(?:$|/) { deny all; }
+    location ~* ^/+(?:app/logs|var/logs|var/cache|translations|mails)(?:$|/) { deny all; }
 """,
     },
     {
         "name": "Joomla",
         "slug": "joomla",
-        "description": "Joomla! 4/5. Protección de archivos de configuración y directorio de caché.",
+        "description": "Joomla! 4/5: más memoria y subidas de 32 MB, y bloqueo de configuration.php y de las carpetas de logs, temporales y caché.",
         "category": "cms",
         "fastcgi_cache_default": False,
         "php_ini_overrides": json.dumps({
@@ -274,27 +198,15 @@ BUILTIN_TEMPLATES = [
             "post_max_size":       "32M",
         }),
         "nginx_extra": """
-    # ── Joomla ─────────────────────────────────────────────────────────
-    add_header X-Content-Type-Options "nosniff" always;
-    add_header X-Frame-Options "SAMEORIGIN" always;
-
-    location ~* /configuration\\.php   { deny all; }
-    location ~* ^/logs/                { deny all; }
-    location ~* ^/tmp/                 { deny all; }
-    location ~* ^/cache/               { deny all; }
-    location ~* /htaccess\\.txt        { deny all; }
-
-    location ~* \\.(jpg|jpeg|png|gif|ico|css|js|woff2|svg)$ {
-        expires 30d;
-        add_header Cache-Control "public, immutable";
-        access_log off;
-    }
+    # ── Joomla ──────────────────────────────────────────────────────────
+    location ~* ^/+(configuration\\.php|htaccess\\.txt)$ { deny all; }
+    location ~* ^/+(?:logs|tmp|cache|administrator/logs)/ { deny all; }
 """,
     },
     {
         "name": "Magento 2",
         "slug": "magento2",
-        "description": "Magento 2. Alta memoria, protección de rutas internas y rewrite de URLs.",
+        "description": "Magento 2: la memoria alta que necesita, bloqueo de env.php, var, vendor y setup, y las URLs versionadas de /pub/static cuando el servidor es solo nginx.",
         "category": "ecommerce",
         "fastcgi_cache_default": False,
         "php_ini_overrides": json.dumps({
@@ -305,28 +217,20 @@ BUILTIN_TEMPLATES = [
         }),
         "nginx_extra": """
     # ── Magento 2 ───────────────────────────────────────────────────────
-    add_header X-Content-Type-Options "nosniff" always;
-
-    location ~* /app/etc/env\\.php       { deny all; }
-    location ~* ^/var/.*\\.php$         { deny all; }
-    location ~* ^/vendor/.*\\.php$      { deny all; }
-    location ~* /downloader/             { return 403; }
-    location ~* /setup/                  { allow 127.0.0.1; deny all; }
-
-    location ~* ^/pub/static/version    {
-        rewrite ^/pub/static/(version[0-9]+/)?(.*)$ /pub/static/$2 last;
+    location ~* ^/+app/etc/ { deny all; }
+    location ~* ^/+(?:var|vendor)/.*\\.php$ { deny all; }
+    location ~* ^/+(?:setup|downloader|update)(?:$|/) { deny all; }
+    # >>> solo-nginx
+    location ~* ^/+pub/static/version {
+        rewrite ^/+pub/static/(version[0-9]+/)?(.*)$ /pub/static/$2 last;
     }
-    location ~* \\.(jpg|jpeg|png|gif|ico|css|js|woff2|svg)$ {
-        expires 30d;
-        add_header Cache-Control "public, immutable";
-        access_log off;
-    }
+    # <<< solo-nginx
 """,
     },
     {
         "name": "Moodle",
         "slug": "moodle",
-        "description": "Plataforma de e-learning Moodle. Protege /config.php y rutas internas; sube límites para subir contenidos.",
+        "description": "Moodle: límites altos para subir cursos y contenidos (256 MB, 5000 campos), bloqueo de config.php y rutas internas, y los enlaces de ficheros (/pluginfile.php/…) cuando el servidor es solo nginx.",
         "category": "cms",
         "fastcgi_cache_default": False,
         "php_ini_overrides": json.dumps({
@@ -338,20 +242,26 @@ BUILTIN_TEMPLATES = [
         }),
         "nginx_extra": """
     # ── Moodle ──────────────────────────────────────────────────────────
-    add_header X-Content-Type-Options "nosniff" always;
-    location ~ ^/(config|lib/setup|install)\\.php { deny all; }
-    location ~ ^/(vendor|node_modules)/ { deny all; }
-    location ~* /\\.(git|svn|env) { deny all; }
-    # Moodle sirve archivos vía script; cachear estáticos reales
-    location ~* \\.(jpg|jpeg|png|gif|ico|css|js|woff2|svg)$ {
-        expires 7d; add_header Cache-Control "public"; access_log off;
+    location ~ ^/+(config|lib/setup|install)\\.php$ { deny all; }
+    location ~ ^/+(vendor|node_modules|environment|composer\\.(json|lock))(?:$|/) { deny all; }
+    # >>> solo-nginx
+    # "Argumentos con barra": /pluginfile.php/12/... necesita PATH_INFO
+    location ~ [^/]\\.php(/|$) {
+        fastcgi_split_path_info ^(.+\\.php)(/.*)$;
+        fastcgi_pass $phpfpm_backend;
+        fastcgi_index index.php;
+        include fastcgi_params;
+        fastcgi_param SCRIPT_FILENAME $document_root$fastcgi_script_name;
+        fastcgi_param PATH_INFO $fastcgi_path_info;
+        fastcgi_param HTTPS $https if_not_empty;
     }
+    # <<< solo-nginx
 """,
     },
     {
         "name": "MediaWiki",
         "slug": "mediawiki",
-        "description": "MediaWiki (la wiki de Wikipedia). URLs amigables, protección de /cache y /includes.",
+        "description": "MediaWiki: subidas de 128 MB, bloqueo de las carpetas internas y URLs cortas /wiki/Página (requiere $wgArticlePath = \"/wiki/$1\").",
         "category": "cms",
         "fastcgi_cache_default": False,
         "php_ini_overrides": json.dumps({
@@ -362,20 +272,15 @@ BUILTIN_TEMPLATES = [
         }),
         "nginx_extra": """
     # ── MediaWiki ───────────────────────────────────────────────────────
-    add_header X-Content-Type-Options "nosniff" always;
-    location ~ ^/(cache|includes|languages|maintenance|serialized)/ { deny all; }
-    location ~ /\\.(ht|git|svn) { deny all; }
+    location ~ ^/+(cache|includes|languages|maintenance|serialized|vendor)/ { deny all; }
     # URLs cortas /wiki/Pagina
-    location /wiki/ { rewrite ^/wiki/(.*)$ /index.php?title=$1&$args last; }
-    location ~* \\.(jpg|jpeg|png|gif|ico|css|js|woff2|svg)$ {
-        expires 30d; add_header Cache-Control "public, immutable"; access_log off;
-    }
+    location ^~ /wiki/ { rewrite ^/wiki/(.*)$ /index.php?title=$1&$args last; }
 """,
     },
     {
         "name": "phpBB",
         "slug": "phpbb",
-        "description": "Foro phpBB. Protege /cache, /store, /files y /config.php.",
+        "description": "Foro phpBB: subidas de 32 MB y bloqueo de config.php y de las carpetas de caché, adjuntos y avatares (se sirven a través de phpBB, que comprueba permisos).",
         "category": "cms",
         "fastcgi_cache_default": False,
         "php_ini_overrides": json.dumps({
@@ -386,18 +291,14 @@ BUILTIN_TEMPLATES = [
         }),
         "nginx_extra": """
     # ── phpBB ───────────────────────────────────────────────────────────
-    add_header X-Content-Type-Options "nosniff" always;
-    location ~ ^/(config\\.php|common\\.php|cache|files|store|images/avatars/upload)/ { deny all; }
-    location ~ /\\.(ht|git|svn) { deny all; }
-    location ~* \\.(jpg|jpeg|png|gif|ico|css|js|woff2|svg)$ {
-        expires 30d; add_header Cache-Control "public"; access_log off;
-    }
+    location ~ ^/+(config|common)\\.php$ { deny all; }
+    location ~ ^/+(cache|files|store|includes|images/avatars/upload)/ { deny all; }
 """,
     },
     {
         "name": "Symfony",
         "slug": "symfony",
-        "description": "Framework Symfony. Sirve desde /public con front controller index.php.",
+        "description": "Symfony: sirve desde /public y solo deja ejecutar el front controller index.php (cualquier otro .php olvidado devuelve 404).",
         "category": "framework",
         "fastcgi_cache_default": False,
         "docroot_subdir": "public",
@@ -408,24 +309,15 @@ BUILTIN_TEMPLATES = [
             "max_execution_time":  "60",
         }),
         "nginx_extra": """
-    # ── Symfony (front controller) ──────────────────────────────────────
-    add_header X-Content-Type-Options "nosniff" always;
-    location / { try_files $uri /index.php$is_args$args; }
-    # Solo index.php es ejecutable (Symfony best practice)
-    location ~ ^/index\\.php(/|$) {
-        fastcgi_pass $phpfpm_backend;
-        fastcgi_split_path_info ^(.+\\.php)(/.*)$;
-        include fastcgi_params;
-        fastcgi_param SCRIPT_FILENAME $document_root$fastcgi_script_name;
-        internal;
-    }
-    location ~ \\.php$ { return 404; }
+    # ── Symfony ─────────────────────────────────────────────────────────
+    # Solo index.php es ejecutable (práctica recomendada por Symfony)
+    location ~ ^/+(?!index\\.php).+\\.php(/|$) { return 404; }
 """,
     },
     {
         "name": "CodeIgniter",
         "slug": "codeigniter",
-        "description": "Framework CodeIgniter 4. Sirve desde /public con front controller.",
+        "description": "CodeIgniter 4: sirve desde /public y solo deja ejecutar index.php.",
         "category": "framework",
         "fastcgi_cache_default": False,
         "docroot_subdir": "public",
@@ -436,15 +328,13 @@ BUILTIN_TEMPLATES = [
         }),
         "nginx_extra": """
     # ── CodeIgniter 4 ───────────────────────────────────────────────────
-    add_header X-Content-Type-Options "nosniff" always;
-    location / { try_files $uri $uri/ /index.php$is_args$args; }
-    location ~ /\\.(ht|git|env) { deny all; }
+    location ~ ^/+(?!index\\.php).+\\.php(/|$) { return 404; }
 """,
     },
     {
         "name": "Yii Framework",
         "slug": "yii",
-        "description": "Framework Yii 2. Sirve desde /web con clean URLs.",
+        "description": "Yii 2: sirve desde /web y solo deja ejecutar index.php (bloquea index-test.php, que no debe estar accesible en producción).",
         "category": "framework",
         "fastcgi_cache_default": False,
         "docroot_subdir": "web",
@@ -455,22 +345,19 @@ BUILTIN_TEMPLATES = [
         }),
         "nginx_extra": """
     # ── Yii 2 ───────────────────────────────────────────────────────────
-    add_header X-Content-Type-Options "nosniff" always;
-    location / { try_files $uri $uri/ /index.php$is_args$args; }
-    location ~ /\\.(ht|git|env) { deny all; }
-    location ~ ^/(protected|framework|themes/\\w+/views) { deny all; }
+    location ~ ^/+(?!index\\.php).+\\.php(/|$) { return 404; }
 """,
     },
     {
         "name": "Ghost",
         "slug": "ghost",
-        "description": "Blog Ghost (Node.js). Nginx hace proxy al puerto local de Ghost (por defecto 2368).",
+        "description": "Blog Ghost (Node.js): nginx sirve el dominio haciendo de proxy al servicio Ghost local (puerto 2368; ajústalo en Directivas si usas otro). Sustituye al PHP del dominio.",
         "category": "cms",
         "fastcgi_cache_default": False,
         "php_ini_overrides": None,
         "nginx_extra": """
     # ── Ghost (proxy a Node.js) ─────────────────────────────────────────
-    # Ghost corre como servicio Node en 127.0.0.1:2368. Ajusta el puerto si usas otro.
+    # Sustituye al location / del panel: el sitio lo sirve Ghost, no PHP.
     location / {
         proxy_pass http://127.0.0.1:2368;
         proxy_set_header Host $host;
@@ -483,7 +370,7 @@ BUILTIN_TEMPLATES = [
     {
         "name": "Matomo",
         "slug": "matomo",
-        "description": "Analítica web Matomo (ex Piwik). Protege rutas internas y config.",
+        "description": "Analítica Matomo: más memoria, bloqueo de config, tmp y núcleo, y solo los PHP públicos de Matomo son ejecutables (index.php, matomo.php, piwik.php).",
         "category": "other",
         "fastcgi_cache_default": False,
         "php_ini_overrides": json.dumps({
@@ -494,19 +381,15 @@ BUILTIN_TEMPLATES = [
         }),
         "nginx_extra": """
     # ── Matomo ──────────────────────────────────────────────────────────
-    add_header X-Content-Type-Options "nosniff" always;
-    location ~ ^/(config|tmp|core|lang)/ { deny all; }
-    location ~ \\.(git|svn) { deny all; }
-    location ~ ^/(libs|vendor|plugins|misc/user)/.*\\.(twig|tpl|php)$ { deny all; }
-    location ~* \\.(jpg|jpeg|png|gif|ico|css|js|woff2|svg)$ {
-        expires 30d; add_header Cache-Control "public"; access_log off;
-    }
+    location ~ ^/+(config|tmp|core|lang)(?:$|/) { deny all; }
+    location ~ ^/+(libs|vendor|plugins|misc/user)/.*\\.(twig|tpl|php)$ { deny all; }
+    location ~ ^/+(?!(index|matomo|piwik|js/index)\\.php).+\\.php$ { deny all; }
 """,
     },
     {
         "name": "OpenCart",
         "slug": "opencart",
-        "description": "Tienda OpenCart. Protege /system y /storage, cachea estáticos.",
+        "description": "Tienda OpenCart: subidas de 64 MB y bloqueo de /system y /storage.",
         "category": "ecommerce",
         "fastcgi_cache_default": False,
         "php_ini_overrides": json.dumps({
@@ -517,43 +400,30 @@ BUILTIN_TEMPLATES = [
         }),
         "nginx_extra": """
     # ── OpenCart ────────────────────────────────────────────────────────
-    add_header X-Content-Type-Options "nosniff" always;
-    location ~ ^/(system|storage)/ { deny all; }
-    location ~ /\\.(ht|git|env) { deny all; }
-    location ~* \\.(jpg|jpeg|png|gif|ico|css|js|woff2|svg)$ {
-        expires 30d; add_header Cache-Control "public"; access_log off;
-    }
+    location ~ ^/+(system|storage)/ { deny all; }
 """,
     },
     {
         "name": "Sitio estático / SPA",
         "slug": "static-spa",
-        "description": "Sitio estático o SPA (React/Vue/Angular). try_files a index.html, sin PHP.",
+        "description": "Sitio estático o SPA (React, Vue, Angular): nginx lo sirve directamente y las rutas del navegador vuelven a index.html. Sustituye al PHP del dominio.",
         "category": "other",
         "fastcgi_cache_default": False,
         "php_ini_overrides": None,
         "nginx_extra": """
     # ── Estático / SPA ──────────────────────────────────────────────────
-    add_header X-Content-Type-Options "nosniff" always;
-    # Rutas de cliente (history API) → index.html
+    # Sustituye al location / del panel: rutas de cliente (history API) → index.html
     location / { try_files $uri $uri/ /index.html; }
-    location ~* \\.(jpg|jpeg|png|gif|ico|css|js|woff2|woff|ttf|svg|map)$ {
-        expires 30d; add_header Cache-Control "public, immutable"; access_log off;
-    }
 """,
     },
     {
         "name": "PHP Estándar",
         "slug": "default-php",
-        "description": "Configuración PHP estándar sin modificaciones extra. Útil para apps personalizadas.",
+        "description": "Sin reglas extra: vuelve a la configuración por defecto del panel (quita las reglas de otra plantilla; los valores de PHP no se tocan).",
         "category": "other",
         "fastcgi_cache_default": False,
         "php_ini_overrides": None,
-        "nginx_extra": """
-    # ── PHP Estándar ─────────────────────────────────────────────────────
-    add_header X-Content-Type-Options "nosniff" always;
-    add_header X-Frame-Options "SAMEORIGIN" always;
-""",
+        "nginx_extra": None,
     },
 ]
 

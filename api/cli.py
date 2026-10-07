@@ -1729,6 +1729,78 @@ def cmd_ensure_antispam_defaults() -> int:
     return 0
 
 
+def cmd_resync_builtin_templates(dry_run: bool = False) -> int:
+    """Refresca las plantillas builtin en BD desde el código y pasa a la versión
+    nueva las reglas nginx de los dominios que las tienen aplicadas.
+
+    Cada dominio guarda su COPIA de las reglas al aplicar la plantilla: sin esto,
+    una corrección de la plantilla no les llegaba nunca. Solo toca las reglas de
+    nginx y la subcarpeta del docroot (el PHP del dominio no: el cliente pudo
+    cambiarlo después). Regenera el vhost y, si la validación falla, revierte.
+    Idempotente.
+    """
+    from api.models.models_template import WebTemplate
+    from scripts.template_manager import BUILTIN_TEMPLATES
+    from api.routes.domains import _regenerate_domain_vhost
+
+    by_slug = {t["slug"]: t for t in BUILTIN_TEMPLATES}
+    db = SessionLocal()
+    try:
+        # 1) Filas builtin al día (lo mismo que hace el arranque del panel)
+        for row in db.query(WebTemplate).filter(WebTemplate.is_builtin == True).all():  # noqa: E712
+            t = by_slug.get(row.slug)
+            if not t:
+                continue
+            row.name = t["name"]
+            row.description = t.get("description")
+            row.nginx_extra = t.get("nginx_extra")
+            row.php_ini_overrides = t.get("php_ini_overrides")
+            row.fastcgi_cache_default = t.get("fastcgi_cache_default", False)
+            row.docroot_subdir = t.get("docroot_subdir")
+        if not dry_run:
+            db.commit()
+
+        # 2) Dominios con una plantilla builtin aplicada y reglas desfasadas
+        updated = same = failed = 0
+        for d in db.query(Domain).filter(Domain.applied_template_id.isnot(None)).all():
+            row = db.query(WebTemplate).filter(WebTemplate.id == d.applied_template_id).first()
+            t = by_slug.get(row.slug) if (row and row.is_builtin) else None
+            if not t:
+                continue
+            new_extra = t.get("nginx_extra")
+            new_sub = t.get("docroot_subdir") or None
+            if (d.template_nginx_extra or None) == (new_extra or None) and \
+                    (d.docroot_subdir or None) == new_sub:
+                same += 1
+                continue
+            if dry_run:
+                logger.info(f"  {d.domain_name}: actualizaría reglas de '{row.name}'")
+                updated += 1
+                continue
+            owner = db.query(User).filter(User.id == d.user_id).first()
+            prev_extra, prev_sub = d.template_nginx_extra, d.docroot_subdir
+            d.template_nginx_extra, d.docroot_subdir = new_extra, new_sub
+            d.applied_template_name = t["name"]
+            db.commit()
+            try:
+                _regenerate_domain_vhost(d, owner)
+                updated += 1
+                logger.info(f"  {d.domain_name}: reglas de '{t['name']}' actualizadas")
+            except Exception as e:
+                d.template_nginx_extra, d.docroot_subdir = prev_extra, prev_sub
+                db.commit()
+                try:
+                    _regenerate_domain_vhost(d, owner)
+                except Exception:
+                    pass
+                failed += 1
+                logger.error(f"  {d.domain_name}: no valida, revertido: {e}")
+        logger.info(f"resync_builtin_templates: {updated} actualizados, {same} ya al día, {failed} revertidos")
+        return 0
+    finally:
+        db.close()
+
+
 def cmd_normalize_antispam_actions() -> int:
     """Reescribe local.d/actions.conf con `add_header` (en vez de "add header")
     conservando los umbrales del admin. Quita el aviso de Rspamd "invalid actions
@@ -2530,6 +2602,9 @@ def main():
         help="Instala el Sieve global que mueve el spam marcado a la carpeta Junk")
     sub.add_parser("ensure_antispam_defaults",
         help="Aplica los umbrales antispam por defecto del panel (3/4/10) si el admin no los personalizó")
+    p_rt = sub.add_parser("resync_builtin_templates",
+        help="Refresca las plantillas builtin y pasa sus reglas nuevas a los dominios que las usan")
+    p_rt.add_argument("--dry-run", action="store_true")
     sub.add_parser("normalize_antispam_actions",
         help="Reescribe actions.conf de Rspamd con add_header conservando los umbrales")
     sub.add_parser("fix_domain_logs_perms",
@@ -2698,6 +2773,8 @@ def main():
         sys.exit(cmd_setup_spam_to_junk())
     if args.cmd == "ensure_antispam_defaults":
         sys.exit(cmd_ensure_antispam_defaults())
+    if args.cmd == "resync_builtin_templates":
+        sys.exit(cmd_resync_builtin_templates(dry_run=args.dry_run))
     if args.cmd == "normalize_antispam_actions":
         sys.exit(cmd_normalize_antispam_actions())
     if args.cmd == "fix_domain_logs_perms":

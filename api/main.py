@@ -1012,6 +1012,9 @@ def _seed_builtin_templates(engine):
             elif exists.is_builtin:
                 # Refrescar plantillas builtin ya sembradas (correcciones de
                 # nginx_extra, docroot_subdir, etc.). No tocamos las del usuario.
+                exists.name = tpl["name"]
+                exists.description = tpl.get("description")
+                exists.category = tpl.get("category", "cms")
                 exists.nginx_extra = tpl.get("nginx_extra")
                 exists.php_ini_overrides = tpl.get("php_ini_overrides")
                 exists.fastcgi_cache_default = tpl.get("fastcgi_cache_default", False)

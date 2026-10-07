@@ -467,6 +467,7 @@ class DomainManager(SystemManager):
         is_subdomain: bool = False,
         xmlrpc_blocked: bool = None,
         wp_login_ratelimit: int = None,
+        upload_max_mb: int = None,
     ) -> dict:
         """
         Regenera la vhost completa del dominio con TODO el estado actual
@@ -486,9 +487,10 @@ class DomainManager(SystemManager):
         #  - xmlrpc_blocked / wp_login_ratelimit: protección WordPress por dominio.
         #    Default None = "no me lo dijo el caller, léelo de la BD" → así no hay
         #    que propagar estos flags por TODOS los callers de regenerate_vhost.
+        #  - upload_max_mb: client_max_body_size alineado con el PHP del dominio.
         if (not is_subdomain or docroot_subdir is None
                 or xmlrpc_blocked is None or wp_login_ratelimit is None
-                or fastcgi_cache_enabled is None):
+                or fastcgi_cache_enabled is None or upload_max_mb is None):
             try:
                 from api.models.database import SessionLocal
                 from api.models.models_domain import Domain as _D
@@ -509,11 +511,16 @@ class DomainManager(SystemManager):
                             _ttl = getattr(_d, "fastcgi_cache_ttl_minutes", None)
                             if _ttl:
                                 fastcgi_cache_ttl_minutes = int(_ttl)
+                        if upload_max_mb is None:
+                            from scripts.utils import upload_mb_from_php
+                            upload_max_mb = upload_mb_from_php(
+                                getattr(_d, "php_ini_overrides", None))
                 finally:
                     _db.close()
             except Exception:
                 pass
         # Si tras consultar la BD siguen None (dominio aún no en BD), usar defaults.
+        upload_max_mb = int(upload_max_mb or 64)
         xmlrpc_blocked = bool(xmlrpc_blocked)
         wp_login_ratelimit = int(wp_login_ratelimit or 0)
         fastcgi_cache_enabled = bool(fastcgi_cache_enabled)
@@ -609,6 +616,7 @@ class DomainManager(SystemManager):
                 is_subdomain=is_subdomain,
                 xmlrpc_blocked=xmlrpc_blocked,
                 wp_login_ratelimit=wp_login_ratelimit,
+                upload_max_mb=upload_max_mb,
             )
             with open(config_path, "w") as f:
                 f.write(config_content)
@@ -669,6 +677,7 @@ class DomainManager(SystemManager):
                 is_subdomain=is_subdomain,
                 xmlrpc_blocked=xmlrpc_blocked,
                 wp_login_ratelimit=wp_login_ratelimit,
+                upload_max_mb=upload_max_mb,
             )
             with open(config_path, "w") as f:
                 f.write(config_content)
