@@ -55,8 +55,10 @@
           <div class="kv">
             <div v-if="!domain.mail_dns_only" class="kv__row"><span class="kv__k">Document root</span><span class="kv__v mono">{{ domain.public_html || '—' }}</span></div>
             <div class="kv__row"><span class="kv__k">IPv4</span>
-              <span v-if="domain.ipv4" class="kv__v mono">{{ domain.ipv4 }}</span>
-              <span v-else class="kv__v">compartida (la del servidor)</span></div>
+              <span class="kv__v">
+                <span class="mono">{{ domain.ipv4 || domain.server_ipv4 || '—' }}</span>
+                <span v-if="domain.ipv4 || domain.server_ipv4" class="kv__tag">{{ domain.ipv4 ? 'dedicada' : 'compartida' }}</span>
+              </span></div>
             <div class="kv__row"><span class="kv__k">IPv6</span><span class="kv__v mono">{{ domain.ipv6 || 'sin asignar' }}</span></div>
             <div v-if="!domain.mail_dns_only" class="kv__row"><span class="kv__k">Plantilla web</span>
               <span class="kv__v">
@@ -1878,6 +1880,7 @@ location @maintenance {
 .kv__v { color: var(--text); font-size: var(--fs-sm); font-weight: var(--fw-medium); text-align: right; word-break: break-all; }
 .kv__link { margin-left: var(--sp-2); font-weight: var(--fw-normal, 400); color: var(--color-primary); text-decoration: none; }
 .kv__link:hover { text-decoration: underline; }
+.kv__tag { margin-left: var(--sp-2); font-weight: var(--fw-normal, 400); color: var(--text-muted); font-size: var(--fs-xs); }
 
 .dd-actions-row { display: flex; gap: var(--sp-2); }
 .quick-col { display: flex; flex-direction: column; gap: var(--sp-2); }

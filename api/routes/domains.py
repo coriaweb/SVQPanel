@@ -497,6 +497,14 @@ async def get_domain(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail="Dominio no encontrado"
             )
+        # IP compartida del servidor, para que la ficha muestre la IP real por la
+        # que responde un dominio sin IPv4 dedicada (ipv4 NULL). No se persiste.
+        if not domain.ipv4:
+            try:
+                from api.routes.dns import _get_server_ipv4
+                domain.server_ipv4 = _get_server_ipv4(db) or None
+            except Exception:
+                domain.server_ipv4 = None
         return domain
     except HTTPException:
         raise
