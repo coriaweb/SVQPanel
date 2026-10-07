@@ -19,6 +19,9 @@
         <div>
           <div style="display:flex;align-items:center;gap:.5rem;flex-wrap:wrap">
             <span style="font-weight:600">Versión {{ panel.current }}</span>
+            <span v-if="releaseStage" class="su-badge su-badge--stage" :title="releaseStage.label">
+              {{ releaseStage.short }}
+            </span>
             <span v-if="panel.update_available" class="su-badge su-badge--warn">
               <i class="bi bi-arrow-up-circle"></i> Disponible {{ panel.latest }}
             </span>
@@ -250,6 +253,7 @@
 import { ref, onMounted } from 'vue'
 import api from '../services/api'
 import { formatDateTime } from '../utils/datetime'
+import { RELEASE_STAGE } from '../utils/release'
 import BaseCard from '../components/ui/BaseCard.vue'
 import BaseButton from '../components/ui/BaseButton.vue'
 import BaseTabs from '../components/ui/BaseTabs.vue'
@@ -458,6 +462,7 @@ export default {
     }
 
     return {
+      releaseStage: RELEASE_STAGE,
       activeTab, tabs,
       versions, loadingVersions, loadVersions,
       checking, checked, checkedAt, packages,
@@ -536,4 +541,5 @@ export default {
 }
 .su-badge--ok   { background: var(--success-bg, #dcfce7); color: var(--success, #16a34a); }
 .su-badge--warn { background: var(--warning-bg, #fef3c7); color: var(--warning, #d97706); }
+.su-badge--stage { background: var(--info-bg); color: var(--info); letter-spacing: .4px; }
 </style>

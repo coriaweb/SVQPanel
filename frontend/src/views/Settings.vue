@@ -948,7 +948,10 @@
               </li>
               <li class="list-group-item d-flex justify-content-between">
                 <span class="text-muted">Versión</span>
-                <span class="badge bg-secondary">{{ settings?.panel_version }}</span>
+                <span>
+                  <span class="badge bg-secondary">{{ settings?.panel_version }}</span>
+                  <span v-if="releaseStage" class="badge bg-info ms-1" :title="releaseStage.label">{{ releaseStage.short }}</span>
+                </span>
               </li>
               <li class="list-group-item d-flex justify-content-between">
                 <span class="text-muted">API</span>
@@ -1267,6 +1270,7 @@ import { ref, reactive, computed, onMounted } from 'vue'
 import { useMainStore } from '../stores/useMainStore'
 import api from '../services/api'
 import { formatDate as fmtDate, formatDateTime } from '../utils/datetime'
+import { RELEASE_STAGE } from '../utils/release'
 import PasswordField from '../components/PasswordField.vue'
 
 export default {
@@ -2074,6 +2078,7 @@ export default {
     })
 
     return {
+      releaseStage: RELEASE_STAGE,
       tab,
       pwdTest,
       smtp, smtpSaving, smtpTesting, smtpTestMsg, smtpTestOk,

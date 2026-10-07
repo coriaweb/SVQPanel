@@ -207,7 +207,7 @@ Este es un proyecto interno de la empresa. Para cambios:
 
 Para reportar bugs o sugerencias:
 - Issues: GitHub
-- Email: soporte@tu-empresa.com
+- Email: info@svqhost.com
 
 ## 📄 Licencia
 
@@ -215,6 +215,6 @@ Privada - Solo para uso interno de la empresa.
 
 ---
 
-**Última actualización**: Mayo 2026
-**Versión**: 1.0.0-beta
-**Estado**: En desarrollo
+**Última actualización**: Octubre 2026
+**Versión**: ver el archivo `VERSION`
+**Estado**: Release Candidate
