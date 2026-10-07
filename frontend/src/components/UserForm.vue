@@ -97,8 +97,10 @@
         </select>
         <small class="text-muted">{{ roleDescription }}</small>
       </div>
-      <!-- Admin creando un cliente: a qué reseller pertenece (jerarquía tipo Hestia) -->
-      <div class="col-md-6 mb-3" v-if="isAdmin && !isEditing && form.role === 'user' && !parentId">
+      <!-- Admin: a qué reseller pertenece el cliente (jerarquía tipo Hestia).
+           También al editar: un cliente migrado o creado como directo se puede
+           pasar a un reseller (o devolver a cliente directo). -->
+      <div class="col-md-6 mb-3" v-if="isAdmin && form.role === 'user' && !parentId">
         <label for="parent" class="form-label">Reseller</label>
         <select id="parent" v-model="form.parent_id" class="form-select">
           <option :value="null">— Ninguno (cliente directo) —</option>
@@ -208,7 +210,7 @@ export default {
       disk_quota_mb:       props.user?.disk_quota_mb ?? 1024,
       plan_id:             props.user?.plan_id     ?? null,
       is_active:           props.user?.is_active   ?? true,
-      parent_id:           null,
+      parent_id:           props.user?.parent_id ?? null,
     })
 
     const isAdmin = computed(() => {
@@ -221,10 +223,10 @@ export default {
     onMounted(async () => {
       try { plans.value = await api.getPlans() }
       catch (e) { /* ignorar: usuario sin permisos para planes */ }
-      if (isAdmin.value && !isEditing.value) {
+      if (isAdmin.value) {
         try {
           const all = await api.getUsers(0, 1000)
-          resellers.value = (all || []).filter((u) => u.role === 'reseller')
+          resellers.value = (all || []).filter((u) => u.role === 'reseller' && u.id !== props.user?.id)
         } catch (e) { /* sin lista: se crea como cliente directo */ }
       }
     })
@@ -262,6 +264,11 @@ export default {
           }
           // El rol solo lo cambia el admin (un reseller recibiría 403)
           if (isAdmin.value) payload.role = form.value.role
+          // Reseller propietario: solo admin, solo clientes y solo si cambió
+          if (isAdmin.value && form.value.role === 'user' &&
+              (form.value.parent_id ?? null) !== (props.user.parent_id ?? null)) {
+            payload.parent_id = form.value.parent_id ?? null
+          }
           // Solo enviar cuota si el usuario no tiene plan (con plan la fija el plan)
           if (!form.value.plan_id) {
             payload.disk_quota_mb = form.value.disk_quota_mb

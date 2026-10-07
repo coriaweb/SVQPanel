@@ -290,11 +290,42 @@ async def update_user(
                         "volver a administrar el panel). Crea otro admin primero."),
             )
 
+        # Cambio de reseller propietario: solo el admin, y solo para clientes
+        # (rol user). Antes solo se podía elegir al CREAR la cuenta: un cliente
+        # migrado o creado como directo no se podía pasar a un reseller.
+        _parent_change = "parent_id" in user_update.model_fields_set
+        if _parent_change:
+            if not is_admin(current_user):
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail="Solo un administrador puede cambiar el reseller de una cuenta",
+                )
+            new_parent = user_update.parent_id
+            target_role = user_update.role or db_user.role or "user"
+            if new_parent is not None:
+                if target_role != "user":
+                    raise HTTPException(
+                        status_code=status.HTTP_400_BAD_REQUEST,
+                        detail="Solo las cuentas de cliente (rol usuario) pueden pertenecer a un reseller",
+                    )
+                if new_parent == db_user.id:
+                    raise HTTPException(
+                        status_code=status.HTTP_400_BAD_REQUEST,
+                        detail="Una cuenta no puede ser su propio reseller",
+                    )
+                parent = db.query(User).filter(User.id == new_parent).first()
+                if not parent or parent.role != "reseller":
+                    raise HTTPException(
+                        status_code=status.HTTP_400_BAD_REQUEST,
+                        detail="El propietario indicado no existe o no es un reseller",
+                    )
+
         # Estado previo, para la auditoría (antes de mutar el objeto).
         _before = {"email": db_user.email, "role": db_user.role,
                    "is_active": db_user.is_active,
                    "domains_limit": db_user.domains_limit,
-                   "disk_quota_mb": db_user.disk_quota_mb}
+                   "disk_quota_mb": db_user.disk_quota_mb,
+                   "parent_id": db_user.parent_id}
 
         if user_update.email is not None:
             db_user.email = user_update.email
@@ -313,6 +344,11 @@ async def update_user(
         if user_update.role is not None:
             db_user.role = user_update.role
             db_user.is_admin = (user_update.role == "admin")
+            # Un admin/reseller no cuelga de ningún reseller
+            if user_update.role != "user":
+                db_user.parent_id = None
+        if _parent_change and (db_user.role or "user") == "user":
+            db_user.parent_id = user_update.parent_id
 
         # Cambio de contraseña (opcional)
         if user_update.new_password:
@@ -339,6 +375,7 @@ async def update_user(
                          "is_active": db_user.is_active,
                          "domains_limit": db_user.domains_limit,
                          "disk_quota_mb": db_user.disk_quota_mb,
+                         "parent_id": db_user.parent_id,
                          "password_changed": bool(user_update.new_password)},
                   request=request)
 

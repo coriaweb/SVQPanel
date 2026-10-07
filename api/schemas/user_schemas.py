@@ -27,6 +27,9 @@ class UserUpdate(BaseModel):
     domains_limit: Optional[int] = Field(None, ge=0)
     disk_quota_mb: Optional[int] = Field(None, ge=0, description="Cuota de disco en MB; 0 = ilimitado")
     new_password: Optional[str] = Field(None, min_length=8, description="Nueva contraseña (opcional)")
+    # Reseller propietario (solo admin). Enviar null = pasar a cliente directo;
+    # no enviar el campo = no tocarlo (se distingue con model_fields_set).
+    parent_id: Optional[int] = Field(None, description="ID del reseller propietario")
 
 
 class UserResponse(BaseModel):

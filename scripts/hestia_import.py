@@ -1890,6 +1890,23 @@ def import_dns(backup: "HestiaBackup", zoneinfo: Dict, owner, db, report: Import
     except Exception:
         pass
 
+    # SPF: añadir la IPv6 por la que SALE el correo de este servidor. El SPF del
+    # backup solo trae la IP vieja reescrita (ip4:) y con `-all` el correo que
+    # Postfix envíe por IPv6 (Gmail, Outlook…) fallaba el SPF (obradormarilo.com,
+    # oct 2026). Misma función que al cambiar la IP de salida en el panel; solo
+    # si el correo del dominio está en este servidor (import_mail va antes).
+    try:
+        from api.models.models_mail import MailDomain
+        from api.routes.mail import _sync_spf_out_ip6
+        md = db.query(MailDomain).filter(MailDomain.domain_name == domain).first()
+        if md:
+            dom = db.query(_Domain).filter(_Domain.domain_name == domain).first()
+            pref = getattr(md, "mail_out_ip_pref", "ipv4") or "ipv4"
+            if _sync_spf_out_ip6(md, dom.ipv6 if dom else None, pref, db):
+                report.ok("dns", domain, "SPF: añadida la IPv6 de salida del correo")
+    except Exception as e:
+        logger.warning(f"[import] SPF ip6 de {domain}: {e}")
+
     report.ok("dns", domain, f"{n} registro(s) (NS/SOA de SVQPanel)")
 
 
