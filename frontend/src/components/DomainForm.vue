@@ -218,8 +218,16 @@
       </div>
     </template>
 
-    <!-- Plantilla web (creación Y edición) — no aplica a solo correo/DNS -->
-    <template v-if="isWebDomain">
+    <!-- Plantilla web: solo al CREAR. Para un dominio existente se aplica desde
+         su ficha (pestaña Avanzado), que valida y revierte si algo falla. -->
+    <template v-if="isWebDomain && isEditing">
+    <hr class="my-3" />
+    <p class="small text-muted mb-3">
+      <i class="bi bi-layout-text-window-reverse me-1"></i>
+      La plantilla web se cambia desde la ficha del dominio, pestaña <strong>Avanzado</strong>.
+    </p>
+    </template>
+    <template v-if="isWebDomain && !isEditing">
     <hr class="my-3" />
     <p class="fw-semibold mb-2 text-muted small text-uppercase">
       <i class="bi bi-layout-text-window-reverse me-1"></i> Plantilla web
@@ -265,11 +273,6 @@
             class="badge bg-light text-dark border"
           >{{ key }}: {{ val }}</span>
         </template>
-      </div>
-      <!-- Al editar: aviso de que se aplicará al guardar -->
-      <div v-if="isEditing" class="mt-2 text-warning fw-semibold small">
-        <i class="bi bi-exclamation-triangle me-1"></i>
-        La plantilla se aplicará al hacer clic en "Actualizar Dominio"
       </div>
     </div>
     </template>
@@ -469,12 +472,7 @@ import { ref, computed, onMounted } from 'vue'
 import { useMainStore } from '../stores/useMainStore'
 import api from '../services/api'
 
-const TEMPLATE_CATEGORIES = [
-  { key: 'cms',        label: 'CMS' },
-  { key: 'framework',  label: 'Frameworks' },
-  { key: 'ecommerce',  label: 'E-commerce' },
-  { key: 'other',      label: 'Otros' },
-]
+import { TEMPLATE_CATEGORIES } from '../utils/templates'
 
 export default {
   name: 'DomainForm',
@@ -684,13 +682,15 @@ export default {
             redirect_to:    form.value.redirect_enabled ? form.value.redirect_to.trim() : '',
             custom_docroot: !form.value.redirect_enabled ? form.value.custom_docroot.trim() : '',
           })
-          // Caché FastCGI: solo si cambió y no se va a aplicar plantilla (la plantilla lo gestiona)
+          // Caché FastCGI: solo si cambió. (Antes se saltaba si el dominio TENÍA
+          // plantilla —selected_template_id venía precargado— y el cambio de caché
+          // de un dominio con plantilla no se guardaba nunca.)
           const prevEnabled = props.domain.fastcgi_cache_enabled ?? false
           const prevTtl     = props.domain.fastcgi_cache_ttl_minutes ?? 60
           const cacheChanged =
             form.value.fastcgi_cache_enabled !== prevEnabled ||
             (form.value.fastcgi_cache_enabled && form.value.fastcgi_cache_ttl_minutes !== prevTtl)
-          if (cacheChanged && !form.value.selected_template_id) {
+          if (cacheChanged) {
             await api.setDomainCache(
               props.domain.id,
               form.value.fastcgi_cache_enabled,
@@ -721,19 +721,7 @@ export default {
               form.value.php_hardening_relaxed,
             )
           }
-          // Aplicar plantilla si se seleccionó una (y es diferente a la actual)
-          const prevTemplateId = props.domain?.applied_template_id ?? null
-          if (form.value.selected_template_id && form.value.selected_template_id !== prevTemplateId) {
-            await api.applyTemplate(props.domain.id, form.value.selected_template_id, {
-              ttl_minutes: form.value.fastcgi_cache_ttl_minutes,
-            })
-            store.showNotification(
-              `Plantilla "${selectedTemplate.value?.name}" aplicada correctamente`,
-              'success'
-            )
-          } else {
-            store.showNotification('Dominio actualizado correctamente', 'success')
-          }
+          store.showNotification('Dominio actualizado correctamente', 'success')
         } else {
           const userId = isAdminOrReseller.value
             ? form.value.user_id

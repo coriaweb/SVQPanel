@@ -102,6 +102,9 @@ class DomainResponse(BaseModel):
     # FastCGI cache (Fase 14)
     fastcgi_cache_enabled:     Optional[bool] = False
     fastcgi_cache_ttl_minutes: Optional[int]  = 60
+    # Plantilla web aplicada (la ficha del dominio la muestra y permite cambiarla)
+    applied_template_id:   Optional[int] = None
+    applied_template_name: Optional[str] = None
     # Redirección y docroot personalizado (Fase 16)
     redirect_to:    Optional[str] = None
     custom_docroot: Optional[str] = None

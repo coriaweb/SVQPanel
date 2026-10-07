@@ -766,6 +766,45 @@ define('WP_REDIS_PATH', '{{ redisStatus.socket }}');</pre>
         </template>
       </BaseCard>
 
+      <!-- ===== Avanzado: plantilla web ===== -->
+      <BaseCard v-show="tab === 'advanced'" title="Plantilla web" icon="layout-text-window-reverse">
+        <p class="dd-muted">
+          Ajustes recomendados para la aplicación del dominio (reglas de nginx, PHP y caché).
+          Se valida antes de aplicar; si algo falla, se restaura la configuración anterior y el sitio sigue intacto.
+        </p>
+        <p class="dd-muted" style="margin-top:0">
+          Plantilla actual: <strong>{{ domain.applied_template_name || 'ninguna (configuración por defecto)' }}</strong>
+        </p>
+        <div class="adv-field">
+          <select class="svq-input" v-model="tplSelected" :disabled="tplApplying">
+            <option :value="null">— Elige una plantilla —</option>
+            <optgroup v-for="cat in templateCategories" :key="cat.key" :label="cat.label">
+              <option v-for="t in templates.filter(x => x.category === cat.key && x.is_active !== false)"
+                      :key="t.id" :value="t.id">{{ t.name }}</option>
+            </optgroup>
+          </select>
+        </div>
+        <div v-if="tplPreview" class="adv-examples" style="margin-top:.5rem">
+          <div class="adv-example">
+            <div class="adv-example__head"><span class="adv-example__title">{{ tplPreview.name }}</span></div>
+            <p class="dd-muted" style="margin:.25rem 0 .5rem">{{ tplPreview.description }}</p>
+            <div style="display:flex;flex-wrap:wrap;gap:.4rem">
+              <StatusBadge v-if="tplPreview.fastcgi_cache_default" status="warning" label="Activa la caché de página" />
+              <StatusBadge v-if="tplPreview.nginx_extra" status="info" label="Reglas de nginx" />
+              <StatusBadge v-if="tplPreview.docroot_subdir" status="info" :label="`Raíz web: ${tplPreview.docroot_subdir}/`" />
+              <StatusBadge v-for="(v, k) in tplPhp" :key="k" status="neutral" :label="`${k}: ${v}`" />
+            </div>
+          </div>
+        </div>
+        <div v-if="tplError" class="adv-error"><i class="bi bi-exclamation-triangle"></i> {{ tplError }}</div>
+        <div class="adv-actions">
+          <BaseButton variant="primary" icon="check2" :loading="tplApplying"
+                      :disabled="!tplSelected || tplSelected === domain.applied_template_id"
+                      @click="applyTemplate">Aplicar plantilla</BaseButton>
+          <small class="dd-muted">Se ejecuta <code>nginx -t</code> / <code>apachectl configtest</code> antes de recargar.</small>
+        </div>
+      </BaseCard>
+
       <!-- ===== Avanzado: directivas nginx/apache personalizadas ===== -->
       <BaseCard v-show="tab === 'advanced'" title="Directivas personalizadas" icon="sliders">
         <p class="dd-muted">
@@ -918,6 +957,7 @@ import { useRoute, useRouter } from 'vue-router'
 import { useMainStore } from '../stores/useMainStore'
 import api from '../services/api'
 import { formatDate as fmtDate, formatDateTime } from '../utils/datetime'
+import { TEMPLATE_CATEGORIES, parseTemplatePhp } from '../utils/templates'
 import BaseCard from '../components/ui/BaseCard.vue'
 import BaseButton from '../components/ui/BaseButton.vue'
 import BaseTabs from '../components/ui/BaseTabs.vue'
@@ -1109,6 +1149,37 @@ location @maintenance {
         advError.value = e.message || 'No se pudo aplicar la configuración'
       } finally { advSaving.value = false }
     }
+    // ── Plantilla web (tab Avanzado) ──
+    const templates = ref([])
+    const tplSelected = ref(null)
+    const tplApplying = ref(false)
+    const tplError = ref('')
+    const templateCategories = TEMPLATE_CATEGORIES
+    const tplPreview = computed(() => templates.value.find(t => t.id === tplSelected.value) || null)
+    const tplPhp = computed(() => parseTemplatePhp(tplPreview.value))
+    let _templatesLoaded = false
+    const loadTemplates = async () => {
+      if (_templatesLoaded) return
+      try { templates.value = (await api.getTemplates()) || []; _templatesLoaded = true }
+      catch (e) { templates.value = [] }
+    }
+    const applyTemplate = async () => {
+      const tpl = tplPreview.value
+      if (!tpl) return
+      if (!confirm(`¿Aplicar la plantilla "${tpl.name}" a ${domain.value.domain_name}?\n\n` +
+                   'Se regenera la configuración web del dominio. Si la validación falla, se restaura la anterior.')) return
+      tplApplying.value = true; tplError.value = ''
+      try {
+        await api.applyTemplate(domainId.value, tpl.id, {})
+        store.showNotification(`Plantilla "${tpl.name}" aplicada`, 'success')
+        tplSelected.value = null
+        await reloadDomain()
+      } catch (e) {
+        tplError.value = e.message || 'No se pudo aplicar la plantilla'
+      } finally { tplApplying.value = false }
+    }
+    watch(tab, (t) => { if (t === 'advanced') loadTemplates() })
+
     const saveHttpauth = async () => {
       authSaving.value = true; authError.value = ''
       try {
@@ -1742,6 +1813,7 @@ location @maintenance {
       logSearch, filteredLogLines, logLineClass, highlightLog,
       downloading, downloadSite, suspend, unsuspend, remove, goFiles,
       advNginx, advApache, advSaving, advError, saveCustomConfig,
+      templates, tplSelected, tplApplying, tplError, templateCategories, tplPreview, tplPhp, applyTemplate,
       showNginxEx, showApacheEx, nginxExamples, apacheExamples, insertExample,
       authEnabled, authUser, authPass, authSaving, authError, saveHttpauth,
       statsUrl, statsLoading, statsError, loadStats,

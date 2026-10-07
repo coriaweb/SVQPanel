@@ -162,8 +162,9 @@ async def apply_template(
     )
 
     if result["status"] != "success":
+        # apply_template ya ha revertido BD, pool y vhost: es un rechazo, no un 500
         raise HTTPException(
-            status_code=500,
+            status_code=422,
             detail=result.get("error", "Error desconocido al aplicar la plantilla")
         )
 

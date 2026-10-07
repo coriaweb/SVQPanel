@@ -19,13 +19,8 @@ from typing import Dict, Any, Optional
 
 from scripts.base import SystemManager
 from scripts.utils import (
-    get_nginx_config_path,
     get_public_html,
     get_domain_logs,
-    reload_nginx,
-    generate_nginx_config,
-    write_fastcgi_cache_zone,
-    remove_fastcgi_cache_zone,
 )
 
 logger = logging.getLogger(__name__)
@@ -583,11 +578,20 @@ class TemplateManager(SystemManager):
     ) -> Dict[str, Any]:
         """
         Aplica la plantilla al dominio:
-          1. Actualiza los campos de plantilla en el objeto domain_row (el caller hace commit)
-          2. Regenera el vhost nginx con el nginx_extra de la plantilla
-          3. Si hay php_ini_overrides, los aplica via PHPIniManager
-          4. Activa/desactiva FastCGI cache según la plantilla (a menos que enable_cache lo anule)
-          5. Reload nginx
+          1. Si hay php_ini_overrides, reescribe el pool PHP-FPM con ellos
+          2. Guarda en domain_row los campos de la plantilla (nginx_extra,
+             docroot_subdir, php_ini_overrides, caché) y hace commit
+          3. Regenera el vhost con el MISMO camino que el resto del panel
+             (_regenerate_domain_vhost → DomainManager.regenerate_vhost)
+          4. Si la validación falla, revierte TODO (BD, pool y vhost)
+
+        Antes generaba el vhost por su cuenta con generate_nginx_config: en
+        servidores Apache+Nginx escribía un vhost de PHP directo con
+        fastcgi_cache sobre una zona declarada como proxy_cache → nginx -t
+        fallaba ("shared memory zone … already declared for a different use")
+        y, como no revertía, dejaba el vhost roto en disco (obradormarilo.com,
+        oct 2026). Además perdía ajustes del dominio que solo conoce
+        regenerate_vhost (directivas propias, xmlrpc, wp-login, HTTP/3, httpauth…).
 
         Returns: dict con resultado
         """
@@ -601,7 +605,6 @@ class TemplateManager(SystemManager):
 
         domain_name = domain_row.domain_name
         php_version = domain_row.php_version or "8.2"
-        ssl_enabled = domain_row.ssl_enabled or False
 
         # ── Determinar estado de cache ────────────────────────────────────
         use_cache = template_row.fastcgi_cache_default
@@ -612,8 +615,7 @@ class TemplateManager(SystemManager):
         # Todos los dominios tienen pool dedicado (con bloque de seguridad).
         # Si el template trae overrides, reescribimos el pool con ellos; si no,
         # el pool existente se mantiene. El socket SIEMPRE es el dedicado.
-        from scripts.php_ini_manager import write_pool, pool_socket_path, has_pool
-        php_socket_override = pool_socket_path(domain_name) if has_pool(domain_name) else None
+        from scripts.php_ini_manager import write_pool
         relax = getattr(domain_row, "php_hardening_relaxed", False) or False
         # Preservar el tuning FPM del dominio al reescribir el pool por la plantilla.
         _fpm_raw = getattr(domain_row, "fpm_pool_overrides", None)
@@ -621,85 +623,76 @@ class TemplateManager(SystemManager):
             fpm_tuning = json.loads(_fpm_raw) if _fpm_raw else None
         except (ValueError, TypeError):
             fpm_tuning = None
+        from sqlalchemy.orm import object_session
+        from api.models.models_user import User
+        from api.routes.domains import _regenerate_domain_vhost
+
+        db = object_session(domain_row)
+        owner = db.query(User).filter(User.id == domain_row.user_id).first() if db else None
+        if db is None or owner is None:
+            result["status"] = "failed"
+            result["error"] = "No se pudo resolver el dominio o su propietario en la BD"
+            return result
+
+        # Estado anterior, para revertir si la validación falla
+        _fields = ("applied_template_id", "applied_template_name", "template_nginx_extra",
+                   "docroot_subdir", "php_ini_overrides", "fastcgi_cache_enabled",
+                   "fastcgi_cache_ttl_minutes")
+        prev = {f: getattr(domain_row, f, None) for f in _fields}
+        pool_rewritten = False
+
+        def _write_pool_with(overrides_json):
+            overrides = json.loads(overrides_json) if overrides_json else {}
+            return write_pool(domain=domain_name, version=php_version, owner=username,
+                              overrides=overrides, relax_hardening=relax,
+                              fpm_tuning=fpm_tuning)
+
+        # ── PHP ini overrides → pool dedicado ─────────────────────────────
         if template_row.php_ini_overrides:
             try:
-                overrides = json.loads(template_row.php_ini_overrides)
-                ok, msg = write_pool(
-                    domain=domain_name,
-                    version=php_version,
-                    owner=username,
-                    overrides=overrides,
-                    relax_hardening=relax,
-                    fpm_tuning=fpm_tuning,
-                )
+                ok, msg = _write_pool_with(template_row.php_ini_overrides)
                 if ok:
-                    php_socket_override = pool_socket_path(domain_name)
+                    pool_rewritten = True
                     result["php_pool"] = True
                 else:
                     logger.warning(f"PHP pool fallido para {domain_name}: {msg}")
             except Exception as exc:
                 logger.warning(f"PHP ini overrides fallaron para {domain_name}: {exc}")
 
-        # ── FastCGI cache zone (si procede) ────────────────────────────────
-        if use_cache:
-            try:
-                write_fastcgi_cache_zone(domain_name)
-                result["cache_updated"] = True
-            except Exception as exc:
-                logger.warning(f"Error configurando cache zone para {domain_name}: {exc}")
-        else:
-            try:
-                remove_fastcgi_cache_zone(domain_name)
-            except Exception:
-                pass
-
-        # ── Regenerar nginx con template_nginx_extra ───────────────────────
-        try:
-            nginx_config_path = get_nginx_config_path(domain_name)
-            config = generate_nginx_config(
-                domain=domain_name,
-                user=username,
-                php_version=php_version,
-                ssl_enabled=ssl_enabled,
-                ipv6=domain_row.ipv6,
-                fastcgi_cache_enabled=use_cache,
-                fastcgi_cache_ttl_minutes=ttl_minutes,
-                php_socket_override=php_socket_override,
-                template_nginx_extra=template_row.nginx_extra,
-                ipv4=getattr(domain_row, 'ipv4', None),
-                force_https=getattr(domain_row, 'force_https', False) or False,
-                hsts=getattr(domain_row, 'hsts_enabled', False) or False,
-                rate_limit_enabled=getattr(domain_row, 'rate_limit_enabled', False) or False,
-                rate_limit_burst=getattr(domain_row, 'rate_limit_burst', 20) or 20,
-                docroot_subdir=getattr(template_row, 'docroot_subdir', None),
-                canonical_domain=getattr(domain_row, 'canonical_domain', 'www') or 'www',
-            )
-            with open(nginx_config_path, "w") as f:
-                f.write(config)
-            result["nginx_updated"] = True
-        except Exception as exc:
-            result["status"] = "failed"
-            result["error"]  = f"Error escribiendo nginx config: {exc}"
-            return result
-
-        # ── Reload nginx ───────────────────────────────────────────────────
-        if not reload_nginx():
-            result["status"] = "failed"
-            result["error"]  = "nginx config test falló tras aplicar plantilla"
-            return result
-
-        # ── Actualizar campos en domain_row (caller hace commit) ───────────
+        # ── Campos de la plantilla en BD (regenerate_vhost lee de aquí) ─────
         domain_row.applied_template_id   = template_row.id
         domain_row.applied_template_name = template_row.name
         domain_row.template_nginx_extra  = template_row.nginx_extra
-        # Persistir la subcarpeta del docroot (Laravel/Symfony 'public') para que
-        # toda regeneración posterior del vhost la conserve (si no, da 404).
+        # Subcarpeta del docroot (Laravel/Symfony 'public'): toda regeneración
+        # posterior del vhost la conserva (si no, da 404).
         domain_row.docroot_subdir = getattr(template_row, 'docroot_subdir', None) or None
-
         if template_row.php_ini_overrides:
             domain_row.php_ini_overrides = template_row.php_ini_overrides
-
         domain_row.fastcgi_cache_enabled     = use_cache
         domain_row.fastcgi_cache_ttl_minutes = ttl_minutes
+        db.commit()
 
-        return result
+        # ── Vhost: mismo camino que el resto del panel (respeta Apache/nginx) ─
+        try:
+            _regenerate_domain_vhost(domain_row, owner)
+            result["nginx_updated"] = True
+            result["cache_updated"] = True
+            return result
+        except Exception as exc:
+            logger.error(f"Plantilla '{template_row.name}' en {domain_name}: {exc}; revirtiendo")
+            for f, v in prev.items():
+                setattr(domain_row, f, v)
+            db.commit()
+            if pool_rewritten:
+                try:
+                    _write_pool_with(prev["php_ini_overrides"])
+                except Exception as exc2:
+                    logger.error(f"No se pudo restaurar el pool de {domain_name}: {exc2}")
+            try:
+                _regenerate_domain_vhost(domain_row, owner)
+            except Exception as exc3:
+                logger.error(f"No se pudo restaurar el vhost de {domain_name}: {exc3}")
+            result.update(status="failed", nginx_updated=False, cache_updated=False,
+                          error=f"La plantilla no se ha aplicado (configuración no válida, "
+                                f"se ha restaurado la anterior): {exc}")
+            return result
