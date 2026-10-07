@@ -1378,6 +1378,9 @@ class APIClient {
   applyPanelUpdate() {
     return this.post('/api/system/panel-update', {})
   }
+  panelUpdateStatus() {
+    return this.get('/api/system/panel-update/status')
+  }
   setPanelAutoUpdate(enabled, hour = 4) {
     return this.post(`/api/system/panel-update/auto?enabled=${enabled ? 'true' : 'false'}&hour=${hour}`, {})
   }

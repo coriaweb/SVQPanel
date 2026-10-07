@@ -660,6 +660,13 @@ async def panel_update_apply(current_user: User = Depends(require_admin)):
     return {"status": "success", **res}
 
 
+@router.get("/system/panel-update/status")
+def panel_update_status(current_user: User = Depends(require_admin)):
+    """Progreso de la actualizacion en curso (la UI lo consulta en bucle)."""
+    from scripts import panel_updater
+    return panel_updater.status()
+
+
 @router.post("/system/panel-update/auto")
 async def panel_update_auto(enabled: bool = True, hour: int = 4, current_user: User = Depends(require_admin)):
     """Activa/desactiva la auto-actualizacion diaria del panel por cron."""

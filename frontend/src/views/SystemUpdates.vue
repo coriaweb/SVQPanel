@@ -37,14 +37,15 @@
             Actualizar automáticamente cada noche (4:00)
           </label>
         </div>
-        <BaseButton v-if="panel.update_available" variant="primary"
-                    :loading="panelUpdating" @click="applyPanelUpdate">
-          <i class="bi bi-download"></i> Actualizar ahora
+        <BaseButton v-if="panel.update_available || panelUpdating" variant="primary"
+                    :loading="panelUpdating" :disabled="panelUpdating" @click="applyPanelUpdate">
+          <i class="bi bi-download"></i> {{ panelUpdating ? 'Actualizando…' : 'Actualizar ahora' }}
         </BaseButton>
       </div>
-      <p v-if="panelMsg" :style="{color: panelError ? 'var(--danger)' : 'var(--success)', fontSize:'.85rem', marginTop:'.5rem'}">
+      <p v-if="panelMsg" :style="{color: panelError ? 'var(--danger)' : (panelUpdating ? 'var(--text-muted)' : 'var(--success)'), fontSize:'.85rem', marginTop:'.5rem'}">
         {{ panelMsg }}
       </p>
+      <pre v-if="panelSteps.length && (panelUpdating || panelError)" class="su-log su-log--steps">{{ panelSteps.join('\n') }}</pre>
     </BaseCard>
 
     <!-- Componentes gestionados por el panel (los que NO vienen de apt) -->
@@ -250,7 +251,7 @@
 </template>
 
 <script>
-import { ref, onMounted } from 'vue'
+import { ref, onMounted, onUnmounted } from 'vue'
 import api from '../services/api'
 import { formatDateTime } from '../utils/datetime'
 import { RELEASE_STAGE } from '../utils/release'
@@ -317,15 +318,63 @@ export default {
       panelUpdating.value = true
       panelMsg.value = ''
       panelError.value = false
+      panelSteps.value = []
+      // Marca de la última ejecución previa, para no confundir su log con la nueva
+      let prevStarted = null
+      try { prevStarted = (await api.panelUpdateStatus()).started } catch (e) { /* endpoint aún no existe */ }
       try {
         await api.applyPanelUpdate()
-        panelMsg.value = 'Actualización lanzada. El panel se está reiniciando; recarga la página en unos segundos.'
       } catch (e) {
         panelError.value = true
         panelMsg.value = 'Error: ' + (e.message || e)
-      } finally {
         panelUpdating.value = false
+        return
       }
+      followPanelUpdate(prevStarted)
+    }
+
+    // Sigue el progreso de update.sh hasta que termina. Mientras el servicio se
+    // reinicia la API no responde: se toma como "reiniciando" y se reintenta.
+    // Al acabar recarga la página para cargar el frontend nuevo.
+    const panelSteps = ref([])
+    let panelPoll = null
+    const stopPanelPoll = () => { if (panelPoll) { clearTimeout(panelPoll); panelPoll = null } }
+    const followPanelUpdate = (prevStarted) => {
+      const t0 = Date.now()
+      let seenRunning = false
+      const tick = async () => {
+        if (Date.now() - t0 > 15 * 60 * 1000) {
+          panelUpdating.value = false
+          panelError.value = true
+          panelMsg.value = 'La actualización está tardando más de lo normal. Revisa /var/log/svqpanel-update.log.'
+          return
+        }
+        try {
+          const st = await api.panelUpdateStatus()
+          const isNewRun = st.started && st.started !== prevStarted
+          panelSteps.value = isNewRun ? (st.steps || []) : []
+          if (st.running) seenRunning = true
+          // Sin lock y (ya lo vimos correr, o hay log de una ejecución nueva, o han pasado 20s): terminó
+          const finished = !st.running && (seenRunning || isNewRun || Date.now() - t0 > 20000)
+          if (finished) {
+            panelUpdating.value = false
+            if (!isNewRun || st.failed || !st.completed) {
+              panelError.value = true
+              panelMsg.value = 'La actualización terminó con errores. Revisa los pasos de abajo.'
+              return
+            }
+            panelMsg.value = `Actualizado a la versión ${st.version}. Recargando…`
+            setTimeout(() => window.location.reload(), 1500)
+            return
+          }
+          panelMsg.value = 'Actualizando el panel… no cierres esta página.'
+        } catch (e) {
+          panelMsg.value = 'El panel se está reiniciando…'
+        }
+        panelPoll = setTimeout(tick, 2000)
+      }
+      panelMsg.value = 'Actualizando el panel… no cierres esta página.'
+      panelPoll = setTimeout(tick, 1500)
     }
     const togglePanelAuto = async (enabled) => {
       panelAutoSaving.value = true
@@ -385,6 +434,7 @@ export default {
     }
 
     onMounted(() => { loadVersions(); loadPanelUpdate(); loadComponents() })
+    onUnmounted(stopPanelPoll)
 
     const checkUpdates = async () => {
       checking.value  = true
@@ -469,7 +519,7 @@ export default {
       upgrading, upgradingPkg, upgradeLog,
       statusMsg, statusError, dpkgInterrupted, repairing,
       checkUpdates, upgradeAll, upgradePkg, repairDpkg,
-      panel, panelChecking, panelUpdating, panelAutoSaving, panelMsg, panelError,
+      panel, panelChecking, panelUpdating, panelAutoSaving, panelMsg, panelError, panelSteps,
       loadPanelUpdate, applyPanelUpdate, togglePanelAuto,
       components, compsLoading, compUpgrading, compsMsg, compsError, compLog,
       loadComponents, upgradeComponent,
@@ -541,5 +591,6 @@ export default {
 }
 .su-badge--ok   { background: var(--success-bg, #dcfce7); color: var(--success, #16a34a); }
 .su-badge--warn { background: var(--warning-bg, #fef3c7); color: var(--warning, #d97706); }
+.su-log--steps { max-height: 220px; margin-top: .5rem; }
 .su-badge--stage { background: var(--info-bg); color: var(--info); letter-spacing: .4px; }
 </style>

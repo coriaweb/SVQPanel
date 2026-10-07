@@ -14,8 +14,10 @@ La comprobación compara el VERSION local con el del remoto (origin/main) sin
 aplicar nada, así que es barata y segura de llamar desde la UI.
 """
 import os
+import re
 import subprocess
 import logging
+import time
 
 logger = logging.getLogger(__name__)
 
@@ -95,6 +97,59 @@ def check() -> dict:
 
 UPDATE_SCRIPT = os.path.join(PANEL_DIR, "update.sh")
 UPDATE_LOG = "/var/log/svqpanel-update.log"
+UPDATE_LOCK = "/var/run/svqpanel-update.lock"   # lo crea/borra update.sh
+
+_ANSI_RE = re.compile(r"\x1b\[[0-9;]*m")
+_RUN_HEADER = "=== SVQPanel Update"
+
+
+def _update_running() -> bool:
+    """True si hay un update.sh vivo (lock con PID existente)."""
+    try:
+        with open(UPDATE_LOCK) as f:
+            pid = int(f.read().strip() or 0)
+    except (FileNotFoundError, ValueError):
+        return False
+    if pid <= 0:
+        return False
+    try:
+        os.kill(pid, 0)
+        return True
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    except OSError:
+        return False
+
+
+def status() -> dict:
+    """Progreso de la última ejecución de update.sh, para que la UI la siga.
+
+    Barato (sin git): lee el lock y el final del log. `steps` son solo las
+    líneas con fecha de la ejecución en curso/última (sin la salida de npm).
+    """
+    steps = []
+    try:
+        with open(UPDATE_LOG, "rb") as f:
+            f.seek(0, os.SEEK_END)
+            f.seek(max(0, f.tell() - 65536))
+            text = f.read().decode("utf-8", "replace")
+        lines = [_ANSI_RE.sub("", l).rstrip() for l in text.splitlines()]
+        start = max((i for i, l in enumerate(lines) if _RUN_HEADER in l), default=None)
+        if start is not None:
+            steps = [l for l in lines[start:] if l.startswith("[")]
+    except FileNotFoundError:
+        pass
+    joined = "\n".join(steps)
+    return {
+        "running": _update_running(),
+        "version": local_version(),
+        "started": steps[0][1:20] if steps else None,
+        "completed": "=== Update completado" in joined,
+        "failed": "✗" in joined,
+        "steps": steps[-20:],
+    }
 
 
 def apply_update() -> dict:
@@ -108,8 +163,11 @@ def apply_update() -> dict:
     corre el cron a las 3am, de modo que el botón de la web y el cron hacen
     EXACTAMENTE lo mismo.
 
-    Como update.sh reinicia svqpanel (nos mata), lo lanzamos en background y la
-    UI vuelve a consultar /system/panel-update tras unos segundos.
+    Como update.sh reinicia svqpanel, NO puede ser hijo nuestro: el servicio usa
+    KillMode=control-group y el restart mataba también a update.sh a medias (el
+    log se cortaba en "Reiniciando servicio svqpanel..."). Lo lanzamos como
+    unidad transitoria con systemd-run, en su propio cgroup, y la UI sigue el
+    progreso con status().
     """
     if not os.path.exists(UPDATE_SCRIPT):
         # Fallback defensivo (instalaciones antiguas sin update.sh): pull mínimo.
@@ -120,11 +178,19 @@ def apply_update() -> dict:
         return {"ok": rc == 0, "version": local_version(),
                 "log": out[-2000:], "fallback": True}
 
-    # Lanzar update.sh en background, logueando a su fichero habitual.
-    subprocess.Popen(
-        ["bash", "-c",
-         f"sleep 1; bash {UPDATE_SCRIPT} >> {UPDATE_LOG} 2>&1"],
-        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    # Lanzar update.sh fuera del cgroup del panel, logueando a su fichero habitual.
+    shell_cmd = f"bash {UPDATE_SCRIPT} >> {UPDATE_LOG} 2>&1"
+    rc, out = _run(
+        ["systemd-run", f"--unit=svqpanel-update-{int(time.time())}",
+         "--collect", "--quiet",
+         f"--setenv=PATH={os.environ.get('PATH', '/usr/sbin:/usr/bin:/sbin:/bin')}",
+         "bash", "-c", shell_cmd], timeout=30)
+    if rc != 0:
+        # Sin systemd-run (no debería pasar en Debian): lanzamiento clásico.
+        logger.warning("systemd-run falló (%s): %s — lanzando como hijo", rc, out)
+        subprocess.Popen(["bash", "-c", f"sleep 1; {shell_cmd}"],
+                         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                         start_new_session=True)
 
     return {"ok": True, "version": local_version(),
             "log": f"Actualización lanzada vía update.sh "
