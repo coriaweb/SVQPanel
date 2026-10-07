@@ -83,10 +83,9 @@
               </td>
               <td class="ta-end">
                 <div class="t-actions">
-                  <router-link class="icon-act" :to="`/domains/${domain.id}`" title="Ver detalle"><i class="bi bi-box-arrow-in-right"></i></router-link>
+                  <router-link class="icon-act" :to="`/domains/${domain.id}`" title="Ver y configurar el dominio"><i class="bi bi-box-arrow-in-right"></i></router-link>
                   <button v-if="!domain.mail_dns_only" class="icon-act" @click="openSSLManager(domain)" title="SSL"><i class="bi bi-lock"></i></button>
                   <button v-if="!domain.mail_dns_only" class="icon-act" @click="openFileManager(domain)" title="Archivos"><i class="bi bi-folder2-open"></i></button>
-                  <button class="icon-act" @click="openEditForm(domain)" title="Editar"><i class="bi bi-pencil"></i></button>
                   <button v-if="!domain.is_suspended" class="icon-act is-warn" @click="suspendDomain(domain)" title="Suspender"><i class="bi bi-pause-circle"></i></button>
                   <button v-else class="icon-act is-ok" @click="unsuspendDomain(domain)" title="Reactivar"><i class="bi bi-play-circle"></i></button>
                   <button class="icon-act is-danger" @click="deleteDomainConfirm(domain.id)" title="Eliminar"><i class="bi bi-trash"></i></button>
@@ -99,6 +98,7 @@
     </BaseCard>
 
     <!-- Modal: crear/editar dominio -->
+    <!-- Solo alta: los ajustes de un dominio existente están en su ficha (/domains/:id) -->
     <Modal :isOpen="showDomainForm" :title="editingDomain ? 'Editar Dominio' : 'Crear Dominio'" @close="closeDomainForm">
       <DomainForm
         :domain="editingDomain"

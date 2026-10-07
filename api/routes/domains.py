@@ -162,6 +162,13 @@ async def create_domain(
         # como un dominio normal, pero sin tocar el webserver.
         mail_dns_only = bool(getattr(domain, "mail_dns_only", False))
 
+        # IPv6 elegida en el alta: validar ANTES de crear nada (rango del
+        # servidor, no la principal, libre). Se pone en la interfaz tras el alta.
+        new_ipv6 = getattr(domain, "ipv6", None) or None
+        if new_ipv6 and not mail_dns_only:
+            from api.routes.ipv6 import _validate_assignable
+            _validate_assignable(db, Domain(id=-1, domain_name=domain.domain_name), new_ipv6)
+
         # Create domain in system (Nginx, directories, etc) — salvo solo-correo/DNS
         if not mail_dns_only:
             domain_manager.create_domain(
@@ -206,6 +213,22 @@ async def create_domain(
         db.add(db_domain)
         db.commit()
         db.refresh(db_domain)
+
+        # IPv6 del alta: ponerla en la interfaz (antes solo se guardaba en BD y se
+        # publicaba el AAAA, pero la IP no existía en el servidor → el dominio no
+        # respondía por IPv6). Mismo camino que al editar.
+        if db_domain.ipv6 and not mail_dns_only:
+            try:
+                from scripts.ipv6_manager import IPv6Manager as _IPv6Mgr
+                from api.models.models_settings import Settings as _Settings
+                _s = db.query(_Settings).filter(_Settings.id == 1).first()
+                _iface = (_s.network_interface or "eth0") if _s else "eth0"
+                _prefix = _s.ipv6_range.split("/")[1] if _s and _s.ipv6_range and "/" in _s.ipv6_range else "64"
+                _IPv6Mgr().assign_ipv6(_iface, f"{db_domain.ipv6}/{_prefix}")
+            except Exception as _e:
+                import logging as _logging
+                _logging.getLogger(__name__).warning(
+                    f"{db_domain.domain_name}: no se pudo poner la IPv6 {db_domain.ipv6} en la interfaz: {_e}")
 
         # Crear zona DNS automáticamente si se solicitó
         if domain.dns_enabled:
@@ -580,6 +603,11 @@ async def update_domain(
         if 'ipv6' in domain_update.model_fields_set:
             new_ipv6 = domain_update.ipv6 or None
             if new_ipv6 != db_domain.ipv6:
+                if new_ipv6:
+                    # Mismo control que POST /domains/{id}/ipv6: del rango del
+                    # servidor, no la principal y libre (se pone en la interfaz).
+                    from api.routes.ipv6 import _validate_assignable
+                    _validate_assignable(db, db_domain, new_ipv6)
                 db_domain.ipv6 = new_ipv6
                 ipv6_changed = True
 

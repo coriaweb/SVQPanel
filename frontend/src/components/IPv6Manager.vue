@@ -2,7 +2,7 @@
   <div>
 
     <!-- Ya tiene IPv6 asignada -->
-    <template v-if="currentIPv6">
+    <template v-if="currentIPv6 && !changing">
       <div class="alert alert-success d-flex align-items-start gap-3">
         <i class="bi bi-shield-check fs-4 text-success mt-1"></i>
         <div class="flex-fill">
@@ -12,9 +12,14 @@
           </div>
         </div>
       </div>
-      <button class="btn btn-outline-danger btn-sm" @click="confirmRemove = true" :disabled="loading">
-        <i class="bi bi-x-circle me-1"></i> Quitar IPv6
-      </button>
+      <div class="d-flex gap-2 flex-wrap">
+        <button class="btn btn-outline-primary btn-sm" @click="startChange" :disabled="loading">
+          <i class="bi bi-arrow-left-right me-1"></i> Cambiar IPv6
+        </button>
+        <button class="btn btn-outline-danger btn-sm" @click="confirmRemove = true" :disabled="loading">
+          <i class="bi bi-x-circle me-1"></i> Quitar IPv6
+        </button>
+      </div>
 
       <div v-if="confirmRemove" class="alert alert-warning mt-3">
         <p class="mb-2">¿Quitar la dirección IPv6 de este dominio?</p>
@@ -28,8 +33,13 @@
       </div>
     </template>
 
-    <!-- Sin IPv6 -->
+    <!-- Sin IPv6 (o cambiándola) -->
     <template v-else>
+      <div v-if="changing" class="alert alert-info small py-2">
+        <i class="bi bi-info-circle me-1"></i>
+        La nueva IPv6 sustituirá a <code>{{ currentIPv6 }}</code>: se actualizan la web y los registros AAAA de su DNS,
+        y la anterior se quita del servidor. Los visitantes con la IPv6 antigua en caché de DNS pueden tardar un rato en notarlo.
+      </div>
 
       <!-- IPv6 no configurado en el panel -->
       <div v-if="ipv6NotConfigured" class="alert alert-warning">
@@ -97,9 +107,9 @@
           <button class="btn btn-primary" @click="assignIPv6" :disabled="loading || !isValidIPv6">
             <span v-if="loading" class="spinner-border spinner-border-sm me-2"></span>
             <i v-else class="bi bi-lightning me-1"></i>
-            Asignar IPv6
+            {{ changing ? 'Cambiar a esta IPv6' : 'Asignar IPv6' }}
           </button>
-          <button class="btn btn-outline-secondary" @click="reset">Cancelar</button>
+          <button class="btn btn-outline-secondary" @click="cancel">Cancelar</button>
         </div>
       </div>
     </template>
@@ -108,7 +118,7 @@
 </template>
 
 <script>
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, onMounted, watch } from 'vue'
 import { useMainStore } from '../stores/useMainStore'
 import api from '../services/api'
 
@@ -189,16 +199,31 @@ export default {
       }
     }
 
+    // Cambio de IPv6: mismo formulario que la asignación; el backend quita la
+    // anterior del servidor una vez puesta la nueva.
+    const changing = ref(false)
+    const startChange = async () => {
+      changing.value = true
+      generatedIP.value = false
+      await generateIP()
+    }
+    const cancel = () => {
+      reset()
+      changing.value = false
+    }
+    watch(() => props.domain.ipv6, (v) => { currentIPv6.value = v || null })
+
     const assignIPv6 = async () => {
+      if (changing.value && !confirm(`¿Cambiar la IPv6 de ${props.domain.domain_name}?\n\n${currentIPv6.value} → ${composedIPv6.value}`)) return
       loading.value = true
       try {
         await api.assignIPv6(props.domain.id, {
           ipv6_address: composedIPv6.value,
           network_interface: form.value.network_interface
         })
-        currentIPv6.value = composedIPv6.value
-        store.showNotification('IPv6 asignada correctamente', 'success')
+        store.showNotification(changing.value ? 'IPv6 cambiada correctamente' : 'IPv6 asignada correctamente', 'success')
         generatedIP.value = false
+        changing.value = false
         emit('reload')
       } catch (e) {
         store.showNotification('Error al asignar IPv6: ' + e.message, 'danger')
@@ -241,7 +266,8 @@ export default {
       currentIPv6, generatedIP, ipv6Range, usedCount,
       fixedGroups, groups, form,
       composedIPv6, isValidIPv6,
-      generateIP, assignIPv6, removeIPv6, reset
+      generateIP, assignIPv6, removeIPv6, reset,
+      changing, startChange, cancel,
     }
   }
 }

@@ -30,6 +30,57 @@ def _get_interface(db: Session, override: str = None) -> str:
     return "eth0"
 
 
+def _owned_domain(domain_id: int, db: Session, user: User) -> Domain:
+    """Dominio accesible por el usuario (mismo criterio que /domains: 404 si no).
+
+    Antes estos endpoints buscaban el dominio solo por ID: cualquier cliente con
+    sesión podía asignar o quitar la IPv6 de un dominio ajeno (IDOR).
+    """
+    from api.routes.domains import _get_owned_domain
+    return _get_owned_domain(domain_id, db, user)
+
+
+def _is_admin(user: User) -> bool:
+    return bool(getattr(user, "is_admin", False) or getattr(user, "role", "") == "admin")
+
+
+def _validate_assignable(db: Session, domain: Domain, ipv6: str) -> None:
+    """La IPv6 debe ser del rango del servidor y estar libre.
+
+    Sin esto se podía poner en la interfaz CUALQUIER IPv6 (la del gateway, la
+    principal del servidor, la de otro dominio…) y dejar la red sin IPv6.
+    """
+    import ipaddress
+    from api.models.models_settings import Settings
+    addr = ipaddress.IPv6Address(ipv6)
+    s = db.query(Settings).filter(Settings.id == 1).first()
+    rng = (getattr(s, "ipv6_range", None) or "").strip() if s else ""
+    if not rng:
+        raise HTTPException(status_code=409,
+            detail="El servidor no tiene un rango IPv6 configurado (Configuración → IPv6).")
+    try:
+        net = ipaddress.IPv6Network(rng, strict=False)
+    except ValueError:
+        raise HTTPException(status_code=409, detail=f"Rango IPv6 del servidor no válido: {rng}")
+    if addr not in net or addr == net.network_address:
+        raise HTTPException(status_code=400,
+            detail=f"La IPv6 debe pertenecer al rango del servidor ({net}).")
+    try:
+        from api.routes.dns import _get_server_ipv6
+        main = _get_server_ipv6(db)
+        if main and ipaddress.IPv6Address(main) == addr:
+            raise HTTPException(status_code=400,
+                detail="Esa es la IPv6 principal del servidor: elige otra del rango.")
+    except HTTPException:
+        raise
+    except Exception:
+        pass
+    other = db.query(Domain).filter(Domain.ipv6 == str(addr), Domain.id != domain.id).first()
+    if other:
+        raise HTTPException(status_code=409,
+            detail=f"Esa IPv6 ya está asignada a {other.domain_name}.")
+
+
 @router.post("/domains/{domain_id}/ipv6", response_model=IPv6Response, status_code=status.HTTP_201_CREATED)
 async def assign_ipv6(
     domain_id: int,
@@ -37,14 +88,18 @@ async def assign_ipv6(
     current_user: User = Depends(require_auth),
     db: Session = Depends(get_db)
 ):
-    """Asignar una dirección IPv6 a un dominio"""
+    """Asignar (o cambiar) la dirección IPv6 de un dominio.
+
+    Si el dominio ya tenía una, la anterior se quita del servidor DESPUÉS de
+    poner la nueva (así nunca se queda sin IPv6 a medias)."""
     ipv6_manager = IPv6Manager()
 
-    domain = db.query(Domain).filter(Domain.id == domain_id).first()
-    if not domain:
-        raise HTTPException(status_code=404, detail="Dominio no encontrado")
+    domain = _owned_domain(domain_id, db, current_user)
+    _validate_assignable(db, domain, data.ipv6_address)
+    previous = domain.ipv6 if domain.ipv6 and domain.ipv6 != data.ipv6_address else None
 
-    interface = _get_interface(db, data.network_interface)
+    # La interfaz solo la elige el admin (un cliente podría apuntar a otra).
+    interface = _get_interface(db, data.network_interface if _is_admin(current_user) else None)
 
     # Obtener usuario propietario del dominio
     owner = db.query(UserModel).filter(UserModel.id == domain.user_id).first()
@@ -93,6 +148,15 @@ async def assign_ipv6(
         logging.getLogger(__name__).warning(
             f"IPv6 asignada pero no se pudo sincronizar AAAA en DNS: {e}")
 
+    # 5. Cambio de IPv6: quitar la anterior del servidor (ya no la usa nadie)
+    if previous:
+        try:
+            ipv6_manager.remove_ipv6(interface, previous)
+        except Exception as e:
+            import logging
+            logging.getLogger(__name__).warning(
+                f"No se pudo quitar la IPv6 anterior {previous} del sistema: {e}")
+
     return IPv6Response(
         domain_id=domain.id,
         ipv6_address=domain.ipv6,
@@ -108,9 +172,7 @@ async def get_ipv6(
     db: Session = Depends(get_db)
 ):
     """Obtener dirección IPv6 de un dominio"""
-    domain = db.query(Domain).filter(Domain.id == domain_id).first()
-    if not domain:
-        raise HTTPException(status_code=404, detail="Dominio no encontrado")
+    domain = _owned_domain(domain_id, db, current_user)
 
     if not domain.ipv6:
         raise HTTPException(status_code=404, detail="El dominio no tiene IPv6 asignado")
@@ -133,9 +195,7 @@ async def delete_ipv6(
     """Remover dirección IPv6 de un dominio"""
     ipv6_manager = IPv6Manager()
 
-    domain = db.query(Domain).filter(Domain.id == domain_id).first()
-    if not domain:
-        raise HTTPException(status_code=404, detail="Dominio no encontrado")
+    domain = _owned_domain(domain_id, db, current_user)
 
     owner = db.query(UserModel).filter(UserModel.id == domain.user_id).first()
     interface = _get_interface(db)
