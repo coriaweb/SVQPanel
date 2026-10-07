@@ -641,14 +641,14 @@ async def read_domain_log(
 # Auto-actualizacion del PANEL (git pull + build + restart)
 # 
 @router.get("/system/panel-update")
-async def panel_update_check(current_user: User = Depends(require_admin)):
+def panel_update_check(current_user: User = Depends(require_admin)):
     """Comprueba si hay una version nueva del panel (sin aplicar nada)."""
     from scripts import panel_updater
     return panel_updater.check()
 
 
 @router.post("/system/panel-update")
-async def panel_update_apply(current_user: User = Depends(require_admin)):
+def panel_update_apply(current_user: User = Depends(require_admin)):
     """Aplica la actualizacion del panel: git pull + deps + build + restart."""
     from scripts import panel_updater
     info = panel_updater.check()
@@ -685,18 +685,20 @@ async def panel_update_auto(enabled: bool = True, hour: int = 4, current_user: U
 # la pestaña de Actualizaciones (apt). Ver scripts/component_updater.py.
 # ─────────────────────────────────────────────────────────────────────────────
 @router.get("/system/components")
-async def system_components(current_user: User = Depends(require_admin)):
+def system_components(current_user: User = Depends(require_admin)):
     """Versión instalada vs. disponible de los componentes gestionados."""
     from scripts import component_updater
     return component_updater.check_all()
 
 
 @router.post("/system/components/{key}/upgrade")
-async def system_component_upgrade(key: str, current_user: User = Depends(require_admin)):
+def system_component_upgrade(key: str, current_user: User = Depends(require_admin)):
     """Actualiza un componente gestionado (Roundcube, ttyd…).
 
     Puede tardar (descarga + migración), así que el cliente debe usar un
     timeout generoso. El propio actualizador revierte si algo sale mal.
+    `def` (no async): FastAPI lo corre en un hilo; con async bloqueaba el
+    único worker y el panel entero dejaba de responder durante la actualización.
     """
     from scripts import component_updater
     res = component_updater.upgrade(key)
