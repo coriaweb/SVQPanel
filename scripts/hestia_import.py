@@ -986,6 +986,13 @@ def import_web(backup: "HestiaBackup", web: Dict, owner, db, report: ImportRepor
         # (Mismo estado que un dominio creado por el panel normalmente.)
         subprocess.run(["chgrp", "www-data", web_root], capture_output=True)
         subprocess.run(["chmod", "750", web_root], capture_output=True)
+        # Igual con logs/: el chown -R lo dejaba usuario:usuario y los workers de
+        # nginx (www-data) no podían reabrir los logs al rotar (emerg cada noche).
+        from scripts.utils import get_domain_logs
+        logs_dir = get_domain_logs(owner.username, domain_name)
+        if os.path.isdir(logs_dir):
+            subprocess.run(["chgrp", "www-data", logs_dir], capture_output=True)
+            subprocess.run(["chmod", "750", logs_dir], capture_output=True)
 
     # 3) Persistir el Domain en la BD del panel
     ipv4 = None

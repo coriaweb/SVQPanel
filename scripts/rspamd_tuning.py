@@ -70,6 +70,13 @@ DEFAULT_ACTIONS = {
     # OJO: un rechazo es definitivo y no se recupera, a diferencia de Junk.
     "reject": 6.0,
 }
+# Nombre de la acción en actions.conf. El panel usa "add header" (como lo
+# devuelve Rspamd en JSON), pero el actions.conf de fábrica usa `add_header`:
+# escribir "add header" dejaba las DOS claves en la config (la nuestra ganaba)
+# y Rspamd avisaba en cada arranque "invalid actions thresholds order:
+# add_header (6) must have lower score than reject (6)".
+_FILE_KEY = {"add header": "add_header"}
+
 # Límites de cordura para los umbrales (evitar que el admin se dispare en el pie).
 ACTION_BOUNDS = {
     "greylist":   (1.0, 30.0),
@@ -269,7 +276,10 @@ def get_actions() -> dict:
             with open(ACTIONS_FILE) as f:
                 txt = f.read()
             for key in vals:
-                m = re.search(rf'"{re.escape(key)}"\s*=\s*([\-\d.]+)', txt)
+                # Acepta la forma del fichero (add_header) y la antigua ("add header")
+                names = {key, _FILE_KEY.get(key, key)}
+                alt = "|".join(re.escape(n) for n in names)
+                m = re.search(rf'"?(?:{alt})"?\s*=\s*([\-\d.]+)', txt)
                 if m:
                     vals[key] = float(m.group(1))
         except Exception as e:
@@ -341,8 +351,19 @@ def _build_actions(actions: dict) -> str:
     lines = ["# SVQPanel — umbrales de acción antispam (admin). NO editar a mano."]
     for key in ("greylist", "add header", "reject"):
         if key in actions:
-            lines.append(f'"{key}" = {float(actions[key]):.2f};')
+            lines.append(f'"{_FILE_KEY.get(key, key)}" = {float(actions[key]):.2f};')
     return "\n".join(lines) + "\n"
+
+
+def normalize_actions_file() -> dict:
+    """Reescribe actions.conf con `add_header` si aún usa `"add header"`,
+    conservando los valores del admin. Idempotente (update 0162)."""
+    txt = _read(ACTIONS_FILE)
+    if txt is None or '"add header"' not in txt:
+        return {"success": True, "skipped": True}
+    res = apply(None, get_actions())
+    res["skipped"] = False
+    return res
 
 
 def apply(weight_overrides: dict | None, actions: dict | None) -> dict:

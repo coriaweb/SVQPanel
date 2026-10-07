@@ -37,6 +37,28 @@ def test_build_actions_formato():
     # actions{}) y que install.sh replica en su heredoc.
     out = rt._build_actions(dict(rt.DEFAULT_ACTIONS))
     assert '"greylist" = 3.00;' in out
-    assert '"add header" = 4.00;' in out
+    # add_header (como el actions.conf de fábrica), no "add header": con la
+    # forma con espacio Rspamd veía las dos claves y avisaba en cada arranque.
+    assert '"add_header" = 4.00;' in out
+    assert '"add header"' not in out
     assert '"reject" = 6.00;' in out
     assert "actions {" not in out
+
+
+def test_get_actions_lee_ambas_formas(tmp_path, monkeypatch):
+    for content in ('"greylist" = 2.00;\n"add header" = 5.50;\n"reject" = 9.00;\n',
+                    '"greylist" = 2.00;\n"add_header" = 5.50;\n"reject" = 9.00;\n',
+                    'greylist = 2;\nadd_header = 5.5;\nreject = 9;\n'):
+        f = tmp_path / "actions.conf"
+        f.write_text(content)
+        monkeypatch.setattr(rt, "ACTIONS_FILE", str(f))
+        assert rt.get_actions() == {"greylist": 2.0, "add header": 5.5, "reject": 9.0}
+
+
+def test_install_sh_usa_add_header():
+    # install.sh replica _build_actions en un heredoc: deben coincidir.
+    root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    with open(os.path.join(root, "install.sh"), encoding="utf-8") as fh:
+        txt = fh.read()
+    assert '"add_header" = 4.00;' in txt
+    assert '"add header" = 4.00;' not in txt

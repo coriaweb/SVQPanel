@@ -195,7 +195,8 @@ están implementadas; las secciones de arriba documentan las que tienen reglas
 propias.
 
 - Doble BD: PostgreSQL (panel) + MariaDB (clientes: `models_client_db.py`,
-  `routes/databases.py`, sección MariaDB 11.4 LTS opcional en `install.sh`).
+  `routes/databases.py`, sección MariaDB opcional en `install.sh`: paquetes de
+  Debian, 11.8 LTS en trixie; NO usar el repo de mariadb.org, ver `updates/0161`).
 
 ## 🔧 Tecnología Stack
 

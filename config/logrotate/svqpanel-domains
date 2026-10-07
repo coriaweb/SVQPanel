@@ -1,0 +1,31 @@
+# SVQPanel — rotación de los logs web de cada dominio. NO editar a mano:
+# lo instalan install.sh y updates/0163 desde config/logrotate/svqpanel-domains.
+#
+# Antes NO se rotaban nunca (había dominios con 5 GB de logs).
+#
+# copytruncate: el fichero conserva su inode, así que nginx, Apache, CrowdSec y
+# fail2ban siguen escribiendo/leyendo sin reabrir nada (los workers de nginx
+# corren como www-data y no siempre pueden reabrir ficheros dentro de /home).
+#
+# weekly + rotate 10: más de un mes de historial, que es lo que suma el tráfico
+# mensual del cliente (scripts/user_stats.py lee nginx.access.log*, .gz incl.).
+# maxsize: un sitio con mucho tráfico rota antes de la semana (logrotate corre a
+# diario). delaycompress: el .1 queda sin comprimir para GoAccess (web_stats.py).
+#
+# Seguridad: logrotate se niega a rotar enlaces simbólicos y Debian trae
+# fs.protected_hardlinks=1, así que el cliente no puede apuntar el log a otro
+# fichero del sistema para que root lo trunque.
+/home/*/web/*/logs/nginx.access.log
+/home/*/web/*/logs/nginx.error.log
+/home/*/web/*/logs/apache.access.log
+/home/*/web/*/logs/apache.error.log
+{
+    weekly
+    maxsize 500M
+    rotate 10
+    missingok
+    notifempty
+    compress
+    delaycompress
+    copytruncate
+}

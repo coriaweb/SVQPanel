@@ -291,7 +291,7 @@ else
     echo -e "${YELLOW}¿Instalar MariaDB para bases de datos de clientes?${NC}"
     echo "  Los clientes podrán crear BDs MySQL/MariaDB para sus aplicaciones"
     echo "  (WordPress, Joomla, PrestaShop, Laravel, etc.)"
-    echo -e "  Se instala MariaDB ${YELLOW}11.4 LTS${NC} desde el repositorio oficial."
+    echo -e "  Se instala MariaDB ${YELLOW}11.8 LTS${NC} (paquetes de Debian)."
     printf "¿Instalar MariaDB? (s/N): "; read _MARIADB_INPUT </dev/tty
 fi
 INSTALL_MARIADB=false
@@ -1375,7 +1375,7 @@ RSPAMDKSGEOF
     cat > /etc/rspamd/local.d/actions.conf << 'RSPAMDACTEOF'
 # SVQPanel — umbrales de acción antispam (admin). NO editar a mano.
 "greylist" = 3.00;
-"add header" = 4.00;
+"add_header" = 4.00;
 "reject" = 6.00;
 RSPAMDACTEOF
 
@@ -2158,16 +2158,18 @@ SQLEOF
 echo -e "${GREEN}✓ PostgreSQL configurado${NC}\n"
 
 ###############################################################################
-# 7b. INSTALAR MARIADB 11.4 LTS (bases de datos para clientes)
+# 7b. INSTALAR MARIADB (Debian, 11.8 LTS) (bases de datos para clientes)
 ###############################################################################
 MARIADB_PANEL_PASS=""
 if [[ "$INSTALL_MARIADB" == true ]]; then
-    echo -e "${YELLOW}Instalando MariaDB 11.4 LTS (repositorio oficial)...${NC}"
+    echo -e "${YELLOW}Instalando MariaDB (paquetes de Debian, 11.8 LTS en trixie)...${NC}"
 
-    # ── Repositorio oficial de MariaDB ────────────────────────────────────────
-    curl -LsS https://r.mariadb.com/downloads/mariadb_repo_setup \
-        | bash -s -- --mariadb-server-version="mariadb-11.4" > /dev/null 2>&1
-    apt-get update -qq
+    # ── Paquetes de Debian, SIN el repo de mariadb.org ────────────────────────
+    # Antes se usaba mariadb_repo_setup (11.4). En trixie no publica servidor:
+    # solo añadía MaxScale + un pin de prioridad 1000 para dlm.mariadb.com, y
+    # apt acababa instalando el 11.8 de Debian igualmente. Ese pin es una mina:
+    # en cuanto el repo ofrezca un 11.4 para trixie, apt lo preferiría al 11.8
+    # (bajada de versión + desinstalar mariadb-server). Ver updates/0161.
     apt-get install -y mariadb-server mariadb-client
 
     systemctl enable mariadb
@@ -2178,7 +2180,7 @@ if [[ "$INSTALL_MARIADB" == true ]]; then
         echo -e "${RED}Error: binario cliente mariadb no encontrado tras instalar mariadb-client${NC}"
         exit 1
     fi
-    echo -e "  ${GREEN}✓ MariaDB 11.4 instalado${NC}"
+    echo -e "  ${GREEN}✓ MariaDB $(mariadb -N -e 'SELECT VERSION()' 2>/dev/null | cut -d- -f1) instalado${NC}"
 
     # ── Generar contraseña del usuario admin del panel ────────────────────────
     # root NO usa contraseña: conecta vía unix_socket (default Debian/MariaDB),
@@ -3288,6 +3290,11 @@ cat > /etc/logrotate.d/svqpanel << 'LRTEOF'
 }
 LRTEOF
 
+# logrotate de los logs web de cada dominio (/home/*/web/*/logs/*.log): sin esto
+# no se rotaban nunca. Misma fuente que updates/0163.
+install -m 0644 /opt/svqpanel/config/logrotate/svqpanel-domains \
+    /etc/logrotate.d/svqpanel-domains
+
 systemctl enable fail2ban >/dev/null 2>&1 || true
 systemctl restart fail2ban >/dev/null 2>&1 || systemctl start fail2ban
 
@@ -4296,7 +4303,7 @@ echo "  Webserver:    $WEBSERVER"
 echo "  PHP versions: ${PHP_ARRAY[*]}"
 echo "  Correo:       $( [[ "$INSTALL_MAIL" == true ]] && echo 'Postfix + Dovecot + Rspamd' || echo 'No instalado' )"
 echo "  Roundcube:    $( [[ "$INSTALL_ROUNDCUBE" == true ]] && echo 'Instalado — /webmail' || echo 'No instalado' )"
-echo "  MariaDB:      $( [[ "$INSTALL_MARIADB" == true ]] && echo 'MariaDB 11.4 LTS (bases de datos de clientes)' || echo 'No instalado' )"
+echo "  MariaDB:      $( [[ "$INSTALL_MARIADB" == true ]] && echo 'MariaDB 11.8 LTS (bases de datos de clientes)' || echo 'No instalado' )"
 echo "  Seguridad:    nftables (table inet svqpanel) + fail2ban$( [[ "$INSTALL_CROWDSEC" == true ]] && echo ' + CrowdSec' )"
 echo "  Directorio:   /opt/svqpanel"
 echo "  Base de datos panel: panel_db (PostgreSQL)"

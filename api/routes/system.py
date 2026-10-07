@@ -309,7 +309,11 @@ def run_system_upgrade(
         dpkg_opts = ["-o", "Dpkg::Options::=--force-confdef",
                      "-o", "Dpkg::Options::=--force-confold"]
         if package:
-            cmd = [apt_get_path, "install", "--only-upgrade", "-y", *dpkg_opts, package]
+            # --no-remove: si actualizar este paquete obliga a DESINSTALAR otros,
+            # apt aborta. Visto en producción: actualizar mysql-common desde un
+            # repo viejo de MariaDB 11.4 quería quitar mariadb-server entero.
+            cmd = [apt_get_path, "install", "--only-upgrade", "--no-remove", "-y",
+                   *dpkg_opts, package]
         else:
             cmd = [apt_get_path, "upgrade", "-y", *dpkg_opts]
         if not is_root:
@@ -322,7 +326,12 @@ def run_system_upgrade(
         # Detectar el caso "dpkg interrumpido": apt no puede continuar hasta que
         # se ejecute 'dpkg --configure -a'. La UI ofrece un botón de reparar.
         dpkg_interrupted = "dpkg was interrupted" in stderr or "dpkg --configure -a" in stderr
+        # apt se negó por seguridad (--no-remove / sin --allow-downgrades): no se tocó nada
+        blocked_removal = "remove is disabled" in stderr
+        blocked_downgrade = "without --allow-downgrades" in stderr
         return {
+            "blocked_removal": blocked_removal,
+            "blocked_downgrade": blocked_downgrade,
             "success":   result.returncode == 0,
             "package":   package or "all",
             "stdout":    result.stdout[-4000:] if result.stdout else "",

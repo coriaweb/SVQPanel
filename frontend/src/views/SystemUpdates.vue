@@ -482,6 +482,11 @@ export default {
         } else if (data.dpkg_interrupted) {
           // Caso recuperable: ofrecer reparación en vez de error en crudo
           dpkgInterrupted.value = true
+        } else if (data.blocked_removal || data.blocked_downgrade) {
+          statusMsg.value = 'No se ha actualizado: hacerlo obligaba a ' +
+            (data.blocked_removal ? 'DESINSTALAR otros paquetes' : 'bajar de versión otros paquetes') +
+            '. No se ha tocado nada. Suele deberse a un repositorio desfasado; revísalo antes de forzarlo.'
+          statusError.value = true
         } else {
           statusMsg.value   = 'El proceso terminó con errores. Revisa la salida.'
           statusError.value = true

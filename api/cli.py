@@ -1729,6 +1729,63 @@ def cmd_ensure_antispam_defaults() -> int:
     return 0
 
 
+def cmd_normalize_antispam_actions() -> int:
+    """Reescribe local.d/actions.conf con `add_header` (en vez de "add header")
+    conservando los umbrales del admin. Quita el aviso de Rspamd "invalid actions
+    thresholds order" en cada arranque. Idempotente."""
+    try:
+        from scripts import rspamd_tuning
+        res = rspamd_tuning.normalize_actions_file()
+    except Exception as e:
+        logger.error(f"normalize_antispam_actions: {e}")
+        return 0
+    if res.get("skipped"):
+        logger.info("normalize_antispam_actions: nada que cambiar")
+    elif res.get("success"):
+        logger.info(f"normalize_antispam_actions: reescrito con {res.get('actions')}")
+    else:
+        logger.warning(f"normalize_antispam_actions: {res.get('error')}")
+    return 0
+
+
+def cmd_fix_domain_logs_perms() -> int:
+    """Devuelve la carpeta logs/ de cada dominio a usuario:www-data 750, como la
+    crea el panel. El importador de Hestia la dejaba usuario:usuario (su chown -R)
+    y los workers de nginx (www-data) no podían reabrir los logs al rotar: ~620
+    `[emerg] open() ... Permission denied` cada noche. Idempotente."""
+    import os
+    import grp
+    from scripts.utils import get_domain_logs
+    try:
+        www_gid = grp.getgrnam("www-data").gr_gid
+    except KeyError:
+        logger.error("fix_domain_logs_perms: no existe el grupo www-data")
+        return 0
+    db = SessionLocal()
+    try:
+        fixed = ok = 0
+        for d in db.query(Domain).all():
+            owner = db.query(User).filter(User.id == d.user_id).first()
+            if not owner:
+                continue
+            path = get_domain_logs(owner.username, d.domain_name)
+            try:
+                st = os.stat(path)
+            except FileNotFoundError:
+                continue
+            if st.st_gid == www_gid and (st.st_mode & 0o777) == 0o750:
+                ok += 1
+                continue
+            os.chown(path, st.st_uid, www_gid)
+            os.chmod(path, 0o750)
+            fixed += 1
+            logger.info(f"  {d.domain_name}: logs/ → grupo www-data, 750")
+        logger.info(f"fix_domain_logs_perms: {fixed} corregidas, {ok} ya estaban bien")
+        return 0
+    finally:
+        db.close()
+
+
 def cmd_setup_spam_to_junk() -> int:
     """Instala el Sieve global que mueve el spam (X-Spam: Yes de Rspamd) a la
     carpeta Junk. Respeta el estado guardado en Settings.spam_to_junk_enabled
@@ -2473,6 +2530,10 @@ def main():
         help="Instala el Sieve global que mueve el spam marcado a la carpeta Junk")
     sub.add_parser("ensure_antispam_defaults",
         help="Aplica los umbrales antispam por defecto del panel (3/4/10) si el admin no los personalizó")
+    sub.add_parser("normalize_antispam_actions",
+        help="Reescribe actions.conf de Rspamd con add_header conservando los umbrales")
+    sub.add_parser("fix_domain_logs_perms",
+        help="Devuelve logs/ de cada dominio a usuario:www-data 750")
     sub.add_parser("secure_rspamd_redis",
         help="Protege el Redis global (backend de Rspamd) con contraseña (requirepass)")
     sub.add_parser("setup_auto_updates",
@@ -2637,6 +2698,10 @@ def main():
         sys.exit(cmd_setup_spam_to_junk())
     if args.cmd == "ensure_antispam_defaults":
         sys.exit(cmd_ensure_antispam_defaults())
+    if args.cmd == "normalize_antispam_actions":
+        sys.exit(cmd_normalize_antispam_actions())
+    if args.cmd == "fix_domain_logs_perms":
+        sys.exit(cmd_fix_domain_logs_perms())
     if args.cmd == "secure_rspamd_redis":
         sys.exit(cmd_secure_rspamd_redis())
     if args.cmd == "setup_auto_updates":
