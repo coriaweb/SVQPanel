@@ -12,6 +12,9 @@ ejecuta la limpieza de sistema que cada recurso necesita. Eso dejaba basura:
   - bases de datos y usuarios MariaDB huérfanos
   - crontab en /var/spool/cron/crontabs/{username} (userdel -r NO lo borra)
   - subcuentas SFTP (usuarios Linux + bind-mounts + ACLs)
+  - certificados SSL (Let's Encrypt de la web y de mail./webmail., y los propios):
+    si se quedan, certbot intenta renovarlos cada día y falla
+  - vhost de mail.{dominio} y su entrada en el SNI de Postfix/Dovecot
 
 Este módulo recoge TODA esa limpieza en un único sitio, reutilizable desde el
 endpoint DELETE /users/{id} y desde la CLI. Es **best-effort**: intenta todos
@@ -198,6 +201,14 @@ def purge_mail_domains(db: Session, mail_domains, username: str, warnings: List[
             RspamdManager().remove_domain(dname)
         except Exception:
             pass
+        # vhost de mail.{dominio} (rebuild_from_db solo quita los de dominios que
+        # siguen en la BD: el de uno borrado se quedaba activo) y sus certificados
+        try:
+            from scripts.mail_tls_manager import MailTLSManager
+            MailTLSManager()._remove_nginx_vhost(dname)
+        except Exception as e:
+            warnings.append(f"mail_vhost[{dname}]: {e}")
+        purge_certs([f"mail.{dname}", f"webmail.{dname}"], warnings)
     # Borrar filas ANTES de regenerar Rspamd para que la config global no incluya
     # los dominios eliminados. El cascade de MailDomain limpia buzones y alias.
     for md in mail_domains:
@@ -208,6 +219,12 @@ def purge_mail_domains(db: Session, mail_domains, username: str, warnings: List[
         _rebuild_rspamd(db)
     except Exception as e:
         warnings.append(f"rspamd_rebuild: {e}")
+    # SNI de Postfix/Dovecot sin los dominios borrados (seguían cargando su cert)
+    try:
+        from api.routes.mail import _rebuild_mail_tls
+        _rebuild_mail_tls(db)
+    except Exception as e:
+        warnings.append(f"mail_tls_rebuild: {e}")
 
 
 def purge_dns_zones(db: Session, domain_names, warnings: List[str]) -> None:
@@ -255,3 +272,59 @@ def purge_dns_zones(db: Session, domain_names, warnings: List[str]) -> None:
             pass
         except Exception as e:
             warnings.append(f"dns: {e}")
+    else:
+        # Con cluster puede quedar en el BIND local una copia de antes de montarlo.
+        # Solo ESA zona: delete_zone reescribe named.conf.zones entero con la BD, y
+        # con cluster el BIND local no tiene esos ficheros.
+        for dname in zone_domains:
+            try:
+                remove_local_zone(dname)
+            except Exception as e:
+                warnings.append(f"dns_local[{dname}]: {e}")
+
+
+def remove_local_zone(domain: str, conf: str = "/etc/bind/named.conf.zones", reload: bool = True) -> bool:
+    """Quita del BIND local SOLO la zona de `domain` (fichero + su bloque en
+    named.conf.zones) y recarga si cambió algo. No toca ninguna otra zona."""
+    import re
+    import subprocess
+    from scripts.dns_manager import DNSManager
+    mgr = DNSManager.__new__(DNSManager)
+    changed = False
+    zone_file = DNSManager.zone_file_path(mgr, domain)
+    if os.path.exists(zone_file):
+        os.remove(zone_file)
+        changed = True
+    if os.path.exists(conf):
+        with open(conf) as f:
+            text = f.read()
+        block = re.compile(r'zone\s+"' + re.escape(domain) + r'"\s+(?:IN\s+)?\{.*?\n\};?\s*\n?', re.S)
+        new = block.sub("", text)
+        if new != text:
+            with open(conf + ".tmp", "w") as f:
+                f.write(new)
+            os.replace(conf + ".tmp", conf)
+            changed = True
+    if changed and reload:
+        subprocess.run(["rndc", "reconfig"], capture_output=True, timeout=30)
+    return changed
+
+
+def purge_certs(names, warnings: List[str]) -> None:
+    """Borra los certificados de esos nombres: el linaje de certbot (si no,
+    certbot intenta renovarlo cada día y falla) y el certificado propio subido."""
+    import shutil as _sh
+    for name in names:
+        if os.path.isfile(f"/etc/letsencrypt/renewal/{name}.conf"):
+            try:
+                from scripts.ssl_manager import SSLManager
+                mgr = SSLManager()
+                mgr.execute_command([mgr._get_certbot_path(), "delete", "--cert-name", name,
+                                     "--non-interactive"], check=False)
+            except Exception as e:
+                warnings.append(f"cert[{name}]: {e}")
+        try:
+            from scripts import custom_ssl
+            custom_ssl.remove(name)
+        except Exception:
+            pass

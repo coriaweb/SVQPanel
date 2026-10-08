@@ -108,9 +108,14 @@ def suspend_user(user, suspend: bool, db) -> dict:
             try:
                 if suspend:
                     dmgr.suspend_domain(d.domain_name)
+                    d.is_suspended = suspend
                 else:
                     dmgr.unsuspend_domain(d.domain_name)
-                d.is_suspended = suspend
+                    d.is_suspended = suspend
+                    db.commit()
+                    # rehacer el vhost con el estado actual (la copia .active puede ser vieja)
+                    from api.routes.domains import _regenerate_from_domain
+                    _regenerate_from_domain(d, db)
                 report["domains"] += 1
             except Exception as e:
                 logger.warning(f"Dominio {d.domain_name}: {e}")

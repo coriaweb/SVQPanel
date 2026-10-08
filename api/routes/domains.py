@@ -2313,13 +2313,13 @@ async def unsuspend_domain(
 
     try:
         mgr = DomainSuspendManager()
-        result = mgr.unsuspend_domain(domain.domain_name)
-        if not result["success"]:
-            raise HTTPException(status_code=500, detail=result["message"])
+        mgr.unsuspend_domain(domain.domain_name)   # quita la página (aunque no haya copia)
         domain.is_suspended = False
         domain.is_active    = True
         db.commit()
-        return {"status": "success", "message": result["message"]}
+        # La copia .active es de cuando se suspendió: el vhost se rehace con el estado actual
+        _regenerate_from_domain(domain, db)
+        return {"status": "success", "message": f"Dominio {domain.domain_name} reactivado"}
     except HTTPException:
         raise
     except Exception as e:

@@ -120,6 +120,48 @@ def _server_block(domain: str, listen: str, ssl_lines: str = "") -> str:
     )
 
 
+SUSPENDED_MARK = "# SVQPanel — Dominio suspendido:"
+
+
+def is_suspended_config(text: str) -> bool:
+    return SUSPENDED_MARK in (text or "")
+
+
+def suspended_config(domain: str) -> str:
+    """vhost nginx que solo sirve la página de 'sitio suspendido' (503)."""
+    from scripts.ssl_paths import cert_paths
+    ssl_cert, ssl_key = cert_paths(domain)   # propio, Let's Encrypt o wildcard heredado
+    conf = f"{SUSPENDED_MARK} {domain}\n"
+    conf += _server_block(domain, "80")
+    if os.path.exists(ssl_cert):
+        ssl_lines = (
+            f"    ssl_certificate     {ssl_cert};\n"
+            f"    ssl_certificate_key {ssl_key};\n"
+            f"    http2 on;\n"
+        )
+        conf += _server_block(domain, "443 ssl", ssl_lines)
+    return conf
+
+
+def write_nginx_vhost(config_path: str, content: str, domain: str, suspended: bool) -> None:
+    """Escribe el vhost nginx del dominio respetando la suspensión: si está
+    suspendido, el vhost bueno (al día) va a .active y en su sitio queda la página
+    de suspendido. Antes cualquier regeneración (updates, SSL, cambio de PHP…)
+    pisaba la suspensión en silencio y la web volvía a servirse."""
+    if suspended:
+        Path(SUSPENDED_DIR).mkdir(parents=True, exist_ok=True)
+        page = Path(SUSPENDED_DIR) / "suspended.html"
+        if not page.exists():
+            page.write_text(_SUSPENDED_HTML)
+        with open(f"{config_path}.active", "w") as f:
+            f.write(content)
+        with open(config_path, "w") as f:
+            f.write(suspended_config(domain))
+    else:
+        with open(config_path, "w") as f:
+            f.write(content)
+
+
 class DomainSuspendManager(SystemManager):
     def __init__(self):
         super().__init__(require_root=True)
@@ -136,24 +178,11 @@ class DomainSuspendManager(SystemManager):
         active_backup = Path(SITES_AVAILABLE) / f"{domain}.active"
         enabled_link = Path(SITES_ENABLED) / domain
 
-        if available.exists() and not active_backup.exists():
+        # Guardar el vhost bueno solo si el que hay NO es ya el de suspendido
+        if available.exists() and not is_suspended_config(available.read_text(errors="replace")):
             self.execute_command(["cp", str(available), str(active_backup)], check=False)
 
-        from scripts.ssl_paths import cert_paths
-        ssl_cert, ssl_key = cert_paths(domain)   # propio o Let's Encrypt
-        has_ssl  = os.path.exists(ssl_cert)
-
-        conf = f"# SVQPanel — Dominio suspendido: {domain}\n"
-        conf += _server_block(domain, "80")
-        if has_ssl:
-            ssl_lines = (
-                f"    ssl_certificate     {ssl_cert};\n"
-                f"    ssl_certificate_key {ssl_key};\n"
-                f"    http2 on;\n"
-            )
-            conf += _server_block(domain, "443 ssl", ssl_lines)
-
-        available.write_text(conf)
+        available.write_text(suspended_config(domain))
 
         if not enabled_link.exists():
             self.execute_command(["ln", "-sf", str(available), str(enabled_link)], check=False)
@@ -162,6 +191,9 @@ class DomainSuspendManager(SystemManager):
         return {"success": True, "message": f"Dominio {domain} suspendido"}
 
     def unsuspend_domain(self, domain: str) -> dict:
+        """Vuelve a poner el vhost bueno. OJO: quien llama debe además REGENERAR el
+        vhost (domains._regenerate_from_domain) con el flag ya a False: la copia
+        .active es de cuando se suspendió y puede estar vieja (PHP, SSL…)."""
         available     = Path(SITES_AVAILABLE) / domain
         active_backup = Path(SITES_AVAILABLE) / f"{domain}.active"
         enabled_link  = Path(SITES_ENABLED) / domain

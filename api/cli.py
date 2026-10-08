@@ -2080,6 +2080,38 @@ def cmd_convert_subdomains(domains=None, dry_run: bool = False) -> int:
     return 0
 
 
+def cmd_reapply_suspensions(dry_run: bool = False) -> int:
+    """Vuelve a poner la página de 'suspendido' a los dominios suspendidos en la BD
+    cuyo vhost sirve la web normal (una regeneración antigua pisó la suspensión).
+    --dry-run: solo los lista."""
+    from scripts.domain_suspend_manager import is_suspended_config
+    from api.routes.domains import _regenerate_from_domain
+    db = SessionLocal()
+    try:
+        fixed = 0
+        for d in db.query(Domain).filter(Domain.is_suspended == True).order_by(Domain.domain_name).all():  # noqa: E712
+            path = f"/etc/nginx/sites-available/{d.domain_name}"
+            try:
+                current = open(path).read()
+            except OSError:
+                current = ""
+            if is_suspended_config(current):
+                continue
+            logger.info(f"  {d.domain_name}: suspendido en la BD pero su web se está sirviendo"
+                        + ("" if dry_run else " → se vuelve a suspender"))
+            if dry_run:
+                continue
+            try:
+                _regenerate_from_domain(d, db)
+                fixed += 1
+            except Exception as e:
+                logger.error(f"  {d.domain_name}: {e}")
+        logger.info(f"reapply_suspensions: {fixed} dominio(s) vueltos a suspender")
+        return 0
+    finally:
+        db.close()
+
+
 def cmd_malware_scan(domain_id=None, full: bool = False, force: bool = False,
                      dry_run: bool = False) -> int:
     """Escaneo de malware (lo lanza el timer nocturno o la unidad por dominio).
@@ -2687,6 +2719,9 @@ def main():
         help="Re-escalona los wp-cron existentes (minuto repartido por dominio, evita pico de load)")
     sub.add_parser("refresh_suspended_vhosts",
         help="Regenera el vhost de los dominios suspendidos (listen IPv6)")
+    p_rs = sub.add_parser("reapply_suspensions",
+        help="Vuelve a suspender los dominios suspendidos cuya web se está sirviendo")
+    p_rs.add_argument("--dry-run", action="store_true", help="Solo listarlos")
     p_mw = sub.add_parser("malware_scan", help="Escaneo de malware de las webs (incremental)")
     p_mw.add_argument("--domain-id", type=int, default=None)
     p_mw.add_argument("--full", action="store_true", help="Revisar todo, no solo lo nuevo/cambiado")
@@ -2867,6 +2902,8 @@ def main():
         sys.exit(cmd_restagger_wp_cron())
     if args.cmd == "refresh_suspended_vhosts":
         sys.exit(cmd_refresh_suspended_vhosts())
+    if args.cmd == "reapply_suspensions":
+        sys.exit(cmd_reapply_suspensions(args.dry_run))
     if args.cmd == "malware_scan":
         sys.exit(cmd_malware_scan(args.domain_id, args.full, args.force, args.dry_run))
     if args.cmd == "install_malware_scanner":

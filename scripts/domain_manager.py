@@ -345,6 +345,18 @@ class DomainManager(SystemManager):
             except Exception as apache_err:
                 logger.warning(f"No se pudo eliminar el vhost Apache de {domain_name}: {apache_err}")
 
+            # Certificado SSL de la web (Let's Encrypt o propio): si se queda, certbot
+            # intenta renovarlo cada día y falla. Los de mail./webmail. los quita
+            # el borrado del dominio de correo.
+            try:
+                from scripts.user_purge import purge_certs
+                _cw = []
+                purge_certs([domain_name], _cw)
+                for w in _cw:
+                    logger.warning(w)
+            except Exception as cert_err:
+                logger.warning(f"No se pudo borrar el certificado de {domain_name}: {cert_err}")
+
             # Reglas de acceso por país/IP del dominio (conf.d)
             try:
                 from scripts import geo_access
@@ -479,6 +491,7 @@ class DomainManager(SystemManager):
         access_rules: str = None,
         httpauth_paths: list = None,
         hotlink: dict = None,
+        suspended: bool = None,
     ) -> dict:
         """
         Regenera la vhost completa del dominio con TODO el estado actual
@@ -504,7 +517,7 @@ class DomainManager(SystemManager):
                 or xmlrpc_blocked is None or wp_login_ratelimit is None
                 or fastcgi_cache_enabled is None or upload_max_mb is None
                 or aliases is None or access_rules is None or httpauth is None
-                or httpauth_paths is None or hotlink is None):
+                or httpauth_paths is None or hotlink is None or suspended is None):
             try:
                 from api.models.database import SessionLocal
                 from api.models.models_domain import Domain as _D
@@ -546,6 +559,8 @@ class DomainManager(SystemManager):
                                 and getattr(_d, "httpauth_user", None)):
                             httpauth = {"user": _d.httpauth_user, "realm": "Zona restringida",
                                         "file": self.htpasswd_path(username, domain_name)}
+                        if suspended is None:
+                            suspended = bool(getattr(_d, "is_suspended", False))
                         if hotlink is None:
                             from scripts.hotlink import parse as _hl_parse
                             hotlink = _hl_parse(getattr(_d, "hotlink_protection", None))
@@ -675,8 +690,8 @@ class DomainManager(SystemManager):
                 httpauth_paths=httpauth_paths or [],
                 hotlink=hotlink or None,
             )
-            with open(config_path, "w") as f:
-                f.write(config_content)
+            from scripts.domain_suspend_manager import write_nginx_vhost
+            write_nginx_vhost(config_path, config_content, domain_name, bool(suspended))
             # Asegurar que el vhost nginx FRONT está activo (symlink en
             # sites-enabled). Sin esto, nginx no carga el vhost del dominio y
             # sirve la página/cert por defecto del panel.
@@ -740,8 +755,8 @@ class DomainManager(SystemManager):
                 httpauth_paths=httpauth_paths or [],
                 hotlink=hotlink or None,
             )
-            with open(config_path, "w") as f:
-                f.write(config_content)
+            from scripts.domain_suspend_manager import write_nginx_vhost
+            write_nginx_vhost(config_path, config_content, domain_name, bool(suspended))
 
             if not reload_nginx():
                 raise RuntimeError("Nginx reload failed tras regenerar vhost")
