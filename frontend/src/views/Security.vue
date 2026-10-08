@@ -205,6 +205,61 @@
       </div>
     </div>
 
+    <!-- Escaneo de malware de las webs -->
+    <div class="sec-card iso-card" style="margin-top:16px">
+      <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:1rem;flex-wrap:wrap">
+        <div style="display:flex;gap:.75rem;align-items:flex-start">
+          <div class="iso-icon" :class="mwHigh ? 'iso-icon--warn' : 'iso-icon--ok'">
+            <i class="bi bi-search"></i>
+          </div>
+          <div>
+            <div style="font-weight:600;font-size:1rem;margin-bottom:.25rem">Escaneo de malware de las webs</div>
+            <p style="font-size:.82rem;color:var(--text-muted);margin:0 0 .5rem;max-width:620px">
+              Cada noche (04:30) revisa los ficheros nuevos o modificados de todas las webs: integridad de WordPress y sus
+              plugins frente a wordpress.org, reglas contra puertas traseras y código ofuscado, y firmas de webshells.
+              Corre aparte del panel con prioridad mínima y se pausa si el servidor va cargado. Nunca borra nada.
+            </p>
+            <div v-if="mwOv" style="display:flex;gap:6px;flex-wrap:wrap">
+              <span class="sec-badge" :class="mwOv.settings.enabled ? 'sec-badge--on' : 'sec-badge--off'">
+                {{ mwOv.settings.enabled ? 'Escaneo nocturno activo' : 'Escaneo nocturno apagado' }}</span>
+              <span class="sec-badge" :class="mwOv.layers.wp_cli ? 'sec-badge--on' : 'sec-badge--off'">Integridad WordPress</span>
+              <span class="sec-badge sec-badge--on">Reglas PHP</span>
+              <span class="sec-badge" :class="mwOv.layers.yara ? 'sec-badge--on' : 'sec-badge--off'">Firmas YARA</span>
+              <span class="sec-badge" :class="mwOv.settings.clamav ? 'sec-badge--on' : 'sec-badge--off'">ClamAV</span>
+              <span v-if="mwOv.running" class="sec-badge sec-badge--on"><span class="spinner-border spinner-border-sm"></span> escaneando</span>
+            </div>
+            <div v-if="mwOv?.last_scan" style="font-size:.78rem;color:var(--text-muted);margin-top:.4rem">
+              Último escaneo: {{ formatDateTime(mwOv.last_scan.finished_at || mwOv.last_scan.started_at) }}
+            </div>
+          </div>
+        </div>
+        <div v-if="mwOv" style="display:flex;flex-direction:column;gap:6px;flex-shrink:0;font-size:.85rem">
+          <label style="display:flex;gap:.4rem;align-items:center;cursor:pointer">
+            <input type="checkbox" :checked="mwOv.settings.enabled" :disabled="mwSaving"
+                   @change="saveMw({ enabled: $event.target.checked })" /> Escaneo nocturno
+          </label>
+          <label style="display:flex;gap:.4rem;align-items:center;cursor:pointer" title="Usa el ClamAV del correo: casi no aporta en PHP y comparte CPU con el filtrado de emails">
+            <input type="checkbox" :checked="mwOv.settings.clamav" :disabled="mwSaving || !mwOv.layers.clamav"
+                   @change="saveMw({ clamav: $event.target.checked })" /> Añadir ClamAV (opcional)
+          </label>
+        </div>
+      </div>
+      <div v-if="mwOv?.domains?.length" class="iso-issues" style="margin-top:1rem">
+        <div v-for="d in mwOv.domains" :key="d.domain_id" class="iso-issue">
+          <span class="iso-issue__domain"><i class="bi bi-globe2"></i>
+            <router-link :to="`/domains/${d.domain_id}`">{{ d.domain }}</router-link></span>
+          <span class="iso-issue__owner">{{ d.owner }}</span>
+          <span class="iso-issue__msg">
+            <span v-if="d.alta" class="sec-badge sec-badge--danger">{{ d.alta }} grave(s)</span>
+            <span v-if="d.media" class="sec-badge sec-badge--off">{{ d.media }} a revisar</span>
+          </span>
+        </div>
+      </div>
+      <div v-else-if="mwOv?.last_scan" style="font-size:.82rem;color:var(--text-muted);margin-top:.75rem">
+        <i class="bi bi-shield-check"></i> Sin avisos abiertos en ninguna web.
+      </div>
+    </div>
+
     <!-- Antivirus de correo (ClamAV) -->
     <div v-if="av && av.available" class="sec-card iso-card" style="margin-top:16px">
       <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:1rem;flex-wrap:wrap">
@@ -1112,6 +1167,22 @@ const isoCardTone = computed(() => {
 const isoInsecureList = computed(() =>
   (isoAudit.value?.domains || []).filter(d => !d.ok))
 
+// ── Escaneo de malware ──
+const mwOv = ref(null)
+const mwSaving = ref(false)
+const mwHigh = computed(() => (mwOv.value?.domains || []).reduce((a, d) => a + d.alta, 0))
+async function loadMalwareOverview() {
+  try { mwOv.value = await api.getMalwareOverview() } catch { /* sin permisos */ }
+}
+async function saveMw(patch) {
+  mwSaving.value = true
+  try {
+    const r = await api.saveMalwareSettings({ ...mwOv.value.settings, ...patch })
+    mwOv.value = { ...mwOv.value, settings: r.settings }
+  } catch (e) { alert(e.message) }
+  finally { mwSaving.value = false }
+}
+
 async function loadIsolation() {
   isoLoading.value = true
   try { isoAudit.value = await api.auditPhpIsolation() }
@@ -1746,7 +1817,7 @@ onMounted(() => {
   loadedTabs.value.add('firewall')
   loadFirewall()   // incluye loadStatus() + system-ports
   // Resumen superior, en segundo plano (no bloquea el render del firewall)
-  setTimeout(() => { loadIsolation(); loadAntivirus(); loadAutoUpdates() }, 0)
+  setTimeout(() => { loadIsolation(); loadAntivirus(); loadAutoUpdates(); loadMalwareOverview() }, 0)
 })
 </script>
 

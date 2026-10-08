@@ -726,6 +726,58 @@ define('WP_REDIS_PATH', '{{ redisStatus.socket }}');</pre>
         </template>
       </BaseCard>
 
+      <!-- ===== Escaneo de malware ===== -->
+      <BaseCard v-show="tab === 'bots'" title="Escaneo de malware" icon="bug">
+        <template #actions>
+          <StatusBadge v-if="mw" :status="mwOpenHigh ? 'error' : mwOpen ? 'warning' : 'active'"
+                       :label="mwOpenHigh ? `${mwOpenHigh} grave(s)` : mwOpen ? `${mwOpen} a revisar` : 'Limpio'" />
+          <BaseButton variant="ghost" size="sm" icon="search" :loading="mwScanning || mw?.running"
+                      :disabled="mw?.running" @click="mwScan">Escanear ahora</BaseButton>
+        </template>
+        <p class="dd-muted">
+          Busca código malicioso en los ficheros de la web: compara WordPress y sus plugins con los originales de
+          wordpress.org, y revisa el PHP con reglas contra puertas traseras, webshells y código ofuscado. Nunca borra
+          nada: tú decides si un fichero va a la cuarentena (sale de la web y se puede restaurar) o es legítimo.
+        </p>
+        <div v-if="!mw" class="svq-skeleton" style="height:90px"></div>
+        <template v-else>
+          <p class="dd-muted mw-last">
+            <template v-if="mw.running"><span class="spinner"></span> Escaneando… (con prioridad mínima: puede tardar unos minutos)</template>
+            <template v-else-if="mw.last_scan">Último escaneo: {{ formatDateTime(mw.last_scan.finished_at || mw.last_scan.started_at) }}
+              · {{ mw.last_scan.files_seen }} ficheros ({{ mw.last_scan.files_checked }} revisados por ser nuevos o cambiados)
+              <span v-if="mw.last_scan.status === 'error'" class="mw-err">· error: {{ mw.last_scan.error }}</span></template>
+            <template v-else>Aún no se ha escaneado esta web.</template>
+            <span v-if="!mw.nightly"> · El escaneo nocturno automático está desactivado en el servidor.</span>
+          </p>
+          <div v-if="!mw.findings.length && mw.last_scan" class="stats-state"><i class="bi bi-shield-check"></i> No se ha encontrado nada sospechoso.</div>
+          <div v-for="f in mw.findings" :key="f.id" class="mw-item" :class="'mw-' + f.status">
+            <div class="mw-head">
+              <span class="mw-sev" :class="f.severity === 'alta' ? 'is-high' : 'is-med'">{{ f.severity }}</span>
+              <code class="mw-path">{{ f.path }}</code>
+              <span v-if="f.status === 'quarantined'" class="mw-tag">en cuarentena</span>
+              <span v-else-if="f.status === 'ignored'" class="mw-tag">marcado como legítimo</span>
+            </div>
+            <ul class="mw-rules"><li v-for="r in f.rules" :key="r.id">{{ r.desc }}</li></ul>
+            <pre v-if="f.snippet" class="mw-snippet mono">{{ f.snippet }}</pre>
+            <div class="mw-actions">
+              <BaseButton v-if="f.status === 'open' || f.status === 'ignored'" variant="danger" size="sm" icon="archive"
+                          :loading="mwBusy === f.id" @click="mwAct(f, 'quarantine')">Cuarentena</BaseButton>
+              <BaseButton v-if="f.status === 'open'" variant="ghost" size="sm" icon="check2"
+                          :loading="mwBusy === f.id" @click="mwAct(f, 'ignore')">Es legítimo</BaseButton>
+              <BaseButton v-if="f.status === 'ignored'" variant="ghost" size="sm" icon="arrow-counterclockwise"
+                          :loading="mwBusy === f.id" @click="mwAct(f, 'reopen')">Volver a avisar</BaseButton>
+              <BaseButton v-if="f.status === 'quarantined'" variant="ghost" size="sm" icon="box-arrow-up"
+                          :loading="mwBusy === f.id" @click="mwAct(f, 'restore')">Restaurar</BaseButton>
+              <small class="dd-muted">Visto el {{ formatDateTime(f.first_seen) }}</small>
+            </div>
+          </div>
+          <p v-if="mw.findings.some(f => f.source === 'wp-core' || f.source === 'wp-plugin')" class="dd-muted acc-hint">
+            Un fichero de WordPress o de un plugin modificado se arregla reinstalándolo (WordPress → actualizar o reinstalar
+            el plugin): si lo mandas a la cuarentena, la web puede dejar de funcionar hasta entonces.
+          </p>
+        </template>
+      </BaseCard>
+
       <!-- ===== Protección con contraseña (httpauth): toda la web o carpetas ===== -->
       <BaseCard v-show="tab === 'bots'" title="Protección con contraseña" icon="lock">
         <template #actions>
@@ -1697,6 +1749,40 @@ location @maintenance {
 
     watch(tab, (t) => { if (t === 'ipv6') loadServerIps(); if (t === 'aliases') loadAliases() })
 
+    // ── Escaneo de malware (pestaña Protección) ──
+    const mw = ref(null)
+    const mwScanning = ref(false)
+    const mwBusy = ref(null)
+    let mwTimer = null
+    const mwOpen = computed(() => (mw.value?.findings || []).filter(f => f.status === 'open').length)
+    const mwOpenHigh = computed(() => (mw.value?.findings || []).filter(f => f.status === 'open' && f.severity === 'alta').length)
+    const loadMalware = async () => {
+      try { mw.value = await api.getDomainMalware(domainId.value) } catch { /* sin permisos o sin web */ }
+      clearTimeout(mwTimer)
+      if (mw.value?.running && tab.value === 'bots') mwTimer = setTimeout(loadMalware, 8000)
+    }
+    const mwScan = async () => {
+      mwScanning.value = true
+      try {
+        const r = await api.scanDomainMalware(domainId.value)
+        store.showNotification(r.message, 'success')
+        setTimeout(loadMalware, 1500)
+      } catch (e) { store.showNotification(e.message, 'danger') }
+      finally { mwScanning.value = false }
+    }
+    const mwAct = async (f, action) => {
+      if (action === 'quarantine' && !window.confirm(`¿Sacar ${f.path} de la web? Se guarda en la cuarentena y se puede restaurar.`)) return
+      mwBusy.value = f.id
+      try {
+        const r = await api.domainMalwareAction(domainId.value, f.id, action)
+        store.showNotification(r.message, 'success')
+        await loadMalware()
+      } catch (e) { store.showNotification(e.message, 'danger') }
+      finally { mwBusy.value = null }
+    }
+    watch(tab, (t) => { if (t === 'bots') loadMalware() })
+    onBeforeUnmount(() => clearTimeout(mwTimer))
+
     // ── Hotlinking (pestaña Protección) ──
     const hlTypes = [
       { key: 'images', label: 'Imágenes', desc: 'jpg, png, gif, webp, svg…' },
@@ -2528,6 +2614,7 @@ location @maintenance {
       hardeningSaving, toggleHardening,
       aliases, aliasData, aliasLoaded, aliasBusy, aliasNew, aliasNewMode, aliasExample,
       hlTypes, hlForm, hlAllowText, hlSaving, hlError, hlChanged, saveHotlink,
+      mw, mwScanning, mwBusy, mwOpen, mwOpenHigh, mwScan, mwAct,
       acc, accForm, accAllowText, accBlockText, accSaving, accError, accModes, accActive, accChanged,
       accHasMyIp, addMyIp, countryName, saveAccess,
       res, resRange, resLoading, resError, setResRange, resDay, resCpu, resMem, resHasData, fmtResMB, fmtCpuTime,
@@ -2615,6 +2702,21 @@ location @maintenance {
 .res-charts { display: grid; grid-template-columns: 1fr 1fr; gap: var(--sp-3); }
 @media (max-width: 900px) { .res-stats { grid-template-columns: repeat(2, 1fr); } }
 @media (max-width: 680px) { .res-stats, .res-charts { grid-template-columns: 1fr; } }
+/* Escaneo de malware (pestaña Protección) */
+.mw-last { font-size: .82rem; }
+.mw-err { color: var(--danger); }
+.mw-item { border: 1px solid var(--border); border-radius: var(--r-md, 10px); padding: var(--sp-3); margin-top: var(--sp-2); }
+.mw-item.mw-quarantined, .mw-item.mw-ignored { opacity: .7; }
+.mw-head { display: flex; gap: .5rem; align-items: center; flex-wrap: wrap; }
+.mw-sev { font-size: .7rem; font-weight: 700; text-transform: uppercase; padding: .1rem .45rem; border-radius: 999px; }
+.mw-sev.is-high { background: var(--danger-bg); color: var(--danger); border: 1px solid var(--danger-border); }
+.mw-sev.is-med { background: var(--warning-bg); color: var(--warning); border: 1px solid var(--warning-border); }
+.mw-path { font-size: .82rem; word-break: break-all; }
+.mw-tag { font-size: .72rem; color: var(--text-muted); }
+.mw-rules { margin: .4rem 0 0; padding-left: 1.1rem; font-size: .82rem; }
+.mw-snippet { margin: .4rem 0 0; padding: .45rem .6rem; background: var(--surface-inset); border-radius: var(--r-sm, 6px);
+  font-size: .72rem; white-space: pre-wrap; word-break: break-all; max-height: 7rem; overflow: auto; }
+.mw-actions { display: flex; gap: var(--sp-2); align-items: center; flex-wrap: wrap; margin-top: .5rem; }
 /* Hotlinking (pestaña Protección) */
 .hl-types { display: grid; grid-template-columns: repeat(3, 1fr); gap: var(--sp-2); margin: var(--sp-3) 0; }
 @media (max-width: 760px) { .hl-types { grid-template-columns: 1fr; } }

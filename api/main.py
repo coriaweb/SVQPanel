@@ -13,7 +13,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from api.models.database import create_tables, get_db
 from config.config import PANEL_NAME, PANEL_VERSION
 
-from api.routes import domain_aliases, domain_resources, domain_access
+from api.routes import domain_aliases, domain_resources, domain_access, malware
 from api.routes import users, domains, php, ssl, ipv6, auth, settings, dns, system, mail, databases, firewall, fail2ban, security_monitor, ip_lists, file_manager, crowdsec, plans, sftp, crons, server_ips, backups, templates, notifications, dns_cluster, git, git_webhook, monitoring, db_tuner, migrations, migration_sources, terminal, license, api_tokens, mail_queue, process_manager, outbound_mail, antispam, branding
 
 # ── Descripción de la API (se muestra en /docs y /redoc) ──────────────────────
@@ -987,6 +987,9 @@ def _run_migrations():
         "ALTER TABLE settings ADD COLUMN IF NOT EXISTS brand_support_url VARCHAR(255)",
         "ALTER TABLE settings ADD COLUMN IF NOT EXISTS brand_support_email VARCHAR(255)",
         "ALTER TABLE settings ADD COLUMN IF NOT EXISTS brand_hide_powered_by BOOLEAN NOT NULL DEFAULT FALSE",
+        # Escaneo de malware (nace apagado; capa ClamAV opcional)
+        "ALTER TABLE settings ADD COLUMN IF NOT EXISTS malware_scan_enabled BOOLEAN NOT NULL DEFAULT FALSE",
+        "ALTER TABLE settings ADD COLUMN IF NOT EXISTS malware_scan_clamav BOOLEAN NOT NULL DEFAULT FALSE",
     ]
     with engine.connect() as conn:
         for sql in migrations:
@@ -1078,6 +1081,7 @@ app.include_router(ipv6.router, prefix="/api", tags=["IPv6"])
 app.include_router(domain_aliases.router, prefix="/api", tags=["Domain aliases"])
 app.include_router(domain_resources.router, prefix="/api", tags=["Domain resources"])
 app.include_router(domain_access.router, prefix="/api", tags=["Domain access"])
+app.include_router(malware.router, prefix="/api", tags=["Malware"])
 app.include_router(settings.router, prefix="/api", tags=["Settings"])
 app.include_router(license.router, prefix="/api", tags=["License"])
 app.include_router(dns.router, prefix="/api", tags=["DNS"])

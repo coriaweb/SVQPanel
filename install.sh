@@ -4122,6 +4122,13 @@ echo ""
     echo -e "${YELLOW}⚠ No se pudo instalar el hook de renovación SSL${NC}"
 echo ""
 
+# Escaneo de malware de las webs (= updates/0165): yara + unidades systemd con
+# prioridad mínima (Nice 19, IO idle, CPUQuota 60%) + reglas de webshells. El
+# timer corre cada noche pero NO escanea hasta que se activa en el panel.
+DEBIAN_FRONTEND=noninteractive apt-get install -y -qq yara >/dev/null 2>&1 ||     echo -e "${YELLOW}⚠ No se pudo instalar yara (el escáner funcionará sin esa capa)${NC}"
+/opt/svqpanel/venv/bin/python -m api.cli install_malware_scanner &&     echo -e "${GREEN}✓ Escáner de malware instalado (apagado hasta activarlo en el panel)${NC}" ||     echo -e "${YELLOW}⚠ No se pudo instalar el escáner de malware${NC}"
+echo ""
+
 # Proteger el Redis global (backend de Rspamd) con contraseña. Sin esto, el
 # PHP de cualquier cliente puede conectar a 127.0.0.1:6379 (disable_functions
 # no bloquea sockets) y hacer FLUSHALL al Bayes/greylist/ratelimit de correo.

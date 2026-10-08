@@ -2080,6 +2080,33 @@ def cmd_convert_subdomains(domains=None, dry_run: bool = False) -> int:
     return 0
 
 
+def cmd_malware_scan(domain_id=None, full: bool = False, force: bool = False,
+                     dry_run: bool = False) -> int:
+    """Escaneo de malware (lo lanza el timer nocturno o la unidad por dominio).
+    --dry-run: revisa todo y lo imprime (JSON) sin guardar, avisar ni tocar nada."""
+    import json as _json
+    from scripts import malware_scanner
+    db = SessionLocal()
+    try:
+        r = malware_scanner.scan_all(db, domain_id=domain_id, full=full, force=force, dry_run=dry_run)
+        if dry_run:
+            print(_json.dumps(r, ensure_ascii=False, indent=1))
+        else:
+            logger.info(f"malware_scan: {r}")
+        return 0
+    finally:
+        db.close()
+
+
+def cmd_install_malware_scanner() -> int:
+    """Unidades systemd + reglas YARA del escaneo de malware (install.sh / updates)."""
+    from scripts import malware_scanner
+    malware_scanner.install_units()
+    ok = malware_scanner.install_yara_rules()
+    logger.info("Escáner de malware instalado" + ("" if ok else " (sin reglas YARA: se sigue con el resto de capas)"))
+    return 0
+
+
 def cmd_acme_dns_hook(action: str) -> int:
     """Hook de certbot para la validación DNS-01 (wildcard). Lo llama
     scripts/certbot-dns-hook.sh con CERTBOT_DOMAIN/CERTBOT_VALIDATION en el
@@ -2660,6 +2687,12 @@ def main():
         help="Re-escalona los wp-cron existentes (minuto repartido por dominio, evita pico de load)")
     sub.add_parser("refresh_suspended_vhosts",
         help="Regenera el vhost de los dominios suspendidos (listen IPv6)")
+    p_mw = sub.add_parser("malware_scan", help="Escaneo de malware de las webs (incremental)")
+    p_mw.add_argument("--domain-id", type=int, default=None)
+    p_mw.add_argument("--full", action="store_true", help="Revisar todo, no solo lo nuevo/cambiado")
+    p_mw.add_argument("--force", action="store_true", help="Aunque el escaneo nocturno esté apagado")
+    p_mw.add_argument("--dry-run", action="store_true", help="Solo informar (JSON): no guarda, no avisa, no toca nada")
+    sub.add_parser("install_malware_scanner", help="Instala las unidades systemd y las reglas YARA del escáner")
     p_acme = sub.add_parser("acme_dns_hook",
         help="(certbot) publica/borra el TXT _acme-challenge para certificados wildcard")
     p_acme.add_argument("action", choices=["auth", "cleanup"])
@@ -2834,6 +2867,10 @@ def main():
         sys.exit(cmd_restagger_wp_cron())
     if args.cmd == "refresh_suspended_vhosts":
         sys.exit(cmd_refresh_suspended_vhosts())
+    if args.cmd == "malware_scan":
+        sys.exit(cmd_malware_scan(args.domain_id, args.full, args.force, args.dry_run))
+    if args.cmd == "install_malware_scanner":
+        sys.exit(cmd_install_malware_scanner())
     if args.cmd == "acme_dns_hook":
         sys.exit(cmd_acme_dns_hook(args.action))
     if args.cmd == "update_geoip":

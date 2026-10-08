@@ -1412,6 +1412,22 @@ class APIClient {
   saveDomainHotlink(domainId, data) {
     return this.put(`/api/domains/${domainId}/hotlink`, data)
   }
+  // Escaneo de malware
+  getDomainMalware(domainId) {
+    return this.get(`/api/domains/${domainId}/malware`)
+  }
+  scanDomainMalware(domainId) {
+    return this.post(`/api/domains/${domainId}/malware/scan`, {})
+  }
+  domainMalwareAction(domainId, findingId, action) {
+    return this.post(`/api/domains/${domainId}/malware/${findingId}/${action}`, {})
+  }
+  getMalwareOverview() {
+    return this.get('/api/malware/overview')
+  }
+  saveMalwareSettings(data) {
+    return this.put('/api/malware/settings', data)
+  }
   // Estado del trabajo de apt/dpkg en segundo plano (upgrade o repair)
   getUpdatesJob() {
     return this.request('/api/system/updates/job', { method: 'GET', silent: true })

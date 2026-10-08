@@ -96,6 +96,10 @@ class Settings(Base):
     panel_smtp_from_email = Column(String(255), nullable=True)   # avisos@dominio.com
     panel_smtp_from_name  = Column(String(255), default="SVQPanel")
 
+    # Escaneo de malware de las webs (scripts/malware_scanner.py). Nace apagado.
+    malware_scan_enabled  = Column(Boolean, default=False, nullable=False)   # pasada nocturna
+    malware_scan_clamav   = Column(Boolean, default=False, nullable=False)   # capa ClamAV (clamd del correo)
+
     # Cluster DNS — clave TSIG compartida master↔slave (ver models_dns_node.py)
     dns_tsig_name   = Column(String(64), nullable=True)       # nombre de la clave, ej: svq-xfer
     dns_tsig_secret = Column(String(128), nullable=True)      # secreto base64
