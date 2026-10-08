@@ -62,6 +62,35 @@ def alert_destination(db) -> str:
     return to
 
 
+def server_identity(settings) -> dict:
+    """Quién soy: nombre, IP y URL del panel. Con varios servidores, una alerta
+    que no dice de cuál viene no sirve de nada."""
+    import socket
+    panel = getattr(settings, "panel_hostname", None)
+    host = panel or socket.getfqdn() or socket.gethostname() or "servidor"
+    try:
+        from scripts.panel_ssl_manager import _detect_panel_web_port
+        port = _detect_panel_web_port()
+    except Exception:
+        port = 8083
+    return {"host": host, "short": host.split(".")[0], "ip": getattr(settings, "server_ipv4", None) or "",
+            "panel_url": f"https://{panel}:{port}" if panel else ""}
+
+
+def tag_with_server(subject: str, body: str, settings) -> tuple:
+    """[SVQPanel] … → [SVQPanel · servidor] …, y al final del cuerpo de qué
+    servidor viene. Lo usan TODOS los emails de alerta (pasan por _notify_email)."""
+    ident = server_identity(settings)
+    tag = f"[SVQPanel · {ident['short']}]"
+    subject = subject.replace("[SVQPanel]", tag, 1) if subject.startswith("[SVQPanel]") else f"{tag} {subject}"
+    lines = [f"Servidor: {ident['host']}"]
+    if ident["ip"]:
+        lines.append(f"IP: {ident['ip']}")
+    if ident["panel_url"]:
+        lines.append(f"Panel: {ident['panel_url']}")
+    return subject, body.rstrip() + "\n\n—\n" + "\n".join(lines) + "\n"
+
+
 def _notify_email(db, subject, body):
     """Envía el email de alerta al destino configurado (o al admin)."""
     try:
@@ -69,6 +98,7 @@ def _notify_email(db, subject, body):
         from api.routes.settings import get_or_create_settings
 
         settings = get_or_create_settings(db)
+        subject, body = tag_with_server(subject, body, settings)
         if not settings.panel_smtp_enabled:
             logger.info("SMTP del panel no activo; alerta solo in-app: %s", subject)
             return False
