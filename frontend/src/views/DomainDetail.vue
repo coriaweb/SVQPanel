@@ -222,6 +222,14 @@
             <div class="disk-item"><span class="disk-k">Total</span><span class="disk-v mono">{{ formatMB((disk.public_html_mb || 0) + (disk.logs_mb || 0)) }}</span></div>
           </div>
           <p v-else class="dd-muted">Pulsa «Recalcular» para medir el uso de disco.</p>
+          <div v-if="resDay" class="disk-grid res-day">
+            <div class="disk-item"><span class="disk-k">CPU media 24 h</span><span class="disk-v mono">{{ resDay.cpu_avg.toFixed(1) }}%</span></div>
+            <div class="disk-item"><span class="disk-k">RAM media 24 h</span><span class="disk-v mono">{{ fmtResMB(resDay.mem_avg) }}</span></div>
+            <div class="disk-item"><span class="disk-k">Saturaciones 24 h</span>
+              <span class="disk-v mono" :class="{ 'res-warn': resDay.hits }">{{ resDay.hits }}</span></div>
+          </div>
+          <BaseButton v-if="resDay" variant="ghost" size="sm" icon="speedometer2" class="res-day-link"
+                      @click="tab = 'resources'">Ver consumo</BaseButton>
         </BaseCard>
 
         <!-- Apps web (WP Toolkit / app detectada / instalador): solo si hay web
@@ -596,7 +604,7 @@ define('WP_REDIS_PATH', '{{ redisStatus.socket }}');</pre>
         </div>
       </BaseCard>
 
-      <BaseCard v-show="tab === 'ipv6'" title="Dominios alias" icon="link-45deg">
+      <BaseCard v-show="tab === 'aliases'" title="Dominios alias" icon="link-45deg">
         <p class="dd-muted">
           Otros dominios que llevan a esta web, por ejemplo <code>{{ aliasExample }}</code> además de
           <code>{{ domain.domain_name }}</code>. Por defecto <strong>redirigen</strong> al dominio principal (lo recomendable
@@ -789,7 +797,7 @@ define('WP_REDIS_PATH', '{{ redisStatus.socket }}');</pre>
         </template>
         <p class="dd-muted">
           Lo que gasta la web en PHP (su pool PHP-FPM propio). No incluye la base de datos ni el
-          servidor web, que son compartidos. La CPU va en % del servidor entero<span v-if="res"> ({{ res.cores }} núcleos)</span>.
+          servidor web, que son compartidos. La CPU va en % del servidor.
         </p>
         <div v-if="resLoading && !res" class="svq-skeleton" style="height:200px"></div>
         <div v-else-if="resError" class="stats-state stats-state--err"><i class="bi bi-exclamation-triangle"></i> {{ resError }}</div>
@@ -1210,6 +1218,7 @@ export default {
     const _allTabs = [
       { key: 'overview', label: 'Resumen', icon: 'grid-1x2' },
       { key: 'ssl',      label: 'SSL',     icon: 'shield-lock' },
+      { key: 'aliases',  label: 'Alias',   icon: 'link-45deg' },
       { key: 'php',      label: 'PHP',     icon: 'filetype-php' },
       { key: 'ipv6',     label: 'Red',     icon: 'hdd-network' },
       { key: 'bots',     label: 'Protección', icon: 'shield-check' },
@@ -1540,7 +1549,7 @@ location @maintenance {
       finally { aliasBusy.value = false }
     }
 
-    watch(tab, (t) => { if (t === 'ipv6') { loadServerIps(); loadAliases() } })
+    watch(tab, (t) => { if (t === 'ipv6') loadServerIps(); if (t === 'aliases') loadAliases() })
 
     // ── Consumo de CPU/RAM (pool PHP-FPM) ──
     const res = ref(null)
@@ -1555,6 +1564,11 @@ location @maintenance {
       finally { resLoading.value = false }
     }
     const setResRange = (r) => { resRange.value = r; loadResources() }
+    // Resumen de 24 h para la tarjeta Recursos del Resumen
+    const resDay = ref(null)
+    const loadResDay = async () => {
+      try { resDay.value = (await api.getDomainResources(domainId.value, '24h')).summary } catch {}
+    }
     const resCpu = computed(() => (res.value?.points || []).map(p => ({ ts: p.ts, value: p.cpu })))
     const resMem = computed(() => (res.value?.points || []).map(p => ({ ts: p.ts, value: p.mem })))
     const resHasData = computed(() => (res.value?.points || []).some(p => p.cpu || p.mem || p.procs))
@@ -2231,7 +2245,7 @@ location @maintenance {
         deprecatedPhp.value = d?.deprecated || []
       }
       catch { phpVersions.value = ['7.4', '8.0', '8.1', '8.2', '8.3', '8.4'] }
-      if (domain.value) { loadDisk(); loadPhp(); loadLogs(); loadSslState(); loadDetectedApp() }
+      if (domain.value) { loadDisk(); loadPhp(); loadLogs(); loadSslState(); loadDetectedApp(); if (!domain.value.mail_dns_only) loadResDay() }
     })
 
     return {
@@ -2256,7 +2270,7 @@ location @maintenance {
       rlPresets, rlForm, rlSaving, rlChanged, saveRateLimit,
       hardeningSaving, toggleHardening,
       aliases, aliasData, aliasLoaded, aliasBusy, aliasNew, aliasNewMode, aliasExample,
-      res, resRange, resLoading, resError, setResRange, resCpu, resMem, resHasData, fmtResMB, fmtCpuTime,
+      res, resRange, resLoading, resError, setResRange, resDay, resCpu, resMem, resHasData, fmtResMB, fmtCpuTime,
       addAlias, setAliasMode, removeAlias, retryAliasSsl,
       showNginxEx, showApacheEx, nginxExamples, apacheExamples, insertExample,
       authEnabled, authUser, authPass, authSaving, authError, saveHttpauth,
@@ -2315,7 +2329,7 @@ location @maintenance {
 .kv__v { color: var(--text); font-size: var(--fs-sm); font-weight: var(--fw-medium); text-align: right; word-break: break-all; }
 .kv__link { margin-left: var(--sp-2); font-weight: var(--fw-normal, 400); color: var(--color-primary); text-decoration: none; }
 .kv__link:hover { text-decoration: underline; }
-/* Dominios alias (pestaña Red) */
+/* Dominios alias (pestaña Alias) */
 .alias-list { display: flex; flex-direction: column; border: 1px solid var(--border); border-radius: var(--radius-md, 10px); margin-bottom: var(--sp-3); }
 .alias-row { display: grid; grid-template-columns: 1fr 240px auto; gap: var(--sp-3); align-items: center; padding: var(--sp-2) var(--sp-3); border-bottom: 1px solid var(--border); }
 .alias-row:last-child { border-bottom: none; }
@@ -2378,6 +2392,8 @@ location @maintenance {
 .disk-item { background: var(--surface-inset); border-radius: var(--r-md); padding: var(--sp-3) var(--sp-4); }
 .disk-k { display: block; font-size: var(--fs-sm); color: var(--text-muted); }
 .disk-v { font-size: var(--fs-lg); font-weight: var(--fw-bold); color: var(--text); }
+.res-day { margin-top: var(--sp-3); }
+.res-day-link { margin-top: var(--sp-3); }
 
 /* select / input */
 .svq-select, .svq-input {
