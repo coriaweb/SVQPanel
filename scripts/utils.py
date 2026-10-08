@@ -615,9 +615,14 @@ def generate_nginx_config(
     xmlrpc_blocked: bool = False,
     wp_login_ratelimit: int = 0,
     upload_max_mb: int = 64,
+    aliases: Optional[list] = None,
 ) -> str:
     """
     Generate Nginx vhost configuration (Hestia-style paths).
+
+    aliases: [{"name": "dominio.es", "redirect": True}, …]. Los que sirven la
+    misma web (redirect=False) se añaden al server_name; los de redirección
+    tienen su propio server{} que hace 301 al dominio principal.
 
     Si proxy_to_apache=True, el bloque que sirve PHP se reemplaza por un
     proxy_pass a Apache (127.0.0.1:8181), que sirve el sitio respetando los
@@ -709,6 +714,13 @@ def generate_nginx_config(
         server_names = domain
     else:
         server_names = f"{domain} www.{domain}"
+    # Alias que sirven la misma web: su nombre y su www. en este mismo server{}.
+    # La redirección canónica solo mira $host == dominio / www.dominio, así que no
+    # los toca. Los alias que redirigen van en un server{} aparte (ver abajo).
+    serve_aliases = [a["name"] for a in (aliases or []) if not a.get("redirect", True)]
+    redirect_aliases = [a["name"] for a in (aliases or []) if a.get("redirect", True)]
+    for _a in serve_aliases:
+        server_names += f" {_a} www.{_a}"
     # La IPv6 del dominio NO va en server_name. Se puso para servir la web en
     # http://[ipv6]/, pero nunca coincidía: el navegador manda "Host: [ipv6]"
     # (con corchetes) y nginx lo mandaba al vhost por defecto igualmente. Solo
@@ -1035,6 +1047,48 @@ server {{
     access_log {logs_dir}/nginx.access.log;
 }}
 """
+
+    # Alias con redirección: 301 al dominio principal conservando la ruta. El
+    # reto ACME se sirve aquí mismo (no se redirige): el alias tiene que poder
+    # validarse para entrar en el certificado del dominio.
+    if redirect_aliases:
+        target = domain if (is_subdomain or canonical_domain in ("non-www", "none")) \
+            else f"www.{domain}"
+        scheme = "https" if ssl_enabled else "http"
+        names = " ".join(f"{a} www.{a}" for a in redirect_aliases)
+        redirect_body = f"""
+    location ^~ /.well-known/acme-challenge/ {{
+        root {public_html};
+        default_type "text/plain";
+        try_files $uri =404;
+    }}
+    location / {{
+        return 301 {scheme}://{target}$request_uri;
+    }}
+
+    access_log {logs_dir}/nginx.access.log;
+    error_log {logs_dir}/nginx.error.log;
+}}
+"""
+        server_block += f"""
+# ── Dominios alias que redirigen a {target} ──
+server {{
+    listen {ipv4_listen_http};
+    {ipv6_listen_http}
+    server_name {names};
+{redirect_body}"""
+        if ssl_enabled:
+            server_block += f"""
+server {{
+    listen {ipv4_listen_https} ssl;
+    http2 on;
+    {ipv6_listen_https}
+    server_name {names};
+    ssl_certificate /etc/letsencrypt/live/{domain}/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/{domain}/privkey.pem;
+    ssl_protocols {SSL_PROTOCOLS};
+    ssl_ciphers {SSL_CIPHERS};
+{redirect_body}"""
 
     return server_block
 

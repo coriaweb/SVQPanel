@@ -1370,6 +1370,22 @@ class APIClient {
   repairDpkg() {
     return this.post('/api/system/updates/repair-dpkg', {})
   }
+  // Dominios alias (otros nombres que llevan a la web del dominio)
+  getDomainAliases(domainId) {
+    return this.get(`/api/domains/${domainId}/aliases`)
+  }
+  addDomainAlias(domainId, aliasName, redirect = true) {
+    return this.post(`/api/domains/${domainId}/aliases`, { alias_name: aliasName, redirect })
+  }
+  updateDomainAlias(domainId, aliasId, redirect) {
+    return this.put(`/api/domains/${domainId}/aliases/${aliasId}`, { redirect })
+  }
+  deleteDomainAlias(domainId, aliasId) {
+    return this.delete(`/api/domains/${domainId}/aliases/${aliasId}`)
+  }
+  retryDomainAliasSsl(domainId) {
+    return this.post(`/api/domains/${domainId}/aliases/ssl`, {})
+  }
   // Estado del trabajo de apt/dpkg en segundo plano (upgrade o repair)
   getUpdatesJob() {
     return this.request('/api/system/updates/job', { method: 'GET', silent: true })

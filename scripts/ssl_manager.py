@@ -175,7 +175,16 @@ class SSLManager(SystemManager):
             cmd = [certbot_path, "certonly", "--nginx", "--cert-name", domain_name]
             for d in domains:
                 cmd += ["-d", d]
+            # Dominios alias (y su www.) entran en el certificado del dominio
+            # solo si ya apuntan aquí; los que no, se añaden cuando apunten.
+            alias_names = [n for n in self._alias_cert_names(domain_name)
+                           if n not in domains and self.points_here(n)]
+            domains += alias_names
+            for d in alias_names:
+                cmd += ["-d", d]
             for d in (extra_domains or []):
+                if d in domains:
+                    continue
                 if validate_domain(d):
                     try:
                         self._validate_dns(d, timeout=3)
@@ -196,6 +205,105 @@ class SSLManager(SystemManager):
         except Exception as e:
             logger.error(f"Failed to create SSL: {str(e)}")
             raise
+
+    @staticmethod
+    def _local_ips() -> set:
+        """IPs globales configuradas en este servidor (IPv4 e IPv6)."""
+        import ipaddress
+        ips = set()
+        try:
+            r = subprocess.run(["ip", "-o", "addr", "show", "scope", "global"],
+                               capture_output=True, text=True, timeout=5)
+            for line in r.stdout.splitlines():
+                parts = line.split()
+                if "inet" in parts or "inet6" in parts:
+                    i = parts.index("inet") if "inet" in parts else parts.index("inet6")
+                    ips.add(str(ipaddress.ip_address(parts[i + 1].split("/")[0])))
+        except Exception:
+            pass
+        return ips
+
+    def points_here(self, name: str, timeout: int = 3) -> bool:
+        """¿TODAS las IPs (A y AAAA) de `name` son de este servidor?
+
+        Más estricto que _validate_dns (que solo mira que resuelva): un alias
+        recién añadido suele apuntar aún al hosting anterior, y si entra en la
+        petición a Let's Encrypt el reto falla y tumba la emisión ENTERA. Let's
+        Encrypt prueba también por IPv6: un AAAA que apunte fuera también la tumba.
+        """
+        import ipaddress
+        old = socket.getdefaulttimeout()
+        try:
+            socket.setdefaulttimeout(timeout)
+            addrs = {str(ipaddress.ip_address(ai[4][0].split("%")[0]))
+                     for ai in socket.getaddrinfo(name, None)}
+        except (socket.gaierror, ValueError, OSError):
+            return False
+        finally:
+            socket.setdefaulttimeout(old)
+        local = self._local_ips()
+        return bool(addrs) and bool(local) and addrs <= local
+
+    @staticmethod
+    def _alias_cert_names(domain_name: str) -> list:
+        """Nombres de los alias del dominio para su certificado (alias + www.alias)."""
+        try:
+            from api.models.database import SessionLocal
+            from api.models.models_domain import Domain
+            from api.models.models_domain_alias import DomainAlias
+            db = SessionLocal()
+            try:
+                d = db.query(Domain).filter(Domain.domain_name == domain_name).first()
+                if not d:
+                    return []
+                names = []
+                for a in db.query(DomainAlias).filter(DomainAlias.domain_id == d.id).all():
+                    names += [a.alias_name, f"www.{a.alias_name}"]
+                return names
+            finally:
+                db.close()
+        except Exception:
+            return []
+
+    def sync_cert_names(self, domain_name: str, add: list = None,
+                        remove: list = None, line_cb=None) -> dict:
+        """Amplía o reduce el certificado VIGENTE del dominio (alias).
+
+        Conserva todos los nombres actuales (www, webmail…), añade los de `add`
+        que resuelvan aquí y quita los de `remove`. Quitar es tan importante como
+        añadir: si un alias borrado se queda en el certificado, la renovación
+        falla ENTERA cuando deja de apuntar aquí (certbot renueva con la lista
+        guardada). Sin certificado, no hace nada (se incluirán al emitirlo).
+        Devuelve {"changed", "names", "skipped"}.
+        """
+        cert = f"/etc/letsencrypt/live/{domain_name}/cert.pem"
+        if not os.path.exists(cert):
+            return {"changed": False, "names": [], "skipped": list(add or [])}
+        existing = self._cert_domains(cert)
+        if not existing:
+            return {"changed": False, "names": [], "skipped": list(add or [])}
+        drop = set(remove or [])
+        wanted = [n for n in existing if n not in drop]
+        skipped = []
+        for n in (add or []):
+            if n in wanted:
+                continue
+            if self.points_here(n):
+                wanted.append(n)
+            else:
+                skipped.append(n)
+        if wanted == existing:
+            return {"changed": False, "names": existing, "skipped": skipped}
+        cmd = [self._get_certbot_path(), "certonly", "--nginx", "--expand",
+               "--cert-name", domain_name]
+        for d in wanted:
+            cmd += ["-d", d]
+        cmd += ["--non-interactive", "--agree-tos"]
+        rc, output = self._run_certbot(cmd, line_cb=line_cb)
+        if rc != 0:
+            raise RuntimeError(f"certbot: {output.strip()[-400:] or f'exit code {rc}'}")
+        logger.info(f"Cert {domain_name}: SAN {existing} → {wanted}")
+        return {"changed": True, "names": wanted, "skipped": skipped}
 
     def _cert_domains(self, cert_path: str) -> list:
         """Devuelve la lista de dominios (SAN) de un certificado. [] si falla."""

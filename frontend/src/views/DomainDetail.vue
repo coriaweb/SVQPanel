@@ -596,6 +596,54 @@ define('WP_REDIS_PATH', '{{ redisStatus.socket }}');</pre>
         </div>
       </BaseCard>
 
+      <BaseCard v-show="tab === 'ipv6'" title="Dominios alias" icon="link-45deg">
+        <p class="dd-muted">
+          Otros dominios que llevan a esta web, por ejemplo <code>{{ aliasExample }}</code> además de
+          <code>{{ domain.domain_name }}</code>. Por defecto <strong>redirigen</strong> al dominio principal (lo recomendable
+          para buscadores: una sola dirección buena); también pueden <strong>mostrar la misma web</strong> con su propio nombre.
+          El alias y su <code>www.</code> se añaden al certificado SSL en cuanto apunten a este servidor.
+        </p>
+        <div v-if="aliases.length" class="alias-list">
+          <div v-for="a in aliases" :key="a.id" class="alias-row">
+            <div class="alias-row__name">
+              <span class="mono">{{ a.alias_name }}</span>
+              <StatusBadge v-if="!a.points_here" status="warning" label="No apunta aquí" />
+              <StatusBadge v-else-if="aliasData.ssl_enabled" :status="a.in_certificate ? 'valid' : 'warning'"
+                           :label="a.in_certificate ? 'SSL' : 'Sin SSL todavía'" />
+            </div>
+            <select class="svq-input alias-row__mode" :value="a.redirect ? 'redirect' : 'serve'"
+                    :disabled="aliasBusy" @change="setAliasMode(a, $event.target.value === 'redirect')">
+              <option value="redirect">Redirige a {{ domain.domain_name }}</option>
+              <option value="serve">Muestra la misma web</option>
+            </select>
+            <BaseButton variant="ghost" size="sm" icon="trash3" :disabled="aliasBusy" @click="removeAlias(a)" />
+          </div>
+        </div>
+        <EmptyState v-else-if="aliasLoaded" icon="link-45deg" title="Sin dominios alias"
+                    description="Añade otros dominios del cliente que deban llevar a esta web." />
+        <div class="alias-add">
+          <input class="svq-input mono" v-model="aliasNew" :placeholder="aliasExample" :disabled="aliasBusy"
+                 @keyup.enter="addAlias" />
+          <select class="svq-input" v-model="aliasNewMode" :disabled="aliasBusy">
+            <option value="redirect">Redirigir (recomendado)</option>
+            <option value="serve">Mostrar la misma web</option>
+          </select>
+          <BaseButton variant="primary" icon="plus-lg" :loading="aliasBusy" :disabled="!aliasNew.trim()" @click="addAlias">Añadir</BaseButton>
+        </div>
+        <p v-if="aliases.some(a => !a.points_here) && aliasData.dns" class="dd-muted alias-dns">
+          <i class="bi bi-info-circle"></i>
+          Para que un alias funcione, su DNS tiene que apuntar aquí:
+          <span v-if="aliasData.dns.A">registro <code>A</code> → <code>{{ aliasData.dns.A }}</code></span>
+          <span v-if="aliasData.dns.AAAA"> y <code>AAAA</code> → <code>{{ aliasData.dns.AAAA }}</code></span>
+          (para el alias y su <code>www</code>). Si el DNS lo gestiona este panel, créale una zona en DNS.
+        </p>
+        <div v-if="aliasData.ssl_enabled && aliases.some(a => a.points_here && !a.in_certificate)" class="adv-actions">
+          <BaseButton variant="subtle" size="sm" icon="shield-check" :loading="aliasBusy" @click="retryAliasSsl">
+            Añadir al certificado los alias que ya apuntan aquí
+          </BaseButton>
+        </div>
+      </BaseCard>
+
       <BaseCard v-show="tab === 'ipv6'" title="IPv6" icon="diagram-3">
         <IPv6Manager :domain="domain" @reload="reloadDomain" />
       </BaseCard>
@@ -1367,7 +1415,74 @@ location @maintenance {
       } catch (e) { store.showNotification('Error: ' + e.message, 'danger') }
       finally { hardeningSaving.value = false }
     }
-    watch(tab, (t) => { if (t === 'ipv6') loadServerIps() })
+    // ── Dominios alias ──
+    const aliases = ref([])
+    const aliasData = ref({ ssl_enabled: false, dns: null })
+    const aliasLoaded = ref(false)
+    const aliasBusy = ref(false)
+    const aliasNew = ref('')
+    const aliasNewMode = ref('redirect')
+    const aliasExample = computed(() => {
+      const n = domain.value?.domain_name || 'dominio.com'
+      const base = n.replace(/\.[^.]+$/, '')
+      return n.endsWith('.es') ? `${base}.com` : `${base}.es`
+    })
+    const _sslNote = (ssl) => {
+      if (!ssl) return ''
+      if (ssl.error) return ' El certificado no se pudo actualizar: ' + ssl.error
+      if (ssl.skipped?.length) return ' Entrará en el certificado cuando su DNS apunte a este servidor.'
+      return ssl.changed ? ' Certificado SSL actualizado.' : ''
+    }
+    const loadAliases = async () => {
+      try {
+        const r = await api.getDomainAliases(domainId.value)
+        aliases.value = r.aliases || []
+        aliasData.value = { ssl_enabled: !!r.ssl_enabled, dns: r.dns || null }
+      } catch (e) { store.showNotification('Error cargando alias: ' + e.message, 'danger') }
+      finally { aliasLoaded.value = true }
+    }
+    const addAlias = async () => {
+      const name = aliasNew.value.trim()
+      if (!name) return
+      aliasBusy.value = true
+      try {
+        const r = await api.addDomainAlias(domainId.value, name, aliasNewMode.value === 'redirect')
+        store.showNotification(`Alias ${r.alias.alias_name} añadido.` + _sslNote(r.ssl), r.ssl?.error ? 'warning' : 'success')
+        aliasNew.value = ''
+        await loadAliases()
+      } catch (e) { store.showNotification('Error: ' + e.message, 'danger') }
+      finally { aliasBusy.value = false }
+    }
+    const setAliasMode = async (a, redirect) => {
+      aliasBusy.value = true
+      try {
+        await api.updateDomainAlias(domainId.value, a.id, redirect)
+        store.showNotification(redirect ? `${a.alias_name} ahora redirige al dominio principal` : `${a.alias_name} ahora muestra la misma web`, 'success')
+        await loadAliases()
+      } catch (e) { store.showNotification('Error: ' + e.message, 'danger'); await loadAliases() }
+      finally { aliasBusy.value = false }
+    }
+    const removeAlias = async (a) => {
+      if (!confirm(`¿Quitar el alias ${a.alias_name}?\n\nDejará de llevar a esta web y se quitará del certificado SSL.`)) return
+      aliasBusy.value = true
+      try {
+        const r = await api.deleteDomainAlias(domainId.value, a.id)
+        store.showNotification(`Alias ${a.alias_name} quitado.` + _sslNote(r.ssl), 'success')
+        await loadAliases()
+      } catch (e) { store.showNotification('Error: ' + e.message, 'danger') }
+      finally { aliasBusy.value = false }
+    }
+    const retryAliasSsl = async () => {
+      aliasBusy.value = true
+      try {
+        const r = await api.retryDomainAliasSsl(domainId.value)
+        store.showNotification('Certificado revisado.' + _sslNote(r.ssl), r.ssl?.error ? 'warning' : 'success')
+        await loadAliases()
+      } catch (e) { store.showNotification('Error: ' + e.message, 'danger') }
+      finally { aliasBusy.value = false }
+    }
+
+    watch(tab, (t) => { if (t === 'ipv6') { loadServerIps(); loadAliases() } })
     const saveCustomConfig = async () => {
       advSaving.value = true; advError.value = ''
       try {
@@ -2050,6 +2165,8 @@ location @maintenance {
       redirForm, redirSaving, redirError, redirChanged, saveRedirect,
       rlPresets, rlForm, rlSaving, rlChanged, saveRateLimit,
       hardeningSaving, toggleHardening,
+      aliases, aliasData, aliasLoaded, aliasBusy, aliasNew, aliasNewMode, aliasExample,
+      addAlias, setAliasMode, removeAlias, retryAliasSsl,
       showNginxEx, showApacheEx, nginxExamples, apacheExamples, insertExample,
       authEnabled, authUser, authPass, authSaving, authError, saveHttpauth,
       statsUrl, statsLoading, statsError, loadStats,
@@ -2107,6 +2224,14 @@ location @maintenance {
 .kv__v { color: var(--text); font-size: var(--fs-sm); font-weight: var(--fw-medium); text-align: right; word-break: break-all; }
 .kv__link { margin-left: var(--sp-2); font-weight: var(--fw-normal, 400); color: var(--color-primary); text-decoration: none; }
 .kv__link:hover { text-decoration: underline; }
+/* Dominios alias (pestaña Red) */
+.alias-list { display: flex; flex-direction: column; border: 1px solid var(--border); border-radius: var(--radius-md, 10px); margin-bottom: var(--sp-3); }
+.alias-row { display: grid; grid-template-columns: 1fr 240px auto; gap: var(--sp-3); align-items: center; padding: var(--sp-2) var(--sp-3); border-bottom: 1px solid var(--border); }
+.alias-row:last-child { border-bottom: none; }
+.alias-row__name { display: flex; align-items: center; gap: var(--sp-2); flex-wrap: wrap; min-width: 0; }
+.alias-add { display: grid; grid-template-columns: 1fr 220px auto; gap: var(--sp-2); align-items: center; }
+.alias-dns { margin-top: var(--sp-3); }
+@media (max-width: 680px) { .alias-row, .alias-add { grid-template-columns: 1fr; } }
 /* Límite de peticiones por IP (pestaña Protección) */
 .rl-tips { margin: 0 0 var(--sp-4); padding-left: 1.1rem; display: flex; flex-direction: column; gap: .35rem; }
 .rl-presets { display: grid; grid-template-columns: repeat(3, 1fr); gap: var(--sp-3); margin-bottom: var(--sp-4); }

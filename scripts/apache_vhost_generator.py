@@ -50,6 +50,7 @@ def generate_apache_vhost(
     custom_apache_config: Optional[str] = None,
     httpauth: Optional[dict] = None,
     xmlrpc_blocked: bool = False,  # el rate-limit de wp-login lo hace siempre Nginx
+    serve_aliases: Optional[list] = None,  # alias que sirven la misma web (nombres)
 ) -> str:
     """
     Genera el vhost Apache BACKEND (127.0.0.1:8181) de un dominio.
@@ -123,11 +124,16 @@ def generate_apache_vhost(
             "    </Files>\n"
         )
 
+    # Alias que sirven la misma web: Nginx reenvía con su Host, así que Apache
+    # tiene que reconocerlos o los mandaría a su vhost por defecto. (Los alias que
+    # redirigen no llegan a Apache: el 301 lo da el Nginx front.)
+    alias_names = "".join(f" {a} www.{a}" for a in (serve_aliases or []))
+
     return f"""# SVQPanel — backend Apache de {domain_name} (front: Nginx)
 # Apache solo sirve PHP + .htaccess; SSL/headers/bots los hace Nginx.
 <VirtualHost {APACHE_BACKEND_ADDR}>
     ServerName {domain_name}
-    ServerAlias www.{domain_name}
+    ServerAlias www.{domain_name}{alias_names}
     DocumentRoot {docroot}
 
     # Nginx termina el SSL y reenvía por HTTP a Apache con X-Forwarded-Proto.

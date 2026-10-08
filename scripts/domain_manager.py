@@ -468,6 +468,7 @@ class DomainManager(SystemManager):
         xmlrpc_blocked: bool = None,
         wp_login_ratelimit: int = None,
         upload_max_mb: int = None,
+        aliases: list = None,
     ) -> dict:
         """
         Regenera la vhost completa del dominio con TODO el estado actual
@@ -488,9 +489,11 @@ class DomainManager(SystemManager):
         #    Default None = "no me lo dijo el caller, léelo de la BD" → así no hay
         #    que propagar estos flags por TODOS los callers de regenerate_vhost.
         #  - upload_max_mb: client_max_body_size alineado con el PHP del dominio.
+        #  - aliases: dominios alias (dominio.es → web de dominio.com).
         if (not is_subdomain or docroot_subdir is None
                 or xmlrpc_blocked is None or wp_login_ratelimit is None
-                or fastcgi_cache_enabled is None or upload_max_mb is None):
+                or fastcgi_cache_enabled is None or upload_max_mb is None
+                or aliases is None):
             try:
                 from api.models.database import SessionLocal
                 from api.models.models_domain import Domain as _D
@@ -515,12 +518,20 @@ class DomainManager(SystemManager):
                             from scripts.utils import upload_mb_from_php
                             upload_max_mb = upload_mb_from_php(
                                 getattr(_d, "php_ini_overrides", None))
+                        if aliases is None:
+                            from api.models.models_domain_alias import DomainAlias as _DA
+                            aliases = [
+                                {"name": a.alias_name, "redirect": bool(a.redirect)}
+                                for a in _db.query(_DA).filter(_DA.domain_id == _d.id)
+                                                       .order_by(_DA.alias_name).all()
+                            ]
                 finally:
                     _db.close()
             except Exception:
                 pass
         # Si tras consultar la BD siguen None (dominio aún no en BD), usar defaults.
         upload_max_mb = int(upload_max_mb or 64)
+        aliases = aliases or []
         xmlrpc_blocked = bool(xmlrpc_blocked)
         wp_login_ratelimit = int(wp_login_ratelimit or 0)
         fastcgi_cache_enabled = bool(fastcgi_cache_enabled)
@@ -556,6 +567,7 @@ class DomainManager(SystemManager):
                 custom_apache_config=custom_apache_config,
                 httpauth=httpauth,
                 xmlrpc_blocked=xmlrpc_blocked,
+                serve_aliases=[a["name"] for a in aliases if not a.get("redirect", True)],
             )
             with open(apache_path, "w") as f:
                 f.write(apache_content)
@@ -617,6 +629,7 @@ class DomainManager(SystemManager):
                 xmlrpc_blocked=xmlrpc_blocked,
                 wp_login_ratelimit=wp_login_ratelimit,
                 upload_max_mb=upload_max_mb,
+                aliases=aliases,
             )
             with open(config_path, "w") as f:
                 f.write(config_content)
@@ -678,6 +691,7 @@ class DomainManager(SystemManager):
                 xmlrpc_blocked=xmlrpc_blocked,
                 wp_login_ratelimit=wp_login_ratelimit,
                 upload_max_mb=upload_max_mb,
+                aliases=aliases,
             )
             with open(config_path, "w") as f:
                 f.write(config_content)
