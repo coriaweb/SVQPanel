@@ -134,6 +134,7 @@ class DomainResponse(BaseModel):
     httpauth_enabled: Optional[bool] = False
     httpauth_user:    Optional[str]  = None
     httpauth_folders: Optional[List[dict]] = []   # [{path, user}] carpetas con contraseña
+    hotlink_settings: Optional[dict] = None       # protección contra hotlinking
     created_at: Optional[datetime] = None
     updated_at: Optional[datetime] = None
 

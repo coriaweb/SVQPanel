@@ -975,6 +975,8 @@ def _run_migrations():
         "ALTER TABLE domains ADD COLUMN IF NOT EXISTS access_rules TEXT",
         # Contraseña en carpetas concretas (JSON [{path,user,hash}])
         "ALTER TABLE domains ADD COLUMN IF NOT EXISTS httpauth_paths TEXT",
+        # Protección contra hotlinking (JSON, scripts/hotlink.py)
+        "ALTER TABLE domains ADD COLUMN IF NOT EXISTS hotlink_protection TEXT",
         # Marca blanca (branding): NULL/False en todo = marca SVQPanel por defecto
         "ALTER TABLE settings ADD COLUMN IF NOT EXISTS brand_name VARCHAR(64)",
         "ALTER TABLE settings ADD COLUMN IF NOT EXISTS brand_accent_color VARCHAR(9)",

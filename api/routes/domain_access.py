@@ -3,6 +3,7 @@ Acceso por país e IP de un dominio (lógica y nginx en scripts/geo_access.py).
 
   GET /api/domains/{id}/access   → reglas + catálogo de países + tu IP/país
   PUT /api/domains/{id}/access   → guardar reglas (regenera el vhost; revierte si no valida)
+  PUT /api/domains/{id}/hotlink  → protección contra hotlinking (ver scripts/hotlink.py)
 
 Si las reglas nuevas dejarían FUERA a quien las está guardando (su IP o su país),
 se pide confirmación (409) en vez de aplicarlas: es la forma típica de quedarse
@@ -95,3 +96,33 @@ def put_access(domain_id: int, data: AccessRules, request: Request,
     _regenerate_or_revert(domain, db, _revert)
     return {"status": "success", "rules": geo_access.parse_rules(domain.access_rules),
             "message": "Reglas de acceso aplicadas"}
+
+
+# ── Protección contra hotlinking (scripts/hotlink.py) ──────────────────────
+class HotlinkRequest(BaseModel):
+    enabled: bool = False
+    types: List[str] = Field(default_factory=lambda: ["images"], max_length=10)
+    allow_search: bool = True
+    allow: List[str] = Field(default_factory=list, max_length=101)
+
+
+@router.put("/domains/{domain_id}/hotlink")
+def put_hotlink(domain_id: int, data: HotlinkRequest,
+                current_user: User = Depends(require_auth), db: Session = Depends(get_db)):
+    from api.routes.domain_aliases import _regenerate_or_revert
+    from scripts import hotlink
+
+    domain = _domain(domain_id, db, current_user)
+    settings, errors = hotlink.validate(data.model_dump())
+    if errors:
+        raise HTTPException(400, detail="; ".join(errors))
+    previous = domain.hotlink_protection
+    domain.hotlink_protection = json.dumps(settings) if (settings["enabled"] or settings["allow"]) else None
+    db.commit()
+
+    def _revert():
+        domain.hotlink_protection = previous
+
+    _regenerate_or_revert(domain, db, _revert)
+    return {"status": "success", "hotlink": hotlink.parse(domain.hotlink_protection),
+            "message": "Protección contra hotlinking " + ("activada" if settings["enabled"] else "desactivada")}

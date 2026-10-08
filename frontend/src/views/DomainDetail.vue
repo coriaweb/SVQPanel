@@ -778,6 +778,46 @@ define('WP_REDIS_PATH', '{{ redisStatus.socket }}');</pre>
         </div>
       </BaseCard>
 
+      <!-- ===== Protección contra hotlinking ===== -->
+      <BaseCard v-show="tab === 'bots'" title="Protección contra hotlinking" icon="image">
+        <template #actions>
+          <StatusBadge :status="domain.hotlink_settings?.enabled ? 'active' : 'none'"
+                       :label="domain.hotlink_settings?.enabled ? 'Activa' : 'Off'" />
+        </template>
+        <p class="dd-muted">
+          Impide que otras webs muestren tus imágenes (o vídeos, PDFs…) enlazándolas directamente: se ven en su
+          página pero gastan tu ancho de banda. Quien lo intente recibe un error <code>403</code>. Tu propia web,
+          sus subdominios y sus alias siempre pueden, igual que quien entra directo o desde una app.
+        </p>
+        <label class="adv-switch"><input type="checkbox" v-model="hlForm.enabled" /> Activar la protección</label>
+        <template v-if="hlForm.enabled">
+          <div class="hl-types">
+            <label v-for="t in hlTypes" :key="t.key" class="acc-mode" :class="{ on: hlForm.types.includes(t.key) }">
+              <input type="checkbox" :value="t.key" v-model="hlForm.types" />
+              <span><strong>{{ t.label }}</strong><small>{{ t.desc }}</small></span>
+            </label>
+          </div>
+          <label class="adv-switch">
+            <input type="checkbox" v-model="hlForm.allow_search" />
+            Permitir buscadores y redes sociales (recomendado)
+          </label>
+          <p class="dd-muted acc-hint">Google Imágenes, Bing, y las miniaturas al compartir en WhatsApp, Facebook,
+            X, LinkedIn… Si lo quitas, tus fotos dejan de salir en Google Imágenes.</p>
+          <label class="adv-field" style="margin-top:var(--sp-3)">
+            <span class="adv-label">Otras webs que sí pueden (una por línea)</span>
+            <textarea class="svq-input mono" rows="3" v-model="hlAllowText"
+                      placeholder="tienda-amiga.com&#10;mi-otro-dominio.es"></textarea>
+            <small class="dd-muted">Incluye sus subdominios. Útil para una tienda o un blog tuyo con otro dominio.</small>
+          </label>
+        </template>
+        <div v-if="hlError" class="adv-error"><i class="bi bi-exclamation-triangle"></i> {{ hlError }}</div>
+        <div class="adv-actions">
+          <BaseButton variant="primary" icon="check2" :loading="hlSaving" :disabled="!hlChanged" @click="saveHotlink">
+            Guardar y aplicar
+          </BaseButton>
+        </div>
+      </BaseCard>
+
       <BaseCard v-show="tab === 'bots'" title="Límite de peticiones por IP" icon="speedometer2">
         <template #actions>
           <StatusBadge :status="domain.rate_limit_enabled ? 'active' : 'none'"
@@ -1657,6 +1697,42 @@ location @maintenance {
 
     watch(tab, (t) => { if (t === 'ipv6') loadServerIps(); if (t === 'aliases') loadAliases() })
 
+    // ── Hotlinking (pestaña Protección) ──
+    const hlTypes = [
+      { key: 'images', label: 'Imágenes', desc: 'jpg, png, gif, webp, svg…' },
+      { key: 'media',  label: 'Vídeo y audio', desc: 'mp4, webm, mp3…' },
+      { key: 'docs',   label: 'Documentos', desc: 'pdf, zip, docx, xlsx…' },
+    ]
+    const hlForm = ref({ enabled: false, types: ['images'], allow_search: true })
+    const hlAllowText = ref('')
+    const hlSaving = ref(false)
+    const hlError = ref('')
+    const _hlFill = (h) => {
+      h = h || {}
+      hlForm.value = { enabled: !!h.enabled, types: [...(h.types?.length ? h.types : ['images'])],
+                       allow_search: h.allow_search !== false }
+      hlAllowText.value = (h.allow || []).join('\n')
+    }
+    const _hlPayload = () => ({ ...hlForm.value, allow: hlAllowText.value.split(/[\s,;]+/).filter(Boolean) })
+    const hlChanged = computed(() => {
+      const h = domain.value?.hotlink_settings || {}
+      const saved = { enabled: !!h.enabled, types: h.types?.length ? h.types : ['images'],
+                      allow_search: h.allow_search !== false, allow: h.allow || [] }
+      const now = _hlPayload()
+      return JSON.stringify(saved) !== JSON.stringify({ ...now, types: hlTypes.map(t => t.key).filter(k => now.types.includes(k)) })
+    })
+    watch(() => domain.value?.hotlink_settings, (h) => _hlFill(h), { immediate: true })
+    const saveHotlink = async () => {
+      hlSaving.value = true; hlError.value = ''
+      try {
+        const r = await api.saveDomainHotlink(domainId.value, _hlPayload())
+        store.showNotification(r.message || 'Protección contra hotlinking guardada', 'success')
+        await reloadDomain()
+      } catch (e) {
+        hlError.value = e.message || 'No se pudo aplicar la protección'
+      } finally { hlSaving.value = false }
+    }
+
     // ── Acceso por país/IP (pestaña Protección) ──
     const acc = ref(null)
     const accForm = ref({ site_mode: 'off', site_countries: [], login_countries: [] })
@@ -2451,6 +2527,7 @@ location @maintenance {
       rlPresets, rlForm, rlSaving, rlChanged, saveRateLimit,
       hardeningSaving, toggleHardening,
       aliases, aliasData, aliasLoaded, aliasBusy, aliasNew, aliasNewMode, aliasExample,
+      hlTypes, hlForm, hlAllowText, hlSaving, hlError, hlChanged, saveHotlink,
       acc, accForm, accAllowText, accBlockText, accSaving, accError, accModes, accActive, accChanged,
       accHasMyIp, addMyIp, countryName, saveAccess,
       res, resRange, resLoading, resError, setResRange, resDay, resCpu, resMem, resHasData, fmtResMB, fmtCpuTime,
@@ -2538,6 +2615,9 @@ location @maintenance {
 .res-charts { display: grid; grid-template-columns: 1fr 1fr; gap: var(--sp-3); }
 @media (max-width: 900px) { .res-stats { grid-template-columns: repeat(2, 1fr); } }
 @media (max-width: 680px) { .res-stats, .res-charts { grid-template-columns: 1fr; } }
+/* Hotlinking (pestaña Protección) */
+.hl-types { display: grid; grid-template-columns: repeat(3, 1fr); gap: var(--sp-2); margin: var(--sp-3) 0; }
+@media (max-width: 760px) { .hl-types { grid-template-columns: 1fr; } }
 /* Contraseña por carpetas (pestaña Protección) */
 .auth-folders { display: flex; flex-direction: column; gap: var(--sp-2); align-items: flex-start; margin-top: var(--sp-3); }
 .auth-folder { display: grid; grid-template-columns: 1.3fr 1fr 1fr auto; gap: var(--sp-2); align-items: end; width: 100%; }

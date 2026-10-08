@@ -115,6 +115,14 @@ class Domain(Base):
 
     # Acceso por país/IP (JSON, ver scripts/geo_access.py). None = sin reglas.
     access_rules = Column(Text, nullable=True)
+    # Protección contra hotlinking (JSON, ver scripts/hotlink.py). None = desactivada.
+    hotlink_protection = Column(Text, nullable=True)
+
+    @property
+    def hotlink_settings(self):
+        """Protección contra hotlinking para la API (ver scripts/hotlink.py)."""
+        from scripts.hotlink import parse
+        return parse(self.hotlink_protection)
 
     @property
     def httpauth_folders(self):

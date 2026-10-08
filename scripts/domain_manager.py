@@ -478,6 +478,7 @@ class DomainManager(SystemManager):
         aliases: list = None,
         access_rules: str = None,
         httpauth_paths: list = None,
+        hotlink: dict = None,
     ) -> dict:
         """
         Regenera la vhost completa del dominio con TODO el estado actual
@@ -503,7 +504,7 @@ class DomainManager(SystemManager):
                 or xmlrpc_blocked is None or wp_login_ratelimit is None
                 or fastcgi_cache_enabled is None or upload_max_mb is None
                 or aliases is None or access_rules is None or httpauth is None
-                or httpauth_paths is None):
+                or httpauth_paths is None or hotlink is None):
             try:
                 from api.models.database import SessionLocal
                 from api.models.models_domain import Domain as _D
@@ -545,6 +546,9 @@ class DomainManager(SystemManager):
                                 and getattr(_d, "httpauth_user", None)):
                             httpauth = {"user": _d.httpauth_user, "realm": "Zona restringida",
                                         "file": self.htpasswd_path(username, domain_name)}
+                        if hotlink is None:
+                            from scripts.hotlink import parse as _hl_parse
+                            hotlink = _hl_parse(getattr(_d, "hotlink_protection", None))
                         # Contraseña en carpetas concretas (si no está la de toda la web)
                         if httpauth_paths is None:
                             import json as _json
@@ -669,6 +673,7 @@ class DomainManager(SystemManager):
                 aliases=aliases,
                 access_deny_var=access_deny_var,
                 httpauth_paths=httpauth_paths or [],
+                hotlink=hotlink or None,
             )
             with open(config_path, "w") as f:
                 f.write(config_content)
@@ -733,6 +738,7 @@ class DomainManager(SystemManager):
                 aliases=aliases,
                 access_deny_var=access_deny_var,
                 httpauth_paths=httpauth_paths or [],
+                hotlink=hotlink or None,
             )
             with open(config_path, "w") as f:
                 f.write(config_content)

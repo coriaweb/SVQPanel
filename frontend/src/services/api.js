@@ -1409,6 +1409,9 @@ class APIClient {
   saveDomainAccess(domainId, rules) {
     return this.put(`/api/domains/${domainId}/access`, rules)
   }
+  saveDomainHotlink(domainId, data) {
+    return this.put(`/api/domains/${domainId}/hotlink`, data)
+  }
   // Estado del trabajo de apt/dpkg en segundo plano (upgrade o repair)
   getUpdatesJob() {
     return this.request('/api/system/updates/job', { method: 'GET', silent: true })

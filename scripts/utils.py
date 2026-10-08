@@ -636,6 +636,7 @@ def generate_nginx_config(
     aliases: Optional[list] = None,
     access_deny_var: Optional[str] = None,
     httpauth_paths: Optional[list] = None,
+    hotlink: Optional[dict] = None,
 ) -> str:
     """
     Generate Nginx vhost configuration (Hestia-style paths).
@@ -734,6 +735,11 @@ def generate_nginx_config(
     # define su conf.d; va antes que los bots para que un bloqueado no llegue a nada.
     if access_deny_var:
         bot_lines.insert(0, f"    if ({access_deny_var}) {{ return 403; }}")
+    # Hotlinking (scripts/hotlink.py): sus maps van al principio del fichero
+    from scripts import hotlink as _hl
+    hotlink_maps = _hl.render_maps(domain, hotlink or {}, [a["name"] for a in (aliases or [])])
+    if hotlink_maps:
+        bot_lines.append(f"    if ({_hl.deny_var(domain)}) {{ return 403; }}   # hotlinking")
     bots_block = "\n" + "\n".join(bot_lines) + "\n"
 
     # Un SUBDOMINIO (gestion.zococoria.es) NO lleva www. (nadie usa
@@ -974,7 +980,7 @@ def generate_nginx_config(
     else:
         http_block = None  # se construye abajo
 
-    server_block = auth_maps + f"""upstream php_{backend_name} {{
+    server_block = auth_maps + hotlink_maps + f"""upstream php_{backend_name} {{
     server unix:{php_socket};
 }}
 """
