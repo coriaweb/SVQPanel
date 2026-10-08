@@ -501,7 +501,7 @@ class DomainManager(SystemManager):
         if (not is_subdomain or docroot_subdir is None
                 or xmlrpc_blocked is None or wp_login_ratelimit is None
                 or fastcgi_cache_enabled is None or upload_max_mb is None
-                or aliases is None or access_rules is None):
+                or aliases is None or access_rules is None or httpauth is None):
             try:
                 from api.models.database import SessionLocal
                 from api.models.models_domain import Domain as _D
@@ -535,6 +535,14 @@ class DomainManager(SystemManager):
                             ]
                         if access_rules is None:
                             access_rules = getattr(_d, "access_rules", None) or ""
+                        # Contraseña de la web: casi ningún caller la pasaba (SSL,
+                        # cambio de PHP, CLI de los updates…) y cada regeneración
+                        # dejaba PÚBLICA una web protegida. Se lee de la BD como el
+                        # resto; quien la desactiva hace commit antes de regenerar.
+                        if (httpauth is None and getattr(_d, "httpauth_enabled", False)
+                                and getattr(_d, "httpauth_user", None)):
+                            httpauth = {"user": _d.httpauth_user, "realm": "Zona restringida",
+                                        "file": self.htpasswd_path(username, domain_name)}
                 finally:
                     _db.close()
             except Exception:
