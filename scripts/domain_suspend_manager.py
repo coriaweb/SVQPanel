@@ -139,8 +139,8 @@ class DomainSuspendManager(SystemManager):
         if available.exists() and not active_backup.exists():
             self.execute_command(["cp", str(available), str(active_backup)], check=False)
 
-        ssl_cert = f"/etc/letsencrypt/live/{domain}/fullchain.pem"
-        ssl_key  = f"/etc/letsencrypt/live/{domain}/privkey.pem"
+        from scripts.ssl_paths import cert_paths
+        ssl_cert, ssl_key = cert_paths(domain)   # propio o Let's Encrypt
         has_ssl  = os.path.exists(ssl_cert)
 
         conf = f"# SVQPanel — Dominio suspendido: {domain}\n"

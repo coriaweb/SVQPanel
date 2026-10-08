@@ -484,6 +484,8 @@ def _generate_redirect_config(
     ipv4: Optional[str] = None,
 ) -> str:
     """Genera un vhost nginx que redirige permanentemente (301) a redirect_to."""
+    from scripts.ssl_paths import cert_paths
+    _ssl_fc, _ssl_pk = cert_paths(domain)
     # Sin la IPv6 literal en server_name: nunca coincidía (ver generate_nginx_config).
     server_names = f"{domain} www.{domain}"
 
@@ -517,8 +519,8 @@ server {{
     {ipv6_listen_https}
     server_name {server_names};
 
-    ssl_certificate /etc/letsencrypt/live/{domain}/fullchain.pem;
-    ssl_certificate_key /etc/letsencrypt/live/{domain}/privkey.pem;
+    ssl_certificate {_ssl_fc};
+    ssl_certificate_key {_ssl_pk};
     ssl_protocols {SSL_PROTOCOLS};
     ssl_ciphers {SSL_CIPHERS};
     ssl_prefer_server_ciphers on;
@@ -631,6 +633,10 @@ def generate_nginx_config(
     delega la ejecución del PHP+.htaccess a Apache. El resto del vhost (TLS,
     seguridad, ficheros bloqueados) es idéntico al modo nginx puro.
     """
+
+    # Certificado: el propio (subido) si existe, si no el de Let's Encrypt
+    from scripts.ssl_paths import cert_paths
+    _ssl_fc, _ssl_pk = cert_paths(domain)
 
     # Si hay redirección activa, generar vhost mínimo de 301
     if redirect_to:
@@ -1008,8 +1014,8 @@ server {{
     server_name {server_names};
     root {public_html};
 {client_max_body}
-    ssl_certificate /etc/letsencrypt/live/{domain}/fullchain.pem;
-    ssl_certificate_key /etc/letsencrypt/live/{domain}/privkey.pem;
+    ssl_certificate {_ssl_fc};
+    ssl_certificate_key {_ssl_pk};
     ssl_protocols {SSL_PROTOCOLS};
     ssl_ciphers {SSL_CIPHERS};
     ssl_prefer_server_ciphers on;
@@ -1089,8 +1095,8 @@ server {{
     http2 on;
     {ipv6_listen_https}
     server_name {names};
-    ssl_certificate /etc/letsencrypt/live/{domain}/fullchain.pem;
-    ssl_certificate_key /etc/letsencrypt/live/{domain}/privkey.pem;
+    ssl_certificate {_ssl_fc};
+    ssl_certificate_key {_ssl_pk};
     ssl_protocols {SSL_PROTOCOLS};
     ssl_ciphers {SSL_CIPHERS};
 {redirect_body}"""

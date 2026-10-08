@@ -34,6 +34,11 @@ class SSLCertInfo(BaseModel):
     key_type:      Optional[str] = None
     issuer:        Optional[str] = None
     pem:           Optional[str] = None
+    # De dónde sale: "custom" (subido, no se renueva solo) | "letsencrypt"
+    source:        Optional[str] = None
+    wildcard:      bool = False
+    auto_renew:    bool = True
+    dns_validated: bool = False   # Let's Encrypt validado por DNS (wildcard)
 
 
 class SSLResponse(BaseModel):
@@ -45,6 +50,7 @@ class SSLResponse(BaseModel):
     certificate:  Optional[str] = None
     key:          Optional[str] = None
     cert_info:    Optional[SSLCertInfo] = None
+    warnings:     List[str] = []   # avisos al subir un certificado propio (p. ej. sin www.)
 
     class Config:
         from_attributes = True
@@ -55,6 +61,8 @@ class SSLToggleRequest(BaseModel):
     force_https:  bool = False
     hsts_enabled: bool = False
     email:        Optional[str] = Field(None, description="Email para certbot (solo al activar)")
+    # dominio + *.dominio validado por DNS (la zona tiene que estar en el panel)
+    wildcard:     bool = False
 
     @field_validator("email")
     @classmethod

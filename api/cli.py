@@ -159,8 +159,9 @@ def cmd_refresh_ssl_expires() -> int:
 
     def _cert_expiry(domain: str):
         """Devuelve datetime de expiración o None si no existe/falla."""
-        cert = f"/etc/letsencrypt/live/{domain}/fullchain.pem"
-        if not __import__("os").path.exists(cert):
+        from scripts.ssl_paths import existing_cert
+        cert = existing_cert(domain)   # propio (subido) o Let's Encrypt
+        if not cert:
             return None
         try:
             r = subprocess.run(
@@ -1314,7 +1315,7 @@ def cmd_fix_subdomain_www_certs(dry_run: bool = False) -> int:
             logger.info(f"  {name}: cert con {www} → reemitir con {wanted}")
             if dry_run:
                 continue
-            cmd = [mgr._get_certbot_path(), "certonly", "--nginx",
+            cmd = [mgr._get_certbot_path(), "certonly", *mgr._auth_args(name),
                    "--cert-name", name, "--non-interactive", "--agree-tos"]
             for s in wanted:
                 cmd += ["-d", s]
@@ -2079,6 +2080,29 @@ def cmd_convert_subdomains(domains=None, dry_run: bool = False) -> int:
     return 0
 
 
+def cmd_acme_dns_hook(action: str) -> int:
+    """Hook de certbot para la validación DNS-01 (wildcard). Lo llama
+    scripts/certbot-dns-hook.sh con CERTBOT_DOMAIN/CERTBOT_VALIDATION en el
+    entorno, en la emisión y en cada renovación automática."""
+    import os
+    from scripts import acme_dns
+    name = os.environ.get("CERTBOT_DOMAIN", "")
+    value = os.environ.get("CERTBOT_VALIDATION", "")
+    if not name or not value:
+        print("Faltan CERTBOT_DOMAIN / CERTBOT_VALIDATION (esto lo llama certbot)", file=sys.stderr)
+        return 2
+    try:
+        if action == "auth":
+            acme_dns.add_challenge(name, value)
+            print(f"Reto DNS publicado para {name}")
+        else:
+            acme_dns.remove_challenge(name, value)
+        return 0
+    except Exception as e:
+        print(f"acme_dns_hook {action} {name}: {e}", file=sys.stderr)
+        return 1
+
+
 def cmd_update_geoip(force: bool = False) -> int:
     """Descarga/actualiza la base GeoIP (DB-IP gratis) para los países en las
     estadísticas de dominio. Idempotente (no re-baja la del mes salvo --force)."""
@@ -2636,6 +2660,9 @@ def main():
         help="Re-escalona los wp-cron existentes (minuto repartido por dominio, evita pico de load)")
     sub.add_parser("refresh_suspended_vhosts",
         help="Regenera el vhost de los dominios suspendidos (listen IPv6)")
+    p_acme = sub.add_parser("acme_dns_hook",
+        help="(certbot) publica/borra el TXT _acme-challenge para certificados wildcard")
+    p_acme.add_argument("action", choices=["auth", "cleanup"])
     p_geo = sub.add_parser("update_geoip",
         help="Descarga/actualiza la base GeoIP (países en estadísticas)")
     p_geo.add_argument("--force", action="store_true", help="Re-descargar aunque ya esté la del mes")
@@ -2807,6 +2834,8 @@ def main():
         sys.exit(cmd_restagger_wp_cron())
     if args.cmd == "refresh_suspended_vhosts":
         sys.exit(cmd_refresh_suspended_vhosts())
+    if args.cmd == "acme_dns_hook":
+        sys.exit(cmd_acme_dns_hook(args.action))
     if args.cmd == "update_geoip":
         sys.exit(cmd_update_geoip(force=getattr(args, "force", False)))
     if args.cmd == "refresh_cloudflare_ips":

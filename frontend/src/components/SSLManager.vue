@@ -23,7 +23,10 @@
       <div class="ssl-badge">
         <i class="bi bi-shield-check-fill"></i>
         <div>
-          <strong>Certificado Activo</strong>
+          <strong>Certificado Activo
+            <span v-if="isCustom" class="ssl-kind">Propio</span>
+            <span v-else-if="ssl.cert_info?.wildcard" class="ssl-kind">Wildcard</span>
+          </strong>
           <span class="ssl-expiry">Válido hasta {{ formatDate(ssl.ssl_expires || ssl.cert_info?.not_after) }}</span>
         </div>
       </div>
@@ -35,7 +38,11 @@
         <div v-if="ssl.cert_info?.not_before" class="ssl-meta-row"><span>Válido desde</span><span>{{ formatDate(ssl.cert_info.not_before) }}</span></div>
         <div v-if="ssl.cert_info?.signature_alg" class="ssl-meta-row"><span>Algoritmo</span><span class="mono">{{ ssl.cert_info.signature_alg }}</span></div>
         <div v-if="ssl.cert_info?.key_size" class="ssl-meta-row"><span>Clave</span><span>{{ ssl.cert_info.key_type ? ssl.cert_info.key_type + ' · ' : '' }}{{ ssl.cert_info.key_size }} bits</span></div>
-        <div class="ssl-meta-row"><span>Auto-renovación</span><span>Habilitada (certbot.timer)</span></div>
+        <div class="ssl-meta-row"><span>Auto-renovación</span>
+          <span v-if="isCustom" class="ssl-warn-text">No: es un certificado propio. Sube el nuevo antes de que caduque (te avisaremos).</span>
+          <span v-else-if="ssl.cert_info?.dns_validated">Habilitada (Let's Encrypt, validación por DNS)</span>
+          <span v-else>Habilitada (Let's Encrypt)</span>
+        </div>
       </div>
       <div v-if="ssl.cert_info?.pem" class="ssl-pem">
         <button type="button" class="ssl-pem__toggle" @click="showPem = !showPem">
@@ -74,13 +81,30 @@
 
       <!-- Acciones -->
       <div class="ssl-actions">
-        <button class="btn btn-sm btn-outline-primary" @click="renewSSL" :disabled="loading">
-          <span v-if="loading" class="spinner-border spinner-border-sm me-1"></span>
-          <i v-else class="bi bi-arrow-repeat me-1"></i>Renovar
-        </button>
-        <button class="btn btn-sm btn-outline-danger" @click="showRevokeConfirm = true" :disabled="loading">
-          <i class="bi bi-x-circle me-1"></i>Revocar
-        </button>
+        <template v-if="isCustom">
+          <button class="btn btn-sm btn-outline-primary" @click="openUpload" :disabled="loading">
+            <i class="bi bi-upload me-1"></i>Sustituir certificado
+          </button>
+          <button class="btn btn-sm btn-outline-danger" @click="removeCustom" :disabled="loading">
+            <i class="bi bi-x-circle me-1"></i>Quitar certificado propio
+          </button>
+        </template>
+        <template v-else>
+          <button class="btn btn-sm btn-outline-primary" @click="renewSSL" :disabled="loading">
+            <span v-if="loading" class="spinner-border spinner-border-sm me-1"></span>
+            <i v-else class="bi bi-arrow-repeat me-1"></i>Renovar
+          </button>
+          <button v-if="!domain.is_subdomain && !ssl.cert_info?.wildcard" class="btn btn-sm btn-outline-secondary"
+                  @click="openIssue(true)" :disabled="loading">
+            <i class="bi bi-asterisk me-1"></i>Pasar a wildcard
+          </button>
+          <button class="btn btn-sm btn-outline-secondary" @click="openUpload" :disabled="loading">
+            <i class="bi bi-upload me-1"></i>Usar un certificado propio
+          </button>
+          <button class="btn btn-sm btn-outline-danger" @click="showRevokeConfirm = true" :disabled="loading">
+            <i class="bi bi-x-circle me-1"></i>Revocar
+          </button>
+        </template>
       </div>
 
       <div v-if="showRevokeConfirm" class="revoke-confirm">
@@ -93,74 +117,120 @@
     </div>
 
     <!-- Sin cert -->
-    <div v-else>
-      <div v-if="!showForm" class="ssl-empty">
-        <i class="bi bi-shield-x ssl-empty-icon"></i>
-        <p>Este dominio no tiene certificado SSL.</p>
-        <p class="ssl-empty-hint">Se emitirá un certificado Let's Encrypt gratuito. El dominio debe apuntar a este servidor.</p>
-        <button class="btn btn-success btn-sm" @click="showForm = true">
-          <i class="bi bi-plus-circle me-1"></i>Emitir certificado SSL
+    <div v-else-if="!showForm && !showUpload" class="ssl-empty">
+      <i class="bi bi-shield-x ssl-empty-icon"></i>
+      <p>Este dominio no tiene certificado SSL.</p>
+      <p class="ssl-empty-hint">Lo normal es uno gratuito de Let's Encrypt, que se renueva solo. Si ya tienes uno comprado, súbelo.</p>
+      <div class="d-flex gap-2 justify-content-center flex-wrap">
+        <button class="btn btn-success btn-sm" @click="openIssue(false)">
+          <i class="bi bi-plus-circle me-1"></i>Emitir certificado gratuito
+        </button>
+        <button class="btn btn-outline-secondary btn-sm" @click="openUpload">
+          <i class="bi bi-upload me-1"></i>Subir certificado propio
         </button>
       </div>
+    </div>
 
-      <div v-else class="ssl-form">
-        <p>Se emitirá un certificado <strong>Let's Encrypt</strong> para:</p>
-        <div class="mono mb-3">{{ domain.domain_name }}</div>
+    <!-- Emitir con Let's Encrypt (normal o wildcard) -->
+    <div v-if="showForm" class="ssl-form">
+      <p>Se emitirá un certificado <strong>Let's Encrypt</strong> para:</p>
+      <div class="mono mb-3">{{ wildcard ? `${domain.domain_name}, *.${domain.domain_name}` : domain.domain_name }}</div>
 
-        <div class="ssl-field">
-          <label>Email para Let's Encrypt <span class="ssl-required">*</span></label>
-          <input v-model="email" type="email" class="form-control form-control-sm"
-            placeholder="admin@tudominio.com" autocomplete="email" />
-          <span class="ssl-hint">Let's Encrypt lo necesita para notificarte de renovaciones. Debe ser un email real.</span>
-        </div>
+      <label v-if="!domain.is_subdomain" class="ssl-wild">
+        <input type="checkbox" v-model="wildcard" :disabled="loading" />
+        <span>
+          <strong>Wildcard (*.{{ domain.domain_name }})</strong>
+          <small>Cubre el dominio y <em>cualquier</em> subdominio (www, mail, webmail, tienda…) con un solo
+            certificado. Se valida creando un registro TXT en la zona DNS, así que el dominio tiene que usar los
+            DNS de este panel.</small>
+        </span>
+      </label>
 
-        <div class="alert alert-info py-2 small">
-          <i class="bi bi-info-circle me-1"></i>
-          El dominio debe apuntar a este servidor y ser accesible por el puerto 80. Tarda ~30 segundos.
+      <div class="ssl-field">
+        <label>Email para Let's Encrypt <span class="ssl-required">*</span></label>
+        <input v-model="email" type="email" class="form-control form-control-sm"
+          placeholder="admin@tudominio.com" autocomplete="email" />
+        <span class="ssl-hint">Let's Encrypt lo necesita para notificarte de renovaciones. Debe ser un email real.</span>
+      </div>
+
+      <div class="alert alert-info py-2 small">
+        <i class="bi bi-info-circle me-1"></i>
+        <template v-if="wildcard">Se publica un registro temporal en los DNS y se espera a que ns1 y ns2 lo sirvan: tarda 1–2 minutos.</template>
+        <template v-else>El dominio debe apuntar a este servidor y ser accesible por el puerto 80. Tarda ~30 segundos.</template>
+      </div>
+      <div class="d-flex gap-2">
+        <button class="btn btn-success btn-sm" @click="createSSL" :disabled="loading || !email">
+          <span v-if="loading" class="ssl-spin"></span>
+          <i v-else class="bi bi-shield-check me-1"></i>
+          {{ loading ? 'Emitiendo…' : 'Emitir certificado' }}
+        </button>
+        <button class="btn btn-secondary btn-sm" @click="showForm = false" :disabled="loading">Cancelar</button>
+      </div>
+      <!-- Progreso real de la emisión: fases del job + salida de certbot en vivo -->
+      <div v-if="loading && !issueJob" class="ssl-progress">
+        <span class="ssl-spin ssl-spin--lg"></span>
+        <div>
+          <strong>Iniciando la emisión…</strong>
         </div>
-        <div class="d-flex gap-2">
-          <button class="btn btn-success btn-sm" @click="createSSL" :disabled="loading || !email">
-            <span v-if="loading" class="ssl-spin"></span>
-            <i v-else class="bi bi-shield-check me-1"></i>
-            {{ loading ? 'Emitiendo…' : 'Emitir certificado' }}
-          </button>
-          <button class="btn btn-secondary btn-sm" @click="showForm = false" :disabled="loading">Cancelar</button>
-        </div>
-        <!-- Progreso real de la emisión: fases del job + salida de certbot en vivo -->
-        <div v-if="loading && !issueJob" class="ssl-progress">
-          <span class="ssl-spin ssl-spin--lg"></span>
-          <div>
-            <strong>Iniciando la emisión…</strong>
-          </div>
-        </div>
-        <div v-if="issueJob" class="ssl-progress ssl-progress--steps">
-          <div class="ssl-steps">
-            <div v-for="(s, i) in issueJob.steps" :key="i" class="ssl-step" :class="'is-' + stepState(i)">
-              <i v-if="stepState(i) === 'done'" class="bi bi-check-circle-fill"></i>
-              <i v-else-if="stepState(i) === 'failed'" class="bi bi-x-circle-fill"></i>
-              <span v-else-if="stepState(i) === 'running'" class="ssl-spin"></span>
-              <i v-else class="bi bi-circle"></i>
-              <span>{{ s }}</span>
-            </div>
-          </div>
-          <div v-if="issueJob.status === 'running' && issueJob.detail" class="ssl-step-live mono" :title="issueJob.detail">
-            {{ issueJob.detail }}
-          </div>
-          <div v-if="issueJob.status === 'failed'" class="ssl-step-error">
-            <strong><i class="bi bi-x-circle-fill me-1"></i>La emisión falló</strong>
-            <pre class="ssl-error-text">{{ issueJob.error }}</pre>
-          </div>
-          <div v-if="issueJob.status === 'running'" class="ssl-hint">
-            Suele tardar ~30 segundos. Puedes salir de esta página: la emisión continúa en el servidor.
+      </div>
+      <div v-if="issueJob" class="ssl-progress ssl-progress--steps">
+        <div class="ssl-steps">
+          <div v-for="(st, i) in issueJob.steps" :key="i" class="ssl-step" :class="'is-' + stepState(i)">
+            <i v-if="stepState(i) === 'done'" class="bi bi-check-circle-fill"></i>
+            <i v-else-if="stepState(i) === 'failed'" class="bi bi-x-circle-fill"></i>
+            <span v-else-if="stepState(i) === 'running'" class="ssl-spin"></span>
+            <i v-else class="bi bi-circle"></i>
+            <span>{{ st }}</span>
           </div>
         </div>
+        <div v-if="issueJob.status === 'running' && issueJob.detail" class="ssl-step-live mono" :title="issueJob.detail">
+          {{ issueJob.detail }}
+        </div>
+        <div v-if="issueJob.status === 'failed'" class="ssl-step-error">
+          <strong><i class="bi bi-x-circle-fill me-1"></i>La emisión falló</strong>
+          <pre class="ssl-error-text">{{ issueJob.error }}</pre>
+        </div>
+        <div v-if="issueJob.status === 'running'" class="ssl-hint">
+          Puedes salir de esta página: la emisión continúa en el servidor.
+        </div>
+      </div>
+    </div>
+
+    <!-- Subir un certificado propio -->
+    <div v-if="showUpload" class="ssl-form">
+      <p><strong>Certificado propio</strong> (comprado o de otra autoridad). Pega el contenido de los ficheros
+        <code>.crt</code>/<code>.pem</code> que te dio tu proveedor.</p>
+      <div v-for="f in uploadFields" :key="f.key" class="ssl-field">
+        <label>{{ f.label }} <span v-if="f.required" class="ssl-required">*</span>
+          <button type="button" class="ssl-file-btn" @click="pickFile(f.key)"><i class="bi bi-folder2-open"></i> Desde archivo</button>
+        </label>
+        <textarea v-model="upload[f.key]" class="form-control form-control-sm mono ssl-pem-input" rows="5"
+                  :placeholder="f.placeholder" spellcheck="false"></textarea>
+        <span class="ssl-hint">{{ f.hint }}</span>
+      </div>
+      <input ref="fileInput" type="file" accept=".pem,.crt,.cer,.key,.ca-bundle,.txt" class="d-none" @change="onFile" />
+      <div class="alert alert-info py-2 small">
+        <i class="bi bi-info-circle me-1"></i>
+        Antes de instalarlo se comprueba que la clave corresponde al certificado, que no ha caducado y que cubre
+        {{ domain.domain_name }}. No se renueva solo: cuando tu proveedor te dé el nuevo, súbelo igual.
+        Si lo compras a una autoridad distinta de Let's Encrypt y la zona DNS está aquí, añade su registro
+        <code>CAA</code> o la autoridad no podrá emitirlo.
+      </div>
+      <div v-if="uploadError" class="alert alert-danger py-2 small">{{ uploadError }}</div>
+      <div class="d-flex gap-2">
+        <button class="btn btn-success btn-sm" @click="submitUpload"
+                :disabled="loading || !upload.certificate.trim() || !upload.private_key.trim()">
+          <span v-if="loading" class="ssl-spin"></span>
+          <i v-else class="bi bi-shield-check me-1"></i>Instalar certificado
+        </button>
+        <button class="btn btn-secondary btn-sm" @click="showUpload = false" :disabled="loading">Cancelar</button>
       </div>
     </div>
   </div>
 </template>
 
 <script>
-import { ref, onMounted, onUnmounted } from 'vue'
+import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { useMainStore } from '../stores/useMainStore'
 import api from '../services/api'
 import { formatDate as fmtDate } from '../utils/datetime'
@@ -182,6 +252,58 @@ export default {
     const hsts = ref(false)
     const email = ref('')
     const showPem = ref(false)
+    const wildcard = ref(false)
+    const showUpload = ref(false)
+    const upload = ref({ certificate: '', private_key: '', chain: '' })
+    const uploadError = ref('')
+    const fileInput = ref(null)
+    let fileTarget = null
+    const uploadFields = [
+      { key: 'certificate', label: 'Certificado', required: true, placeholder: '-----BEGIN CERTIFICATE-----',
+        hint: 'El del dominio (.crt). Si te dieron uno con la cadena ya incluida, vale.' },
+      { key: 'private_key', label: 'Clave privada', required: true, placeholder: '-----BEGIN PRIVATE KEY-----',
+        hint: 'La que generaste al pedir el certificado (.key). Sin contraseña.' },
+      { key: 'chain', label: 'Cadena intermedia (CA bundle)', required: false, placeholder: '-----BEGIN CERTIFICATE-----',
+        hint: 'Los certificados intermedios del proveedor. Sin ellos muchos móviles no confían en la web.' },
+    ]
+    const isCustom = computed(() => ssl.value?.cert_info?.source === 'custom')
+    const openIssue = (wild) => { wildcard.value = !!wild; showUpload.value = false; showForm.value = true }
+    const openUpload = () => {
+      showForm.value = false; uploadError.value = ''
+      upload.value = { certificate: '', private_key: '', chain: '' }
+      showUpload.value = true
+    }
+    const pickFile = (key) => { fileTarget = key; fileInput.value?.click() }
+    const onFile = async (ev) => {
+      const f = ev.target.files?.[0]
+      if (f && fileTarget) upload.value[fileTarget] = await f.text()
+      ev.target.value = ''
+    }
+    const submitUpload = async () => {
+      loading.value = true; uploadError.value = ''
+      try {
+        const r = await api.uploadCustomCert(props.domain.id, upload.value)
+        showUpload.value = false
+        store.showNotification('Certificado propio instalado', 'success')
+        for (const w of (r.warnings || [])) store.showNotification(w, 'warning')
+        await loadSSL()
+        emit('reload')
+      } catch (e) {
+        uploadError.value = e.message || 'No se pudo instalar el certificado'
+      } finally { loading.value = false }
+    }
+    const removeCustom = async () => {
+      if (!window.confirm('¿Quitar el certificado propio? Si el dominio tenía uno de Let\'s Encrypt volverá a él; si no, se quedará sin HTTPS.')) return
+      loading.value = true
+      try {
+        await api.removeCustomCert(props.domain.id)
+        store.showNotification('Certificado propio quitado', 'success')
+        await loadSSL()
+        emit('reload')
+      } catch (e) {
+        store.showNotification('Error: ' + e.message, 'danger')
+      } finally { loading.value = false }
+    }
     const pemCopied = ref(false)
     const copyPem = async () => {
       try { await navigator.clipboard.writeText(ssl.value?.cert_info?.pem || '') } catch { /* http sin portapapeles */ }
@@ -295,6 +417,7 @@ export default {
           force_https: true,
           hsts_enabled: hsts.value,
           email: email.value,
+          wildcard: wildcard.value,
         })
         issueJob.value = r.job
         await pollIssue()
@@ -356,6 +479,8 @@ export default {
       canonical, savingCanonical, canonicalOptions, setCanonical,
       createSSL, renewSSL, revokeSSL, saveToggle, formatDate,
       showPem, pemCopied, copyPem,
+      wildcard, showUpload, upload, uploadError, uploadFields, fileInput, isCustom,
+      openIssue, openUpload, pickFile, onFile, submitUpload, removeCustom,
     }
   }
 }
@@ -473,6 +598,17 @@ export default {
 .ssl-field label { font-size: .82rem; font-weight: 600; color: var(--text-secondary); }
 .ssl-required { color: var(--danger); }
 .ssl-hint { font-size: .75rem; color: var(--text-muted); }
+.ssl-kind { display: inline-block; margin-left: .4rem; padding: .05rem .45rem; border-radius: 999px; font-size: .7rem;
+  font-weight: 600; background: var(--ac-soft); color: var(--ac); vertical-align: middle; }
+.ssl-warn-text { color: var(--warning); }
+.ssl-wild { display: flex; gap: .55rem; align-items: flex-start; padding: .65rem .75rem; margin-bottom: .9rem;
+  border: 1px solid var(--border); border-radius: var(--r-md, 10px); cursor: pointer; }
+.ssl-wild input { margin-top: .2rem; }
+.ssl-wild span { display: flex; flex-direction: column; gap: .15rem; font-size: .85rem; }
+.ssl-wild small { color: var(--text-muted); font-size: .75rem; }
+.ssl-pem-input { font-size: .72rem; resize: vertical; }
+.ssl-file-btn { margin-left: .5rem; border: 0; background: transparent; color: var(--ac); font-size: .75rem; cursor: pointer; }
+
 
 /* Spinner propio (no depende del bootstrap-compat) para que SIEMPRE se vea. */
 .ssl-spin {

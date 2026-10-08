@@ -112,7 +112,8 @@ def _cert_san_names(parent_domain: str, mtime: float) -> frozenset:
     """SANs del cert de un dominio. Cacheado por (dominio, mtime del fichero):
     parsear X.509 no es gratis y al listar se hacía 2 veces por dominio. Si
     certbot renueva, cambia el mtime y la entrada se invalida sola."""
-    parent_cert = f"/etc/letsencrypt/live/{parent_domain}/cert.pem"
+    from scripts.ssl_paths import existing_cert
+    parent_cert = existing_cert(parent_domain)   # propio o Let's Encrypt
     try:
         with open(parent_cert, "rb") as f:
             pem = f.read()
@@ -133,15 +134,18 @@ def _cert_covers(host: str, parent_domain: str) -> bool:
     Solo I/O + lectura de un fichero; rápido.
     """
     import os
-    if os.path.exists(f"/etc/letsencrypt/live/{host}/fullchain.pem"):
+    from scripts.ssl_paths import existing_cert, covers
+    if existing_cert(host):
         return True
-    # Mirar el cert del dominio padre y ver si lista `host` como SAN.
-    parent_cert = f"/etc/letsencrypt/live/{parent_domain}/cert.pem"
+    # Mirar el cert del dominio padre: `host` como SAN o un comodín *.dominio.
+    parent_cert = existing_cert(parent_domain)
+    if not parent_cert:
+        return False
     try:
         mtime = os.path.getmtime(parent_cert)
     except OSError:
         return False
-    return host in _cert_san_names(parent_domain, mtime)
+    return covers(_cert_san_names(parent_domain, mtime), host)
 
 
 def compute_mail_domain_disk(md: MailDomain, db: Session) -> int:
@@ -2549,11 +2553,8 @@ async def create_webmail_token(
     from scripts.webmail_manager import WebmailManager, vhost_name
     import subprocess as _sp
     webmail_domain = f"webmail.{md.domain_name}"
-    webmail_ssl = os.path.exists(
-        f"/etc/letsencrypt/live/{md.domain_name}/fullchain.pem"
-    ) or os.path.exists(
-        f"/etc/letsencrypt/live/{webmail_domain}/fullchain.pem"
-    )
+    from scripts.ssl_paths import existing_cert
+    webmail_ssl = bool(existing_cert(md.domain_name) or existing_cert(webmail_domain))
     vhost_enabled = os.path.exists(
         f"/etc/nginx/sites-enabled/{vhost_name(md.domain_name)}"
     )

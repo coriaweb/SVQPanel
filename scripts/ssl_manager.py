@@ -245,6 +245,47 @@ class SSLManager(SystemManager):
         return bool(addrs) and bool(local) and addrs <= local
 
     @staticmethod
+    def _auth_args(domain_name: str) -> list:
+        """Cómo valida certbot el certificado de este dominio: por DNS (wildcard,
+        con el hook del panel) o por HTTP con nginx. Ampliar o reducir un
+        wildcard con --nginx fallaría: *.dominio solo se valida por DNS."""
+        from scripts import acme_dns
+        return acme_dns.hook_args() if acme_dns.is_dns_lineage(domain_name) else ["--nginx"]
+
+    def create_wildcard(self, domain_name: str, email: str, line_cb=None) -> dict:
+        """Certificado dominio + *.dominio validado por DNS (TXT en la zona del
+        panel). Cubre www., mail., webmail. y cualquier subdominio de un nivel.
+        Mismo lineage (--cert-name) que el normal: el vhost no cambia de ruta.
+        Los alias entran solo si su zona también está en el panel."""
+        from scripts import acme_dns
+        from api.models.database import SessionLocal, load_all_models
+        if not validate_domain(domain_name):
+            raise ValueError(f"Invalid domain: {domain_name}")
+        load_all_models()
+        db = SessionLocal()
+        try:
+            if not acme_dns.can_validate(db, domain_name):
+                raise ValueError(
+                    f"La zona DNS de {domain_name} no está en este panel. El certificado wildcard se "
+                    "valida creando un registro TXT, así que el dominio tiene que usar nuestros DNS.")
+            aliases = [n for n in self._alias_cert_names(domain_name)
+                       if acme_dns.can_validate(db, n)]
+        finally:
+            db.close()
+        names = [domain_name, f"*.{domain_name}"] + [n for n in aliases if n not in (domain_name,)]
+        cmd = [self._get_certbot_path(), "certonly", *acme_dns.hook_args(),
+               "--cert-name", domain_name]
+        for d in dict.fromkeys(names):
+            cmd += ["-d", d]
+        cmd += ["--non-interactive", "--agree-tos", "-m", email, "--expand"]
+        rc, output = self._run_certbot(cmd, line_cb=line_cb)
+        if rc != 0:
+            raise RuntimeError(f"certbot failed: {output.strip()[-600:] or f'exit code {rc}'}")
+        self.execute_command(["systemctl", "enable", "certbot.timer"], check=False)
+        logger.info(f"Wildcard SSL emitido: {names}")
+        return {"success": True, "domain": domain_name, "names": names}
+
+    @staticmethod
     def _alias_cert_names(domain_name: str) -> list:
         """Nombres de los alias del dominio para su certificado (alias + www.alias)."""
         try:
@@ -276,9 +317,12 @@ class SSLManager(SystemManager):
         guardada). Sin certificado, no hace nada (se incluirán al emitirlo).
         Devuelve {"changed", "names", "skipped"}.
         """
+        from scripts import ssl_paths, acme_dns
         cert = f"/etc/letsencrypt/live/{domain_name}/cert.pem"
-        if not os.path.exists(cert):
+        # Certificado propio (subido): sus nombres los decide quien lo compró.
+        if ssl_paths.has_custom(domain_name) or not os.path.exists(cert):
             return {"changed": False, "names": [], "skipped": list(add or [])}
+        dns_mode = acme_dns.is_dns_lineage(domain_name)
         existing = self._cert_domains(cert)
         if not existing:
             return {"changed": False, "names": [], "skipped": list(add or [])}
@@ -288,13 +332,21 @@ class SSLManager(SystemManager):
         for n in (add or []):
             if n in wanted:
                 continue
-            if self.points_here(n):
+            ok = self.points_here(n)
+            if dns_mode:   # wildcard: se valida por DNS, hace falta la zona aquí
+                from api.models.database import SessionLocal
+                _db = SessionLocal()
+                try:
+                    ok = acme_dns.can_validate(_db, n)
+                finally:
+                    _db.close()
+            if ok:
                 wanted.append(n)
             else:
                 skipped.append(n)
         if wanted == existing:
             return {"changed": False, "names": existing, "skipped": skipped}
-        cmd = [self._get_certbot_path(), "certonly", "--nginx", "--expand",
+        cmd = [self._get_certbot_path(), "certonly", *self._auth_args(domain_name), "--expand",
                "--cert-name", domain_name]
         for d in wanted:
             cmd += ["-d", d]
@@ -329,6 +381,11 @@ class SSLManager(SystemManager):
           para webmail.{dominio} (no hay conflicto porque tampoco hay vhost web con SSL)
         """
         webmail_host = f"webmail.{domain_name}"
+        from scripts import ssl_paths
+        if ssl_paths.covers(ssl_paths.names_of(domain_name), webmail_host):
+            # Ya cubierto (wildcard *.dominio, o un certificado propio que lo incluye)
+            return {"success": True, "domain": webmail_host,
+                    "cert": ssl_paths.existing_cert(domain_name)}
         self._validate_dns(webmail_host)
 
         certbot_path = self._get_certbot_path()
@@ -345,7 +402,7 @@ class SSLManager(SystemManager):
             # --cert-name fija el lineage al del dominio: sin esto, certbot puede
             # crear un cert duplicado "{dominio}-0001" en vez de expandir el bueno
             # (deja el vhost apuntando al viejo, sin webmail → candado rojo).
-            cmd = [certbot_path, "certonly", "--nginx", "--expand",
+            cmd = [certbot_path, "certonly", *self._auth_args(domain_name), "--expand",
                    "--cert-name", domain_name]
             for d in wanted:
                 cmd += ["-d", d]
@@ -503,8 +560,9 @@ class SSLManager(SystemManager):
         signature_alg, key_size, issuer, key_type, pem (cert completo).
         Devuelve None si el cert no existe.
         """
-        cert_path = f"/etc/letsencrypt/live/{domain_name}/fullchain.pem"
-        if not os.path.isfile(cert_path):
+        from scripts import ssl_paths, acme_dns
+        cert_path = ssl_paths.existing_cert(domain_name)   # propio o Let's Encrypt
+        if not cert_path:
             return None
         try:
             result = subprocess.run(
@@ -573,7 +631,13 @@ class SSLManager(SystemManager):
             with open(cert_path, "r") as f:
                 pem = f.read()
 
+            src = ssl_paths.source(domain_name)
             return {
+                # custom = subido (no se renueva solo); letsencrypt (wildcard = por DNS)
+                "source":        src,
+                "wildcard":      any(n.startswith("*.") for n in sans),
+                "auto_renew":    src == "letsencrypt",
+                "dns_validated": src == "letsencrypt" and acme_dns.is_dns_lineage(domain_name),
                 "issued_to":     issued_to or domain_name,
                 "sans":          sans,
                 "not_before":    not_before,

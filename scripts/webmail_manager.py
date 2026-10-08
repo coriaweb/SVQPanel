@@ -73,24 +73,14 @@ def cert_includes_webmail(domain: str) -> bool:
       1. Cert propio de webmail.{dominio} (emitido con --webroot independiente).
       2. Cert del dominio padre que incluya webmail.{dominio} como SAN (expand legacy).
     """
+    from scripts import ssl_paths
     host = webmail_host(domain)
     # 1. Cert propio para webmail.{dominio}
-    own_cert = f"/etc/letsencrypt/live/{host}/cert.pem"
-    if os.path.exists(own_cert):
+    if ssl_paths.existing_cert(host):
         return True
-    # 2. SAN en el cert del dominio padre
-    parent_cert = f"/etc/letsencrypt/live/{domain}/cert.pem"
-    if not os.path.exists(parent_cert):
-        return False
-    try:
-        import subprocess
-        r = subprocess.run(
-            ["/usr/bin/openssl", "x509", "-noout", "-text", "-in", parent_cert],
-            capture_output=True, text=True, timeout=10,
-        )
-        return f"DNS:{host}" in r.stdout
-    except Exception:
-        return False
+    # 2. El cert del dominio padre (propio o Let's Encrypt) lo cubre: como SAN
+    #    o con un comodín *.dominio
+    return ssl_paths.covers(ssl_paths.names_of(domain), host)
 
 
 class WebmailManager(SystemManager):
@@ -156,21 +146,12 @@ class WebmailManager(SystemManager):
         # Usar un cert separado para webmail causa conflictos SNI en nginx cuando
         # múltiples vhosts comparten el mismo listen 443 (el primer cert cargado
         # gana para toda la IP antes de leer el SNI del cliente).
-        import os as _os, subprocess as _sp
-        domain_cert  = f"/etc/letsencrypt/live/{domain}/fullchain.pem"
-        domain_key   = f"/etc/letsencrypt/live/{domain}/privkey.pem"
-        webmail_cert = f"/etc/letsencrypt/live/{host}/fullchain.pem"
-        webmail_key  = f"/etc/letsencrypt/live/{host}/privkey.pem"
+        import os as _os
+        from scripts import ssl_paths
+        domain_cert, domain_key = ssl_paths.cert_paths(domain)
+        webmail_cert, webmail_key = ssl_paths.cert_paths(host)
 
-        def _cert_has_san(cert_path, san):
-            try:
-                r = _sp.run(["openssl", "x509", "-noout", "-ext", "subjectAltName",
-                              "-in", cert_path], capture_output=True, text=True, timeout=5)
-                return san in r.stdout
-            except Exception:
-                return False
-
-        if _os.path.exists(domain_cert) and _cert_has_san(domain_cert, host):
+        if _os.path.exists(domain_cert) and ssl_paths.covers(ssl_paths.cert_sans(domain_cert), host):
             # El cert del dominio padre ya incluye webmail — usarlo directamente
             ssl_cert, ssl_key = domain_cert, domain_key
         elif _os.path.exists(webmail_cert):
@@ -295,10 +276,9 @@ server {{
         enabled = os.path.join(SITES_ENABLED,   vhost_name(domain))
 
         # Detectar si hay cert disponible para mantener HTTPS
-        domain_cert = f"/etc/letsencrypt/live/{domain}/fullchain.pem"
-        domain_key  = f"/etc/letsencrypt/live/{domain}/privkey.pem"
-        own_cert    = f"/etc/letsencrypt/live/{host}/fullchain.pem"
-        own_key     = f"/etc/letsencrypt/live/{host}/privkey.pem"
+        from scripts import ssl_paths
+        domain_cert, domain_key = ssl_paths.cert_paths(domain)
+        own_cert, own_key = ssl_paths.cert_paths(host)
 
         if os.path.exists(domain_cert):
             ssl_cert, ssl_key = domain_cert, domain_key

@@ -29,6 +29,7 @@ from api.models.database import get_db
 from api.models.models_domain import Domain
 from api.models.models_domain_alias import DomainAlias
 from api.models.models_user import User
+from scripts.ssl_paths import covers
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -99,12 +100,8 @@ def _regenerate_or_revert(domain: Domain, db: Session, revert) -> None:
 
 
 def _cert_names(domain: Domain) -> set:
-    import os
-    cert = f"/etc/letsencrypt/live/{domain.domain_name}/cert.pem"
-    if not os.path.exists(cert):
-        return set()
-    from scripts.ssl_manager import SSLManager
-    return set(SSLManager()._cert_domains(cert))
+    from scripts.ssl_paths import names_of
+    return set(names_of(domain.domain_name))   # propio o Let's Encrypt
 
 
 def _sync_cert(domain: Domain, add=None, remove=None) -> dict:
@@ -147,7 +144,7 @@ def list_aliases(domain_id: int, current_user: User = Depends(require_auth),
         out.append({
             "id": a.id, "alias_name": a.alias_name, "redirect": bool(a.redirect),
             "points_here": sm.points_here(a.alias_name),
-            "in_certificate": a.alias_name in in_cert,
+            "in_certificate": covers(in_cert, a.alias_name),
             "created_at": a.created_at,
         })
     return {"aliases": out, "ssl_enabled": bool(domain.ssl_enabled),

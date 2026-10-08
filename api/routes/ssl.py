@@ -2,7 +2,10 @@
 Rutas API para gestión de certificados SSL
 """
 
+from typing import Optional
+
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, status
+from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 from datetime import datetime, timedelta
 from api.models.database import get_db
@@ -12,6 +15,7 @@ from api.schemas.ssl_schemas import SSLCreate, SSLResponse, SSLToggleRequest, SS
 from api.dependencies import require_auth
 from scripts.ssl_manager import SSLManager
 from scripts.domain_manager import DomainManager
+from scripts import ssl_paths as _ssl_paths, custom_ssl as _custom_ssl
 
 router = APIRouter()
 
@@ -109,9 +113,11 @@ def toggle_ssl(
         elif not body.enabled and domain.ssl_enabled:
             # Desactivar: revocar cert
             try:
-                ssl_manager.revoke_ssl(domain.domain_name)
+                if _ssl_paths.has_le(domain.domain_name):
+                    ssl_manager.revoke_ssl(domain.domain_name)
             except Exception:
                 pass  # aunque falle la revocación, desactivamos en BD
+            _custom_ssl.remove(domain.domain_name)
             domain.ssl_enabled = False
             domain.ssl_expires = None
 
@@ -159,9 +165,23 @@ async def start_ssl_issue(
 
     raw_email = (body.email or "").strip() or (current_user.email or "").strip()
     email = _validate_acme_email(raw_email)
+    if body.wildcard:
+        from scripts import acme_dns
+        if domain.is_subdomain:
+            raise HTTPException(400, detail="El certificado wildcard se pide para el dominio principal "
+                                            "(cubre todos sus subdominios).")
+        if not acme_dns.can_validate(db, domain.domain_name):
+            raise HTTPException(400, detail=(
+                f"El wildcard se valida creando un registro TXT en la zona DNS de {domain.domain_name}, "
+                "y esa zona no está en este panel: el dominio tiene que usar nuestros DNS."))
+    if _ssl_paths.has_custom(domain.domain_name):
+        raise HTTPException(400, detail="Este dominio usa un certificado propio. Quítalo antes de "
+                                        "emitir uno de Let's Encrypt.")
 
-    ssl_jobs.job_init("web", domain_id, ssl_jobs.web_steps(domain.domain_name))
-    background_tasks.add_task(ssl_jobs.run_web_issue, domain_id, email, body.hsts_enabled)
+    steps = (ssl_jobs.wildcard_steps if body.wildcard else ssl_jobs.web_steps)(domain.domain_name)
+    ssl_jobs.job_init("web", domain_id, steps)
+    background_tasks.add_task(ssl_jobs.run_web_issue, domain_id, email, body.hsts_enabled,
+                              bool(body.wildcard))
     return {"status": "success", "job": ssl_jobs.job_status("web", domain_id)}
 
 
@@ -186,6 +206,10 @@ def renew_ssl(
     domain = _owned(domain_id, db, current_user)
     if not domain.ssl_enabled:
         raise HTTPException(status_code=400, detail="El dominio no tiene SSL activo")
+    if _ssl_paths.has_custom(domain.domain_name):
+        raise HTTPException(status_code=400, detail=(
+            "Es un certificado propio: no lo renueva Let's Encrypt. Cuando tu proveedor te dé "
+            "el nuevo, súbelo igual que el actual."))
 
     ssl_manager = SSLManager()
     try:
@@ -260,7 +284,9 @@ def delete_ssl(
     domain = _owned(domain_id, db, current_user)
     ssl_manager = SSLManager()
     try:
-        ssl_manager.revoke_ssl(domain.domain_name)
+        if _ssl_paths.has_le(domain.domain_name):
+            ssl_manager.revoke_ssl(domain.domain_name)
+        _custom_ssl.remove(domain.domain_name)
         domain.ssl_enabled    = False
         domain.ssl_certificate = None
         domain.ssl_key         = None
@@ -277,3 +303,84 @@ def delete_ssl(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Error al revocar certificado SSL: {str(e)}"
         )
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Certificado PROPIO (subido): ver scripts/custom_ssl.py
+# ─────────────────────────────────────────────────────────────────────────────
+
+class CustomCertRequest(BaseModel):
+    certificate: str = Field(..., max_length=_custom_ssl.MAX_PEM)
+    private_key: str = Field(..., max_length=_custom_ssl.MAX_PEM)
+    chain:       Optional[str] = Field("", max_length=_custom_ssl.MAX_PEM)
+
+
+def _rebuild_mail_tls(db: Session) -> None:
+    from api.utils.ssl_jobs import _rebuild_mail_tls as _r
+    _r(db)
+
+
+@router.post("/domains/{domain_id}/ssl/custom", response_model=SSLResponse)
+def upload_custom_cert(domain_id: int, body: CustomCertRequest,
+                       current_user: User = Depends(require_auth), db: Session = Depends(get_db)):
+    """Instala un certificado propio. Se valida entero antes de tocar nada y, si
+    nginx no lo acepta, se vuelve al estado anterior."""
+    domain = _owned(domain_id, db, current_user)
+    if getattr(domain, "mail_dns_only", False):
+        raise HTTPException(400, detail="Este dominio no tiene web en este servidor (solo correo/DNS).")
+    try:
+        info = _custom_ssl.validate(domain.domain_name, body.certificate, body.private_key,
+                                    body.chain or "", is_subdomain=bool(domain.is_subdomain))
+    except _custom_ssl.CertError as e:
+        raise HTTPException(400, detail=str(e))
+
+    prev = {"ssl_enabled": domain.ssl_enabled, "ssl_expires": domain.ssl_expires,
+            "ssl_certificate": domain.ssl_certificate}
+    _custom_ssl.install(domain.domain_name, info)
+    domain.ssl_enabled = True
+    domain.ssl_expires = info["not_after"].replace(tzinfo=None)
+    domain.ssl_certificate = "Propio"
+    db.commit()
+    try:
+        _regenerate(domain, db)
+    except Exception as e:
+        _custom_ssl.restore_previous(domain.domain_name)
+        for k, v in prev.items():
+            setattr(domain, k, v)
+        db.commit()
+        try:
+            _regenerate(domain, db)
+        except Exception:
+            pass
+        raise HTTPException(422, detail=f"nginx no ha aceptado el certificado; se ha dejado el anterior: {e}")
+    _rebuild_mail_tls(db)
+    resp = _domain_ssl_response(domain, SSLManager())
+    resp.warnings = info["warnings"]
+    return resp
+
+
+@router.delete("/domains/{domain_id}/ssl/custom", response_model=SSLResponse)
+def remove_custom_cert(domain_id: int, current_user: User = Depends(require_auth),
+                       db: Session = Depends(get_db)):
+    """Quita el certificado propio. Si el dominio tenía uno de Let's Encrypt,
+    vuelve a él; si no, se queda sin HTTPS."""
+    domain = _owned(domain_id, db, current_user)
+    if not _custom_ssl.remove(domain.domain_name):
+        raise HTTPException(404, detail="Este dominio no tiene un certificado propio")
+    if _ssl_paths.has_le(domain.domain_name):
+        domain.ssl_certificate = "Let's Encrypt"
+        info = SSLManager().get_cert_info(domain.domain_name) or {}
+        try:
+            domain.ssl_expires = datetime.strptime(info.get("not_after", ""), "%b %d %H:%M:%S %Y %Z")
+        except ValueError:
+            pass
+    else:
+        domain.ssl_enabled = False
+        domain.ssl_expires = None
+        domain.ssl_certificate = None
+        domain.force_https = False
+        domain.hsts_enabled = False
+    db.commit()
+    _regenerate(domain, db)
+    _rebuild_mail_tls(db)
+    return _domain_ssl_response(domain, SSLManager())

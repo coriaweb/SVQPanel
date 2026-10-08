@@ -1395,6 +1395,13 @@ class APIClient {
   getTopResources(range = '24h', limit = 20) {
     return this.get(`/api/resources/top?range=${range}&limit=${limit}`)
   }
+  // Certificado SSL propio (subido)
+  uploadCustomCert(domainId, data) {
+    return this.post(`/api/domains/${domainId}/ssl/custom`, data)
+  }
+  removeCustomCert(domainId) {
+    return this.delete(`/api/domains/${domainId}/ssl/custom`)
+  }
   // Acceso por país/IP por dominio
   getDomainAccess(domainId) {
     return this.get(`/api/domains/${domainId}/access`)

@@ -174,12 +174,12 @@ def cert_paths(domain: str) -> Tuple[str, str]:
     Prefiere el cert PROPIO de mail.{dominio} (emitido con --webroot
     independiente); si no existe, cae al cert del dominio padre (legacy --expand).
     """
+    from scripts import ssl_paths
     host = mail_host(domain)
-    own = f"/etc/letsencrypt/live/{host}"
-    if os.path.exists(f"{own}/fullchain.pem"):
-        return f"{own}/fullchain.pem", f"{own}/privkey.pem"
-    base = f"/etc/letsencrypt/live/{domain}"
-    return f"{base}/fullchain.pem", f"{base}/privkey.pem"
+    if ssl_paths.existing_cert(host):
+        return ssl_paths.cert_paths(host)
+    # El del dominio: propio (subido) o Let's Encrypt (también un *.dominio)
+    return ssl_paths.cert_paths(domain)
 
 
 def cert_includes_mail(domain: str) -> bool:
@@ -187,23 +187,13 @@ def cert_includes_mail(domain: str) -> bool:
     ¿Hay un cert SSL válido para mail.{dominio}?
     Comprueba el cert propio de mail.{dominio} o un SAN en el cert del padre.
     """
+    from scripts import ssl_paths
     host = mail_host(domain)
     # 1. Cert propio de mail.{dominio}
-    if os.path.exists(f"/etc/letsencrypt/live/{host}/cert.pem"):
+    if ssl_paths.existing_cert(host):
         return True
-    # 2. SAN en el cert del dominio padre
-    cert = f"/etc/letsencrypt/live/{domain}/cert.pem"
-    if not os.path.exists(cert):
-        return False
-    try:
-        import subprocess
-        r = subprocess.run(
-            ["/usr/bin/openssl", "x509", "-noout", "-text", "-in", cert],
-            capture_output=True, text=True, timeout=10,
-        )
-        return f"DNS:{host}" in r.stdout
-    except Exception:
-        return False
+    # 2. El cert del dominio lo cubre (SAN o comodín *.dominio)
+    return ssl_paths.covers(ssl_paths.names_of(domain), host)
 
 
 class MailTLSManager(SystemManager):

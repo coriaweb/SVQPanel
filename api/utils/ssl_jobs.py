@@ -104,7 +104,25 @@ def webmail_steps(domain_name: str) -> List[str]:
     ]
 
 
-def run_web_issue(domain_id: int, email: str, hsts: bool = False) -> None:
+def wildcard_steps(domain_name: str) -> List[str]:
+    return [
+        f"Comprobar que la zona DNS de {domain_name} está en el panel",
+        f"Validar {domain_name} y *.{domain_name} por DNS con Let's Encrypt",
+        "Instalar el certificado y activar HTTPS",
+    ]
+
+
+def _rebuild_mail_tls(db) -> None:
+    """El correo (mail.dominio) puede servir el certificado del dominio si lo
+    cubre (un wildcard o uno propio): rehacer el SNI de Postfix/Dovecot."""
+    try:
+        from api.routes.mail import _rebuild_mail_tls as _r
+        _r(db)
+    except Exception as e:
+        logger.warning(f"No se pudo rehacer el TLS del correo: {e}")
+
+
+def run_web_issue(domain_id: int, email: str, hsts: bool = False, wildcard: bool = False) -> None:
     """Emite el cert del dominio, actualiza la BD y regenera el vhost."""
     kind = "web"
     from api.models.database import SessionLocal
@@ -121,14 +139,23 @@ def run_web_issue(domain_id: int, email: str, hsts: bool = False) -> None:
 
         # Paso 0: DNS del dominio (la variante www la decide certbot dentro)
         job_step(kind, domain_id, 0)
-        mgr._validate_dns(domain.domain_name)
+        if wildcard:
+            from scripts import acme_dns
+            if not acme_dns.can_validate(db, domain.domain_name):
+                raise ValueError(f"La zona DNS de {domain.domain_name} no está en este panel")
+        else:
+            mgr._validate_dns(domain.domain_name)
 
         # Paso 1: certbot, con su salida en vivo
         job_step(kind, domain_id, 1)
-        mgr.create_ssl_with_email(
-            domain.domain_name, email,
-            line_cb=lambda l: job_line(kind, domain_id, l),
-            include_www=not domain.is_subdomain)
+        if wildcard:
+            mgr.create_wildcard(domain.domain_name, email,
+                                line_cb=lambda l: job_line(kind, domain_id, l))
+        else:
+            mgr.create_ssl_with_email(
+                domain.domain_name, email,
+                line_cb=lambda l: job_line(kind, domain_id, l),
+                include_www=not domain.is_subdomain)
 
         # Paso 2: BD + vhost. Al emitir por primera vez se activa force_https
         # (el formulario de emisión no ofrece esa opción; se ajusta después
@@ -144,6 +171,8 @@ def run_web_issue(domain_id: int, email: str, hsts: bool = False) -> None:
 
         from api.routes.domains import _regenerate_from_domain
         _regenerate_from_domain(domain, db)
+        if wildcard:   # *.dominio cubre mail.dominio: el correo puede usarlo
+            _rebuild_mail_tls(db)
 
         job_end(kind, domain_id)
         logger.info(f"SSL issue job OK: {domain.domain_name}")
