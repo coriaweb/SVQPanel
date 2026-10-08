@@ -15,6 +15,7 @@ emitirle nada. Si tiene uno suyo, manda el suyo.
 pero no dominio.com ni a.b.dominio.com (como los navegadores y los MTA).
 """
 import os
+import posixpath   # rutas de Linux siempre (el panel genera configs de nginx)
 import subprocess
 from typing import List, Optional, Tuple
 
@@ -23,17 +24,17 @@ LE_ROOT = "/etc/letsencrypt/live"
 
 
 def custom_dir(name: str) -> str:
-    return os.path.join(CUSTOM_ROOT, name)
+    return posixpath.join(CUSTOM_ROOT, name)
 
 
 def custom_paths(name: str) -> Tuple[str, str]:
     d = custom_dir(name)
-    return os.path.join(d, "fullchain.pem"), os.path.join(d, "privkey.pem")
+    return posixpath.join(d, "fullchain.pem"), posixpath.join(d, "privkey.pem")
 
 
 def le_paths(name: str) -> Tuple[str, str]:
-    d = os.path.join(LE_ROOT, name)
-    return os.path.join(d, "fullchain.pem"), os.path.join(d, "privkey.pem")
+    d = posixpath.join(LE_ROOT, name)
+    return posixpath.join(d, "fullchain.pem"), posixpath.join(d, "privkey.pem")
 
 
 def has_custom(name: str) -> bool:

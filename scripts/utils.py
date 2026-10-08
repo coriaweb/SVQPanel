@@ -586,6 +586,22 @@ def _readonly_mode_block(allowed_ips_json: Optional[str]) -> str:
     return "\n".join(lines) + "\n"
 
 
+def _httpauth_maps(key: str, folders: list) -> str:
+    """maps (nivel http) para la contraseña por carpetas: realm y .htpasswd según
+    $uri. La más específica primero (/a/b antes que /a: en un map gana la primera
+    regex que casa). El reto ACME nunca pide contraseña."""
+    import re as _re
+    realm = ['    default off;', '    "~^/\\.well-known/acme-challenge/" off;']
+    files = ['    default /dev/null;']
+    for f in sorted(folders, key=lambda f: -len(f["path"])):
+        rx = "~^" + _re.sub(r"([.\\+*?()\[\]{}|^$])", r"\\\1", f["path"].rstrip("/")) + "(?:/|$)"
+        realm.append(f'    "{rx}" "Zona restringida";')
+        files.append(f'    "{rx}" {f["file"]};')
+    return (f"# Contraseña por carpetas (lo genera el panel)\n"
+            f"map $uri $svq_auth_{key} {{\n" + "\n".join(realm) + "\n}\n"
+            f"map $uri $svq_authf_{key} {{\n" + "\n".join(files) + "\n}\n")
+
+
 def generate_nginx_config(
     domain: str,
     user: str,
@@ -619,6 +635,7 @@ def generate_nginx_config(
     upload_max_mb: int = 64,
     aliases: Optional[list] = None,
     access_deny_var: Optional[str] = None,
+    httpauth_paths: Optional[list] = None,
 ) -> str:
     """
     Generate Nginx vhost configuration (Hestia-style paths).
@@ -756,6 +773,7 @@ def generate_nginx_config(
     tpl_extra = ("\n" + template_nginx_extra.rstrip()) if template_nginx_extra else ""
     if custom_nginx_config and custom_nginx_config.strip():
         tpl_extra += "\n    # ── Directivas personalizadas del dominio ──\n" + custom_nginx_config.rstrip() + "\n"
+    auth_maps = ""
     # Protección con contraseña (auth básica) a nivel de server → protege todo
     # el sitio. .well-known/acme-challenge se exime para no romper Let's Encrypt.
     if httpauth and httpauth.get("file"):
@@ -765,6 +783,17 @@ def generate_nginx_config(
             f'    auth_basic "{_realm}";\n'
             f'    auth_basic_user_file {httpauth["file"]};\n'
             f'    location ^~ /.well-known/acme-challenge/ {{ auth_basic off; allow all; }}\n')
+    elif httpauth_paths:
+        # Solo algunas carpetas: auth_basic con VARIABLES (un map por $uri decide si
+        # pide contraseña y con qué .htpasswd). Así no hace falta un location por
+        # carpeta, que obligaría a duplicar el manejo de PHP de cada plantilla.
+        # $uri ya va normalizado: //admin o /%61dmin no se lo saltan.
+        _k = backend_name
+        tpl_extra += (
+            f'\n    # ── Contraseña en carpetas: {", ".join(f["path"] for f in httpauth_paths)} ──\n'
+            f'    auth_basic $svq_auth_{_k};\n'
+            f'    auth_basic_user_file $svq_authf_{_k};\n')
+        auth_maps = _httpauth_maps(_k, httpauth_paths)
 
 
     # IPv4: escuchar genérico (listen 80), NO atado a una IP concreta. Atarlo a
@@ -945,7 +974,7 @@ def generate_nginx_config(
     else:
         http_block = None  # se construye abajo
 
-    server_block = f"""upstream php_{backend_name} {{
+    server_block = auth_maps + f"""upstream php_{backend_name} {{
     server unix:{php_socket};
 }}
 """

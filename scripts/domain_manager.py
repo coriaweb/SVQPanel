@@ -477,6 +477,7 @@ class DomainManager(SystemManager):
         upload_max_mb: int = None,
         aliases: list = None,
         access_rules: str = None,
+        httpauth_paths: list = None,
     ) -> dict:
         """
         Regenera la vhost completa del dominio con TODO el estado actual
@@ -501,7 +502,8 @@ class DomainManager(SystemManager):
         if (not is_subdomain or docroot_subdir is None
                 or xmlrpc_blocked is None or wp_login_ratelimit is None
                 or fastcgi_cache_enabled is None or upload_max_mb is None
-                or aliases is None or access_rules is None or httpauth is None):
+                or aliases is None or access_rules is None or httpauth is None
+                or httpauth_paths is None):
             try:
                 from api.models.database import SessionLocal
                 from api.models.models_domain import Domain as _D
@@ -543,6 +545,17 @@ class DomainManager(SystemManager):
                                 and getattr(_d, "httpauth_user", None)):
                             httpauth = {"user": _d.httpauth_user, "realm": "Zona restringida",
                                         "file": self.htpasswd_path(username, domain_name)}
+                        # Contraseña en carpetas concretas (si no está la de toda la web)
+                        if httpauth_paths is None:
+                            import json as _json
+                            try:
+                                _fs = _json.loads(getattr(_d, "httpauth_paths", None) or "[]")
+                            except (ValueError, TypeError):
+                                _fs = []
+                            httpauth_paths = [
+                                {"path": f["path"],
+                                 "file": self.folder_htpasswd_path(username, domain_name, f["path"])}
+                                for f in _fs if f.get("path") and f.get("user")]
                 finally:
                     _db.close()
             except Exception:
@@ -655,6 +668,7 @@ class DomainManager(SystemManager):
                 upload_max_mb=upload_max_mb,
                 aliases=aliases,
                 access_deny_var=access_deny_var,
+                httpauth_paths=httpauth_paths or [],
             )
             with open(config_path, "w") as f:
                 f.write(config_content)
@@ -718,6 +732,7 @@ class DomainManager(SystemManager):
                 upload_max_mb=upload_max_mb,
                 aliases=aliases,
                 access_deny_var=access_deny_var,
+                httpauth_paths=httpauth_paths or [],
             )
             with open(config_path, "w") as f:
                 f.write(config_content)
@@ -752,6 +767,38 @@ class DomainManager(SystemManager):
         self.execute_command(["chown", f"www-data:{username}", path], check=False)
         self.execute_command(["chmod", "640", path], check=False)
         return pass_hash
+
+    def hash_password(self, password: str) -> str:
+        """Hash apr1 (lo entiende nginx y Apache); la contraseña va por stdin."""
+        rc, out, err = self.execute_with_input(
+            ["openssl", "passwd", "-apr1", "-stdin"], password + "\n", check=False)
+        if rc != 0 or not out.strip():
+            raise RuntimeError(f"No pude generar el hash de contraseña: {err}")
+        return out.strip()
+
+    def folder_htpasswd_path(self, username: str, domain_name: str, path: str) -> str:
+        """Un .htpasswd por carpeta protegida (cada una tiene su usuario)."""
+        import hashlib
+        h = hashlib.sha1(path.encode()).hexdigest()[:10]
+        return f"/home/{username}/web/{domain_name}/.htpasswd-{h}"
+
+    def write_folder_htpasswds(self, username: str, domain_name: str, folders: list) -> None:
+        """Escribe el .htpasswd de cada carpeta y borra los de carpetas que ya no están."""
+        import glob
+        keep = set()
+        for f in folders or []:
+            path = self.folder_htpasswd_path(username, domain_name, f["path"])
+            keep.add(path)
+            with open(path, "w") as fh:
+                fh.write(f"{f['user']}:{f['hash']}\n")
+            self.execute_command(["chown", f"www-data:{username}", path], check=False)
+            self.execute_command(["chmod", "640", path], check=False)
+        for old in glob.glob(f"/home/{username}/web/{domain_name}/.htpasswd-*"):
+            if old not in keep:
+                try:
+                    os.remove(old)
+                except OSError:
+                    pass
 
     def write_htpasswd_hash(self, username: str, domain_name: str,
                             auth_user: str, pass_hash: str) -> None:

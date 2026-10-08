@@ -133,6 +133,7 @@ class DomainResponse(BaseModel):
     # Protección con contraseña (no se expone el hash)
     httpauth_enabled: Optional[bool] = False
     httpauth_user:    Optional[str]  = None
+    httpauth_folders: Optional[List[dict]] = []   # [{path, user}] carpetas con contraseña
     created_at: Optional[datetime] = None
     updated_at: Optional[datetime] = None
 

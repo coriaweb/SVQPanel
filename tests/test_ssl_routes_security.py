@@ -63,3 +63,25 @@ def test_regenerate_vhost_conserva_la_contrasena_de_la_web(db, monkeypatch, tmp_
     db.commit()
     mgr.regenerate_vhost("c1", "uno.com", "8.4", webserver="nginx")
     assert seen["httpauth"] is None
+
+
+def test_regenerate_vhost_conserva_las_carpetas_con_contrasena(db, monkeypatch, tmp_path):
+    import json
+    import scripts.domain_manager as DM
+    import api.models.database as database
+    _setup(db)
+    d = db.get(Domain, 1)
+    d.httpauth_paths = json.dumps([{"path": "/admin", "user": "jefe", "hash": "h"}])
+    db.commit()
+    seen = {}
+    monkeypatch.setattr(database, "SessionLocal", lambda: db)
+    monkeypatch.setattr(db, "close", lambda: None)
+    monkeypatch.setattr(DM, "generate_nginx_config", lambda *a, **k: seen.update(k) or "")
+    monkeypatch.setattr(DM, "get_nginx_config_path", lambda dom: str(tmp_path / dom))
+    monkeypatch.setattr(DM, "reload_nginx", lambda: True)
+    for fn in ("write_fastcgi_cache_zone", "remove_fastcgi_cache_zone", "remove_ratelimit_zone"):
+        monkeypatch.setattr(DM, fn, lambda *a, **k: None)
+    mgr = DM.DomainManager.__new__(DM.DomainManager)
+    mgr.regenerate_vhost("c1", "uno.com", "8.4", webserver="nginx")
+    assert [f["path"] for f in seen["httpauth_paths"]] == ["/admin"]
+    assert seen["httpauth_paths"][0]["file"].startswith("/home/c1/web/uno.com/.htpasswd-")

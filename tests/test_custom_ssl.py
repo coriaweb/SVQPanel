@@ -137,7 +137,7 @@ def test_resolver_prefiere_el_propio_y_vuelve_a_lets_encrypt(tmp_path, monkeypat
 
     from scripts.utils import generate_nginx_config
     v = generate_nginx_config("mi-web.com", "u", "8.4", ssl_enabled=True)
-    assert f"ssl_certificate {tmp_path / 'custom' / 'mi-web.com' / 'fullchain.pem'};" in v
+    assert f"ssl_certificate {ssl_paths.custom_paths('mi-web.com')[0]};" in v
 
     custom_ssl.restore_previous("mi-web.com")    # deshacer: no había propio antes
     assert ssl_paths.source("mi-web.com") == "letsencrypt"
@@ -253,7 +253,7 @@ def test_subdominio_hereda_el_wildcard(tmp_path, monkeypatch, pki):
     monkeypatch.setattr(ssl_paths, "LE_ROOT", str(tmp_path / "le"))
     k = _key()
     _le(tmp_path, "mi-web.com", _cert("mi-web.com", pki["im"], pki["im_k"], k, ["mi-web.com", "*.mi-web.com"]))
-    parent_fc = str(tmp_path / "le" / "mi-web.com" / "fullchain.pem")
+    parent_fc = ssl_paths.le_paths("mi-web.com")[0]
 
     assert ssl_paths.cert_paths("tienda.mi-web.com")[0] == parent_fc
     assert ssl_paths.source("tienda.mi-web.com") == "inherited"

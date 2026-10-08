@@ -2,6 +2,7 @@
 Rutas API para gestión de dominios
 """
 
+import json
 import os
 import socket
 import tarfile
@@ -1943,22 +1944,47 @@ async def update_custom_config(
     }}
 
 
+class HttpauthFolder(BaseModel):
+    path:     str = _Field(..., max_length=200)
+    user:     str = _Field(..., max_length=64)
+    password: Optional[str] = _Field(None, max_length=128)   # vacío = conservar la actual
+
+
 class HttpauthRequest(BaseModel):
+    # "off" | "site" (toda la web) | "folders" (solo algunas carpetas).
+    # Sin mode se usa `enabled` (compatibilidad con la UI y la API anteriores).
+    mode:     Optional[str] = _Field(None, pattern="^(off|site|folders)$")
     enabled:  bool = False
     user:     Optional[str] = _Field(None, max_length=64)
     password: Optional[str] = _Field(None, max_length=128)
+    folders:  List[HttpauthFolder] = _Field(default_factory=list, max_length=50)
+
+
+_HTTPAUTH_USER_RE = r"^[A-Za-z0-9._-]{2,64}$"
+_HTTPAUTH_PATH_RE = r"^/[A-Za-z0-9._~\-/]+$"
+
+
+def _norm_auth_path(raw: str) -> str:
+    import re as _re
+    p = "/" + (raw or "").strip().strip("/")
+    p = _re.sub(r"/{2,}", "/", p)
+    if p == "/" or not _re.match(_HTTPAUTH_PATH_RE, p) or "/../" in p + "/" or "/./" in p + "/":
+        raise HTTPException(status_code=400, detail=(
+            f"Carpeta no válida: {raw!r}. Usa una ruta como /admin o /privado/docs "
+            "(letras, números, . _ - ~ /). Para proteger toda la web elige «Toda la web»."))
+    return p
 
 
 @router.put("/domains/{domain_id}/httpauth")
-async def update_httpauth(
+def update_httpauth(
     domain_id:    int,
     payload:      HttpauthRequest,
     current_user: User = Depends(require_auth),
     db:           Session = Depends(get_db),
 ):
-    """Activa/desactiva la protección con contraseña (auth básica) del dominio.
+    """Protección con contraseña (auth básica): toda la web o solo algunas carpetas.
 
-    Gestiona el fichero .htpasswd y regenera el vhost (valida y revierte si falla).
+    Gestiona los .htpasswd y regenera el vhost (valida y revierte si falla).
     """
     import re as _re
     domain = _get_owned_domain(domain_id, db, current_user)
@@ -1966,16 +1992,19 @@ async def update_httpauth(
     if not owner:
         raise HTTPException(status_code=409, detail="El dominio no tiene propietario")
 
+    mode = payload.mode or ("site" if payload.enabled else "off")
     mgr = DomainManager()
     prev = {
         "enabled": domain.httpauth_enabled,
         "user": domain.httpauth_user,
         "hash": domain.httpauth_pass_hash,
+        "paths": domain.httpauth_paths,
     }
+    old_folders = {f["path"]: f for f in json.loads(domain.httpauth_paths or "[]")}
 
-    if payload.enabled:
+    if mode == "site":
         user = (payload.user or "").strip()
-        if not _re.match(r"^[A-Za-z0-9._-]{2,64}$", user):
+        if not _re.match(_HTTPAUTH_USER_RE, user):
             raise HTTPException(status_code=400,
                 detail="Usuario no válido (2-64 caracteres: letras, números, . _ -).")
         if payload.password:
@@ -2004,20 +2033,60 @@ async def update_httpauth(
         mgr.remove_htpasswd(owner.username, domain.domain_name)
         # Conservamos user/hash en BD por si reactiva (no recordar la pass otra vez).
 
+    if mode == "folders":
+        if not payload.folders:
+            raise HTTPException(status_code=400, detail="Añade al menos una carpeta.")
+        folders, seen = [], set()
+        for f in payload.folders:
+            path = _norm_auth_path(f.path)
+            if path in seen:
+                raise HTTPException(status_code=400, detail=f"La carpeta {path} está repetida.")
+            seen.add(path)
+            user = (f.user or "").strip()
+            if not _re.match(_HTTPAUTH_USER_RE, user):
+                raise HTTPException(status_code=400,
+                    detail=f"{path}: usuario no válido (2-64 caracteres: letras, números, . _ -).")
+            if f.password:
+                if len(f.password) < 4:
+                    raise HTTPException(status_code=400,
+                        detail=f"{path}: la contraseña debe tener al menos 4 caracteres.")
+                pass_hash = mgr.hash_password(f.password)
+            elif path in old_folders:
+                pass_hash = old_folders[path]["hash"]   # sin contraseña nueva: la de antes
+            else:
+                raise HTTPException(status_code=400, detail=f"{path}: indica una contraseña.")
+            folders.append({"path": path, "user": user, "hash": pass_hash})
+        domain.httpauth_paths = json.dumps(folders)
+    else:
+        folders = []
+        domain.httpauth_paths = None if mode == "off" else domain.httpauth_paths
+
+    try:
+        mgr.write_folder_htpasswds(owner.username, domain.domain_name,
+                                   folders if mode == "folders" else [])
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"No pude crear los .htpasswd de las carpetas: {e}")
+
     db.commit()
     db.refresh(domain)
 
     try:
         _regenerate_domain_vhost(domain, owner)
     except Exception as e:
-        # Revertir estado y vhost.
+        # Revertir estado, ficheros y vhost.
         domain.httpauth_enabled = prev["enabled"]
         domain.httpauth_user = prev["user"]
         domain.httpauth_pass_hash = prev["hash"]
+        domain.httpauth_paths = prev["paths"]
         if prev["enabled"] and prev["hash"] and prev["user"]:
             mgr.write_htpasswd_hash(owner.username, domain.domain_name, prev["user"], prev["hash"])
         else:
             mgr.remove_htpasswd(owner.username, domain.domain_name)
+        try:
+            mgr.write_folder_htpasswds(owner.username, domain.domain_name,
+                                       [] if prev["enabled"] else list(old_folders.values()))
+        except Exception:
+            pass
         db.commit()
         try:
             _regenerate_domain_vhost(domain, owner)
@@ -2028,6 +2097,7 @@ async def update_httpauth(
     return {"status": "success", "data": {
         "httpauth_enabled": domain.httpauth_enabled,
         "httpauth_user": domain.httpauth_user,
+        "httpauth_folders": domain.httpauth_folders,
     }}
 
 

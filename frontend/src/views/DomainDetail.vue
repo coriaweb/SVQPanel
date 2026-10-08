@@ -726,6 +726,58 @@ define('WP_REDIS_PATH', '{{ redisStatus.socket }}');</pre>
         </template>
       </BaseCard>
 
+      <!-- ===== Protección con contraseña (httpauth): toda la web o carpetas ===== -->
+      <BaseCard v-show="tab === 'bots'" title="Protección con contraseña" icon="lock">
+        <template #actions>
+          <StatusBadge :status="domain.httpauth_enabled || domain.httpauth_folders?.length ? 'active' : 'none'"
+                       :label="domain.httpauth_enabled ? 'Toda la web'
+                               : domain.httpauth_folders?.length ? `${domain.httpauth_folders.length} carpeta(s)` : 'Off'" />
+        </template>
+        <p class="dd-muted">
+          Pide usuario y contraseña (autenticación básica HTTP) antes de entrar. Para una web en pruebas, toda la
+          web; para una zona privada (<code>/admin</code>, <code>/descargas</code>…), solo esas carpetas y el resto
+          sigue abierto. La verificación del certificado SSL queda siempre fuera.
+        </p>
+        <div class="acc-modes">
+          <label v-for="m in authModes" :key="m.key" class="acc-mode" :class="{ on: authMode === m.key }">
+            <input type="radio" :value="m.key" v-model="authMode" />
+            <span><strong>{{ m.label }}</strong><small>{{ m.desc }}</small></span>
+          </label>
+        </div>
+
+        <div v-if="authMode === 'site'" class="mig-grid" style="margin-top:var(--sp-3)">
+          <label class="adv-field"><span class="adv-label">Usuario</span>
+            <input class="svq-input" v-model="authUser" placeholder="usuario" /></label>
+          <label class="adv-field"><span class="adv-label">Contraseña</span>
+            <input class="svq-input" v-model="authPass" type="text"
+              :placeholder="domain && domain.httpauth_user ? '(dejar vacío para no cambiarla)' : 'mín. 4 caracteres'" /></label>
+        </div>
+
+        <div v-if="authMode === 'folders'" class="auth-folders">
+          <div v-for="(f, i) in authFolders" :key="i" class="auth-folder">
+            <label class="adv-field"><span class="adv-label">Carpeta</span>
+              <input class="svq-input mono" v-model="f.path" placeholder="/admin" /></label>
+            <label class="adv-field"><span class="adv-label">Usuario</span>
+              <input class="svq-input" v-model="f.user" placeholder="usuario" /></label>
+            <label class="adv-field"><span class="adv-label">Contraseña</span>
+              <input class="svq-input" v-model="f.password" type="text"
+                     :placeholder="f.saved ? '(dejar vacío para no cambiarla)' : 'mín. 4 caracteres'" /></label>
+            <BaseButton variant="ghost" size="sm" icon="trash" :aria-label="`Quitar ${f.path}`"
+                        @click="authFolders.splice(i, 1)" />
+          </div>
+          <BaseButton variant="ghost" size="sm" icon="plus" @click="authFolders.push({ path: '', user: '', password: '', saved: false })">
+            Añadir carpeta
+          </BaseButton>
+          <small class="dd-muted">Protege la carpeta y todo lo que hay dentro (<code>/admin</code> cubre
+            <code>/admin/usuarios</code>, pero no <code>/administracion</code>).</small>
+        </div>
+
+        <div v-if="authError" class="adv-error"><i class="bi bi-exclamation-triangle"></i> {{ authError }}</div>
+        <div class="adv-actions">
+          <BaseButton variant="primary" icon="check2" :loading="authSaving" @click="saveHttpauth">Guardar y aplicar</BaseButton>
+        </div>
+      </BaseCard>
+
       <BaseCard v-show="tab === 'bots'" title="Límite de peticiones por IP" icon="speedometer2">
         <template #actions>
           <StatusBadge :status="domain.rate_limit_enabled ? 'active' : 'none'"
@@ -1164,31 +1216,6 @@ define('WP_REDIS_PATH', '{{ redisStatus.socket }}');</pre>
         </div>
       </BaseCard>
 
-      <!-- ===== Protección con contraseña (httpauth) ===== -->
-      <BaseCard v-show="tab === 'advanced'" title="Protección con contraseña" icon="lock">
-        <p class="dd-muted">
-          Pide usuario y contraseña (autenticación básica HTTP) para acceder a toda la web.
-          Útil para entornos de pruebas o zonas privadas.
-        </p>
-        <label class="adv-switch">
-          <input type="checkbox" v-model="authEnabled" /> Activar protección con contraseña
-        </label>
-        <div v-if="authEnabled" class="mig-grid" style="margin-top:var(--sp-3)">
-          <label class="adv-field"><span class="adv-label">Usuario</span>
-            <input class="svq-input" v-model="authUser" placeholder="usuario" /></label>
-          <label class="adv-field"><span class="adv-label">Contraseña</span>
-            <input class="svq-input" v-model="authPass" type="text"
-              :placeholder="domain && domain.httpauth_user ? '(dejar vacío para no cambiarla)' : 'mín. 4 caracteres'" /></label>
-        </div>
-        <div v-if="authError" class="adv-error"><i class="bi bi-exclamation-triangle"></i> {{ authError }}</div>
-        <div class="adv-actions">
-          <BaseButton variant="primary" icon="check2" :loading="authSaving" @click="saveHttpauth">Guardar</BaseButton>
-          <small v-if="domain && domain.httpauth_enabled" class="dd-muted">
-            <i class="bi bi-lock-fill"></i> Activa actualmente (usuario: <strong>{{ domain.httpauth_user }}</strong>)
-          </small>
-        </div>
-      </BaseCard>
-
       <!-- ===== Logs ===== -->
       <BaseCard v-show="tab === 'logs'" title="Registros" icon="journal-text" flush>
         <template #actions>
@@ -1405,6 +1432,13 @@ location @maintenance {
     }
     // ── Protección con contraseña (httpauth) ──
     const authEnabled = ref(false)
+    const authMode = ref('off')          // off | site | folders
+    const authFolders = ref([])          // [{path, user, password, saved}]
+    const authModes = [
+      { key: 'off',     label: 'Desactivada', desc: 'Sin contraseña' },
+      { key: 'site',    label: 'Toda la web', desc: 'Webs en pruebas o privadas' },
+      { key: 'folders', label: 'Solo estas carpetas', desc: 'Una zona privada; el resto, abierto' },
+    ]
     const authUser = ref('')
     const authPass = ref('')
     const authSaving = ref(false)
@@ -1439,6 +1473,8 @@ location @maintenance {
       authEnabled.value = !!domain.value?.httpauth_enabled
       authUser.value = domain.value?.httpauth_user || ''
       authPass.value = ''
+      authFolders.value = (domain.value?.httpauth_folders || []).map(f => ({ ...f, password: '', saved: true }))
+      authMode.value = authEnabled.value ? 'site' : (authFolders.value.length ? 'folders' : 'off')
       // Tarjetas que antes vivían en "Editar dominio"
       ipv4Sel.value = domain.value?.ipv4 || null
       redirForm.value = {
@@ -1777,11 +1813,14 @@ location @maintenance {
       authSaving.value = true; authError.value = ''
       try {
         await api.updateDomainHttpauth(domainId.value, {
-          enabled: authEnabled.value,
+          mode: authMode.value,
           user: authUser.value,
           password: authPass.value || null,
+          folders: authMode.value === 'folders'
+            ? authFolders.value.filter(f => f.path.trim()).map(f => ({ path: f.path, user: f.user, password: f.password || null }))
+            : [],
         })
-        store.showNotification(authEnabled.value ? 'Protección activada' : 'Protección desactivada', 'success')
+        store.showNotification(authMode.value === 'off' ? 'Protección desactivada' : 'Protección aplicada', 'success')
         authPass.value = ''
         await reloadDomain()
       } catch (e) {
@@ -2417,7 +2456,7 @@ location @maintenance {
       res, resRange, resLoading, resError, setResRange, resDay, resCpu, resMem, resHasData, fmtResMB, fmtCpuTime,
       addAlias, setAliasMode, removeAlias, retryAliasSsl,
       showNginxEx, showApacheEx, nginxExamples, apacheExamples, insertExample,
-      authEnabled, authUser, authPass, authSaving, authError, saveHttpauth,
+      authEnabled, authMode, authModes, authFolders, authUser, authPass, authSaving, authError, saveHttpauth,
       statsUrl, statsLoading, statsError, loadStats,
       appForm, installing, installResult, doInstallApp, appNeedsAdmin, appNeedsEmail, wpLocales,
       detectedApp, appLabel,
@@ -2499,6 +2538,10 @@ location @maintenance {
 .res-charts { display: grid; grid-template-columns: 1fr 1fr; gap: var(--sp-3); }
 @media (max-width: 900px) { .res-stats { grid-template-columns: repeat(2, 1fr); } }
 @media (max-width: 680px) { .res-stats, .res-charts { grid-template-columns: 1fr; } }
+/* Contraseña por carpetas (pestaña Protección) */
+.auth-folders { display: flex; flex-direction: column; gap: var(--sp-2); align-items: flex-start; margin-top: var(--sp-3); }
+.auth-folder { display: grid; grid-template-columns: 1.3fr 1fr 1fr auto; gap: var(--sp-2); align-items: end; width: 100%; }
+@media (max-width: 760px) { .auth-folder { grid-template-columns: 1fr; } }
 /* Acceso por país/IP (pestaña Protección) */
 .acc-me { display: inline-flex; align-items: center; gap: .4rem; font-size: .85rem; color: var(--text-secondary);
   padding: .35rem .65rem; background: var(--surface-2); border-radius: var(--r-sm, 6px); margin-bottom: var(--sp-4); }

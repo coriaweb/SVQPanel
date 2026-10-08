@@ -76,6 +76,9 @@ class Domain(Base):
     httpauth_enabled    = Column(Boolean, default=False)
     httpauth_user       = Column(String(64), nullable=True)
     httpauth_pass_hash  = Column(String(255), nullable=True)
+    # Contraseña solo en algunas carpetas (JSON [{path, user, hash}]). Se usa si
+    # la de toda la web (httpauth_enabled) está desactivada.
+    httpauth_paths      = Column(Text, nullable=True)
 
     # Redirección 301 y docroot personalizado (Fase 16)
     redirect_to    = Column(String(512), nullable=True)   # ej: https://otro.com
@@ -112,6 +115,15 @@ class Domain(Base):
 
     # Acceso por país/IP (JSON, ver scripts/geo_access.py). None = sin reglas.
     access_rules = Column(Text, nullable=True)
+
+    @property
+    def httpauth_folders(self):
+        """Carpetas protegidas para la API: [{path, user}] (sin el hash)."""
+        import json
+        try:
+            return [{"path": f["path"], "user": f["user"]} for f in json.loads(self.httpauth_paths or "[]")]
+        except (ValueError, TypeError, KeyError):
+            return []
 
     # Redis dedicado del dominio (caché de objetos). Instancia propia con
     # socket unix en private/ y maxmemory acotado — ver scripts/redis_manager.py.
