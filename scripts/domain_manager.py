@@ -345,6 +345,13 @@ class DomainManager(SystemManager):
             except Exception as apache_err:
                 logger.warning(f"No se pudo eliminar el vhost Apache de {domain_name}: {apache_err}")
 
+            # Reglas de acceso por país/IP del dominio (conf.d)
+            try:
+                from scripts import geo_access
+                geo_access.remove_domain_conf(domain_name)
+            except Exception as geo_err:
+                logger.warning(f"No se pudo quitar el acceso por país de {domain_name}: {geo_err}")
+
             # Eliminar el pool PHP-FPM dedicado del dominio (todas las versiones)
             try:
                 from scripts import php_ini_manager as phpini
@@ -469,6 +476,7 @@ class DomainManager(SystemManager):
         wp_login_ratelimit: int = None,
         upload_max_mb: int = None,
         aliases: list = None,
+        access_rules: str = None,
     ) -> dict:
         """
         Regenera la vhost completa del dominio con TODO el estado actual
@@ -493,7 +501,7 @@ class DomainManager(SystemManager):
         if (not is_subdomain or docroot_subdir is None
                 or xmlrpc_blocked is None or wp_login_ratelimit is None
                 or fastcgi_cache_enabled is None or upload_max_mb is None
-                or aliases is None):
+                or aliases is None or access_rules is None):
             try:
                 from api.models.database import SessionLocal
                 from api.models.models_domain import Domain as _D
@@ -525,6 +533,8 @@ class DomainManager(SystemManager):
                                 for a in _db.query(_DA).filter(_DA.domain_id == _d.id)
                                                        .order_by(_DA.alias_name).all()
                             ]
+                        if access_rules is None:
+                            access_rules = getattr(_d, "access_rules", None) or ""
                 finally:
                     _db.close()
             except Exception:
@@ -535,6 +545,12 @@ class DomainManager(SystemManager):
         xmlrpc_blocked = bool(xmlrpc_blocked)
         wp_login_ratelimit = int(wp_login_ratelimit or 0)
         fastcgi_cache_enabled = bool(fastcgi_cache_enabled)
+
+        # Acceso por país/IP: conf.d propio + lista global de países; el vhost
+        # solo comprueba la variable (vale igual en modo nginx y Apache: el
+        # front siempre es nginx).
+        from scripts import geo_access
+        access_deny_var = geo_access.apply_domain(domain_name, access_rules or None)
 
         # Auto-detectar webserver
         if webserver is None:
@@ -630,6 +646,7 @@ class DomainManager(SystemManager):
                 wp_login_ratelimit=wp_login_ratelimit,
                 upload_max_mb=upload_max_mb,
                 aliases=aliases,
+                access_deny_var=access_deny_var,
             )
             with open(config_path, "w") as f:
                 f.write(config_content)
@@ -692,6 +709,7 @@ class DomainManager(SystemManager):
                 wp_login_ratelimit=wp_login_ratelimit,
                 upload_max_mb=upload_max_mb,
                 aliases=aliases,
+                access_deny_var=access_deny_var,
             )
             with open(config_path, "w") as f:
                 f.write(config_content)

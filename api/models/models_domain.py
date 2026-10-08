@@ -110,6 +110,9 @@ class Domain(Base):
     # {"preset":"low|medium|high","manual":{"pm.max_children":12,...}}. None = preset medium.
     fpm_pool_overrides = Column(Text, nullable=True)
 
+    # Acceso por país/IP (JSON, ver scripts/geo_access.py). None = sin reglas.
+    access_rules = Column(Text, nullable=True)
+
     # Redis dedicado del dominio (caché de objetos). Instancia propia con
     # socket unix en private/ y maxmemory acotado — ver scripts/redis_manager.py.
     redis_enabled      = Column(Boolean, default=False, nullable=False)

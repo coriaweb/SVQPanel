@@ -656,7 +656,76 @@ define('WP_REDIS_PATH', '{{ redisStatus.socket }}');</pre>
         <IPv6Manager :domain="domain" @reload="reloadDomain" />
       </BaseCard>
 
-      <!-- ===== Protección: límite de peticiones + bots ===== -->
+      <!-- ===== Protección: acceso por país/IP + límite de peticiones + bots ===== -->
+      <BaseCard v-show="tab === 'bots'" title="Acceso por país e IP" icon="globe2">
+        <template #actions>
+          <StatusBadge :status="accActive ? 'active' : 'none'" :label="accActive ? 'Activo' : 'Off'" />
+        </template>
+        <p class="dd-muted">
+          Decide desde qué países (o IPs) se puede entrar a esta web. Quien no pueda recibe un error <code>403</code>.
+          La verificación del certificado SSL queda siempre abierta, así que las renovaciones no se rompen.
+        </p>
+        <div v-if="!acc" class="svq-skeleton" style="height:160px"></div>
+        <template v-else>
+          <div class="acc-me">
+            <i class="bi bi-person-badge"></i>
+            Tu conexión: <code>{{ acc.me.ip || '¿?' }}</code>
+            <span v-if="acc.me.country">· {{ countryName(acc.me.country) }}</span>
+          </div>
+
+          <div class="acc-sec">
+            <h4 class="acc-title">Toda la web</h4>
+            <div class="acc-modes">
+              <label v-for="m in accModes" :key="m.key" class="acc-mode" :class="{ on: accForm.site_mode === m.key }">
+                <input type="radio" :value="m.key" v-model="accForm.site_mode" />
+                <span><strong>{{ m.label }}</strong><small>{{ m.desc }}</small></span>
+              </label>
+            </div>
+            <CountryPicker v-if="accForm.site_mode !== 'off'" v-model="accForm.site_countries"
+                           :countries="acc.countries"
+                           :placeholder="accForm.site_mode === 'allow' ? 'Elige los países que SÍ pueden entrar' : 'Elige los países que NO pueden entrar'" />
+            <p v-if="accForm.site_mode === 'allow'" class="dd-muted acc-hint">
+              Los buscadores también vienen de fuera (Google rastrea desde EE. UU.): si la web vive de Google, mejor
+              «todos menos» o limitar solo el acceso de administración.
+            </p>
+          </div>
+
+          <div v-if="detectedApp.app === 'wordpress' || accForm.login_countries.length" class="acc-sec">
+            <h4 class="acc-title">Acceso de administración de WordPress</h4>
+            <p class="dd-muted">
+              <code>wp-login.php</code>, <code>wp-admin</code> y <code>xmlrpc.php</code> solo desde estos países; la web
+              pública sigue abierta. Corta de raíz casi todos los ataques de contraseña. Vacío = sin límite.
+            </p>
+            <CountryPicker v-model="accForm.login_countries" :countries="acc.countries"
+                           placeholder="Sin límite: se puede entrar desde cualquier país" />
+          </div>
+
+          <div class="acc-sec acc-ips">
+            <label>
+              <span class="acc-title">IPs siempre permitidas</span>
+              <textarea class="svq-input mono" rows="3" v-model="accAllowText" placeholder="Una por línea: 1.2.3.4 o 10.0.0.0/8"></textarea>
+              <small class="dd-muted">Entran aunque su país no esté permitido (la oficina, una VPN, tu casa…).</small>
+              <BaseButton v-if="acc.me.ip && !accHasMyIp" variant="ghost" size="sm" icon="plus" @click="addMyIp">
+                Añadir mi IP
+              </BaseButton>
+            </label>
+            <label>
+              <span class="acc-title">IPs bloqueadas</span>
+              <textarea class="svq-input mono" rows="3" v-model="accBlockText" placeholder="Una por línea: 5.6.7.8 o 5.6.7.0/24"></textarea>
+              <small class="dd-muted">Nunca entran a esta web, vengan de donde vengan.</small>
+            </label>
+          </div>
+
+          <div v-if="accError" class="alert alert-danger small">{{ accError }}</div>
+          <div class="adv-actions">
+            <BaseButton variant="primary" icon="check2" :loading="accSaving" :disabled="!accChanged" @click="saveAccess()">
+              Guardar y aplicar
+            </BaseButton>
+            <small v-if="accSaving" class="dd-muted">La primera vez que se usa un país puede tardar unos segundos.</small>
+          </div>
+        </template>
+      </BaseCard>
+
       <BaseCard v-show="tab === 'bots'" title="Límite de peticiones por IP" icon="speedometer2">
         <template #actions>
           <StatusBadge :status="domain.rate_limit_enabled ? 'active' : 'none'"
@@ -1199,10 +1268,11 @@ import IPv6Manager from '../components/IPv6Manager.vue'
 import WpManager from '../components/WpManager.vue'
 import ComposerManager from '../components/ComposerManager.vue'
 import MetricChart from '../components/ui/MetricChart.vue'
+import CountryPicker from '../components/CountryPicker.vue'
 
 export default {
   name: 'DomainDetail',
-  components: { BaseCard, BaseButton, BaseTabs, StatusBadge, EmptyState, SSLManager, IPv6Manager, WpManager, ComposerManager, MetricChart },
+  components: { BaseCard, BaseButton, BaseTabs, StatusBadge, EmptyState, SSLManager, IPv6Manager, WpManager, ComposerManager, MetricChart, CountryPicker },
   setup() {
     const route = useRoute()
     const router = useRouter()
@@ -1550,6 +1620,78 @@ location @maintenance {
     }
 
     watch(tab, (t) => { if (t === 'ipv6') loadServerIps(); if (t === 'aliases') loadAliases() })
+
+    // ── Acceso por país/IP (pestaña Protección) ──
+    const acc = ref(null)
+    const accForm = ref({ site_mode: 'off', site_countries: [], login_countries: [] })
+    const accAllowText = ref('')
+    const accBlockText = ref('')
+    const accSaving = ref(false)
+    const accError = ref('')
+    const accModes = [
+      { key: 'off',   label: 'Sin filtro por país', desc: 'Entra todo el mundo' },
+      { key: 'allow', label: 'Solo desde estos países', desc: 'Lo habitual en una web local' },
+      { key: 'block', label: 'Todos menos estos países', desc: 'Cortar el origen de ataques' },
+    ]
+    const _lines = (t) => t.split(/[\s,;]+/).map(x => x.trim()).filter(Boolean)
+    const _accPayload = () => ({
+      site_mode: accForm.value.site_mode,
+      site_countries: accForm.value.site_mode === 'off' ? [] : accForm.value.site_countries,
+      login_countries: accForm.value.login_countries,
+      ip_allow: _lines(accAllowText.value),
+      ip_block: _lines(accBlockText.value),
+    })
+    const _accFill = (rules) => {
+      accForm.value = { site_mode: rules.site_mode || 'off', site_countries: [...(rules.site_countries || [])],
+                        login_countries: [...(rules.login_countries || [])] }
+      accAllowText.value = (rules.ip_allow || []).join('\n')
+      accBlockText.value = (rules.ip_block || []).join('\n')
+    }
+    const accActive = computed(() => {
+      const r = acc.value?.rules
+      return !!r && !!((r.site_mode !== 'off' && r.site_countries.length) || r.login_countries.length || r.ip_block.length)
+    })
+    const accChanged = computed(() => {
+      if (!acc.value) return false
+      const r = acc.value.rules
+      const saved = { site_mode: r.site_mode, site_countries: r.site_mode === 'off' ? [] : r.site_countries,
+                      login_countries: r.login_countries, ip_allow: r.ip_allow, ip_block: r.ip_block }
+      return JSON.stringify(saved) !== JSON.stringify(_accPayload())
+    })
+    const accHasMyIp = computed(() => _lines(accAllowText.value).includes(acc.value?.me?.ip))
+    const addMyIp = () => {
+      const t = accAllowText.value.trim()
+      accAllowText.value = (t ? t + '\n' : '') + acc.value.me.ip
+    }
+    const countryName = (cc) => acc.value?.countries.find(c => c.cc === cc)?.name || cc
+    let accRetry = null
+    const loadAccess = async () => {
+      try {
+        acc.value = await api.getDomainAccess(domainId.value)
+        _accFill(acc.value.rules)
+        // La lista de países se prepara en segundo plano la primera vez (~30 s)
+        clearTimeout(accRetry)
+        if (!acc.value.countries_ready) accRetry = setTimeout(loadAccess, 10000)
+      } catch (e) { accError.value = e.message || 'No se pudieron cargar las reglas' }
+    }
+    const saveAccess = async (confirm = false) => {
+      accSaving.value = true; accError.value = ''
+      try {
+        const r = await api.saveDomainAccess(domainId.value, { ..._accPayload(), confirm_self_block: confirm })
+        acc.value = { ...acc.value, rules: r.rules }
+        _accFill(r.rules)
+        store.showNotification('Reglas de acceso aplicadas', 'success')
+      } catch (e) {
+        if (e.status === 409 && !confirm) {
+          accSaving.value = false
+          if (window.confirm(e.message + '\n\n¿Aplicar de todos modos?')) return saveAccess(true)
+          return
+        }
+        accError.value = e.message || 'No se pudieron aplicar las reglas'
+      } finally { accSaving.value = false }
+    }
+    watch(tab, (t) => { if (t === 'bots' && !acc.value) loadAccess() })
+    onBeforeUnmount(() => clearTimeout(accRetry))
 
     // ── Consumo de CPU/RAM (pool PHP-FPM) ──
     const res = ref(null)
@@ -2270,6 +2412,8 @@ location @maintenance {
       rlPresets, rlForm, rlSaving, rlChanged, saveRateLimit,
       hardeningSaving, toggleHardening,
       aliases, aliasData, aliasLoaded, aliasBusy, aliasNew, aliasNewMode, aliasExample,
+      acc, accForm, accAllowText, accBlockText, accSaving, accError, accModes, accActive, accChanged,
+      accHasMyIp, addMyIp, countryName, saveAccess,
       res, resRange, resLoading, resError, setResRange, resDay, resCpu, resMem, resHasData, fmtResMB, fmtCpuTime,
       addAlias, setAliasMode, removeAlias, retryAliasSsl,
       showNginxEx, showApacheEx, nginxExamples, apacheExamples, insertExample,
@@ -2355,6 +2499,23 @@ location @maintenance {
 .res-charts { display: grid; grid-template-columns: 1fr 1fr; gap: var(--sp-3); }
 @media (max-width: 900px) { .res-stats { grid-template-columns: repeat(2, 1fr); } }
 @media (max-width: 680px) { .res-stats, .res-charts { grid-template-columns: 1fr; } }
+/* Acceso por país/IP (pestaña Protección) */
+.acc-me { display: inline-flex; align-items: center; gap: .4rem; font-size: .85rem; color: var(--text-secondary);
+  padding: .35rem .65rem; background: var(--surface-2); border-radius: var(--r-sm, 6px); margin-bottom: var(--sp-4); }
+.acc-sec { padding: var(--sp-4) 0; border-top: 1px solid var(--border); }
+.acc-title { display: block; font-size: .9rem; font-weight: var(--fw-semibold, 600); margin: 0 0 var(--sp-2); }
+.acc-modes { display: grid; grid-template-columns: repeat(3, 1fr); gap: var(--sp-2); margin-bottom: var(--sp-3); }
+.acc-mode { display: flex; gap: .5rem; align-items: flex-start; padding: var(--sp-3); border: 1px solid var(--border);
+  border-radius: var(--r-md, 10px); cursor: pointer; }
+.acc-mode.on { border-color: var(--ac); background: var(--ac-soft); }
+.acc-mode input { margin-top: .2rem; }
+.acc-mode span { display: flex; flex-direction: column; gap: .1rem; font-size: .85rem; }
+.acc-mode small { color: var(--text-muted); font-size: .75rem; }
+.acc-hint { margin-top: var(--sp-2); font-size: .8rem; }
+.acc-ips { display: grid; grid-template-columns: 1fr 1fr; gap: var(--sp-4); }
+.acc-ips label { display: flex; flex-direction: column; gap: .35rem; align-items: flex-start; }
+.acc-ips textarea { width: 100%; resize: vertical; }
+@media (max-width: 760px) { .acc-modes, .acc-ips { grid-template-columns: 1fr; } }
 /* Límite de peticiones por IP (pestaña Protección) */
 .rl-tips { margin: 0 0 var(--sp-4); padding-left: 1.1rem; display: flex; flex-direction: column; gap: .35rem; }
 .rl-presets { display: grid; grid-template-columns: repeat(3, 1fr); gap: var(--sp-3); margin-bottom: var(--sp-4); }

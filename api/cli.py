@@ -2089,6 +2089,15 @@ def cmd_update_geoip(force: bool = False) -> int:
         return 0
     ok = update_geoip_db(force=force)
     logger.info("GeoIP actualizada" if ok else "GeoIP no disponible (sin red?)")
+    # Los rangos del acceso por país por dominio salen de esta misma base: si ha
+    # cambiado, rehacer su caché y la lista de nginx (no hace nada si nadie filtra).
+    if ok:
+        try:
+            from scripts import geo_access
+            if not geo_access.cache_ready():
+                geo_access.refresh_after_db_update()
+        except Exception as e:
+            logger.warning(f"No se pudo refrescar el acceso por país: {e}")
     return 0  # nunca bloquea la cadena de updates/install
 
 

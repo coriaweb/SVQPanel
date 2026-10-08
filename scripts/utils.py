@@ -616,6 +616,7 @@ def generate_nginx_config(
     wp_login_ratelimit: int = 0,
     upload_max_mb: int = 64,
     aliases: Optional[list] = None,
+    access_deny_var: Optional[str] = None,
 ) -> str:
     """
     Generate Nginx vhost configuration (Hestia-style paths).
@@ -706,6 +707,10 @@ def generate_nginx_config(
             if pattern:
                 safe = pattern.replace('"', '\\"').replace("'", "\\'")
                 bot_lines.append(f'    if ($http_user_agent ~* "{safe}") {{ return 444; }}')
+    # Acceso por país/IP del dominio (scripts/geo_access.py): la variable la
+    # define su conf.d; va antes que los bots para que un bloqueado no llegue a nada.
+    if access_deny_var:
+        bot_lines.insert(0, f"    if ({access_deny_var}) {{ return 403; }}")
     bots_block = "\n" + "\n".join(bot_lines) + "\n"
 
     # Un SUBDOMINIO (gestion.zococoria.es) NO lleva www. (nadie usa

@@ -13,7 +13,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from api.models.database import create_tables, get_db
 from config.config import PANEL_NAME, PANEL_VERSION
 
-from api.routes import domain_aliases, domain_resources
+from api.routes import domain_aliases, domain_resources, domain_access
 from api.routes import users, domains, php, ssl, ipv6, auth, settings, dns, system, mail, databases, firewall, fail2ban, security_monitor, ip_lists, file_manager, crowdsec, plans, sftp, crons, server_ips, backups, templates, notifications, dns_cluster, git, git_webhook, monitoring, db_tuner, migrations, migration_sources, terminal, license, api_tokens, mail_queue, process_manager, outbound_mail, antispam, branding
 
 # ── Descripción de la API (se muestra en /docs y /redoc) ──────────────────────
@@ -971,6 +971,8 @@ def _run_migrations():
         "CREATE INDEX IF NOT EXISTS ix_domains_staging_of_domain_id ON domains(staging_of_domain_id)",
         # Actualizaciones automáticas seguras de WordPress (checkpoint + rollback)
         "ALTER TABLE domains ADD COLUMN IF NOT EXISTS wp_auto_update BOOLEAN NOT NULL DEFAULT FALSE",
+        # Acceso por país/IP por dominio (scripts/geo_access.py). NULL = sin reglas
+        "ALTER TABLE domains ADD COLUMN IF NOT EXISTS access_rules TEXT",
         # Marca blanca (branding): NULL/False en todo = marca SVQPanel por defecto
         "ALTER TABLE settings ADD COLUMN IF NOT EXISTS brand_name VARCHAR(64)",
         "ALTER TABLE settings ADD COLUMN IF NOT EXISTS brand_accent_color VARCHAR(9)",
@@ -1071,6 +1073,7 @@ app.include_router(ssl.router, prefix="/api", tags=["SSL"])
 app.include_router(ipv6.router, prefix="/api", tags=["IPv6"])
 app.include_router(domain_aliases.router, prefix="/api", tags=["Domain aliases"])
 app.include_router(domain_resources.router, prefix="/api", tags=["Domain resources"])
+app.include_router(domain_access.router, prefix="/api", tags=["Domain access"])
 app.include_router(settings.router, prefix="/api", tags=["Settings"])
 app.include_router(license.router, prefix="/api", tags=["License"])
 app.include_router(dns.router, prefix="/api", tags=["DNS"])

@@ -77,7 +77,9 @@ class APIClient {
         } else {
           errorMessage = data?.message || data?.detail || `Error ${response.status}`
         }
-        throw new Error(errorMessage)
+        const err = new Error(errorMessage)
+        err.status = response.status   // p. ej. 409 = pedir confirmación
+        throw err
       }
 
       return data
@@ -1392,6 +1394,13 @@ class APIClient {
   }
   getTopResources(range = '24h', limit = 20) {
     return this.get(`/api/resources/top?range=${range}&limit=${limit}`)
+  }
+  // Acceso por país/IP por dominio
+  getDomainAccess(domainId) {
+    return this.get(`/api/domains/${domainId}/access`)
+  }
+  saveDomainAccess(domainId, rules) {
+    return this.put(`/api/domains/${domainId}/access`, rules)
   }
   // Estado del trabajo de apt/dpkg en segundo plano (upgrade o repair)
   getUpdatesJob() {
