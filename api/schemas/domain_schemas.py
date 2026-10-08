@@ -3,7 +3,7 @@ Esquemas Pydantic para dominios
 """
 
 from pydantic import BaseModel, Field, field_validator
-from typing import Optional
+from typing import List, Optional
 from datetime import datetime
 import re
 
