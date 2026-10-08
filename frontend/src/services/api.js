@@ -1386,6 +1386,13 @@ class APIClient {
   retryDomainAliasSsl(domainId) {
     return this.post(`/api/domains/${domainId}/aliases/ssl`, {})
   }
+  // Consumo de CPU/RAM por dominio (pool PHP-FPM)
+  getDomainResources(domainId, range = '24h') {
+    return this.get(`/api/domains/${domainId}/resources?range=${range}`)
+  }
+  getTopResources(range = '24h', limit = 20) {
+    return this.get(`/api/resources/top?range=${range}&limit=${limit}`)
+  }
   // Estado del trabajo de apt/dpkg en segundo plano (upgrade o repair)
   getUpdatesJob() {
     return this.request('/api/system/updates/job', { method: 'GET', silent: true })

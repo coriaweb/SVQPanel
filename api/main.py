@@ -13,7 +13,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from api.models.database import create_tables, get_db
 from config.config import PANEL_NAME, PANEL_VERSION
 
-from api.routes import domain_aliases
+from api.routes import domain_aliases, domain_resources
 from api.routes import users, domains, php, ssl, ipv6, auth, settings, dns, system, mail, databases, firewall, fail2ban, security_monitor, ip_lists, file_manager, crowdsec, plans, sftp, crons, server_ips, backups, templates, notifications, dns_cluster, git, git_webhook, monitoring, db_tuner, migrations, migration_sources, terminal, license, api_tokens, mail_queue, process_manager, outbound_mail, antispam, branding
 
 # ── Descripción de la API (se muestra en /docs y /redoc) ──────────────────────
@@ -237,6 +237,12 @@ async def startup():
         start_metrics_scheduler()
     except Exception as e:
         print(f"⚠ No se pudo arrancar el metrics scheduler: {e}")
+    # Consumo de CPU/RAM por dominio (pools PHP-FPM), pasada cada 10s.
+    try:
+        from scripts.domain_resources import start_domain_resources_sampler
+        start_domain_resources_sampler()
+    except Exception as e:
+        print(f"⚠ No se pudo arrancar el muestreo por dominio: {e}")
 
     # Ingestor de la cola de ejecuciones de cron (historial de crons).
     try:
@@ -1064,6 +1070,7 @@ app.include_router(php.router, prefix="/api", tags=["PHP"])
 app.include_router(ssl.router, prefix="/api", tags=["SSL"])
 app.include_router(ipv6.router, prefix="/api", tags=["IPv6"])
 app.include_router(domain_aliases.router, prefix="/api", tags=["Domain aliases"])
+app.include_router(domain_resources.router, prefix="/api", tags=["Domain resources"])
 app.include_router(settings.router, prefix="/api", tags=["Settings"])
 app.include_router(license.router, prefix="/api", tags=["License"])
 app.include_router(dns.router, prefix="/api", tags=["DNS"])

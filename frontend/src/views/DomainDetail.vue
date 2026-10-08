@@ -779,6 +779,62 @@ define('WP_REDIS_PATH', '{{ redisStatus.socket }}');</pre>
         </div>
       </BaseCard>
 
+      <!-- ===== Consumo de CPU/RAM (pool PHP-FPM del dominio) ===== -->
+      <BaseCard v-show="tab === 'resources'" title="Consumo de CPU y RAM" icon="speedometer2">
+        <template #actions>
+          <div class="res-range">
+            <button v-for="r in ['24h','7d','30d']" :key="r" class="res-range__btn"
+                    :class="{ 'res-range__btn--active': resRange === r }" @click="setResRange(r)">{{ r }}</button>
+          </div>
+        </template>
+        <p class="dd-muted">
+          Lo que gasta la web en PHP (su pool PHP-FPM propio). No incluye la base de datos ni el
+          servidor web, que son compartidos. La CPU va en % del servidor entero<span v-if="res"> ({{ res.cores }} núcleos)</span>.
+        </p>
+        <div v-if="resLoading && !res" class="svq-skeleton" style="height:200px"></div>
+        <div v-else-if="resError" class="stats-state stats-state--err"><i class="bi bi-exclamation-triangle"></i> {{ resError }}</div>
+        <template v-else-if="res">
+          <div v-if="res.summary.hits" class="res-alert">
+            <i class="bi bi-exclamation-triangle-fill"></i>
+            <span>
+              La web se quedó sin procesos PHP libres <strong>{{ res.summary.hits }}</strong>
+              {{ res.summary.hits === 1 ? 'vez' : 'veces' }} en este periodo: las visitas esperaron en cola.
+              Sube el perfil de recursos en <a href="#" @click.prevent="tab = 'php'">PHP</a>
+              (ahora «{{ res.pool.preset }}», máx. {{ res.pool.max_children }} procesos).
+            </span>
+          </div>
+          <div class="res-stats">
+            <div class="res-stat">
+              <span>Ahora</span>
+              <strong>{{ res.live.cpu_percent.toFixed(1) }}% · {{ fmtResMB(res.live.mem_mb) }}</strong>
+              <small>{{ res.live.procs }} {{ res.live.procs === 1 ? 'proceso' : 'procesos' }} PHP</small>
+            </div>
+            <div class="res-stat">
+              <span>CPU media / pico</span>
+              <strong>{{ res.summary.cpu_avg.toFixed(1) }}% / {{ res.summary.cpu_peak.toFixed(1) }}%</strong>
+              <small>{{ fmtCpuTime(res.summary.cpu_seconds) }} de CPU en {{ resRange }}</small>
+            </div>
+            <div class="res-stat">
+              <span>RAM media / pico</span>
+              <strong>{{ fmtResMB(res.summary.mem_avg) }} / {{ fmtResMB(res.summary.mem_peak) }}</strong>
+              <small>hasta {{ res.summary.procs_peak }} procesos a la vez</small>
+            </div>
+            <div class="res-stat">
+              <span>Saturaciones</span>
+              <strong :class="{ 'res-warn': res.summary.hits }">{{ res.summary.hits }}</strong>
+              <small>límite: {{ res.pool.max_children }} procesos ({{ res.pool.preset }})</small>
+            </div>
+          </div>
+          <div v-if="!resHasData" class="stats-state">
+            <i class="bi bi-moon"></i> Sin actividad de PHP en este periodo. Se mide cada 10 s y se guarda cada 5 min.
+          </div>
+          <div v-else class="res-charts">
+            <MetricChart title="CPU" unit="% del servidor" :series="resCpu" :format="v => v.toFixed(1) + '%'" />
+            <MetricChart title="RAM" unit="media" color="#8b5cf6" :series="resMem" :format="fmtResMB" />
+          </div>
+        </template>
+      </BaseCard>
+
       <!-- ===== Git deploy ===== -->
       <BaseCard v-show="tab === 'git'" title="Despliegue Git" icon="git">
         <template #actions v-if="git && git.enabled">
@@ -1134,10 +1190,11 @@ import SSLManager from '../components/SSLManager.vue'
 import IPv6Manager from '../components/IPv6Manager.vue'
 import WpManager from '../components/WpManager.vue'
 import ComposerManager from '../components/ComposerManager.vue'
+import MetricChart from '../components/ui/MetricChart.vue'
 
 export default {
   name: 'DomainDetail',
-  components: { BaseCard, BaseButton, BaseTabs, StatusBadge, EmptyState, SSLManager, IPv6Manager, WpManager, ComposerManager },
+  components: { BaseCard, BaseButton, BaseTabs, StatusBadge, EmptyState, SSLManager, IPv6Manager, WpManager, ComposerManager, MetricChart },
   setup() {
     const route = useRoute()
     const router = useRouter()
@@ -1157,7 +1214,8 @@ export default {
       { key: 'ipv6',     label: 'Red',     icon: 'hdd-network' },
       { key: 'bots',     label: 'Protección', icon: 'shield-check' },
       { key: 'stats',    label: 'Estadísticas', icon: 'bar-chart' },
-      { key: 'git',      label: 'Git',     icon: 'git' },
+      { key: 'resources', label: 'Consumo', icon: 'speedometer2' },
+      { key: 'git',     label: 'Git',     icon: 'git' },
       { key: 'composer', label: 'Composer',icon: 'box-seam' },
       { key: 'advanced', label: 'Avanzado',icon: 'sliders' },
       { key: 'logs',     label: 'Logs',    icon: 'journal-text' },
@@ -1483,6 +1541,38 @@ location @maintenance {
     }
 
     watch(tab, (t) => { if (t === 'ipv6') { loadServerIps(); loadAliases() } })
+
+    // ── Consumo de CPU/RAM (pool PHP-FPM) ──
+    const res = ref(null)
+    const resRange = ref('24h')
+    const resLoading = ref(false)
+    const resError = ref('')
+    let resTimer = null
+    const loadResources = async () => {
+      resLoading.value = true; resError.value = ''
+      try { res.value = await api.getDomainResources(domainId.value, resRange.value) }
+      catch (e) { resError.value = e.message || 'No se pudo cargar el consumo' }
+      finally { resLoading.value = false }
+    }
+    const setResRange = (r) => { resRange.value = r; loadResources() }
+    const resCpu = computed(() => (res.value?.points || []).map(p => ({ ts: p.ts, value: p.cpu })))
+    const resMem = computed(() => (res.value?.points || []).map(p => ({ ts: p.ts, value: p.mem })))
+    const resHasData = computed(() => (res.value?.points || []).some(p => p.cpu || p.mem || p.procs))
+    const fmtResMB = (mb) => (mb >= 1024 ? (mb / 1024).toFixed(1) + ' GB' : Math.round(mb || 0) + ' MB')
+    const fmtCpuTime = (s) => {
+      if (s >= 3600) return (s / 3600).toFixed(1) + ' h'
+      if (s >= 60) return Math.round(s / 60) + ' min'
+      return Math.round(s) + ' s'
+    }
+    // Mientras la pestaña está abierta, refresca cada minuto (el "Ahora" cambia cada 10 s)
+    watch(tab, (t) => {
+      clearInterval(resTimer); resTimer = null
+      if (t === 'resources') {
+        loadResources()
+        resTimer = setInterval(() => { if (!document.hidden) loadResources() }, 60000)
+      }
+    })
+    onBeforeUnmount(() => clearInterval(resTimer))
     const saveCustomConfig = async () => {
       advSaving.value = true; advError.value = ''
       try {
@@ -2166,6 +2256,7 @@ location @maintenance {
       rlPresets, rlForm, rlSaving, rlChanged, saveRateLimit,
       hardeningSaving, toggleHardening,
       aliases, aliasData, aliasLoaded, aliasBusy, aliasNew, aliasNewMode, aliasExample,
+      res, resRange, resLoading, resError, setResRange, resCpu, resMem, resHasData, fmtResMB, fmtCpuTime,
       addAlias, setAliasMode, removeAlias, retryAliasSsl,
       showNginxEx, showApacheEx, nginxExamples, apacheExamples, insertExample,
       authEnabled, authUser, authPass, authSaving, authError, saveHttpauth,
@@ -2232,6 +2323,24 @@ location @maintenance {
 .alias-add { display: grid; grid-template-columns: 1fr 220px auto; gap: var(--sp-2); align-items: center; }
 .alias-dns { margin-top: var(--sp-3); }
 @media (max-width: 680px) { .alias-row, .alias-add { grid-template-columns: 1fr; } }
+/* Consumo de CPU/RAM (pestaña Consumo) */
+.res-range { display: inline-flex; border: 1px solid var(--border); border-radius: var(--r-sm, 6px); overflow: hidden; }
+.res-range__btn { background: transparent; border: 0; padding: .25rem .65rem; font-size: .78rem; color: var(--text-secondary); cursor: pointer; }
+.res-range__btn + .res-range__btn { border-left: 1px solid var(--border); }
+.res-range__btn--active { background: var(--ac-soft); color: var(--ac); font-weight: 600; }
+.res-alert { display: flex; gap: .6rem; align-items: flex-start; padding: var(--sp-3); margin-bottom: var(--sp-4);
+  background: var(--warning-bg); border: 1px solid var(--warning-border); border-radius: var(--r-md, 10px); font-size: .875rem; }
+.res-alert > i { color: var(--warning); margin-top: .1rem; }
+.res-stats { display: grid; grid-template-columns: repeat(4, 1fr); gap: var(--sp-3); margin-bottom: var(--sp-4); }
+.res-stat { display: flex; flex-direction: column; gap: .15rem; padding: var(--sp-3); background: var(--surface-2);
+  border: 1px solid var(--border); border-radius: var(--r-md, 10px); min-width: 0; }
+.res-stat > span { font-size: .75rem; color: var(--text-muted); }
+.res-stat > strong { font-size: 1rem; font-variant-numeric: tabular-nums; }
+.res-stat > small { font-size: .72rem; color: var(--text-muted); }
+.res-warn { color: var(--warning); }
+.res-charts { display: grid; grid-template-columns: 1fr 1fr; gap: var(--sp-3); }
+@media (max-width: 900px) { .res-stats { grid-template-columns: repeat(2, 1fr); } }
+@media (max-width: 680px) { .res-stats, .res-charts { grid-template-columns: 1fr; } }
 /* Límite de peticiones por IP (pestaña Protección) */
 .rl-tips { margin: 0 0 var(--sp-4); padding-left: 1.1rem; display: flex; flex-direction: column; gap: .35rem; }
 .rl-presets { display: grid; grid-template-columns: repeat(3, 1fr); gap: var(--sp-3); margin-bottom: var(--sp-4); }

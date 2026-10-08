@@ -142,6 +142,37 @@
       </div>
     </div>
 
+    <!-- Webs que más consumen (pool PHP-FPM de cada dominio) -->
+    <div class="mon-card">
+      <div class="mon-card-head">
+        <span class="mon-card-title"><i class="bi bi-speedometer2"></i> Webs que más consumen
+          <small style="color:var(--text-muted);font-weight:400">PHP · {{ range }}</small></span>
+      </div>
+      <div class="mon-card-body">
+        <div v-if="!top.length" class="mon-hint">
+          Aún no hay datos: se mide cada 10 s y se guarda cada 5 min.
+        </div>
+        <div v-else class="mon-table-wrap">
+          <table class="mon-table">
+            <thead><tr><th>Dominio</th><th>CPU media</th><th>Tiempo CPU</th><th>RAM media / pico</th><th>Ahora</th><th>Saturaciones</th></tr></thead>
+            <tbody>
+              <tr v-for="d in top" :key="d.domain_id">
+                <td>
+                  <router-link :to="`/domains/${d.domain_id}`">{{ d.domain }}</router-link>
+                  <div class="mon-hint">{{ d.owner }}</div>
+                </td>
+                <td>{{ d.cpu_avg.toFixed(1) }}%</td>
+                <td>{{ fmtCpuTime(d.cpu_seconds) }}</td>
+                <td>{{ fmtMB(Math.round(d.mem_avg)) }} / {{ fmtMB(Math.round(d.mem_peak)) }}</td>
+                <td>{{ d.live.cpu_percent.toFixed(1) }}% · {{ fmtMB(Math.round(d.live.mem_mb)) }}</td>
+                <td :class="d.hits ? 'mc-warn' : ''">{{ d.hits }}</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+
     <!-- Configuración de alertas -->
     <div class="mon-card">
       <div class="mon-card-head">
@@ -605,7 +636,18 @@ export default {
       try { events.value = await api.get('/api/monitoring/alerts/events?limit=50') } catch {}
     }
 
-    const setRange = (r) => { range.value = r; loadHistory() }
+    // Webs que más consumen (CPU/RAM del pool PHP-FPM de cada dominio)
+    const top = ref([])
+    const loadTop = async () => {
+      try { top.value = (await api.getTopResources(range.value, 15)).domains || [] } catch {}
+    }
+    const fmtCpuTime = (s) => {
+      if (s >= 3600) return (s / 3600).toFixed(1) + ' h'
+      if (s >= 60) return Math.round(s / 60) + ' min'
+      return Math.round(s) + ' s'
+    }
+
+    const setRange = (r) => { range.value = r; loadHistory(); loadTop() }
 
     const saveCfg = async () => {
       savingCfg.value = true
@@ -713,10 +755,10 @@ export default {
     }
 
     onMounted(async () => {
-      await Promise.all([loadHistory(), loadConfig(), loadEvents(), loadDetail()])
+      await Promise.all([loadHistory(), loadConfig(), loadEvents(), loadDetail(), loadTop()])
       // Refresco automático cada 60s según la pestaña activa
       refreshTimer = setInterval(() => {
-        if (tab.value === 'recursos') { loadHistory(); loadEvents(); loadDetail() }
+        if (tab.value === 'recursos') { loadHistory(); loadEvents(); loadDetail(); loadTop() }
         else if (tab.value === 'correo') { loadMail() }
         else if (tab.value === 'web') { loadWeb() }
         else if (tab.value === 'bbdd') { loadDb() }
@@ -729,7 +771,7 @@ export default {
       range, points, loading, cfg, events, savingCfg, testing,
       seriesCpu, seriesRam, seriesDisk, seriesLoad, seriesRx, seriesTx,
       openAlerts, setRange, saveCfg, sendTest, relTime,
-      detail, fmtMB, barClass,
+      detail, fmtMB, barClass, top, fmtCpuTime,
       tab, mail, mailLoading, loadMail, selectMailTab, fmtAge,
       web, webLoading, loadWeb, selectWebTab, fmtNum,
       dbStats, dbLoading, loadDb, selectDbTab,
