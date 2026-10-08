@@ -7,6 +7,10 @@ Un dominio puede tener su certificado en dos sitios:
 Manda el PROPIO si existe: así, al quitarlo, el dominio vuelve solo al de Let's
 Encrypt (si lo había) sin reemitir nada.
 
+Un SUBDOMINIO sin certificado suyo usa el del dominio principal si es un
+wildcard que lo cubre (tienda.dominio.com ← *.dominio.com): no hace falta
+emitirle nada. Si tiene uno suyo, manda el suyo.
+
 `covers()` entiende comodines: *.dominio.com cubre mail.dominio.com (un nivel),
 pero no dominio.com ni a.b.dominio.com (como los navegadores y los MTA).
 """
@@ -41,23 +45,60 @@ def has_le(name: str) -> bool:
     return os.path.isfile(le_paths(name)[0])
 
 
+def _own_paths(name: str) -> Optional[Tuple[str, str]]:
+    """Certificado del PROPIO nombre (subido o de Let's Encrypt), sin heredar."""
+    if has_custom(name):
+        return custom_paths(name)
+    if has_le(name):
+        return le_paths(name)
+    return None
+
+
+def parent_of(name: str) -> Optional[str]:
+    """tienda.dominio.com → dominio.com (None si no hay nivel por encima)."""
+    parts = (name or "").split(".", 1)
+    return parts[1] if len(parts) == 2 and "." in parts[1] else None
+
+
+def inherited_from(name: str) -> Optional[str]:
+    """Dominio cuyo certificado (wildcard) usa `name` por no tener uno suyo, o None."""
+    if _own_paths(name):
+        return None
+    parent = parent_of(name)
+    if not parent:
+        return None
+    own = _own_paths(parent)
+    if own and covers(cert_sans(own[0]), name):
+        return parent
+    return None
+
+
 def cert_paths(name: str) -> Tuple[str, str]:
-    """(fullchain, privkey) que debe servir `name`. Si no hay ninguno devuelve
-    las rutas de Let's Encrypt (lo que se escribía siempre hasta ahora)."""
-    return custom_paths(name) if has_custom(name) else le_paths(name)
+    """(fullchain, privkey) que debe servir `name`: el suyo, o el wildcard del
+    dominio principal si lo cubre. Si no hay ninguno devuelve las rutas de
+    Let's Encrypt del propio nombre (lo que se escribía siempre hasta ahora)."""
+    own = _own_paths(name)
+    if own:
+        return own
+    parent = inherited_from(name)
+    if parent:
+        return _own_paths(parent)
+    return le_paths(name)
 
 
 def existing_cert(name: str) -> Optional[str]:
-    """fullchain que existe para `name` (propio o Let's Encrypt), o None."""
+    """fullchain que sirve `name` (propio, Let's Encrypt o heredado), o None."""
     fc = cert_paths(name)[0]
     return fc if os.path.isfile(fc) else None
 
 
 def source(name: str) -> Optional[str]:
-    """'custom' | 'letsencrypt' | None."""
+    """'custom' | 'letsencrypt' | 'inherited' (wildcard del principal) | None."""
     if has_custom(name):
         return "custom"
-    return "letsencrypt" if has_le(name) else None
+    if has_le(name):
+        return "letsencrypt"
+    return "inherited" if inherited_from(name) else None
 
 
 def covers(sans, host: str) -> bool:

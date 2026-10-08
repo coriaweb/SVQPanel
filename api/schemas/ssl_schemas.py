@@ -39,6 +39,7 @@ class SSLCertInfo(BaseModel):
     wildcard:      bool = False
     auto_renew:    bool = True
     dns_validated: bool = False   # Let's Encrypt validado por DNS (wildcard)
+    inherited_from: Optional[str] = None   # subdominio que usa el wildcard de este dominio
 
 
 class SSLResponse(BaseModel):

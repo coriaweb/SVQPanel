@@ -632,12 +632,18 @@ class SSLManager(SystemManager):
                 pem = f.read()
 
             src = ssl_paths.source(domain_name)
+            parent = ssl_paths.inherited_from(domain_name) if src == "inherited" else None
+            # De quién es el certificado (el del principal si se hereda su wildcard)
+            owner = parent or domain_name
+            owner_src = ssl_paths.source(owner)
             return {
-                # custom = subido (no se renueva solo); letsencrypt (wildcard = por DNS)
-                "source":        src,
-                "wildcard":      any(n.startswith("*.") for n in sans),
-                "auto_renew":    src == "letsencrypt",
-                "dns_validated": src == "letsencrypt" and acme_dns.is_dns_lineage(domain_name),
+                # custom = subido (no se renueva solo); letsencrypt (wildcard = por DNS);
+                # inherited = usa el wildcard del dominio principal (inherited_from)
+                "source":         src,
+                "inherited_from": parent,
+                "wildcard":       any(n.startswith("*.") for n in sans),
+                "auto_renew":     owner_src == "letsencrypt",
+                "dns_validated":  owner_src == "letsencrypt" and acme_dns.is_dns_lineage(owner),
                 "issued_to":     issued_to or domain_name,
                 "sans":          sans,
                 "not_before":    not_before,

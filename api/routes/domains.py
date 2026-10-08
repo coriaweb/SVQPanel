@@ -329,6 +329,27 @@ async def create_domain(
         except Exception:
             pass
 
+        # Subdominio de un dominio con certificado wildcard: nace ya con HTTPS
+        # (lo cubre *.dominio, no hay nada que emitir). Si no valida, sigue en HTTP.
+        if db_domain.is_subdomain and not mail_dns_only:
+            try:
+                from scripts.ssl_paths import inherited_from
+                if inherited_from(db_domain.domain_name):
+                    db_domain.ssl_enabled = True
+                    db_domain.force_https = True
+                    db.commit()
+                    try:
+                        _regenerate_from_domain(db_domain, db)
+                    except Exception:
+                        db_domain.ssl_enabled = False
+                        db_domain.force_https = False
+                        db.commit()
+                        _regenerate_from_domain(db_domain, db)
+            except Exception as _e:
+                import logging as _logging
+                _logging.getLogger(__name__).warning(
+                    f"{db_domain.domain_name}: no se pudo activar el HTTPS heredado del wildcard: {_e}")
+
         # Liberar memoria de subprocesos (nginx, PHP-FPM, chown...) retenida
         # temporalmente por Python. Sin esto, el spike de ~800MB al crear un
         # dominio puede persistir hasta el siguiente GC automático.

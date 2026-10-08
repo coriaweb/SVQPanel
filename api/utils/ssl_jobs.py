@@ -148,7 +148,12 @@ def run_web_issue(domain_id: int, email: str, hsts: bool = False, wildcard: bool
 
         # Paso 1: certbot, con su salida en vivo
         job_step(kind, domain_id, 1)
-        if wildcard:
+        from scripts import ssl_paths
+        parent = None if wildcard else ssl_paths.inherited_from(domain.domain_name)
+        if parent:
+            # Subdominio ya cubierto por el wildcard del principal: nada que emitir
+            job_line(kind, domain_id, f"Ya lo cubre el certificado wildcard de {parent}: no hace falta emitir otro")
+        elif wildcard:
             mgr.create_wildcard(domain.domain_name, email,
                                 line_cb=lambda l: job_line(kind, domain_id, l))
         else:
@@ -169,8 +174,9 @@ def run_web_issue(domain_id: int, email: str, hsts: bool = False, wildcard: bool
         db.commit()
         db.refresh(domain)
 
-        from api.routes.domains import _regenerate_from_domain
-        _regenerate_from_domain(domain, db)
+        # Con sus subdominios que heredan el wildcard (ver api/routes/ssl._regenerate)
+        from api.routes.ssl import _regenerate
+        _regenerate(domain, db)
         if wildcard:   # *.dominio cubre mail.dominio: el correo puede usarlo
             _rebuild_mail_tls(db)
 

@@ -238,3 +238,75 @@ def test_hook_args():
     a = acme_dns.hook_args()
     assert a[:3] == ["--manual", "--preferred-challenges", "dns"]
     assert "bash /opt/svqpanel/scripts/certbot-dns-hook.sh auth" in a
+
+
+# ── Subdominios que heredan el wildcard del principal ──────────────────────
+def _le(tmp_path, name, cert):
+    d = tmp_path / "le" / name
+    d.mkdir(parents=True, exist_ok=True)
+    (d / "fullchain.pem").write_text(_pem(cert))
+    (d / "privkey.pem").write_text("k")
+
+
+def test_subdominio_hereda_el_wildcard(tmp_path, monkeypatch, pki):
+    monkeypatch.setattr(ssl_paths, "CUSTOM_ROOT", str(tmp_path / "custom"))
+    monkeypatch.setattr(ssl_paths, "LE_ROOT", str(tmp_path / "le"))
+    k = _key()
+    _le(tmp_path, "mi-web.com", _cert("mi-web.com", pki["im"], pki["im_k"], k, ["mi-web.com", "*.mi-web.com"]))
+    parent_fc = str(tmp_path / "le" / "mi-web.com" / "fullchain.pem")
+
+    assert ssl_paths.cert_paths("tienda.mi-web.com")[0] == parent_fc
+    assert ssl_paths.source("tienda.mi-web.com") == "inherited"
+    assert ssl_paths.inherited_from("tienda.mi-web.com") == "mi-web.com"
+    assert ssl_paths.existing_cert("mail.mi-web.com") == parent_fc       # correo y webmail también
+    assert ssl_paths.inherited_from("a.tienda.mi-web.com") is None        # dos niveles: no
+    assert ssl_paths.inherited_from("mi-web.com") is None                 # el principal no hereda de .com
+
+    from scripts.utils import generate_nginx_config
+    v = generate_nginx_config("tienda.mi-web.com", "u", "8.4", ssl_enabled=True, is_subdomain=True)
+    assert f"ssl_certificate {parent_fc};" in v
+
+    # Con certificado suyo, manda el suyo
+    _le(tmp_path, "tienda.mi-web.com", _cert("tienda.mi-web.com", pki["im"], pki["im_k"], k, ["tienda.mi-web.com"]))
+    assert ssl_paths.source("tienda.mi-web.com") == "letsencrypt"
+    # Un principal SIN comodín no se hereda
+    _le(tmp_path, "otra.com", _cert("otra.com", pki["im"], pki["im_k"], k, ["otra.com", "www.otra.com"]))
+    assert ssl_paths.inherited_from("blog.otra.com") is None
+
+
+def test_regenerar_el_principal_arrastra_a_sus_subdominios(db, monkeypatch, tmp_path, pki):
+    """Si el principal deja de tener wildcard, el subdominio que lo heredaba se
+    queda en HTTP (no apuntando a un certificado que no lo cubre), y los hijos
+    se regeneran antes y después del principal."""
+    from api.models.models_domain import Domain
+    from api.routes import ssl as R
+    import api.routes.domains as DR
+    monkeypatch.setattr(ssl_paths, "CUSTOM_ROOT", str(tmp_path / "custom"))
+    monkeypatch.setattr(ssl_paths, "LE_ROOT", str(tmp_path / "le"))
+    _add(db, 5, "c1")
+    db.add_all([
+        Domain(id=1, user_id=5, domain_name="mi-web.com", php_version="8.4", public_html="/p", ssl_enabled=True),
+        Domain(id=2, user_id=5, domain_name="tienda.mi-web.com", php_version="8.4", public_html="/p",
+               is_subdomain=True, parent_domain="mi-web.com", ssl_enabled=True, force_https=True),
+        Domain(id=3, user_id=5, domain_name="blog.mi-web.com", php_version="8.4", public_html="/p",
+               is_subdomain=True, parent_domain="mi-web.com", ssl_enabled=True),
+    ])
+    db.commit()
+    k = _key()
+    # blog tiene certificado suyo; tienda heredaba el wildcard, que ahora ya NO es wildcard
+    _le(tmp_path, "blog.mi-web.com", _cert("blog.mi-web.com", pki["im"], pki["im_k"], k, ["blog.mi-web.com"]))
+    _le(tmp_path, "mi-web.com", _cert("mi-web.com", pki["im"], pki["im_k"], k, ["mi-web.com", "www.mi-web.com"]))
+
+    order, fails = [], {"tienda.mi-web.com": 1}
+    def _regen(d, db):
+        order.append(d.domain_name)
+        if fails.get(d.domain_name):
+            fails[d.domain_name] -= 1
+            raise RuntimeError("nginx -t (el principal aún apunta al viejo)")
+    monkeypatch.setattr(DR, "_regenerate_from_domain", _regen)
+
+    R._regenerate(db.get(Domain, 1), db)
+    assert order == ["tienda.mi-web.com", "blog.mi-web.com", "mi-web.com", "tienda.mi-web.com"]
+    tienda, blog = db.get(Domain, 2), db.get(Domain, 3)
+    assert not tienda.ssl_enabled and not tienda.force_https     # ya nada lo cubre
+    assert blog.ssl_enabled                                      # el suyo sigue

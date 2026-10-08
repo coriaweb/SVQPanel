@@ -36,9 +36,42 @@ def _regenerate(domain: Domain, db: Session) -> None:
     """Vhost con TODO el estado del dominio (camino común). Antes se llamaba a
     regenerate_vhost con solo una parte de los ajustes y, al cambiar forzar HTTPS
     o HSTS, se perdían la contraseña de la web, las directivas personalizadas,
-    los headers de seguridad, HTTP/3, el modo solo lectura y los bots."""
+    los headers de seguridad, HTTP/3, el modo solo lectura y los bots.
+
+    Regenera también los SUBDOMINIOS que usan el wildcard de este dominio: si el
+    certificado del principal cambia de sitio o desaparece (revocar, subir uno
+    propio, reemitir sin comodín), su vhost no puede seguir apuntando al viejo.
+    Orden: primero los hijos (sus recargas pueden fallar mientras el principal
+    aún apunta al certificado anterior), luego el principal (debe validar) y se
+    repiten los hijos que fallaron. Si un hijo se queda sin certificado que lo
+    cubra, se le desactiva el HTTPS en vez de dejar nginx roto para todos."""
     from api.routes.domains import _regenerate_from_domain
+    children = []
+    if not domain.is_subdomain:
+        children = db.query(Domain).filter(Domain.is_subdomain == True,  # noqa: E712
+                                           Domain.parent_domain == domain.domain_name,
+                                           Domain.ssl_enabled == True).all()  # noqa: E712
+    for child in children:
+        if not _ssl_paths.existing_cert(child.domain_name):
+            child.ssl_enabled = False
+            child.force_https = False
+            child.hsts_enabled = False
+    if children:
+        db.commit()
+    failed = []
+    for child in children:
+        try:
+            _regenerate_from_domain(child, db)
+        except Exception:
+            failed.append(child)
     _regenerate_from_domain(domain, db)
+    for child in failed:
+        try:
+            _regenerate_from_domain(child, db)
+        except Exception as e:
+            import logging
+            logging.getLogger(__name__).error(f"vhost de {child.domain_name} tras cambiar el SSL "
+                                              f"de {domain.domain_name}: {e}")
 
 
 def _domain_ssl_response(domain: Domain, ssl_manager: SSLManager) -> SSLResponse:
@@ -210,6 +243,11 @@ def renew_ssl(
         raise HTTPException(status_code=400, detail=(
             "Es un certificado propio: no lo renueva Let's Encrypt. Cuando tu proveedor te dé "
             "el nuevo, súbelo igual que el actual."))
+    _parent = _ssl_paths.inherited_from(domain.domain_name)
+    if _parent:
+        raise HTTPException(status_code=400, detail=(
+            f"Este subdominio usa el certificado wildcard de {_parent}: se renueva con él "
+            "(renuévalo desde la ficha de ese dominio)."))
 
     ssl_manager = SSLManager()
     try:

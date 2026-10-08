@@ -25,6 +25,7 @@
         <div>
           <strong>Certificado Activo
             <span v-if="isCustom" class="ssl-kind">Propio</span>
+            <span v-else-if="inheritedFrom" class="ssl-kind">Wildcard de {{ inheritedFrom }}</span>
             <span v-else-if="ssl.cert_info?.wildcard" class="ssl-kind">Wildcard</span>
           </strong>
           <span class="ssl-expiry">Válido hasta {{ formatDate(ssl.ssl_expires || ssl.cert_info?.not_after) }}</span>
@@ -39,7 +40,8 @@
         <div v-if="ssl.cert_info?.signature_alg" class="ssl-meta-row"><span>Algoritmo</span><span class="mono">{{ ssl.cert_info.signature_alg }}</span></div>
         <div v-if="ssl.cert_info?.key_size" class="ssl-meta-row"><span>Clave</span><span>{{ ssl.cert_info.key_type ? ssl.cert_info.key_type + ' · ' : '' }}{{ ssl.cert_info.key_size }} bits</span></div>
         <div class="ssl-meta-row"><span>Auto-renovación</span>
-          <span v-if="isCustom" class="ssl-warn-text">No: es un certificado propio. Sube el nuevo antes de que caduque (te avisaremos).</span>
+          <span v-if="inheritedFrom">Se renueva con el de {{ inheritedFrom }}</span>
+          <span v-else-if="isCustom" class="ssl-warn-text">No: es un certificado propio. Sube el nuevo antes de que caduque (te avisaremos).</span>
           <span v-else-if="ssl.cert_info?.dns_validated">Habilitada (Let's Encrypt, validación por DNS)</span>
           <span v-else>Habilitada (Let's Encrypt)</span>
         </div>
@@ -81,7 +83,14 @@
 
       <!-- Acciones -->
       <div class="ssl-actions">
-        <template v-if="isCustom">
+        <template v-if="inheritedFrom">
+          <span class="ssl-hint">Este subdominio usa el certificado wildcard de <strong>{{ inheritedFrom }}</strong>:
+            no necesita uno propio y se renueva con él.</span>
+          <button class="btn btn-sm btn-outline-danger" @click="showRevokeConfirm = true" :disabled="loading">
+            <i class="bi bi-x-circle me-1"></i>Desactivar HTTPS
+          </button>
+        </template>
+        <template v-else-if="isCustom">
           <button class="btn btn-sm btn-outline-primary" @click="openUpload" :disabled="loading">
             <i class="bi bi-upload me-1"></i>Sustituir certificado
           </button>
@@ -108,7 +117,7 @@
       </div>
 
       <div v-if="showRevokeConfirm" class="revoke-confirm">
-        <p><i class="bi bi-exclamation-triangle-fill"></i> ¿Revocar el certificado SSL? El dominio quedará en HTTP.</p>
+        <p><i class="bi bi-exclamation-triangle-fill"></i> {{ inheritedFrom ? `¿Desactivar el HTTPS? El certificado de ${inheritedFrom} no se toca; este subdominio quedará en HTTP.` : "¿Revocar el certificado SSL? El dominio quedará en HTTP." }}</p>
         <div class="d-flex gap-2">
           <button class="btn btn-danger btn-sm" @click="revokeSSL" :disabled="loading">Confirmar</button>
           <button class="btn btn-secondary btn-sm" @click="showRevokeConfirm = false">Cancelar</button>
@@ -267,6 +276,7 @@ export default {
         hint: 'Los certificados intermedios del proveedor. Sin ellos muchos móviles no confían en la web.' },
     ]
     const isCustom = computed(() => ssl.value?.cert_info?.source === 'custom')
+    const inheritedFrom = computed(() => ssl.value?.cert_info?.inherited_from || null)
     const openIssue = (wild) => { wildcard.value = !!wild; showUpload.value = false; showForm.value = true }
     const openUpload = () => {
       showForm.value = false; uploadError.value = ''
@@ -479,7 +489,7 @@ export default {
       canonical, savingCanonical, canonicalOptions, setCanonical,
       createSSL, renewSSL, revokeSSL, saveToggle, formatDate,
       showPem, pemCopied, copyPem,
-      wildcard, showUpload, upload, uploadError, uploadFields, fileInput, isCustom,
+      wildcard, showUpload, upload, uploadError, uploadFields, fileInput, isCustom, inheritedFrom,
       openIssue, openUpload, pickFile, onFile, submitUpload, removeCustom,
     }
   }

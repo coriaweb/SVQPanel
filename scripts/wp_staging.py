@@ -420,9 +420,12 @@ def _issue_ssl(db, staging_row, owner) -> bool:
         return False
     try:
         from scripts.ssl_manager import SSLManager
+        from scripts.ssl_paths import inherited_from
         from datetime import timedelta
-        SSLManager().create_ssl_with_email(staging_row.domain_name, email,
-                                           include_www=False)
+        # Si el principal tiene un wildcard, staging.dominio ya está cubierto
+        if not inherited_from(staging_row.domain_name):
+            SSLManager().create_ssl_with_email(staging_row.domain_name, email,
+                                               include_www=False)
         staging_row.ssl_enabled = True
         staging_row.ssl_expires = datetime.utcnow() + timedelta(days=90)
         staging_row.ssl_renewed_at = datetime.utcnow()
