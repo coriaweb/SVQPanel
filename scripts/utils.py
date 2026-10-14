@@ -838,6 +838,10 @@ def generate_nginx_config(
         http3_header = '\n    add_header Alt-Svc \'h3=":443"; ma=86400\' always;'
 
     # Headers de seguridad HTTP (sin CSP para no romper contenido de clientes)
+    # Permissions-Policy: cámara/micro/ubicación en (self), NO (): con () el
+    # navegador se lo deniega a la propia web sin preguntar (lectores QR,
+    # videollamadas, mapas "cerca de mí"). (self) sigue pidiendo permiso al
+    # visitante y bloquea los iframes de terceros. Ver updates/0166.
     sec_headers_http = ""
     sec_headers_https = ""
     _sh = ""
@@ -846,7 +850,7 @@ def generate_nginx_config(
     add_header X-Frame-Options "SAMEORIGIN" always;
     add_header X-Content-Type-Options "nosniff" always;
     add_header Referrer-Policy "strict-origin-when-cross-origin" always;
-    add_header Permissions-Policy "accelerometer=(), camera=(), geolocation=(), gyroscope=(), magnetometer=(), microphone=(), payment=(), usb=()" always;
+    add_header Permissions-Policy "accelerometer=(), camera=(self), geolocation=(self), gyroscope=(), magnetometer=(), microphone=(self), payment=(), usb=()" always;
     add_header X-XSS-Protection "1; mode=block" always;"""
         sec_headers_http = "\n" + _sh
         sec_headers_https = "\n" + _sh
