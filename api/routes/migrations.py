@@ -142,6 +142,29 @@ def _staged_path(token: str) -> Optional[str]:
     return p if os.path.isfile(p) else None
 
 
+def _is_leftover_migration_client(db: Session, user: User) -> bool:
+    """¿Es un cliente que creó una migración que FALLÓ y que sigue vacío?
+
+    Condiciones (todas): no es admin; es destino de algún MigrationJob y TODOS
+    sus jobs terminaron en failed (ninguno en curso ni con éxito); y no tiene
+    dominios, dominios de correo ni BDs. Así nunca se "reutiliza" la cuenta de
+    un cliente real que casualmente se llame igual.
+    """
+    from api.models.models_migration import MigrationJob
+    from api.models.models_domain import Domain
+    from api.models.models_mail import MailDomain
+    from api.models.models_client_db import ClientDatabase
+    if user.is_admin or user.role == "admin":
+        return False
+    jobs = db.query(MigrationJob).filter(MigrationJob.target_user_id == user.id).all()
+    if not jobs or any(j.status != "failed" for j in jobs):
+        return False
+    for model in (Domain, MailDomain, ClientDatabase):
+        if db.query(model).filter(model.user_id == user.id).first():
+            return False
+    return True
+
+
 def _create_target_user(db: Session, username: str, email: str,
                         password: Optional[str]) -> User:
     """Crea el cliente destino de la migración (sistema + BD) a partir de los
@@ -162,7 +185,28 @@ def _create_target_user(db: Session, username: str, email: str,
     # Username único EN EL PANEL. (El email NO tiene que ser único: el login es
     # por username, y un mismo dueño puede tener varias cuentas con el mismo
     # email — típico al migrar varios sitios de un cliente.)
-    if db.query(User).filter(User.username == username).first():
+    existing = db.query(User).filter(User.username == username).first()
+    if existing:
+        # Reintento tras una migración fallida: el intento anterior creó el
+        # cliente y falló después (p.ej. el backup del origen no se generó). Si
+        # sigue VACÍO y solo lo usaron migraciones fallidas, lo reutilizamos en
+        # vez de obligar al admin a borrarlo o a elegirlo a mano.
+        if _is_leftover_migration_client(db, existing):
+            if password:
+                errs = validate_password(password, load_policy(db))
+                if errs:
+                    raise HTTPException(status_code=400,
+                        detail="La contraseña no cumple la política: " + "; ".join(errs))
+                try:
+                    UserManager().change_password(username, password)
+                except Exception as e:
+                    raise HTTPException(status_code=500,
+                        detail=f"No se pudo cambiar la contraseña del sistema: {e}")
+                existing.set_password(password)
+                db.commit()
+            logger.info(f"Migración: reutilizando el cliente «{username}» que dejó "
+                        "vacío una migración fallida")
+            return existing
         raise HTTPException(status_code=409,
             detail=f"Ya existe un usuario «{username}». Elige otro nombre o usa el cliente existente.")
 
@@ -368,8 +412,9 @@ _LIVE_MAX_BYTES = 50 * 1024 * 1024
 def _fetch_live_config(cfg: dict) -> tuple:
     """Trae por SSH la config EN VIVO del usuario de Hestia (unos KB, segundos).
 
-    Devuelve (tmp_root, live_dir, system): live_dir = copia local de
-    data/users/USUARIO/. El llamador borra tmp_root. Bloqueante (subprocess):
+    Devuelve (tmp_root, live_dir, system, backup_enabled): live_dir = copia
+    local de data/users/USUARIO/; backup_enabled = si BACKUP_SYSTEM está activo
+    (None si no se pudo leer). El llamador borra tmp_root. Bloqueante (subprocess):
     llamarlo SIEMPRE fuera del event loop.
     """
     import subprocess, shlex, tarfile
@@ -380,10 +425,16 @@ def _fetch_live_config(cfg: dict) -> tuple:
         raise HTTPException(status_code=400, detail=f"Usuario de Hestia no válido: {hu}")
     q = shlex.quote(hu)
     files = " ".join(shlex.quote(f"{hu}/{f}") for f in _LIVE_CONF_FILES)
+    # SVQBACKUP: valor de BACKUP_SYSTEM en hestia.conf/vesta.conf. Vacío =
+    # backups desactivados → v-backup-user falla con "BACKUP_SYSTEM is not
+    # enabled". Lo leemos aquí para avisar al analizar, no al importar.
     remote_cmd = (
         "for b in /usr/local/hestia /usr/local/vesta; do "
         f"if [ -d \"$b/data/users/\"{q} ]; then "
-        "echo \"SVQSYS=$(basename $b)\" >&2; cd \"$b/data/users\" || exit 4; "
+        "echo \"SVQSYS=$(basename $b)\" >&2; "
+        "c=\"$b/conf/$(basename $b).conf\"; [ -r \"$c\" ] && "
+        "echo \"SVQBACKUP=$(sed -n \"s/^BACKUP_SYSTEM='\\([^']*\\)'.*/\\1/p\" \"$c\")\" >&2; "
+        "cd \"$b/data/users\" || exit 4; "
         f"set --; for f in {files}; do [ -e \"$f\" ] && set -- \"$@\" \"$f\"; done; "
         "exec tar czf - \"$@\"; fi; done; echo SVQNOUSER >&2; exit 3"
     )
@@ -403,6 +454,11 @@ def _fetch_live_config(cfg: dict) -> tuple:
                 detail="No pude leer la configuración del Hestia de origen por SSH: "
                        + (err.strip()[-300:] or f"código {r.returncode}"))
         system = "vesta" if "SVQSYS=vesta" in err else "hestia"
+        # True/False si se pudo leer la config; None si no (no bloquear a ciegas).
+        backup_enabled = None
+        for line in err.splitlines():
+            if line.startswith("SVQBACKUP="):
+                backup_enabled = bool(line.split("=", 1)[1].strip())
         dest = os.path.join(tmp_root, "x")
         os.makedirs(dest)
         total = 0
@@ -427,7 +483,7 @@ def _fetch_live_config(cfg: dict) -> tuple:
         if not os.path.isdir(live_dir):
             raise HTTPException(status_code=502,
                 detail="El Hestia de origen no devolvió la configuración del usuario.")
-        return tmp_root, live_dir, system
+        return tmp_root, live_dir, system, backup_enabled
     except HTTPException:
         shutil.rmtree(tmp_root, ignore_errors=True)
         raise
@@ -572,14 +628,22 @@ def _ssh_from_form(host, user, password, key, port, hestia_user) -> Optional[dic
     return None
 
 
+BACKUP_DISABLED_MSG = (
+    "El Hestia de origen tiene los backups desactivados (BACKUP_SYSTEM vacío) y "
+    "no deja generar el backup de la cuenta. Actívalos en ese servidor, como root: "
+    "/usr/local/hestia/bin/v-change-sys-config-value BACKUP_SYSTEM local "
+    "— y vuelve a analizar.")
+
+
 def _analyze_live(ssh: dict, db: Session, scope_list, dns_proposals_fn=None) -> tuple:
     """Analiza la config EN VIVO del Hestia de origen. Bloqueante (SSH): llamar
     con run_in_threadpool. Devuelve (manifest, conflicts, dns_proposals)."""
     from scripts.hestia_import import HestiaLiveBackup, find_conflicts
-    tmp_root, live_dir, system = _fetch_live_config(ssh)
+    tmp_root, live_dir, system, backup_enabled = _fetch_live_config(ssh)
     try:
         with HestiaLiveBackup(live_dir, ssh["hestia_user"].strip(), system) as backup:
             manifest = backup.analyze()
+            manifest["backup_enabled"] = backup_enabled
             conflicts = find_conflicts(manifest, db, scope_list)
             proposals = dns_proposals_fn(manifest) if dns_proposals_fn else {}
         return manifest, conflicts, proposals
@@ -725,6 +789,8 @@ async def migration_analyze(
 
     # ¿Hay datos comprimidos en zst y no tenemos soporte? Avisar (no bloquea analyze).
     warnings = []
+    if manifest.get("backup_enabled") is False:
+        warnings.append(BACKUP_DISABLED_MSG)
     space_warning = _disk_space_warning(manifest.get("size_mb") or 0)
     if space_warning:
         warnings.append(space_warning)
@@ -763,6 +829,7 @@ async def migration_analyze(
             # (U_DISK de Hestia, MB) y aviso de que el backup aún no se ha traído.
             "size_mb": manifest.get("size_mb"),
             "live": bool(manifest.get("live")),
+            "backup_enabled": manifest.get("backup_enabled"),
             # Token del backup ya descargado: la importación lo reutiliza para no
             # volver a traerlo. None si el origen es una ruta local del servidor.
             "cache_token": cache_token,
@@ -1082,12 +1149,11 @@ async def migration_import(
         except (ValueError, TypeError):
             raise HTTPException(status_code=400, detail="dns_records no es un JSON válido")
 
-    # Resolver el usuario destino: o se crea uno nuevo desde el backup, o se usa
-    # uno existente.
-    if create_new:
-        target = _create_target_user(db, new_username, new_email, new_password)
-        target_user_id = target.id
-    else:
+    # Usuario destino existente: validarlo ya (no tiene efectos). Si hay que
+    # CREARLO, se hace después del preflight: crearlo antes dejaba un cliente
+    # vacío huérfano cada vez que el preflight fallaba (conflictos, backup del
+    # origen desactivado…) y el reintento chocaba con "Ya existe un usuario".
+    if not create_new:
         if not target_user_id:
             raise HTTPException(status_code=400,
                 detail="Indica un cliente destino o marca «crear cliente nuevo».")
@@ -1127,6 +1193,10 @@ async def migration_import(
         def _preflight():
             if fetch_in_job:
                 m, c, _ = _analyze_live(ssh, db, scope_list)
+                # Sin backups activados en el origen, v-backup-user fallará:
+                # pararlo AQUÍ, antes de crear el cliente y el job.
+                if m.get("backup_enabled") is False:
+                    raise HestiaImportError(BACKUP_DISABLED_MSG)
                 return m, c
             with open_backup(source_panel, tar_path, config_only=True) as backup:
                 m = backup.analyze()
@@ -1145,6 +1215,17 @@ async def migration_import(
             "message": "La importación se ha cancelado: hay recursos que ya existen.",
             "conflicts": conflicts,
         })
+
+    if create_new:
+        try:
+            target = _create_target_user(db, new_username, new_email, new_password)
+        except HTTPException:
+            # Un tar de la caché de staging se conserva: corregido el nombre o
+            # la contraseña, el reintento lo reutiliza sin volver a traerlo.
+            if tar_path and cleanup_tar and not staged and os.path.exists(tar_path):
+                os.remove(tar_path)
+            raise
+        target_user_id = target.id
 
     # Crear el job persistiendo lo que el subproceso aislado necesita (tar_path,
     # cleanup_tar, dns_records): el import corre fuera del proceso del panel para

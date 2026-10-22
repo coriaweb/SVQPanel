@@ -239,7 +239,8 @@
       </div>
 
       <div class="mig-actions" v-else>
-        <BaseButton variant="primary" icon="box-arrow-in-down" :loading="importing" @click="startImport">Importar a «{{ targetUsername }}»</BaseButton>
+        <BaseButton variant="primary" icon="box-arrow-in-down" :loading="importing"
+                    :disabled="manifest.backup_enabled === false" @click="startImport">Importar a «{{ targetUsername }}»</BaseButton>
         <small class="dd-muted">
           Esto creará los recursos en el servidor. Las contraseñas se conservan cuando es posible.
           <template v-if="manifest.live">El backup se generará en el Hestia de origen y se descargará ahora; verás el progreso abajo.</template>
