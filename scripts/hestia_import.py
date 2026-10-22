@@ -689,6 +689,136 @@ def username_from_backup_name(name: str) -> str:
     return m.group(1).lower() if m else ""
 
 
+# ─────────────────────────────────────────────────────────────────────────────
+# Análisis de la configuración EN VIVO de un Hestia (origen SSH, sin backup)
+# ─────────────────────────────────────────────────────────────────────────────
+# Los .conf de un backup de Hestia son copias de los que el panel guarda en vivo
+# en /usr/local/hestia/data/users/USUARIO/ (unos KB). Analizar leyendo esos en
+# vez de generar y traer el backup entero convierte un análisis de minutos (o de
+# horas con cuentas de 40 GB, para luego quizá no migrar) en uno de segundos. El
+# backup completo solo se genera al IMPORTAR.
+#
+# Disposición en vivo                  → disposición de un backup
+#   user.conf                            {sys}/user.conf
+#   web.conf   (una línea por dominio)   web/{d}/{sys}/web.conf
+#   db.conf    (una línea por BD)        db/{db}/{sys}/db.conf
+#   mail.conf  + mail/{d}.conf           mail/{d}/{sys}/mail.conf + {d}.conf
+#   dns.conf   + dns/{d}.conf            dns/{d}/{sys}/dns.conf + {d}.conf
+#   cron.conf                            cron/cron.conf
+# Convertimos a la del backup y reutilizamos TODO el parser de HestiaBackup.
+
+LIVE_DATA_MARKER = "(se genera al importar)"
+_SAFE_COMPONENT_RE = re.compile(r"[A-Za-z0-9_][A-Za-z0-9._-]*")
+
+
+def _safe_component(name: str) -> bool:
+    """Nombre usable como componente de ruta (sin /, sin .., sin vacíos)."""
+    return bool(name) and len(name) <= 255 and bool(_SAFE_COMPONENT_RE.fullmatch(name))
+
+
+def _to_mb(v) -> int:
+    try:
+        return int(float(v or 0))
+    except (TypeError, ValueError):
+        return 0
+
+
+def live_to_backup_layout(live_dir: str, out_dir: str, system: str = "hestia") -> Dict:
+    """Reordena la config en vivo de un usuario de Hestia con la estructura de un
+    backup. Devuelve los tamaños (MB, campo U_DISK de Hestia) por recurso."""
+    sizes = {"total": 0, "web": {}, "db": {}, "mail": {}}
+
+    def rd(rel):
+        try:
+            with open(os.path.join(live_dir, rel), encoding="utf-8", errors="replace") as f:
+                return f.read()
+        except OSError:
+            return ""
+
+    def wr(rel, text):
+        p = os.path.join(out_dir, rel)
+        os.makedirs(os.path.dirname(p), exist_ok=True)
+        with open(p, "w", encoding="utf-8") as f:
+            f.write(text)
+
+    def lines(text, key):
+        for line in text.splitlines():
+            kv = parse_conf_line(line)
+            name = kv.get(key, "")
+            if _safe_component(name):
+                yield name, line.strip() + "\n", kv
+
+    os.makedirs(os.path.join(out_dir, system), exist_ok=True)  # marcador de sistema
+    user_txt = rd("user.conf")
+    wr(f"{system}/user.conf", user_txt)
+    sizes["total"] = _to_mb(parse_conf_single(user_txt).get("U_DISK"))
+
+    for d, line, kv in lines(rd("web.conf"), "DOMAIN"):
+        wr(f"web/{d}/{system}/web.conf", line)
+        sizes["web"][d] = _to_mb(kv.get("U_DISK"))
+    for name, line, kv in lines(rd("db.conf"), "DB"):
+        wr(f"db/{name}/{system}/db.conf", line)
+        sizes["db"][name] = _to_mb(kv.get("U_DISK"))
+    for d, line, kv in lines(rd("mail.conf"), "DOMAIN"):
+        wr(f"mail/{d}/{system}/mail.conf", line)
+        wr(f"mail/{d}/{system}/{d}.conf", rd(f"mail/{d}.conf"))
+        sizes["mail"][d] = _to_mb(kv.get("U_DISK"))
+    for d, line, _kv in lines(rd("dns.conf"), "DOMAIN"):
+        wr(f"dns/{d}/{system}/dns.conf", line)
+        wr(f"dns/{d}/{system}/{d}.conf", rd(f"dns/{d}.conf"))
+    cron = rd("cron.conf")
+    if cron:
+        wr("cron/cron.conf", cron)
+    return sizes
+
+
+class HestiaLiveBackup(HestiaBackup):
+    """Config en vivo de una cuenta de Hestia, analizable como si fuera un backup.
+
+    `live_dir` es la copia local de /usr/local/hestia/data/users/USUARIO/. No hay
+    datos (webs, dumps, buzones): has_data/has_dump salen a True porque el backup
+    que se generará al importar sí los traerá.
+    """
+
+    def __init__(self, live_dir: str, username: str, system: str = "hestia"):
+        # Sin super().__init__: ese exige un .tar existente.
+        self.tar_path = ""
+        self.tmpdir = tempfile.mkdtemp(prefix="svq_hestia_", dir=_tmp_dir())
+        self.system = system if system in ("hestia", "vesta") else "hestia"
+        self.config_only = True
+        self._tar_names = []
+        self.progress_cb = None
+        self._extracted = False
+        self._live_dir = live_dir
+        self._username = username
+        self.sizes: Dict = {}
+
+    def extract(self):
+        if self._extracted:
+            return
+        self.sizes = live_to_backup_layout(self._live_dir, self.tmpdir, self.system)
+        self.root = self.tmpdir
+        self._extracted = True
+
+    def _find_data_archive(self, kind: str, name: str, base: str) -> Optional[str]:
+        return LIVE_DATA_MARKER
+
+    def _find_db_dump(self, dbname: str, dbtype: str) -> Optional[str]:
+        return LIVE_DATA_MARKER
+
+    def guess_username(self) -> str:
+        return self._username
+
+    def analyze(self) -> Dict:
+        manifest = super().analyze()
+        for kind, key in (("web", "domain"), ("db", "db"), ("mail", "domain")):
+            for item in manifest[kind]:
+                item["disk_mb"] = self.sizes.get(kind, {}).get(item[key], 0)
+        manifest["size_mb"] = self.sizes.get("total", 0)
+        manifest["live"] = True
+        return manifest
+
+
 def installed_php_versions() -> List[str]:
     """Versiones PHP instaladas (con pool FPM) en el servidor, ordenadas."""
     base = "/etc/php"
@@ -999,6 +1129,14 @@ def import_web(backup: "HestiaBackup", web: Dict, owner, db, report: ImportRepor
         # arquitectura Apache-tras-Nginx causa un bucle infinito de redirección
         # (Apache siempre ve HTTPS off tras el proxy) → ERR_TOO_MANY_REDIRECTS.
         _neutralize_htaccess_https_redirect(public_html)
+        # Si el cliente se llama distinto que en el origen, las rutas absolutas
+        # /home/<viejo>/ (Wordfence en .user.ini, wp-config…) ya no existen:
+        # PHP daría un fatal en TODAS las páginas por el auto_prepend_file.
+        changed = _rewrite_old_home_paths(public_html, owner.username, domain_name)
+        if changed:
+            report.ok("web-paths", domain_name,
+                      f"rutas /home/{changed[0]}/ → /home/{owner.username}/ en: "
+                      + ", ".join(changed[1:]))
         # Permisos: el CONTENIDO al usuario del dominio (ver svqpanel-php-pool-user).
         import subprocess
         subprocess.run(["chown", "-R", f"{owner.username}:{owner.username}", web_root],
@@ -1102,6 +1240,56 @@ def _neutralize_htaccess_https_redirect(public_html: str) -> None:
             logger.info(f"Neutralizada la redirección https redundante en {ht} ({n})")
         except OSError as e:
             logger.warning(f"No se pudo editar {ht}: {e}")
+
+
+# Ficheros (relativos a public_html) que suelen llevar rutas absolutas del
+# servidor y rompen el sitio si apuntan a un /home/ que ya no existe. Lista
+# cerrada y pequeña a propósito: NO se recorre la web entera.
+_HOME_PATH_FILES = (".user.ini", ".htaccess", "php.ini", "wordfence-waf.php",
+                    "wp-config.php", "wp-content/advanced-cache.php")
+
+
+def _rewrite_old_home_paths(public_html: str, new_user: str, domain: str) -> List[str]:
+    """Reescribe /home/<usuario_origen>/ → /home/<new_user>/ en _HOME_PATH_FILES.
+
+    El usuario de origen se deduce de los propios ficheros (/home/X/web/<domain>/),
+    así que funciona igual con backups subidos que por SSH. Sin copia .bak: un
+    wp-config.php.svqbak dentro de public_html se podría descargar en claro.
+    Devuelve [usuario_origen, fichero1, fichero2…] o [] si no tocó nada.
+    """
+    anchor = re.compile(r"/home/([A-Za-z0-9._-]+)/web/" + re.escape(domain) + "/")
+    old_users = set()
+    changed = []
+    for rel in _HOME_PATH_FILES:
+        path = os.path.join(public_html, rel)
+        if os.path.islink(path) or not os.path.isfile(path):
+            continue
+        try:
+            if os.path.getsize(path) > 2 * 1024 * 1024:
+                continue
+            with open(path, encoding="utf-8", errors="surrogateescape") as f:
+                content = f.read()
+        except OSError:
+            continue
+        olds = {u for u in anchor.findall(content) if u != new_user}
+        if not olds:
+            continue
+        new = content
+        for old in olds:
+            new = new.replace(f"/home/{old}/", f"/home/{new_user}/")
+        try:
+            with open(path, "w", encoding="utf-8", errors="surrogateescape") as f:
+                f.write(new)
+        except OSError as e:
+            logger.warning(f"No se pudieron reescribir las rutas de {path}: {e}")
+            continue
+        old_users |= olds
+        changed.append(rel)
+    if changed:
+        logger.info(f"[import] {domain}: rutas /home/{','.join(sorted(old_users))}/ "
+                    f"→ /home/{new_user}/ en {', '.join(changed)}")
+        return [",".join(sorted(old_users))] + changed
+    return []
 
 
 def _restore_web_files(data_tar: str, web_root: str, public_html: str,
@@ -1229,10 +1417,15 @@ def import_db(backup: "HestiaBackup", dbinfo: Dict, owner, db, report: ImportRep
         report.fail("db", name, f"tipo {dbtype} no soportado (solo MySQL/MariaDB)")
         return
 
-    # Identificadores: respetamos el nombre original del backup (sin re-prefijar,
-    # para que el sitio importado siga encontrando su BD por el nombre de siempre).
-    safe_name = _ident(name)
-    safe_user = _ident(dbuser)
+    # Identificadores: respetamos el nombre original del backup EXACTO (sin
+    # re-prefijar ni quitar puntos), para que el sitio importado siga encontrando
+    # su BD por el nombre de siempre.
+    try:
+        safe_name = _ident(name)
+        safe_user = _ident(dbuser, maxlen=80)
+    except ValueError as e:
+        report.fail("db", name, str(e))
+        return
     new_password = None
 
     # 1) Crear la BD. Idempotente: si ya existe (de un intento de migración
@@ -1368,9 +1561,22 @@ def _import_sql_dump(dump_path: str, db_name: str) -> None:
             os.remove(tmp_sql)
 
 
-def _ident(s: str) -> str:
-    """Sanea un identificador de BD/usuario (alfanumérico + _)."""
-    return re.sub(r"[^A-Za-z0-9_]", "", s)[:64]
+# Nombres de BD/usuario que aceptamos TAL CUAL del origen. Hestia permite puntos
+# y guiones (un usuario "midominio.com" crea BDs "midominio.com_wp"), y el
+# wp-config del sitio usa ese nombre exacto: antes los quitábamos ("midominiocom_wp")
+# y la web importada daba "Error establishing a database connection". Van siempre
+# entre `backticks` / 'comillas', así que basta con excluir comillas, barras y
+# espacios; el primer carácter no puede ser "-" (el nombre va como argv a mariadb).
+_DB_IDENT_RE = re.compile(r"[A-Za-z0-9_][A-Za-z0-9_.\-]*")
+
+
+def _ident(s: str, maxlen: int = 64) -> str:
+    """Valida un identificador de BD (máx. 64) o usuario MariaDB (máx. 80) y lo
+    devuelve SIN modificar. ValueError si trae caracteres no admitidos."""
+    s = s or ""
+    if not _DB_IDENT_RE.fullmatch(s) or len(s) > maxlen:
+        raise ValueError(f"nombre no admitido para MariaDB: {s!r}")
+    return s
 
 
 # ─────────────────────────────────────────────────────────────────────────────

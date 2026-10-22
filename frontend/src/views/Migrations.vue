@@ -48,6 +48,7 @@
         </template>
         <template v-else>
           Backup de usuario de HestiaCP. En el servidor Hestia: <code>v-backup-user usuario</code> (queda en <code>/backup/</code>), o con el origen «SSH» el panel lo genera y lo trae solo.
+          <template v-if="source === 'ssh'"><br>Con SSH, el análisis lee la configuración del Hestia en vivo (segundos, sin traer nada); el backup completo se genera y descarga solo al pulsar «Importar».</template>
         </template>
       </p>
 
@@ -151,6 +152,7 @@
         <div class="mig-stat"><span class="mig-stat__n">{{ mailAccounts }}</span><span class="mig-stat__k">Buzones</span></div>
         <div class="mig-stat"><span class="mig-stat__n">{{ manifest.dns.length }}</span><span class="mig-stat__k">Zonas DNS</span></div>
         <div class="mig-stat"><span class="mig-stat__n">{{ (manifest.cron || []).length }}</span><span class="mig-stat__k">Tareas cron</span></div>
+        <div v-if="manifest.size_mb" class="mig-stat"><span class="mig-stat__n">{{ fmtMb(manifest.size_mb) }}</span><span class="mig-stat__k">Tamaño aprox.</span></div>
       </div>
 
       <div class="mig-lists">
@@ -159,6 +161,7 @@
           <ul class="mig-ul">
             <li v-for="w in manifest.web" :key="w.domain">
               <strong>{{ w.domain }}</strong> · PHP {{ w.php_version || '—' }}
+              <span v-if="w.disk_mb" class="dd-muted"> · {{ fmtMb(w.disk_mb) }}</span>
               <span v-if="w.ssl" class="mig-tag">SSL</span>
               <span v-if="!w.has_data" class="mig-tag mig-tag--muted">sin archivos</span>
             </li>
@@ -237,7 +240,10 @@
 
       <div class="mig-actions" v-else>
         <BaseButton variant="primary" icon="box-arrow-in-down" :loading="importing" @click="startImport">Importar a «{{ targetUsername }}»</BaseButton>
-        <small class="dd-muted">Esto creará los recursos en el servidor. Las contraseñas se conservan cuando es posible.</small>
+        <small class="dd-muted">
+          Esto creará los recursos en el servidor. Las contraseñas se conservan cuando es posible.
+          <template v-if="manifest.live">El backup se generará en el Hestia de origen y se descargará ahora; verás el progreso abajo.</template>
+        </small>
       </div>
     </BaseCard>
 
@@ -400,6 +406,16 @@ export default {
 
     const onFile = (e) => { file.value = e.target.files?.[0] || null }
 
+    // Hestia admite usuarios tipo "midominio.com", pero un usuario del panel es
+    // un usuario Linux (^[a-z_][a-z0-9_-]{2,31}$): proponemos "midominio". Los
+    // nombres de BD y las rutas del sitio se conservan/adaptan al importar.
+    const toPanelUsername = (raw) => {
+      let u = (raw || '').toLowerCase().split('.')[0].replace(/[^a-z0-9_-]/g, '')
+      if (/^[0-9-]/.test(u)) u = 'u' + u
+      return u.slice(0, 32)
+    }
+    const fmtMb = (mb) => mb >= 1024 ? `${(mb / 1024).toFixed(1)} GB` : `${mb} MB`
+
     const _formData = (forImport = false) => {
       const fd = new FormData()
       if (source.value === 'upload' && file.value) fd.append('file', file.value)
@@ -447,8 +463,8 @@ export default {
           // panel, "hestia"/"vesta"/"cpanel", y acababa como nombre del cliente).
           if (!newUser.value.username) {
             const fromFile = ((file.value && file.value.name) || '').match(/^([a-z0-9][a-z0-9_-]*)\.\d{4}-\d{2}-\d{2}/i)
-            newUser.value.username = ((source.value === 'ssh' && ssh.value.hestia_user.trim()) ||
-              r.data.username || (fromFile && fromFile[1]) || '').toLowerCase()
+            newUser.value.username = toPanelUsername((source.value === 'ssh' && ssh.value.hestia_user.trim()) ||
+              r.data.username || (fromFile && fromFile[1]) || '')
           }
           if (!newUser.value.email) newUser.value.email = r.data.user?.contact || ''
         }
@@ -512,7 +528,7 @@ export default {
       sourcePanel, source, file, serverPath, url, ssh, targetUserId, newUser, clientUsers, scope, scopeOptions,
       savedSources, selectedSource, applySource, saveSource, deleteSource,
       analyzing, importing, manifest, dnsZones, job, canAnalyze, mailAccounts, targetUsername,
-      onFile, analyze, startImport,
+      onFile, analyze, startImport, fmtMb,
     }
   },
 }
@@ -553,7 +569,7 @@ input[type="file"].svq-input { padding: var(--sp-2); height: auto; }
 .mig-scope__label { font-size: var(--fs-sm); color: var(--text-muted); }
 .mig-check { display: inline-flex; align-items: center; gap: 6px; font-size: var(--fs-sm); }
 .mig-actions { display: flex; align-items: center; gap: var(--sp-3); margin-top: var(--sp-4); flex-wrap: wrap; }
-.mig-summary { display: grid; grid-template-columns: repeat(4, 1fr); gap: var(--sp-3); margin-bottom: var(--sp-4); }
+.mig-summary { display: grid; grid-template-columns: repeat(auto-fit, minmax(110px, 1fr)); gap: var(--sp-3); margin-bottom: var(--sp-4); }
 .mig-stat { background: var(--surface-inset); border: 1px solid var(--border); border-radius: var(--radius-md); padding: var(--sp-3); text-align: center; }
 .mig-stat__n { display: block; font-size: 1.6rem; font-weight: var(--fw-bold); color: var(--svq-orange); }
 .mig-stat__k { font-size: var(--fs-xs); text-transform: uppercase; color: var(--text-muted); }

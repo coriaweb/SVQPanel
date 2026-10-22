@@ -595,7 +595,9 @@ def export_database(
         )
 
     db_name = client_db.db_name
-    if not re.fullmatch(r"[A-Za-z0-9_]+", db_name or ""):
+    # Puntos y guiones admitidos: las BDs migradas de Hestia los conservan
+    # ("midominio.com_wp"). Nunca empieza por "-" (no se confunde con una opción).
+    if not re.fullmatch(r"[A-Za-z0-9_][A-Za-z0-9_.\-]*", db_name or ""):
         # Defensa en profundidad: el nombre va como argv (no shell), pero
         # nunca ejecutamos un identificador que no cumpla la convención.
         raise HTTPException(status_code=400, detail="Nombre de base de datos no válido")

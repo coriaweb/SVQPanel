@@ -17,6 +17,7 @@ from datetime import datetime
 
 from fastapi import (APIRouter, Depends, HTTPException, UploadFile, File, Form,
                      BackgroundTasks)
+from fastapi.concurrency import run_in_threadpool
 from sqlalchemy.orm import Session
 
 from api.models.database import get_db, SessionLocal
@@ -236,11 +237,13 @@ async def _receive_backup(upload: Optional[UploadFile], local_path: Optional[str
             raise
         return tmp
 
+    # Descargas bloqueantes → a un hilo. El panel corre con UN worker: hacerlas
+    # en el event loop congelaba el panel ENTERO (todo daba 504) mientras duraban.
     if url:
-        return _download_url(url)
+        return await run_in_threadpool(_download_url, url)
 
     if ssh:
-        return _fetch_via_ssh(ssh)
+        return await run_in_threadpool(_fetch_via_ssh, ssh)
 
     if local_path:
         if not os.path.isfile(local_path):
@@ -297,54 +300,179 @@ def _remote_cleanup(sshb, remote, remote_tar, env, _sub):
         logger.warning(f"No se pudo borrar el backup remoto {remote_tar}: {e}")
 
 
-def _fetch_via_ssh(cfg: dict) -> str:
+class _SshSession:
+    """Comandos ssh/scp contra el Hestia de origen (patrón de dns_cluster).
+
+    cfg: {host, port?, user, password?, key?, hestia_user}. Con password usa
+    sshpass; con clave la deja en un temporal 0600 que close() borra.
+    """
+
+    def __init__(self, cfg: dict):
+        self.host = (cfg.get("host") or "").strip()
+        self.user = (cfg.get("user") or "root").strip()
+        self.port = str(cfg.get("port") or 22)
+        self.password = cfg.get("password")
+        self.hestia_user = (cfg.get("hestia_user") or "").strip()
+        if not self.host or not self.hestia_user:
+            raise HTTPException(status_code=400,
+                detail="Para SSH indica al menos host y usuario de Hestia a exportar.")
+        self.remote = f"{self.user}@{self.host}"
+        self.keyfile = None
+        key = cfg.get("key")
+        if key:
+            kfd, self.keyfile = tempfile.mkstemp(prefix="svq_sshkey_")
+            with os.fdopen(kfd, "w") as f:
+                f.write(key)
+            os.chmod(self.keyfile, 0o600)
+
+    def prefix(self, binary: str):
+        """(argv base, env) para ssh o scp. El flag de puerto difiere: ssh => -p,
+        scp => -P (en scp, -p significa "preservar timestamps", y pasarle el
+        número de puerto como -p hacía que scp interpretara el "22" como una
+        ruta → error "Not a directory")."""
+        opts = ["-o", "StrictHostKeyChecking=no", "-o", "UserKnownHostsFile=/dev/null",
+                "-o", "ConnectTimeout=15",
+                "-P" if binary == "scp" else "-p", self.port]
+        env = dict(os.environ)
+        if self.keyfile:
+            return [binary] + opts + ["-i", self.keyfile], env
+        if self.password:
+            env["SSHPASS"] = self.password
+            return ["sshpass", "-e", binary] + opts, env
+        return [binary] + opts, env
+
+    def ssh(self, remote_cmd: str):
+        base, env = self.prefix("ssh")
+        return base + [self.remote, remote_cmd], env
+
+    def close(self):
+        if self.keyfile and os.path.exists(self.keyfile):
+            os.remove(self.keyfile)
+
+
+def _human_bytes(n: int) -> str:
+    if n >= 1024 ** 3:
+        return f"{n / 1024 ** 3:.1f} GB"
+    if n >= 1024 ** 2:
+        return f"{n / 1024 ** 2:.0f} MB"
+    return f"{n / 1024:.0f} KB"
+
+
+# Ficheros de /usr/local/hestia/data/users/USUARIO/ que necesita el análisis.
+# Lista cerrada: NO traemos ssl/ (claves privadas) ni nada más.
+_LIVE_CONF_FILES = ("user.conf", "web.conf", "db.conf", "mail.conf", "dns.conf",
+                    "cron.conf", "mail", "dns")
+_LIVE_MAX_BYTES = 50 * 1024 * 1024
+
+
+def _fetch_live_config(cfg: dict) -> tuple:
+    """Trae por SSH la config EN VIVO del usuario de Hestia (unos KB, segundos).
+
+    Devuelve (tmp_root, live_dir, system): live_dir = copia local de
+    data/users/USUARIO/. El llamador borra tmp_root. Bloqueante (subprocess):
+    llamarlo SIEMPRE fuera del event loop.
+    """
+    import subprocess, shlex, tarfile
+    s = _SshSession(cfg)
+    hu = s.hestia_user
+    if not _safe_hestia_user(hu):
+        s.close()
+        raise HTTPException(status_code=400, detail=f"Usuario de Hestia no válido: {hu}")
+    q = shlex.quote(hu)
+    files = " ".join(shlex.quote(f"{hu}/{f}") for f in _LIVE_CONF_FILES)
+    remote_cmd = (
+        "for b in /usr/local/hestia /usr/local/vesta; do "
+        f"if [ -d \"$b/data/users/\"{q} ]; then "
+        "echo \"SVQSYS=$(basename $b)\" >&2; cd \"$b/data/users\" || exit 4; "
+        f"set --; for f in {files}; do [ -e \"$f\" ] && set -- \"$@\" \"$f\"; done; "
+        "exec tar czf - \"$@\"; fi; done; echo SVQNOUSER >&2; exit 3"
+    )
+    tmp_root = tempfile.mkdtemp(prefix="svq_hestia_live_", dir=migration_tmp_dir())
+    tgz = os.path.join(tmp_root, "live.tgz")
+    try:
+        cmd, env = s.ssh(remote_cmd)
+        with open(tgz, "wb") as out:
+            r = subprocess.run(cmd, stdout=out, stderr=subprocess.PIPE, text=False,
+                               env=env, timeout=120)
+        err = (r.stderr or b"").decode("utf-8", "replace")
+        if "SVQNOUSER" in err:
+            raise HTTPException(status_code=422,
+                detail=f"El usuario «{hu}» no existe en el Hestia de origen.")
+        if r.returncode != 0:
+            raise HTTPException(status_code=502,
+                detail="No pude leer la configuración del Hestia de origen por SSH: "
+                       + (err.strip()[-300:] or f"código {r.returncode}"))
+        system = "vesta" if "SVQSYS=vesta" in err else "hestia"
+        dest = os.path.join(tmp_root, "x")
+        os.makedirs(dest)
+        total = 0
+        with tarfile.open(tgz, "r:gz") as tf:
+            for m in tf:
+                parts = m.name.split("/")
+                if (m.name.startswith("/") or ".." in parts or parts[0] != hu
+                        or not (m.isfile() or m.isdir())):
+                    continue
+                target = os.path.join(dest, *parts)
+                if m.isdir():
+                    os.makedirs(target, exist_ok=True)
+                    continue
+                total += m.size
+                if total > _LIVE_MAX_BYTES:
+                    raise HTTPException(status_code=502,
+                        detail="La configuración remota es anormalmente grande; abortado.")
+                os.makedirs(os.path.dirname(target), exist_ok=True)
+                with tf.extractfile(m) as src, open(target, "wb") as dst:
+                    shutil.copyfileobj(src, dst)
+        live_dir = os.path.join(dest, hu)
+        if not os.path.isdir(live_dir):
+            raise HTTPException(status_code=502,
+                detail="El Hestia de origen no devolvió la configuración del usuario.")
+        return tmp_root, live_dir, system
+    except HTTPException:
+        shutil.rmtree(tmp_root, ignore_errors=True)
+        raise
+    except FileNotFoundError as e:
+        shutil.rmtree(tmp_root, ignore_errors=True)
+        raise HTTPException(status_code=500,
+            detail=f"Falta una herramienta (ssh/sshpass): {e}")
+    except subprocess.TimeoutExpired:
+        shutil.rmtree(tmp_root, ignore_errors=True)
+        raise HTTPException(status_code=504,
+            detail="El Hestia de origen no respondió a tiempo por SSH.")
+    except (tarfile.TarError, OSError) as e:
+        shutil.rmtree(tmp_root, ignore_errors=True)
+        raise HTTPException(status_code=502,
+            detail=f"Respuesta no válida del Hestia de origen: {e}")
+    finally:
+        s.close()
+
+
+def _safe_hestia_user(name: str) -> bool:
+    import re
+    return bool(re.fullmatch(r"[A-Za-z0-9_][A-Za-z0-9._-]{0,63}", name or ""))
+
+
+def _fetch_via_ssh(cfg: dict, progress=None, expected_bytes: int = 0) -> str:
     """Genera el backup en un Hestia remoto y lo trae por scp.
 
-    cfg: {host, port?, user, password?, key?, hestia_user}. Ejecuta
-    `v-backup-user <hestia_user>` por SSH y descarga el .tar resultante de
-    /backup/ en el remoto. Usa ssh/scp por subprocess (patrón de dns_cluster);
-    si hay password, requiere sshpass instalado.
+    Ejecuta `v-backup-user <hestia_user>` por SSH y descarga el .tar resultante
+    de /backup/ en el remoto. Bloqueante y potencialmente LARGO (cuentas de
+    decenas de GB): solo se llama desde el job de importación en segundo plano,
+    nunca en una petición. `progress.set_phase(txt)` recibe la fase y los bytes
+    descargados (cada ~3 s); `expected_bytes` es el tamaño estimado (U_DISK).
     """
     import subprocess, shlex
-    host = (cfg.get("host") or "").strip()
-    user = (cfg.get("user") or "root").strip()
-    port = str(cfg.get("port") or 22)
-    password = cfg.get("password")
-    key = cfg.get("key")
-    hestia_user = (cfg.get("hestia_user") or "").strip()
-    if not host or not hestia_user:
-        raise HTTPException(status_code=400,
-            detail="Para SSH indica al menos host y usuario de Hestia a exportar.")
+    s = _SshSession(cfg)
+    hestia_user = s.hestia_user
+    remote = s.remote
+    sshb, env = s.prefix("ssh")
 
-    # Opciones comunes (sin el flag de puerto: ssh usa -p, pero scp usa -P).
-    common_opts = ["-o", "StrictHostKeyChecking=no", "-o", "UserKnownHostsFile=/dev/null",
-                   "-o", "ConnectTimeout=15"]
+    def _sub(lst, env):  # compat con _remote_cleanup
+        return lst, env
 
-    def ssh_prefix(binary):
-        # El flag de puerto difiere: ssh => -p, scp => -P (en scp, -p significa
-        # "preservar timestamps", y pasarle el número de puerto como -p hacía que
-        # scp interpretara el "22" como una ruta → error "Not a directory").
-        port_flag = "-P" if binary == "scp" else "-p"
-        opts = common_opts + [port_flag, port]
-        env = dict(os.environ)
-        if key:
-            base = [binary] + opts + ["-i", "__KEYFILE__"]
-        elif password:
-            env["SSHPASS"] = password
-            base = ["sshpass", "-e", binary] + opts
-        else:
-            base = [binary] + opts
-        return base, env
-
-    keyfile = None
-    if key:
-        kfd, keyfile = tempfile.mkstemp(prefix="svq_sshkey_")
-        with os.fdopen(kfd, "w") as f:
-            f.write(key)
-        os.chmod(keyfile, 0o600)
-
-    def _sub(lst, env):
-        return [keyfile if x == "__KEYFILE__" else x for x in lst], env
+    def _phase(txt):
+        if progress is not None:
+            progress.set_phase(txt)
 
     fd, tmp = tempfile.mkstemp(prefix="svq_hestia_up_", suffix=".tar",
                                dir=migration_tmp_dir())
@@ -355,8 +483,8 @@ def _fetch_via_ssh(cfg: dict) -> str:
         #    los binarios de Hestia (/usr/local/hestia/bin) no están. Usamos la
         #    ruta absoluta del comando, con fallback al PATH si estuviera en otra
         #    ubicación (instalaciones antiguas o forks tipo VestaCP).
-        sshb, env = ssh_prefix("ssh")
-        remote = f"{user}@{host}"
+        _phase("Generando el backup en el servidor de origen (v-backup-user, "
+               "puede tardar varios minutos)…")
         hu = shlex.quote(hestia_user)
         remote_gen = (
             "if [ -x /usr/local/hestia/bin/v-backup-user ]; then "
@@ -366,7 +494,8 @@ def _fetch_via_ssh(cfg: dict) -> str:
             f"else PATH=\"$PATH:/usr/local/hestia/bin:/usr/local/vesta/bin\" v-backup-user {hu}; fi"
         )
         gen_cmd, env = _sub(sshb + [remote, remote_gen], env)
-        r = subprocess.run(gen_cmd, capture_output=True, text=True, env=env, timeout=1800)
+        r = subprocess.run(gen_cmd, capture_output=True, text=True, env=env,
+                           timeout=4 * 3600)
         if r.returncode != 0:
             from scripts.migration_helpers import explain_backup_error
             raise HTTPException(status_code=502,
@@ -381,15 +510,36 @@ def _fetch_via_ssh(cfg: dict) -> str:
             raise HTTPException(status_code=502,
                 detail="No encontré el .tar generado en /backup/ del servidor remoto.")
 
-        # 3) Traerlo por scp
-        scpb, env = ssh_prefix("scp")
-        scp_cmd, env = _sub(scpb + [f"{remote}:{remote_tar}", tmp], env)
-        r = subprocess.run(scp_cmd, capture_output=True, text=True, env=env, timeout=1800)
-        if r.returncode != 0:
+        # 3) Traerlo por scp, informando de los bytes descargados (el tamaño del
+        #    fichero local) para que la barra de la UI no se quede muda.
+        scpb, env = s.prefix("scp")
+        scp_cmd = scpb + [f"{remote}:{remote_tar}", tmp]
+        expected = f" de ~{_human_bytes(expected_bytes)}" if expected_bytes else ""
+        _phase("Descargando el backup del servidor de origen…")
+        proc = subprocess.Popen(scp_cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                                text=True, env=env)
+        deadline = time.time() + 8 * 3600
+        while True:
+            try:
+                out, errout = proc.communicate(timeout=3)
+                break
+            except subprocess.TimeoutExpired:
+                if time.time() > deadline:
+                    proc.kill()
+                    out, errout = proc.communicate()
+                    errout = "superó el tiempo máximo (8 h)"
+                    break
+                try:
+                    done = os.path.getsize(tmp)
+                except OSError:
+                    done = 0
+                _phase(f"Descargando el backup del servidor de origen · "
+                       f"{_human_bytes(done)}{expected}")
+        if proc.returncode != 0:
             # Limpiar el .tar del remoto aunque el scp falle (no dejar basura).
             _remote_cleanup(sshb, remote, remote_tar, env, _sub)
             raise HTTPException(status_code=502,
-                detail=f"scp del backup falló: {(r.stderr or r.stdout)[:300]}")
+                detail=f"scp del backup falló: {(errout or out or '')[:300]}")
 
         # 4) Borrar el .tar generado en el remoto: lo generamos nosotros y ya lo
         #    tenemos local; si no, /backup/ del Hestia origen acumularía basura.
@@ -402,9 +552,12 @@ def _fetch_via_ssh(cfg: dict) -> str:
         os.path.exists(tmp) and os.remove(tmp)
         raise HTTPException(status_code=500,
             detail=f"Falta una herramienta (ssh/scp/sshpass): {e}")
+    except subprocess.TimeoutExpired:
+        os.path.exists(tmp) and os.remove(tmp)
+        raise HTTPException(status_code=504,
+            detail="El servidor de origen tardó demasiado en generar el backup.")
     finally:
-        if keyfile and os.path.exists(keyfile):
-            os.remove(keyfile)
+        s.close()
 
 
 def _is_temp_upload(path: str) -> bool:
@@ -417,6 +570,51 @@ def _ssh_from_form(host, user, password, key, port, hestia_user) -> Optional[dic
         return {"host": host, "user": user or "root", "password": password or None,
                 "key": key or None, "port": port or 22, "hestia_user": hestia_user}
     return None
+
+
+def _analyze_live(ssh: dict, db: Session, scope_list, dns_proposals_fn=None) -> tuple:
+    """Analiza la config EN VIVO del Hestia de origen. Bloqueante (SSH): llamar
+    con run_in_threadpool. Devuelve (manifest, conflicts, dns_proposals)."""
+    from scripts.hestia_import import HestiaLiveBackup, find_conflicts
+    tmp_root, live_dir, system = _fetch_live_config(ssh)
+    try:
+        with HestiaLiveBackup(live_dir, ssh["hestia_user"].strip(), system) as backup:
+            manifest = backup.analyze()
+            conflicts = find_conflicts(manifest, db, scope_list)
+            proposals = dns_proposals_fn(manifest) if dns_proposals_fn else {}
+        return manifest, conflicts, proposals
+    finally:
+        shutil.rmtree(tmp_root, ignore_errors=True)
+
+
+def _disk_space_warning(size_mb: int) -> Optional[str]:
+    """Aviso si no cabe la cuenta (tamaño estimado) en este servidor.
+
+    La importación necesita el .tar (en MIGRATION_TMP_DIR) y los datos ya
+    restaurados (en /home) a la vez durante un momento: si ambos están en el
+    mismo disco, hace falta ~2× el tamaño. Solo avisa; no bloquea.
+    """
+    if not size_mb:
+        return None
+    need = size_mb * 1024 * 1024
+    try:
+        tmp_dir = migration_tmp_dir() or tempfile.gettempdir()
+        same_fs = os.stat(tmp_dir).st_dev == os.stat("/home").st_dev
+        free_home = shutil.disk_usage("/home").free
+        free_tmp = shutil.disk_usage(tmp_dir).free
+    except OSError:
+        return None
+    if same_fs:
+        short = free_home < 2 * need
+        free_txt = _human_bytes(free_home)
+    else:
+        short = free_home < need or free_tmp < need
+        free_txt = f"{_human_bytes(free_home)} en /home, {_human_bytes(free_tmp)} para temporales"
+    if not short:
+        return None
+    return (f"La cuenta ocupa unos {_human_bytes(need)} y en este servidor quedan "
+            f"{free_txt} libres. La importación necesita aproximadamente el doble "
+            "(backup + datos restaurados): libera espacio antes de importar.")
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -475,44 +673,61 @@ async def migration_analyze(
     except Exception:
         pass
 
-    tar_path = await _receive_backup(file, path, url, ssh)
-    downloaded = _is_temp_upload(tar_path)  # subido/URL/SSH → es nuestro temporal
-    try:
-        # config_only: el análisis solo necesita los .conf, no los datos pesados.
-        with open_backup(source_panel, tar_path, config_only=True) as backup:
-            manifest = backup.analyze()
-            conflicts = find_conflicts(manifest, db, scope_list)
-            # Propuesta DNS por zona (clasifica reescrituras) — dentro del with
-            # porque necesita los _records antes de limpiar el tmp.
-            dns_proposals = {}
-            for z in manifest["dns"]:
-                dns_proposals[z["domain"]] = build_dns_proposal(
+    def _dns_proposals(manifest):
+        # Propuesta DNS por zona (clasifica reescrituras). Debe llamarse con el
+        # backup aún abierto: necesita los _records antes de limpiar el tmp.
+        return {z["domain"]: build_dns_proposal(
                     z, server_ipv4, server_ipv6, z.get("ip"), panel_ns=panel_ns)
-    except (HestiaImportError, CpanelImportError) as e:
-        if downloaded and os.path.exists(tar_path):
-            os.remove(tar_path)
-        raise HTTPException(status_code=422, detail=str(e))
-    except Exception as e:
-        if downloaded and os.path.exists(tar_path):
-            os.remove(tar_path)
-        logger.exception("Error analizando backup")
-        raise HTTPException(status_code=500, detail=f"Error analizando el backup: {e}")
+                for z in manifest["dns"]}
 
-    # Reutilización: si el backup lo hemos DESCARGADO nosotros (subida/URL/SSH),
-    # lo movemos a la caché de staging y devolvemos un token para que la
-    # importación NO lo vuelva a traer. Los backups por 'path' (ruta local del
-    # usuario) no se cachean: ya están en el servidor y no se tocan.
     cache_token = None
-    if downloaded and os.path.exists(tar_path):
+    if ssh and (source_panel or "hestia").lower() == "hestia":
+        # Origen SSH: se analiza la config EN VIVO del Hestia (segundos). El
+        # backup completo NO se genera aquí: solo al importar, en segundo plano.
         try:
-            cache_token = _stage_tar(tar_path)
-        except Exception as e:
-            logger.warning(f"No se pudo cachear el tar de migración: {e}")
-            if os.path.exists(tar_path):
+            manifest, conflicts, dns_proposals = await run_in_threadpool(
+                _analyze_live, ssh, db, scope_list, _dns_proposals)
+        except HestiaImportError as e:
+            raise HTTPException(status_code=422, detail=str(e))
+    else:
+        tar_path = await _receive_backup(file, path, url, ssh)
+        downloaded = _is_temp_upload(tar_path)  # subido/URL → es nuestro temporal
+
+        def _analyze_tar():
+            # config_only: el análisis solo necesita los .conf, no los datos pesados.
+            with open_backup(source_panel, tar_path, config_only=True) as backup:
+                m = backup.analyze()
+                return m, find_conflicts(m, db, scope_list), _dns_proposals(m)
+
+        try:
+            manifest, conflicts, dns_proposals = await run_in_threadpool(_analyze_tar)
+        except (HestiaImportError, CpanelImportError) as e:
+            if downloaded and os.path.exists(tar_path):
                 os.remove(tar_path)
+            raise HTTPException(status_code=422, detail=str(e))
+        except Exception as e:
+            if downloaded and os.path.exists(tar_path):
+                os.remove(tar_path)
+            logger.exception("Error analizando backup")
+            raise HTTPException(status_code=500, detail=f"Error analizando el backup: {e}")
+
+        # Reutilización: si el backup lo hemos DESCARGADO nosotros (subida/URL),
+        # lo movemos a la caché de staging y devolvemos un token para que la
+        # importación NO lo vuelva a traer. Los backups por 'path' (ruta local del
+        # usuario) no se cachean: ya están en el servidor y no se tocan.
+        if downloaded and os.path.exists(tar_path):
+            try:
+                cache_token = _stage_tar(tar_path)
+            except Exception as e:
+                logger.warning(f"No se pudo cachear el tar de migración: {e}")
+                if os.path.exists(tar_path):
+                    os.remove(tar_path)
 
     # ¿Hay datos comprimidos en zst y no tenemos soporte? Avisar (no bloquea analyze).
     warnings = []
+    space_warning = _disk_space_warning(manifest.get("size_mb") or 0)
+    if space_warning:
+        warnings.append(space_warning)
     needs_zst = any(
         (w.get("_data_tar") or "").endswith((".zst", ".zstd")) for w in manifest["web"]
     ) or any((d.get("_dump") or "").endswith((".zst", ".zstd")) for d in manifest["db"])
@@ -544,6 +759,10 @@ async def migration_analyze(
             "conflicts": conflicts,
             "importable": len(conflicts) == 0,
             "warnings": warnings,
+            # Solo en el análisis en vivo (SSH): tamaño estimado de la cuenta
+            # (U_DISK de Hestia, MB) y aviso de que el backup aún no se ha traído.
+            "size_mb": manifest.get("size_mb"),
+            "live": bool(manifest.get("live")),
             # Token del backup ya descargado: la importación lo reutiliza para no
             # volver a traerlo. None si el origen es una ruta local del servidor.
             "cache_token": cache_token,
@@ -751,6 +970,68 @@ def _spawn_import_subprocess(job_id: int):
         db.close()
 
 
+def _fetch_then_import(job_id: int, ssh: dict, expected_bytes: int = 0):
+    """Background task del import por SSH: genera y trae el backup del Hestia de
+    origen (con progreso en el job) y después lanza el import aislado.
+
+    Corre en el threadpool (función síncrona en BackgroundTasks), no en el event
+    loop: aunque tarde horas, el panel sigue respondiendo. Las credenciales SSH
+    solo viven en memoria; no se guardan en el MigrationJob.
+    """
+    from api.models.models_migration import MigrationJob
+
+    def _fail(msg: str):
+        db = SessionLocal()
+        try:
+            job = db.query(MigrationJob).filter(MigrationJob.id == job_id).first()
+            if job:
+                job.status = "failed"
+                job.error = msg
+                job.progress_detail = None
+                job.finished_at = datetime.utcnow()
+                db.commit()
+        finally:
+            db.close()
+
+    db = SessionLocal()
+    try:
+        job = db.query(MigrationJob).filter(MigrationJob.id == job_id).first()
+        if not job:
+            return
+        job.status = "running"
+        job.started_at = datetime.utcnow()
+        db.commit()
+    finally:
+        db.close()
+
+    prog = _JobProgress(job_id)
+    try:
+        tar_path = _fetch_via_ssh(ssh, progress=prog, expected_bytes=expected_bytes)
+    except HTTPException as e:
+        _fail(f"No se pudo traer el backup del origen: {e.detail}")
+        return
+    except Exception as e:
+        logger.exception("Error trayendo el backup por SSH")
+        _fail(f"No se pudo traer el backup del origen: {e}")
+        return
+    finally:
+        prog.close()
+
+    db = SessionLocal()
+    try:
+        job = db.query(MigrationJob).filter(MigrationJob.id == job_id).first()
+        if not job:
+            os.path.exists(tar_path) and os.remove(tar_path)
+            return
+        job.tar_path = tar_path
+        job.cleanup_tar = 1
+        job.progress_detail = "Backup descargado; empezando la importación…"
+        db.commit()
+    finally:
+        db.close()
+    _spawn_import_subprocess(job_id)
+
+
 @router.post("/migrations/import")
 async def migration_import(
     background_tasks: BackgroundTasks,
@@ -819,31 +1100,46 @@ async def migration_import(
 
     # Reutilizar el backup ya descargado en el análisis si hay token válido. Así
     # NO se vuelve a generar/descargar (clave con backups grandes por SSH).
-    staged = _staged_path(cache_token)
-    if staged:
-        tar_path = staged
-        cleanup_tar = True   # es nuestro (caché de staging); el job lo borra
-        logger.info(f"Migración: reutilizando backup cacheado {cache_token}")
-    else:
-        ssh = _ssh_from_form(ssh_host, ssh_user, ssh_password, ssh_key, ssh_port, hestia_user)
-        tar_path = await _receive_backup(file, path, url, ssh)
-        cleanup_tar = _is_temp_upload(tar_path)
-
-    # Preflight: analizar y comprobar conflictos SOLO de lo que se importa.
-    # config_only: el preflight no necesita extraer los datos pesados; el job de
-    # importación (en background) reabre el backup y extrae todo.
     scope_list = [s for s in (scope or "").split(",") if s]
+    staged = _staged_path(cache_token)
+    ssh = _ssh_from_form(ssh_host, ssh_user, ssh_password, ssh_key, ssh_port, hestia_user)
+    # SSH sin backup en caché: el backup (v-backup-user + scp, minutos u horas)
+    # se genera y descarga DENTRO del job en segundo plano. Aquí solo el
+    # preflight contra la config en vivo, que tarda segundos.
+    fetch_in_job = bool(not staged and ssh
+                        and (source_panel or "hestia").lower() == "hestia")
+    tar_path = None
+    cleanup_tar = True
     try:
-        with open_backup(source_panel, tar_path, config_only=True) as backup:
-            manifest = backup.analyze()
-            conflicts = find_conflicts(manifest, db, scope_list)
+        if staged:
+            tar_path = staged
+            # es nuestro (caché de staging); el job lo borra
+            logger.info(f"Migración: reutilizando backup cacheado {cache_token}")
+        elif fetch_in_job:
+            pass
+        else:
+            tar_path = await _receive_backup(file, path, url, ssh)
+            cleanup_tar = _is_temp_upload(tar_path)
+
+        # Preflight: analizar y comprobar conflictos SOLO de lo que se importa.
+        # config_only: el preflight no necesita extraer los datos pesados; el job
+        # de importación (en background) reabre el backup y extrae todo.
+        def _preflight():
+            if fetch_in_job:
+                m, c, _ = _analyze_live(ssh, db, scope_list)
+                return m, c
+            with open_backup(source_panel, tar_path, config_only=True) as backup:
+                m = backup.analyze()
+                return m, find_conflicts(m, db, scope_list)
+
+        manifest, conflicts = await run_in_threadpool(_preflight)
     except (HestiaImportError, CpanelImportError) as e:
-        if cleanup_tar and os.path.exists(tar_path):
+        if tar_path and cleanup_tar and os.path.exists(tar_path):
             os.remove(tar_path)
         raise HTTPException(status_code=422, detail=str(e))
 
     if conflicts:
-        if cleanup_tar and os.path.exists(tar_path):
+        if tar_path and cleanup_tar and os.path.exists(tar_path):
             os.remove(tar_path)
         raise HTTPException(status_code=409, detail={
             "message": "La importación se ha cancelado: hay recursos que ya existen.",
@@ -854,7 +1150,7 @@ async def migration_import(
     # cleanup_tar, dns_records): el import corre fuera del proceso del panel para
     # que un pico de RAM / OOM mate solo al hijo, no a uvicorn.
     job = MigrationJob(
-        source_type="upload" if cleanup_tar else "path",
+        source_type="ssh" if fetch_in_job else ("upload" if cleanup_tar else "path"),
         source_kind=manifest.get("system") or "hestia",
         target_user_id=target_user_id,
         status="pending",
@@ -872,7 +1168,11 @@ async def migration_import(
     db.commit()
     db.refresh(job)
 
-    background_tasks.add_task(_spawn_import_subprocess, job.id)
+    if fetch_in_job:
+        expected = (manifest.get("size_mb") or 0) * 1024 * 1024
+        background_tasks.add_task(_fetch_then_import, job.id, ssh, expected)
+    else:
+        background_tasks.add_task(_spawn_import_subprocess, job.id)
     return {"status": "success", "data": {"job_id": job.id, "status": "pending"}}
 
 
