@@ -503,6 +503,45 @@ def _fetch_live_config(cfg: dict) -> tuple:
         s.close()
 
 
+# Secciones del log de v-backup-user ("-- WEB --", "-- MAIL --"…) → texto de la UI.
+_HESTIA_SECTIONS = {
+    "WEB": "las webs", "DNS": "el DNS", "MAIL": "el correo", "DB": "las bases de datos",
+    "CRON": "las tareas cron", "USER DIRECTORIES": "los archivos del usuario",
+}
+
+
+def _hestia_backup_phase(log_tail: str) -> Optional[str]:
+    """Fase legible del backup de Hestia a partir de las últimas líneas de su log.
+
+    Formato del log: cabeceras "-- MAIL --" y líneas "AAAA-MM-DD hh:mm:ss texto".
+    Mientras check_backup_conditions espera porque la carga supera
+    BACKUP_LA_LIMIT, escribe "… Load Average N" cada minuto: se dice tal cual,
+    para que no parezca que el panel se ha colgado.
+    """
+    import re
+    lines = [l.strip() for l in (log_tail or "").splitlines() if l.strip()]
+    if not lines:
+        return None
+    m = re.search(r"Load Average (\d+)", lines[-1])
+    if m:
+        return ("El Hestia de origen espera a que baje la carga de su servidor "
+                f"(carga {m.group(1)}) para seguir con el backup; continúa solo…")
+    section = None
+    for l in lines:
+        h = re.fullmatch(r"-- (.+?) --", l)
+        if h:
+            section = h.group(1).strip().upper()
+    last = re.sub(r"^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\s*", "", lines[-1])
+    if re.match(r"(?i)(runtime|size|local):", last) or section == "SUMMARY":
+        return "El Hestia de origen está terminando el backup…"
+    if section in _HESTIA_SECTIONS:
+        what = _HESTIA_SECTIONS[section]
+        detail = "" if (not last or last.startswith("***") or last.startswith("--")) \
+            else f" ({last[:60]})"
+        return f"Generando el backup en el origen: copiando {what}{detail}…"
+    return None
+
+
 def _safe_hestia_user(name: str) -> bool:
     import re
     return bool(re.fullmatch(r"[A-Za-z0-9_][A-Za-z0-9._-]{0,63}", name or ""))
@@ -550,12 +589,43 @@ def _fetch_via_ssh(cfg: dict, progress=None, expected_bytes: int = 0) -> str:
             f"else PATH=\"$PATH:/usr/local/hestia/bin:/usr/local/vesta/bin\" v-backup-user {hu}; fi"
         )
         gen_cmd, env = _sub(sshb + [remote, remote_gen], env)
-        r = subprocess.run(gen_cmd, capture_output=True, text=True, env=env,
-                           timeout=4 * 3600)
-        if r.returncode != 0:
+        # Mientras Hestia trabaja, leemos su log (/backup/USUARIO.log) cada
+        # ~20 s y mostramos la fase: sin esto la UI se quedaba en "Generando…"
+        # minutos sin cambiar y parecía colgada (p.ej. Hestia esperando a que
+        # baje la carga del servidor antes de volcar las BDs). Solo si el log
+        # es de ESTE backup (más nuevo que el arranque), no de uno anterior.
+        started = int(time.time()) - 60
+        log_path = shlex.quote(f"/backup/{hestia_user}.log")
+        log_cmd = sshb + [remote, f"find {log_path} -newermt @{started} "
+                                  f"-exec tail -n 12 {{}} \\; 2>/dev/null"]
+        gen = subprocess.Popen(gen_cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                               text=True, env=env)
+        deadline = time.time() + 4 * 3600
+        last_poll = time.time()
+        while True:
+            try:
+                gen_out, gen_err = gen.communicate(timeout=5)
+                break
+            except subprocess.TimeoutExpired:
+                if time.time() > deadline:
+                    gen.kill()
+                    gen.communicate()
+                    raise subprocess.TimeoutExpired(gen_cmd, 4 * 3600)
+                if progress is None or time.time() - last_poll < 20:
+                    continue
+                last_poll = time.time()
+                try:
+                    lr = subprocess.run(log_cmd, capture_output=True, text=True,
+                                        env=env, timeout=25)
+                    phase = _hestia_backup_phase(lr.stdout)
+                    if phase:
+                        _phase(phase)
+                except Exception:
+                    pass   # el log es solo informativo: nunca romper el backup
+        if gen.returncode != 0:
             from scripts.migration_helpers import explain_backup_error
             raise HTTPException(status_code=502,
-                detail=explain_backup_error(r.stderr, r.stdout, hestia_user))
+                detail=explain_backup_error(gen_err, gen_out, hestia_user))
 
         # 2) Localizar el .tar más reciente del usuario en /backup/
         find_cmd, env = _sub(sshb + [remote,
