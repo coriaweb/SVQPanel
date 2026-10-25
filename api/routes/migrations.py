@@ -510,6 +510,40 @@ _HESTIA_SECTIONS = {
 }
 
 
+# Tramos de la barra de progreso en una migración por SSH (el resto, la
+# importación, va de PROGRESS_DOWNLOAD[1] a 100).
+PROGRESS_GENERATE = (0, 25)
+PROGRESS_DOWNLOAD = (25, 50)
+# Avance dentro de "generar" según la sección del log de v-backup-user. Webs y
+# correo son lo pesado (comprimir); DNS y cron, instantáneos.
+_HESTIA_SECTION_PCT = {"WEB": 3, "DNS": 10, "MAIL": 11, "DB": 17, "CRON": 20,
+                       "USER DIRECTORIES": 21, "SUMMARY": 24}
+
+
+def _hestia_backup_pct(log_tail: str) -> Optional[int]:
+    """% de la barra (dentro de PROGRESS_GENERATE) según la última sección del
+    log de Hestia; None si no se sabe (log vacío o de otro backup)."""
+    import re
+    pct = None
+    for line in (log_tail or "").splitlines():
+        h = re.fullmatch(r"-- (.+?) --", line.strip())
+        if h and h.group(1).strip().upper() in _HESTIA_SECTION_PCT:
+            pct = _HESTIA_SECTION_PCT[h.group(1).strip().upper()]
+    if pct is not None and re.search(r"(?im)^\S+ \S+ (?:runtime|size|local):", log_tail or ""):
+        pct = _HESTIA_SECTION_PCT["SUMMARY"]
+    return pct
+
+
+def _download_pct(done: int, expected: int) -> int:
+    """% de la barra durante la descarga. El tamaño estimado (U_DISK) es el de la
+    cuenta SIN comprimir y el .tar suele ser menor: se topa por debajo del final
+    del tramo para que no se quede "lleno" esperando."""
+    lo, hi = PROGRESS_DOWNLOAD
+    if expected:
+        return min(hi - 1, lo + int((hi - lo) * done / expected))
+    return min(hi - 1, lo + done // (200 * 1024 * 1024))     # sin estimación: +1 % cada 200 MB
+
+
 def _hestia_backup_phase(log_tail: str) -> Optional[str]:
     """Fase legible del backup de Hestia a partir de las últimas líneas de su log.
 
@@ -565,8 +599,12 @@ def _fetch_via_ssh(cfg: dict, progress=None, expected_bytes: int = 0) -> str:
     def _sub(lst, env):  # compat con _remote_cleanup
         return lst, env
 
-    def _phase(txt):
-        if progress is not None:
+    def _phase(txt, pct=None):
+        if progress is None:
+            return
+        if pct is not None and hasattr(progress, "set_percent"):
+            progress.set_percent(pct, txt)
+        else:
             progress.set_phase(txt)
 
     fd, tmp = tempfile.mkstemp(prefix="svq_hestia_up_", suffix=".tar",
@@ -578,8 +616,10 @@ def _fetch_via_ssh(cfg: dict, progress=None, expected_bytes: int = 0) -> str:
         #    los binarios de Hestia (/usr/local/hestia/bin) no están. Usamos la
         #    ruta absoluta del comando, con fallback al PATH si estuviera en otra
         #    ubicación (instalaciones antiguas o forks tipo VestaCP).
-        _phase("Generando el backup en el servidor de origen (v-backup-user, "
-               "puede tardar varios minutos)…")
+        gen_text = ("Generando el backup en el servidor de origen (v-backup-user, "
+                    "puede tardar varios minutos)…")
+        gen_pct = 1
+        _phase(gen_text, gen_pct)
         hu = shlex.quote(hestia_user)
         remote_gen = (
             "if [ -x /usr/local/hestia/bin/v-backup-user ]; then "
@@ -617,9 +657,9 @@ def _fetch_via_ssh(cfg: dict, progress=None, expected_bytes: int = 0) -> str:
                 try:
                     lr = subprocess.run(log_cmd, capture_output=True, text=True,
                                         env=env, timeout=25)
-                    phase = _hestia_backup_phase(lr.stdout)
-                    if phase:
-                        _phase(phase)
+                    gen_text = _hestia_backup_phase(lr.stdout) or gen_text
+                    gen_pct = max(gen_pct, _hestia_backup_pct(lr.stdout) or 0)   # nunca hacia atrás
+                    _phase(gen_text, gen_pct)
                 except Exception:
                     pass   # el log es solo informativo: nunca romper el backup
         if gen.returncode != 0:
@@ -641,7 +681,7 @@ def _fetch_via_ssh(cfg: dict, progress=None, expected_bytes: int = 0) -> str:
         scpb, env = s.prefix("scp")
         scp_cmd = scpb + [f"{remote}:{remote_tar}", tmp]
         expected = f" de ~{_human_bytes(expected_bytes)}" if expected_bytes else ""
-        _phase("Descargando el backup del servidor de origen…")
+        _phase("Descargando el backup del servidor de origen…", PROGRESS_DOWNLOAD[0])
         proc = subprocess.Popen(scp_cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                                 text=True, env=env)
         deadline = time.time() + 8 * 3600
@@ -660,7 +700,7 @@ def _fetch_via_ssh(cfg: dict, progress=None, expected_bytes: int = 0) -> str:
                 except OSError:
                     done = 0
                 _phase(f"Descargando el backup del servidor de origen · "
-                       f"{_human_bytes(done)}{expected}")
+                       f"{_human_bytes(done)}{expected}", _download_pct(done, expected_bytes))
         if proc.returncode != 0:
             # Limpiar el .tar del remoto aunque el scp falle (no dejar basura).
             _remote_cleanup(sshb, remote, remote_tar, env, _sub)
@@ -921,13 +961,25 @@ class _JobProgress:
     Los UPDATE van throttled (máx. ~1 cada 2s) para no castigar PostgreSQL.
     """
 
-    def __init__(self, job_id: int):
+    def __init__(self, job_id: int, window: tuple = (0, 99)):
         self.job_id = job_id
         self._db = SessionLocal()
         self._total = 1
         self._done = 0
         self._detail = ""
         self._last_flush = 0.0
+        # Tramo de la barra que le toca a esta fase. Por SSH el job tiene tres:
+        # generar el backup en el origen (0-25), descargarlo (25-50) e importarlo
+        # (50-100); antes la barra se quedaba en 0 % hasta la importación aunque
+        # llevase minutos trabajando.
+        self._lo, self._hi = window
+        self._fixed_pct = None      # % puesto a mano (fases sin bytes: generar, descargar)
+
+    def set_percent(self, pct: int, detail: str) -> None:
+        """Fija el % y el texto (para fases que no cuentan bytes)."""
+        self._fixed_pct = max(0, min(99, int(pct)))
+        self._detail = detail
+        self._flush(force=True)
 
     def set_total(self, total: int, done=None) -> None:
         self._total = max(1, int(total))
@@ -957,11 +1009,15 @@ class _JobProgress:
             return
         self._last_flush = now
         # Tope 99: el 100 lo pone el cierre del job (con el informe ya guardado).
-        pct = min(99, int(self._done * 100 / self._total))
+        if self._fixed_pct is not None:
+            pct = self._fixed_pct
+        else:
+            frac = min(1.0, self._done / self._total)
+            pct = min(99, int(self._lo + frac * (self._hi - self._lo)))
         # Detalle con los datos procesados: la fase sola se queda "muda" en los
         # tramos largos (extraer/restaurar GB); con los bytes se ve avanzar.
         detail = self._detail
-        if self._total > 1 and self._done > 0:
+        if self._fixed_pct is None and self._total > 1 and self._done > 0:
             detail = (f"{self._detail} · "
                       f"{self._human(min(self._done, self._total))} de "
                       f"{self._human(self._total)}")
@@ -1012,7 +1068,9 @@ def run_migration_job_inproc(job_id: int):
         job.started_at = datetime.utcnow()
         db.commit()
 
-        prog = _JobProgress(job_id)
+        # Por SSH, generar y descargar ya ocuparon la primera mitad de la barra.
+        prog = _JobProgress(job_id, window=(PROGRESS_DOWNLOAD[1], 99) if job.source_type == "ssh"
+                            else (0, 99))
         scope = [s for s in (job.scope or "").split(",") if s]
         report = run_import(tar_path, job.target_user_id, scope, db,
                             dns_records=dns_records,
@@ -1141,7 +1199,7 @@ def _fetch_then_import(job_id: int, ssh: dict, expected_bytes: int = 0):
     finally:
         db.close()
 
-    prog = _JobProgress(job_id)
+    prog = _JobProgress(job_id, window=PROGRESS_GENERATE)
     try:
         tar_path = _fetch_via_ssh(ssh, progress=prog, expected_bytes=expected_bytes)
     except HTTPException as e:
@@ -1163,6 +1221,7 @@ def _fetch_then_import(job_id: int, ssh: dict, expected_bytes: int = 0):
         job.tar_path = tar_path
         job.cleanup_tar = 1
         job.progress_detail = "Backup descargado; empezando la importación…"
+        job.progress = PROGRESS_DOWNLOAD[1]
         db.commit()
     finally:
         db.close()
