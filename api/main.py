@@ -990,6 +990,9 @@ def _run_migrations():
         # Escaneo de malware (nace apagado; capa ClamAV opcional)
         "ALTER TABLE settings ADD COLUMN IF NOT EXISTS malware_scan_enabled BOOLEAN NOT NULL DEFAULT FALSE",
         "ALTER TABLE settings ADD COLUMN IF NOT EXISTS malware_scan_clamav BOOLEAN NOT NULL DEFAULT FALSE",
+        # Progreso del escaneo de malware (barra en la ficha del dominio)
+        "ALTER TABLE malware_scan_runs ADD COLUMN IF NOT EXISTS progress INTEGER DEFAULT 0",
+        "ALTER TABLE malware_scan_runs ADD COLUMN IF NOT EXISTS phase VARCHAR(160)",
     ]
     # "ADD COLUMN IF NOT EXISTS" pide un bloqueo EXCLUSIVO de la tabla aunque la
     # columna ya exista: con 170+ sentencias, cada arranque bloqueaba las tablas

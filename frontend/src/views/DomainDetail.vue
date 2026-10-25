@@ -742,7 +742,18 @@ define('WP_REDIS_PATH', '{{ redisStatus.socket }}');</pre>
         <div v-if="!mw" class="svq-skeleton" style="height:90px"></div>
         <template v-else>
           <p class="dd-muted mw-last">
-            <template v-if="mw.running"><span class="spinner"></span> Escaneando… (con prioridad mínima: puede tardar unos minutos)</template>
+            <template v-if="mw.running">
+              <span class="mw-progress">
+                <span class="mw-progress__head">
+                  <span class="spinner"></span>
+                  <span>{{ (mw.last_scan && mw.last_scan.status === 'running' && mw.last_scan.phase) || 'Escaneando… (con prioridad mínima: puede tardar unos minutos)' }}</span>
+                  <strong v-if="mw.last_scan && mw.last_scan.status === 'running'">{{ mw.last_scan.progress || 0 }}%</strong>
+                </span>
+                <span v-if="mw.last_scan && mw.last_scan.status === 'running'" class="mw-progress__bar">
+                  <span class="mw-progress__fill" :style="{ width: (mw.last_scan.progress || 0) + '%' }"></span>
+                </span>
+              </span>
+            </template>
             <template v-else-if="mw.last_scan">Último escaneo: {{ formatDateTime(mw.last_scan.finished_at || mw.last_scan.started_at) }}
               · {{ mw.last_scan.files_seen }} ficheros ({{ mw.last_scan.files_checked }} revisados por ser nuevos o cambiados)
               <span v-if="mw.last_scan.status === 'error'" class="mw-err">· error: {{ mw.last_scan.error }}</span></template>
@@ -2704,6 +2715,11 @@ location @maintenance {
 @media (max-width: 680px) { .res-stats, .res-charts { grid-template-columns: 1fr; } }
 /* Escaneo de malware (pestaña Protección) */
 .mw-last { font-size: .82rem; }
+.mw-progress { display: flex; flex-direction: column; gap: 6px; }
+.mw-progress__head { display: flex; align-items: center; gap: .5rem; }
+.mw-progress__head strong { margin-left: auto; color: var(--color-primary); font-variant-numeric: tabular-nums; }
+.mw-progress__bar { display: block; height: 6px; border-radius: 999px; background: var(--surface-2); border: 1px solid var(--border); overflow: hidden; }
+.mw-progress__fill { display: block; height: 100%; border-radius: 999px; background: var(--color-primary); transition: width .8s ease; }
 .mw-err { color: var(--danger); }
 .mw-item { border: 1px solid var(--border); border-radius: var(--r-md, 10px); padding: var(--sp-3); margin-top: var(--sp-2); }
 .mw-item.mw-quarantined, .mw-item.mw-ignored { opacity: .7; }
