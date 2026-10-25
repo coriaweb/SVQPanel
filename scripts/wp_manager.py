@@ -429,11 +429,33 @@ def sync_wp_cron_php(domain, db, owner_username: str = None) -> bool:
         return False
 
 
+# Dónde colocar una constante NUEVA en wp-config.php si no está la línea estándar
+# "/* That's all, stop editing! */" (la que usa wp-cli por defecto): wp-configs
+# antiguos o editados a mano no la tienen y `wp config set` fallaba con
+# "Unable to locate placement anchor". Respaldo: justo tras "<?php". Definir una
+# constante al principio siempre es válido; anclar antes de un require/if podría
+# colarse entre un "if" sin llaves y su sentencia.
+_WP_CONFIG_ANCHORS = (("<?php", "after"),)
+
+
+def wp_config_set_constant(docroot: str, owner: str, name: str, raw_value: str) -> Tuple[int, str, str]:
+    """`wp config set NAME VALUE --raw` con anclajes de respaldo si el wp-config
+    no tiene la línea estándar donde wp-cli coloca las constantes nuevas."""
+    base = ["config", "set", name, raw_value, "--raw", "--type=constant"]
+    rc, out, err = _wp(docroot, owner, base)
+    if rc == 0 or "placement anchor" not in (err + out).lower():
+        return rc, out, err
+    for anchor, placement in _WP_CONFIG_ANCHORS:
+        rc2, out2, err2 = _wp(docroot, owner, base + [f"--anchor={anchor}", f"--placement={placement}"])
+        if rc2 == 0:
+            return rc2, out2, err2
+    return rc, out, err
+
+
 def wp_config_disable_cron(docroot: str, owner: str, disable: bool) -> None:
     """Fija o quita DISABLE_WP_CRON en wp-config (parte 'app' de la optimización)."""
     if disable:
-        rc, out, err = _wp(docroot, owner,
-            ["config", "set", "DISABLE_WP_CRON", "true", "--raw", "--type=constant"])
+        rc, out, err = wp_config_set_constant(docroot, owner, "DISABLE_WP_CRON", "true")
         if rc != 0:
             raise WpError(f"No pude fijar DISABLE_WP_CRON: {err or out}")
     else:
@@ -508,11 +530,9 @@ def wp_hardening_apply(docroot: str, owner: str, fix_ids: Optional[List[str]] = 
     }
 
     if "disallow_file_edit" in todo:
-        _wp(docroot, owner, ["config", "set", "DISALLOW_FILE_EDIT", "true",
-                             "--raw", "--type=constant"])
+        wp_config_set_constant(docroot, owner, "DISALLOW_FILE_EDIT", "true")
     if "disallow_unfiltered_html" in todo:
-        _wp(docroot, owner, ["config", "set", "DISALLOW_UNFILTERED_HTML", "true",
-                             "--raw", "--type=constant"])
+        wp_config_set_constant(docroot, owner, "DISALLOW_UNFILTERED_HTML", "true")
     if "remove_version_files" in todo:
         for fn in ("readme.html", "license.txt"):
             p = os.path.join(docroot, fn)
