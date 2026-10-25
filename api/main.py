@@ -991,12 +991,35 @@ def _run_migrations():
         "ALTER TABLE settings ADD COLUMN IF NOT EXISTS malware_scan_enabled BOOLEAN NOT NULL DEFAULT FALSE",
         "ALTER TABLE settings ADD COLUMN IF NOT EXISTS malware_scan_clamav BOOLEAN NOT NULL DEFAULT FALSE",
     ]
+    # "ADD COLUMN IF NOT EXISTS" pide un bloqueo EXCLUSIVO de la tabla aunque la
+    # columna ya exista: con 170+ sentencias, cada arranque bloqueaba las tablas
+    # una a una, y si otra sesión tenía una transacción abierta (un escaneo de
+    # malware leyendo `domains`), el panel se quedaba en "Waiting for application
+    # startup" indefinidamente (caso real, oct 2026, al actualizar). Ahora: se
+    # saltan las columnas que ya existen (sin bloqueo) y el resto espera como
+    # mucho 5 s por el bloqueo; si no lo consigue, se intenta en el próximo arranque.
+    import re as _re
+    _add_col = _re.compile(r"^\s*ALTER\s+TABLE\s+(\w+)\s+ADD\s+COLUMN\s+IF\s+NOT\s+EXISTS\s+(\w+)", _re.I)
     with engine.connect() as conn:
+        existing = set()
+        try:
+            existing = {(t, c) for t, c in conn.execute(text(
+                "SELECT table_name, column_name FROM information_schema.columns "
+                "WHERE table_schema = current_schema()"))}
+            conn.commit()
+        except Exception as e:
+            conn.rollback()
+            print(f"⚠ No pude leer las columnas existentes: {e}")
         for sql in migrations:
+            m = _add_col.match(sql)
+            if m and (m.group(1).lower(), m.group(2).lower()) in existing:
+                continue        # ya existe: no hace falta bloquear la tabla
             try:
+                conn.execute(text("SET LOCAL lock_timeout = '5s'"))
                 conn.execute(text(sql))
                 conn.commit()
             except Exception as e:
+                conn.rollback()     # si no, las siguientes fallan por "transaction aborted"
                 print(f"⚠ Migration skipped: {e}")
 
     # Sembrar plantillas builtin si la tabla está vacía
