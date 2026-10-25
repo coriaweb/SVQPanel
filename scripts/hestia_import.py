@@ -2402,6 +2402,16 @@ def run_import(tar_path: str, target_user_id: int, scope: List[str], db,
                 db.rollback()
                 report.fail("dns", name, f"zona por defecto: {e}")
 
+        # WordPress importado: .htaccess con sus reglas y canónico según su home.
+        # Al final: necesita los ficheros (web) Y la base de datos (db) ya dentro.
+        if "web" in scope:
+            for web in manifest.get("web", []):
+                try:
+                    _finalize_wordpress(web["domain"], owner, db, report)
+                except Exception as e:
+                    db.rollback()
+                    report.fail("wp-ajustes", web["domain"], e)
+
         # DKIM: la zona importada del backup publica la clave pública VIEJA
         # del servidor origen, pero aquí Rspamd firma con una clave nueva →
         # reconciliar el TXT con la clave real (si no, DKIM_INVALID en todos
@@ -2415,6 +2425,102 @@ def run_import(tar_path: str, target_user_id: int, scope: List[str], db,
                     report.fail("dkim", m_["domain"], f"reconciliar TXT: {e}")
 
     return report.to_dict()
+
+
+_WP_HTACCESS_BLOCK = """
+# BEGIN WordPress
+<IfModule mod_rewrite.c>
+RewriteEngine On
+RewriteRule .* - [E=HTTP_AUTHORIZATION:%{HTTP:Authorization}]
+RewriteBase /
+RewriteRule ^index\\.php$ - [L]
+RewriteCond %{REQUEST_FILENAME} !-f
+RewriteCond %{REQUEST_FILENAME} !-d
+RewriteRule . /index.php [L]
+</IfModule>
+# END WordPress
+"""
+
+
+def _is_wordpress(root: str) -> bool:
+    return bool(root) and os.path.isfile(os.path.join(root, "wp-config.php")) \
+        and os.path.isfile(os.path.join(root, "wp-includes", "version.php"))
+
+
+def ensure_wp_htaccess(root: str, owner_username: Optional[str] = None) -> bool:
+    """Añade el bloque estándar de WordPress al .htaccess si no tiene reglas de
+    WordPress. Devuelve True si lo añadió.
+
+    Una web que en Hestia iba con nginx no necesitaba .htaccess (nginx resolvía
+    los enlaces permanentes); en modo Apache+Nginx sin este bloque TODAS las
+    páginas interiores dan 404 (5 de 12 webs migradas en oct 2026). El resto del
+    .htaccess se conserva tal cual.
+    """
+    ht = os.path.join(root, ".htaccess")
+    try:
+        with open(ht, encoding="utf-8", errors="surrogateescape") as f:
+            content = f.read()
+    except FileNotFoundError:
+        content = ""
+    if "BEGIN WordPress" in content or re.search(r"RewriteRule\s+\.\s+/?index\.php", content):
+        return False
+    with open(ht, "w", encoding="utf-8", errors="surrogateescape") as f:
+        f.write(content.rstrip("\n") + ("\n" if content else "") + _WP_HTACCESS_BLOCK.lstrip("\n"))
+    if owner_username:
+        import subprocess
+        try:
+            subprocess.run(["chown", f"{owner_username}:{owner_username}", ht], capture_output=True)
+        except OSError:
+            pass        # sin chown (desarrollo): el contenido ya está escrito
+    return True
+
+
+def canonical_from_home(home: str, domain: str) -> Optional[str]:
+    """'www' / 'non-www' según el host del home de WordPress, o None si el home
+    es de otro dominio (no se toca). Sin esto el panel forzaba www por defecto
+    y, con un WordPress sin www, se formaba un bucle de redirección."""
+    from urllib.parse import urlparse
+    host = (urlparse((home or "").strip()).hostname or "").lower().rstrip(".")
+    domain = domain.lower().rstrip(".")
+    if host == f"www.{domain}":
+        return "www"
+    if host == domain:
+        return "non-www"
+    return None
+
+
+def _finalize_wordpress(domain_name: str, owner, db, report: ImportReport) -> None:
+    """Ajustes de un WordPress recién importado: reglas del .htaccess y dominio
+    canónico coherente con su home. No hace nada si la web no es WordPress."""
+    from api.models.models_domain import Domain
+    d = db.query(Domain).filter(Domain.domain_name == domain_name).first()
+    if not d:
+        return
+    root = d.custom_docroot or d.public_html
+    if not _is_wordpress(root):
+        return
+    if ensure_wp_htaccess(root, owner.username):
+        report.ok("wp-htaccess", domain_name, "añadidas las reglas de WordPress al .htaccess "
+                  "(sin ellas las páginas interiores daban 404)")
+    if getattr(d, "is_subdomain", False) or d.redirect_to:
+        return          # subdominio (canónico 'none') o dominio que solo redirige
+    from scripts.wp_manager import _wp
+    rc, out, _err = _wp(root, owner.username, ["option", "get", "home"], timeout=120)
+    wanted = canonical_from_home(out.strip().splitlines()[-1] if rc == 0 and out.strip() else "", domain_name)
+    if not wanted or (d.canonical_domain or "www") == wanted:
+        return
+    prev = d.canonical_domain
+    d.canonical_domain = wanted
+    db.commit()
+    try:
+        from api.routes.domains import _regenerate_domain_vhost
+        _regenerate_domain_vhost(d, owner)
+        report.ok("wp-canonico", domain_name,
+                  f"dominio canónico: {'www' if wanted == 'www' else 'sin www'} (según el home de WordPress)")
+    except Exception as e:
+        d.canonical_domain = prev
+        db.commit()
+        report.fail("wp-canonico", domain_name, f"no se pudo ajustar el canónico: {e}")
 
 
 def _reconcile_dkim_txt(domain: str, db, report: ImportReport) -> None:
