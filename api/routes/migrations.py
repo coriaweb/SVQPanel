@@ -576,6 +576,195 @@ def _hestia_backup_phase(log_tail: str) -> Optional[str]:
     return None
 
 
+# ─────────────────────────────────────────────────────────────────────────────
+# Migración instantánea: al terminar, apuntar el DNS del Hestia a este servidor
+# ─────────────────────────────────────────────────────────────────────────────
+# Como el "Live Transfer" de cPanel (solo la parte DNS): por la misma conexión SSH
+# del backup, en cada zona migrada se cambian SOLO los A que apuntan a la IP vieja
+# del Hestia (y los AAAA de esos mismos nombres, si este servidor tiene IPv6),
+# con TTL corto. Lo que apunta a otros sitios (correo externo, Google, M365…) no
+# se toca. Luego se comprueba en los NS del clúster que responden la IP nueva y,
+# si no (versión de zona del esclavo por encima de la del maestro: caso real
+# empanadaspineda.es), se sube la versión y se reenvía la zona.
+INSTANT_DNS_TTL = 300
+_HESTIA_BIN = "/usr/local/hestia/bin"
+
+
+def _origin_ips(manifest: dict, ssh: Optional[dict]) -> set:
+    """IPs del servidor de origen: la IP de cada zona en Hestia (dns.conf IP) y el
+    host SSH si es una IPv4 literal."""
+    import ipaddress
+    ips = {z.get("ip") for z in manifest.get("dns", []) if z.get("ip")}
+    host = (ssh or {}).get("host", "").strip()
+    try:
+        if ipaddress.ip_address(host).version == 4:
+            ips.add(host)
+    except ValueError:
+        pass
+    return ips
+
+
+def instant_dns_plan(zones: list, old_ips: set, new_v4: Optional[str], new_v6: Optional[str]) -> list:
+    """Qué cambiaría en cada zona (vista previa, sin tocar nada). `zones` = las
+    entradas manifest['dns'] (con _records). Solo A con valor en old_ips."""
+    plan = []
+    for z in zones:
+        recs = z.get("_records") or []
+        names = set()
+        changes = []
+        for r in recs:
+            if (r.get("TYPE") or "").upper() == "A" and (r.get("VALUE") or "").strip() in old_ips and new_v4:
+                changes.append({"record": r.get("RECORD", "@"), "type": "A",
+                                "old": r.get("VALUE", "").strip(), "new": new_v4})
+                names.add(r.get("RECORD", "@"))
+        warnings = []
+        for r in recs:
+            if (r.get("TYPE") or "").upper() == "AAAA" and r.get("RECORD", "@") in names:
+                if new_v6:
+                    changes.append({"record": r.get("RECORD", "@"), "type": "AAAA",
+                                    "old": (r.get("VALUE") or "").strip(), "new": new_v6})
+                else:
+                    warnings.append(f"{r.get('RECORD')} tiene AAAA ({r.get('VALUE')}) y este servidor no "
+                                    "tiene IPv6: quien entre por IPv6 seguirá yendo al servidor viejo.")
+        plan.append({"domain": z["domain"], "changes": changes, "warnings": warnings})
+    return plan
+
+
+def _fqdn(record: str, domain: str) -> str:
+    return domain if record in ("@", "", domain, domain + ".") else f"{record}.{domain}"
+
+
+def _dig(name: str, rtype: str, server: Optional[str] = None) -> list:
+    import subprocess
+    cmd = ["dig", "+short", "+time=3", "+tries=1", rtype, name] + ([f"@{server}"] if server else [])
+    try:
+        out = subprocess.run(cmd, capture_output=True, text=True, timeout=15).stdout
+    except Exception:
+        return []
+    return [l.strip().rstrip(".") for l in out.splitlines() if l.strip() and not l.startswith(";")]
+
+
+def instant_dns_switch(cfg: dict, domains: list, old_ips: set, new_v4: str,
+                       new_v6: Optional[str] = None, wait: int = 6) -> list:
+    """Aplica la migración instantánea en el Hestia de origen. Bloqueante (SSH +
+    dig): solo desde el job en segundo plano. Devuelve un resultado por dominio:
+    {domain, changed:[{record,type,old,new}], verified, warnings:[…], error}."""
+    import json as _json
+    import shlex
+    import subprocess
+    s = _SshSession(cfg)
+    hu = s.hestia_user
+    results = []
+
+    def remote(cmd: str, timeout: int = 120):
+        c, env = s.ssh(cmd)
+        return subprocess.run(c, capture_output=True, text=True, env=env, timeout=timeout)
+
+    try:
+        for d in domains:
+            res = {"domain": d, "changed": [], "verified": False, "warnings": [], "error": None}
+            results.append(res)
+            q = f"{shlex.quote(hu)} {shlex.quote(d)}"
+            r = remote(f"{_HESTIA_BIN}/v-list-dns-records {q} json")
+            if r.returncode != 0:
+                res["error"] = "la zona no está en el Hestia (o no se pudo leer)"
+                continue
+            try:
+                records = _json.loads(r.stdout or "{}")
+            except ValueError:
+                res["error"] = "respuesta no válida de v-list-dns-records"
+                continue
+            info = {}
+            ri = remote(f"{_HESTIA_BIN}/v-list-dns-domain {q} json")
+            try:
+                info = (_json.loads(ri.stdout or "{}") or {}).get(d, {})
+            except ValueError:
+                pass
+            if (info.get("DNSSEC") or "").lower() == "yes":
+                res["warnings"].append("La zona tiene DNSSEC en el Hestia: cambiar registros es seguro (Hestia "
+                                       "vuelve a firmar), pero NO desactives DNSSEC sin quitar antes el DS en el "
+                                       "registrador, o el dominio dejará de resolver.")
+            ns_hosts = [v.get("VALUE", "").rstrip(".") for v in records.values() if (v.get("TYPE") or "").upper() == "NS"]
+            # ¿El dominio usa de verdad el DNS del Hestia? Si no, cambiarlo aquí no sirve.
+            public_ns = set(_dig(d, "NS"))
+            if ns_hosts and public_ns and not (public_ns & set(ns_hosts)):
+                res["warnings"].append(f"El dominio no usa el DNS del Hestia (NS públicos: {', '.join(sorted(public_ns))}): "
+                                       "cambia los registros en ese proveedor.")
+            names, cmds = set(), []
+            for rid, rec in records.items():
+                if (rec.get("TYPE") or "").upper() == "A" and (rec.get("VALUE") or "").strip() in old_ips:
+                    names.add(rec.get("RECORD", "@"))
+                    cmds.append((rid, rec, new_v4))
+            for rid, rec in records.items():
+                if (rec.get("TYPE") or "").upper() == "AAAA" and rec.get("RECORD", "@") in names:
+                    if new_v6:
+                        cmds.append((rid, rec, new_v6))
+                    else:
+                        res["warnings"].append(f"{rec.get('RECORD')} tiene AAAA ({rec.get('VALUE')}) y este servidor no tiene IPv6.")
+            if not cmds:
+                res["warnings"].append("No había registros apuntando a la IP antigua: nada que cambiar.")
+                res["verified"] = True
+                continue
+            script = "; ".join(
+                f"{_HESTIA_BIN}/v-change-dns-record {q} {shlex.quote(str(rid))} {shlex.quote(rec.get('RECORD', '@'))} "
+                f"{shlex.quote(rec.get('TYPE'))} {shlex.quote(val)} {shlex.quote(rec.get('PRIORITY', '') or '')} "
+                f"yes {INSTANT_DNS_TTL}" for rid, rec, val in cmds)
+            r = remote(script, timeout=300)
+            if r.returncode != 0:
+                res["error"] = f"v-change-dns-record falló: {(r.stderr or r.stdout).strip()[-200:]}"
+                continue
+            res["changed"] = [{"record": rec.get("RECORD", "@"), "type": rec.get("TYPE"),
+                               "old": (rec.get("VALUE") or "").strip(), "new": val} for _rid, rec, val in cmds]
+
+            def verify() -> bool:
+                if not ns_hosts:
+                    return False
+                for ch in res["changed"]:
+                    for ns in ns_hosts:
+                        if ch["new"] not in _dig(_fqdn(ch["record"], d), ch["type"], ns):
+                            return False
+                return True
+
+            time.sleep(wait)
+            ok = verify()
+            if not ok and ns_hosts:
+                # Esclavos con versión de zona por encima del maestro: no aceptan la
+                # zona nueva. Subir la versión local por encima y reenviar.
+                serials = []
+                for ns in ns_hosts:
+                    soa = " ".join(_dig(d, "SOA", ns)).split()
+                    if len(soa) > 2 and soa[2].isdigit():
+                        serials.append(int(soa[2]))
+                remote_serial = max(serials or [0])
+                try:    # releída: cada v-change-dns-record la incrementa
+                    ri = remote(f"{_HESTIA_BIN}/v-list-dns-domain {q} json")
+                    local_serial = int(str((_json.loads(ri.stdout or "{}") or {}).get(d, {}).get("SERIAL") or 0))
+                except (ValueError, TypeError):
+                    local_serial = 0
+                if remote_serial and remote_serial >= local_serial:
+                    new_serial = remote_serial + 1
+                    conf = f"/usr/local/hestia/data/users/{hu}/dns.conf"
+                    fix = (f"sed -i \"/DOMAIN='{d}'/ s/SERIAL='[0-9]*'/SERIAL='{new_serial}'/\" {shlex.quote(conf)} && "
+                           f"{_HESTIA_BIN}/v-rebuild-dns-domain {q} yes && "
+                           f"({_HESTIA_BIN}/v-add-remote-dns-domain {q} yes || true)")
+                    remote(fix, timeout=300)
+                    res["warnings"].append(f"Los DNS del clúster tenían una versión de zona más alta ({remote_serial}) que el "
+                                           f"Hestia ({local_serial}): subida a {new_serial} y reenviada.")
+                    time.sleep(wait)
+                    ok = verify()
+            res["verified"] = ok
+            if not ok:
+                res["warnings"].append("Cambiado en el Hestia, pero sus servidores DNS aún no responden la IP nueva: "
+                                       "revísalo en unos minutos.")
+    except Exception as e:
+        logger.exception("migración instantánea")
+        if results:
+            results[-1]["error"] = results[-1].get("error") or str(e)
+    finally:
+        s.close()
+    return results
+
+
 def _safe_hestia_user(name: str) -> bool:
     import re
     return bool(re.fullmatch(r"[A-Za-z0-9_][A-Za-z0-9._-]{0,63}", name or ""))
@@ -940,6 +1129,11 @@ async def migration_analyze(
             "size_mb": manifest.get("size_mb"),
             "live": bool(manifest.get("live")),
             "backup_enabled": manifest.get("backup_enabled"),
+            # Vista previa de la "migración instantánea" (solo origen SSH): qué A
+            # del Hestia pasarían de la IP vieja a la de este servidor.
+            "instant_dns_preview": (instant_dns_plan(manifest["dns"], _origin_ips(manifest, ssh),
+                                                     server_ipv4, server_ipv6)
+                                    if manifest.get("live") else None),
             # Token del backup ya descargado: la importación lo reutiliza para no
             # volver a traerlo. None si el origen es una ruta local del servidor.
             "cache_token": cache_token,
@@ -1086,6 +1280,11 @@ def run_migration_job_inproc(job_id: int):
         job.progress = 100
         job.progress_detail = None
         job.finished_at = datetime.utcnow()
+        if job.status == "success" and "instant-dns" in (job.scope or ""):
+            # Falta la migración instantánea (la hace el proceso del panel, que
+            # tiene las credenciales SSH en memoria): el job sigue abierto.
+            job.status, job.progress, job.finished_at = "running", 99, None
+            job.progress_detail = "Apuntando el DNS del Hestia a este servidor…"
         db.commit()
     except Exception as e:
         logger.exception("Error en job de importación Hestia")
@@ -1165,7 +1364,7 @@ def _spawn_import_subprocess(job_id: int):
         db.close()
 
 
-def _fetch_then_import(job_id: int, ssh: dict, expected_bytes: int = 0):
+def _fetch_then_import(job_id: int, ssh: dict, expected_bytes: int = 0, instant: Optional[dict] = None):
     """Background task del import por SSH: genera y trae el backup del Hestia de
     origen (con progreso en el job) y después lanza el import aislado.
 
@@ -1226,6 +1425,43 @@ def _fetch_then_import(job_id: int, ssh: dict, expected_bytes: int = 0):
     finally:
         db.close()
     _spawn_import_subprocess(job_id)
+    if instant:
+        _finish_instant_dns(job_id, ssh, instant)
+
+
+def _import_then_instant_dns(job_id: int, ssh: dict, instant: dict) -> None:
+    """Backup ya descargado (caché del análisis) + migración instantánea."""
+    _spawn_import_subprocess(job_id)
+    _finish_instant_dns(job_id, ssh, instant)
+
+
+def _finish_instant_dns(job_id: int, ssh: dict, instant: dict) -> None:
+    """Tras una importación correcta con «migración instantánea», apunta el DNS
+    del Hestia a este servidor y cierra el job (la importación lo dejó en
+    'running' al 99 % para que la UI siga consultando hasta ver este resultado)."""
+    import json
+    from api.models.models_migration import MigrationJob
+    db = SessionLocal()
+    try:
+        job = db.query(MigrationJob).filter(MigrationJob.id == job_id).first()
+        if not job or job.status != "running" or "instant-dns" not in (job.scope or ""):
+            return          # la importación falló: no se toca el DNS del origen
+        try:
+            results = instant_dns_switch(ssh, instant["domains"], set(instant["old_ips"]),
+                                         instant["new_v4"], instant.get("new_v6"))
+        except Exception as e:
+            logger.exception("migración instantánea")
+            results = [{"domain": "*", "changed": [], "verified": False, "warnings": [], "error": str(e)}]
+        report = json.loads(job.report_json) if job.report_json else {}
+        report["instant_dns"] = results
+        job.report_json = json.dumps(report, ensure_ascii=False)
+        job.status = "success"
+        job.progress = 100
+        job.progress_detail = None
+        job.finished_at = datetime.utcnow()
+        db.commit()
+    finally:
+        db.close()
 
 
 @router.post("/migrations/import")
@@ -1253,6 +1489,9 @@ async def migration_import(
     # Token del backup ya descargado en el análisis: si viene y el tar sigue en
     # caché, se reutiliza (no se vuelve a generar/descargar).
     cache_token: Optional[str] = Form(None),
+    # Migración instantánea (solo origen SSH Hestia): al terminar, apuntar los A
+    # del Hestia de la IP vieja a este servidor.
+    instant_dns: Optional[bool] = Form(False),
     db: Session = Depends(get_db),
     current_user: User = Depends(require_admin),
 ):
@@ -1356,6 +1595,23 @@ async def migration_import(
             raise
         target_user_id = target.id
 
+    # Migración instantánea: el plan se calcula AQUÍ (antes de crear el job) para
+    # marcar el job solo si de verdad se va a hacer; si no, se quedaría esperando.
+    instant = None
+    if instant_dns and ssh and (source_panel or "hestia").lower() == "hestia":
+        new_v4 = new_v6 = None
+        try:
+            from api.routes.dns import _get_server_ipv4
+            new_v4 = _get_server_ipv4(db) or None
+            from api.models.models_settings import Settings as _S
+            _s = db.query(_S).filter(_S.id == 1).first()
+            new_v6 = (getattr(_s, "server_ipv6", None) or None) if _s else None
+        except Exception:
+            pass
+        if new_v4 and manifest.get("dns"):
+            instant = {"domains": [z["domain"] for z in manifest["dns"]],
+                       "old_ips": sorted(_origin_ips(manifest, ssh)), "new_v4": new_v4, "new_v6": new_v6}
+
     # Crear el job persistiendo lo que el subproceso aislado necesita (tar_path,
     # cleanup_tar, dns_records): el import corre fuera del proceso del panel para
     # que un pico de RAM / OOM mate solo al hijo, no a uvicorn.
@@ -1364,7 +1620,7 @@ async def migration_import(
         source_kind=manifest.get("system") or "hestia",
         target_user_id=target_user_id,
         status="pending",
-        scope=scope,
+        scope=scope + (",instant-dns" if instant else ""),
         tar_path=tar_path,
         cleanup_tar=1 if cleanup_tar else 0,
         dns_records_json=json.dumps(dns_records_parsed) if dns_records_parsed else None,
@@ -1380,7 +1636,9 @@ async def migration_import(
 
     if fetch_in_job:
         expected = (manifest.get("size_mb") or 0) * 1024 * 1024
-        background_tasks.add_task(_fetch_then_import, job.id, ssh, expected)
+        background_tasks.add_task(_fetch_then_import, job.id, ssh, expected, instant)
+    elif instant:
+        background_tasks.add_task(_import_then_instant_dns, job.id, ssh, instant)
     else:
         background_tasks.add_task(_spawn_import_subprocess, job.id)
     return {"status": "success", "data": {"job_id": job.id, "status": "pending"}}

@@ -126,6 +126,12 @@
         </label>
       </div>
 
+      <label v-if="source === 'ssh' && sourcePanel === 'hestia'" class="mig-check mig-instant">
+        <input type="checkbox" v-model="instantDns" />
+        <span><strong>Migración instantánea</strong>: al terminar, apuntar el DNS del Hestia a este servidor
+          (solo los registros A que apuntan a la IP antigua; lo demás no se toca).</span>
+      </label>
+
       <div class="mig-scope">
         <span class="mig-scope__label">Importar:</span>
         <label v-for="s in scopeOptions" :key="s.key" class="mig-check">
@@ -231,6 +237,24 @@
         </div>
       </div>
 
+      <!-- Migración instantánea: qué se cambiará en el DNS del Hestia -->
+      <div v-if="instantDns && manifest.instant_dns_preview" class="mig-dnsnote mig-instant-prev">
+        <i class="bi bi-lightning-charge"></i>
+        <div>
+          <strong>Migración instantánea</strong>: al terminar la importación se cambiará en el Hestia:
+          <ul class="mig-ul">
+            <li v-for="z in manifest.instant_dns_preview" :key="'ip'+z.domain">
+              <strong>{{ z.domain }}</strong>:
+              <template v-if="z.changes.length">
+                <span v-for="(c,i) in z.changes" :key="i" class="mono">{{ c.record }} {{ c.type }} {{ c.old }} → {{ c.new }}<template v-if="i < z.changes.length - 1">, </template></span>
+              </template>
+              <span v-else class="dd-muted">nada apunta a la IP antigua</span>
+              <div v-for="(w,i) in z.warnings" :key="'w'+i" class="mig-warn-inline">⚠ {{ w }}</div>
+            </li>
+          </ul>
+        </div>
+      </div>
+
       <!-- Conflictos: bloquean la importación -->
       <div v-if="manifest.conflicts.length" class="mig-conflicts">
         <p class="mig-conflicts__title"><i class="bi bi-x-octagon-fill"></i> No se puede importar: hay recursos que ya existen</p>
@@ -289,6 +313,27 @@
           </table>
         </div>
 
+        <div v-if="job.report.instant_dns" class="mig-pw">
+          <h4 class="mig-h"><i class="bi bi-lightning-charge"></i> Migración instantánea: DNS del Hestia</h4>
+          <table class="mig-table">
+            <thead><tr><th>Dominio</th><th>Cambios</th><th>Estado</th></tr></thead>
+            <tbody>
+              <tr v-for="r in job.report.instant_dns" :key="'id'+r.domain">
+                <td class="mono">{{ r.domain }}</td>
+                <td class="mono">
+                  <div v-for="(c,i) in r.changed" :key="i">{{ c.record }} {{ c.type }} {{ c.old }} → {{ c.new }}</div>
+                  <div v-for="(w,i) in r.warnings" :key="'w'+i" class="mig-warn-inline">⚠ {{ w }}</div>
+                </td>
+                <td>
+                  <span v-if="r.error" class="mig-badge mig-badge--discard">{{ r.error }}</span>
+                  <span v-else-if="r.verified" class="mig-badge mig-badge--keep">✓ verificado en sus DNS</span>
+                  <span v-else class="mig-badge mig-badge--rewrite">pendiente de verificar</span>
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
         <div v-if="job.report.errors.length" class="mig-errs">
           <h4 class="mig-h">Errores</h4>
           <ul><li v-for="(e,i) in job.report.errors" :key="'e'+i"><span class="mono">{{ e.name }}</span>: {{ e.error }}</li></ul>
@@ -334,6 +379,7 @@ export default {
     const dnsZones = ref([])   // zonas DNS con registros editables (clon de proposed_records)
     const job = ref(null)
     const cacheToken = ref(null)  // backup ya descargado en el análisis (reutilizable)
+    const instantDns = ref(false) // migración instantánea: apuntar el DNS del Hestia aquí al terminar
     let pollTimer = null
 
     const canAnalyze = computed(() => {
@@ -448,6 +494,7 @@ export default {
       }
       // Reutilizar el backup ya descargado en el análisis (no volver a traerlo).
       if (forImport && cacheToken.value) fd.append('cache_token', cacheToken.value)
+      if (forImport && instantDns.value && source.value === 'ssh') fd.append('instant_dns', 'true')
       return fd
     }
 
@@ -527,7 +574,7 @@ export default {
 
     return {
       sourcePanel, source, file, serverPath, url, ssh, targetUserId, newUser, clientUsers, scope, scopeOptions,
-      savedSources, selectedSource, applySource, saveSource, deleteSource,
+      savedSources, selectedSource, applySource, saveSource, deleteSource, instantDns,
       analyzing, importing, manifest, dnsZones, job, canAnalyze, mailAccounts, targetUsername,
       onFile, analyze, startImport, fmtMb,
     }
@@ -566,6 +613,11 @@ input[type="file"].svq-input { padding: var(--sp-2); height: auto; }
 .mig-mini-btn--danger { padding: 0 .6rem; }
 .mig-mini-btn--danger:hover { border-color: var(--danger); color: var(--danger); }
 @media (max-width: 640px) { .mig-saved { grid-template-columns: 1fr; } }
+.mig-instant { display: flex; align-items: flex-start; gap: 8px; margin-top: var(--sp-3); padding: .6rem .8rem;
+  border: 1px solid var(--border); border-radius: var(--radius-md); background: var(--surface-inset); }
+.mig-instant input { margin-top: 3px; }
+.mig-instant-prev { margin-top: var(--sp-3); }
+.mig-warn-inline { color: var(--warning); font-size: .78rem; margin-top: 2px; }
 .mig-scope { display: flex; align-items: center; gap: var(--sp-3); flex-wrap: wrap; margin-top: var(--sp-3); }
 .mig-scope__label { font-size: var(--fs-sm); color: var(--text-muted); }
 .mig-check { display: inline-flex; align-items: center; gap: 6px; font-size: var(--fs-sm); }
