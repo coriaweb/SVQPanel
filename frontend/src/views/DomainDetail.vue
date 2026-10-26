@@ -754,6 +754,8 @@ define('WP_REDIS_PATH', '{{ redisStatus.socket }}');</pre>
                 </span>
               </span>
             </template>
+            <template v-else-if="mw.global_running"><span class="spinner"></span> El escaneo general del servidor está revisando otras webs; esta se revisará en su turno.
+              <template v-if="mw.last_scan"> Último escaneo de esta web: {{ formatDateTime(mw.last_scan.finished_at || mw.last_scan.started_at) }}.</template></template>
             <template v-else-if="mw.last_scan">Último escaneo: {{ formatDateTime(mw.last_scan.finished_at || mw.last_scan.started_at) }}
               · {{ mw.last_scan.files_seen }} ficheros ({{ mw.last_scan.files_checked }} revisados por ser nuevos o cambiados)
               <span v-if="mw.last_scan.status === 'error'" class="mw-err">· error: {{ mw.last_scan.error }}</span></template>
@@ -1770,7 +1772,8 @@ location @maintenance {
     const loadMalware = async () => {
       try { mw.value = await api.getDomainMalware(domainId.value) } catch { /* sin permisos o sin web */ }
       clearTimeout(mwTimer)
-      if (mw.value?.running && tab.value === 'bots') mwTimer = setTimeout(loadMalware, 8000)
+      if (tab.value === 'bots' && (mw.value?.running || mw.value?.global_running))
+        mwTimer = setTimeout(loadMalware, mw.value?.running ? 8000 : 20000)   // el general: más espaciado
     }
     const mwScan = async () => {
       mwScanning.value = true
