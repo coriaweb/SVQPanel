@@ -57,6 +57,27 @@ def _resolve_target(user_id: int, actor: User, db: Session) -> User:
     return target
 
 
+def _connection_info(db: Session) -> dict:
+    """Servidor y puerto a los que se conecta el cliente por SFTP. SFTP va por SSH
+    (no usa certificados SSL): vale cualquier nombre que apunte aquí; se da el del
+    panel, que siempre resuelve. Antes la pantalla decía "TU_SERVIDOR" y el cliente
+    no sabía qué poner."""
+    import re
+    import socket
+    from api.models.models_settings import Settings
+    s = db.query(Settings).first()
+    host = (getattr(s, "panel_hostname", None) or "").strip() or socket.getfqdn()
+    port = 22
+    try:
+        with open("/etc/ssh/sshd_config") as f:
+            m = re.search(r"^\s*Port\s+(\d+)", f.read(), re.M)
+        if m:
+            port = int(m.group(1))
+    except OSError:
+        pass
+    return {"host": host, "port": port}
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # Estado
 # ─────────────────────────────────────────────────────────────────────────────
@@ -78,6 +99,7 @@ async def get_sftp_status(
         "chroot_to":            sftp_manager.home_dir(target.username),
         "writable_dirs":        [f"/home/{target.username}/web",
                                   f"/home/{target.username}/files"],
+        **_connection_info(db),
     }
 
 

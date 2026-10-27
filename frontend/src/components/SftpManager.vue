@@ -79,9 +79,15 @@
         </div>
 
         <div class="sftp__alert sftp__alert--info">
-          <strong>Cómo conectar:</strong>
-          <code>sftp {{ status.username }}@TU_SERVIDOR</code>
-          — el cliente verá <code>web/</code>, <code>files/</code>, y <code>.ssh/</code>.
+          <strong>Datos de conexión</strong> (FileZilla, WinSCP, Cyberduck…):
+          <div class="sftp__conn">
+            <span>Protocolo</span><code>SFTP</code>
+            <span>Servidor</span><code>{{ status.host }}</code>
+            <span>Puerto</span><code>{{ status.port }}</code>
+            <span>Usuario</span><code>{{ status.username }}</code>
+          </div>
+          El cliente verá <code>web/</code>, <code>files/</code> y <code>.ssh/</code>.
+          También vale como servidor cualquier dominio suyo que apunte a este servidor.
         </div>
       </template>
 
@@ -107,7 +113,10 @@
             <div class="sftp__field">
               <label>Nombre (etiqueta)</label>
               <input class="sftp__input" v-model="newAcc.label" placeholder="dev1" pattern="[a-z][a-z0-9_]+">
-              <span class="sftp__muted">usuario: {{ status.username }}_{{ newAcc.label || 'xxx' }}</span>
+              <span class="sftp__muted">usuario: {{ previewUsername }}</span>
+              <span v-if="previewTruncated" class="sftp__muted">
+                <i class="bi bi-info-circle"></i> Linux admite 32 caracteres: el usuario se recorta.
+              </span>
             </div>
             <div class="sftp__field">
               <label>Carpeta destino</label>
@@ -154,13 +163,17 @@
             </tbody>
           </table>
         </div>
+        <p v-if="accounts.length" class="sftp__muted sftp__conn-note">
+          Se conectan por <strong>SFTP</strong> a <code>{{ status.host }}</code>, puerto
+          <code>{{ status.port }}</code>, con el usuario de la tabla.
+        </p>
       </div>
     </div>
   </div>
 </template>
 
 <script setup>
-import { ref, onMounted } from 'vue'
+import { ref, computed, onMounted } from 'vue'
 import api from '../services/api'
 import { formatDateTime } from '../utils/datetime'
 import PasswordField from './PasswordField.vue'
@@ -183,6 +196,12 @@ const showCreate = ref(false)
 const newAcc     = ref({ label: '', target_subpath: '', password: '' })
 
 const formatDate = formatDateTime
+
+// Igual que sftp_account_manager.make_username: Linux corta el usuario a 32
+// caracteres. Mostrarlo sin cortar hizo que un cliente tecleara uno inexistente.
+const fullUsername     = computed(() => `${status.value.username}_${newAcc.value.label || 'xxx'}`)
+const previewUsername  = computed(() => fullUsername.value.slice(0, 32))
+const previewTruncated = computed(() => fullUsername.value.length > 32)
 
 async function load() {
   loading.value = true
@@ -410,6 +429,9 @@ onMounted(load)
 /* Alertas */
 .sftp__alert { padding: .65rem .85rem; border-radius: var(--r-sm); font-size: .82rem; }
 .sftp__alert--info { background: color-mix(in srgb, var(--info) 8%, transparent); border: 1px solid color-mix(in srgb, var(--info) 25%, transparent); }
+.sftp__conn { display: grid; grid-template-columns: max-content 1fr; gap: .25rem .75rem; margin: .5rem 0; }
+.sftp__conn code { user-select: all; justify-self: start; }
+.sftp__conn-note { margin-top: .5rem; }
 .sftp__alert--warn { background: color-mix(in srgb, var(--warning) 10%, transparent); border: 1px solid color-mix(in srgb, var(--warning) 30%, transparent); }
 
 /* Tabla */
