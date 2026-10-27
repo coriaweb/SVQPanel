@@ -75,7 +75,25 @@ def _connection_info(db: Session) -> dict:
             port = int(m.group(1))
     except OSError:
         pass
-    return {"host": host, "port": port}
+    return {"host": host, "port": port, "host_fingerprints": host_fingerprints()}
+
+
+def host_fingerprints(ssh_dir: str = "/etc/ssh") -> list:
+    """Huellas SHA256 de las claves de host (lo que FileZilla/WinSCP enseñan la
+    primera vez): el cliente puede comprobar que conecta con este servidor."""
+    import base64
+    import hashlib
+    import os
+    out = []
+    for kind in ("ed25519", "ecdsa", "rsa"):
+        try:
+            with open(os.path.join(ssh_dir, f"ssh_host_{kind}_key.pub")) as f:
+                parts = f.read().split()
+            digest = hashlib.sha256(base64.b64decode(parts[1])).digest()
+        except (OSError, IndexError, ValueError):
+            continue
+        out.append({"type": parts[0], "sha256": "SHA256:" + base64.b64encode(digest).decode().rstrip("=")})
+    return out
 
 
 # ─────────────────────────────────────────────────────────────────────────────

@@ -85,6 +85,25 @@
             <span>Servidor</span><code>{{ status.host }}</code>
             <span>Puerto</span><code>{{ status.port }}</code>
             <span>Usuario</span><code>{{ status.username }}</code>
+            <template v-for="f in status.host_fingerprints || []" :key="f.type">
+              <span>Huella {{ f.type.replace('ssh-', '') }}</span><code>{{ f.sha256 }}</code>
+            </template>
+          </div>
+          <div class="sftp__conn-actions">
+            <a class="sftp__btn sftp__btn--primary" :href="clientUrl(status.username)">
+              <i class="bi bi-box-arrow-up-right"></i> Abrir en mi programa SFTP
+            </a>
+            <button class="sftp__btn sftp__btn--ghost" @click="downloadFilezilla(status.username)">
+              <i class="bi bi-download"></i> FileZilla (.xml)
+            </button>
+            <button class="sftp__btn sftp__btn--ghost" @click="downloadCyberduck(status.username)">
+              <i class="bi bi-download"></i> Cyberduck (.duck)
+            </button>
+          </div>
+          <div class="sftp__muted">
+            «Abrir» funciona si tiene instalado WinSCP, FileZilla o Cyberduck. En FileZilla, el
+            .xml se carga en <em>Archivo → Importar</em>. Ninguno lleva la contraseña: se pide al
+            conectar. La primera vez, el programa enseña una huella: debe coincidir con la de arriba.
           </div>
           El cliente verá <code>web/</code>, <code>files/</code> y <code>.ssh/</code>.
           También vale como servidor cualquier dominio suyo que apunte a este servidor.
@@ -152,6 +171,15 @@
                 <td><code>{{ a.target_relative }}</code></td>
                 <td><span class="sftp__chip">{{ a.ssh_keys.length }}</span></td>
                 <td class="sftp__ta-end">
+                  <a class="sftp__btn sftp__btn--icon" :href="clientUrl(a.username)" title="Abrir en mi programa SFTP">
+                    <i class="bi bi-box-arrow-up-right"></i>
+                  </a>
+                  <button class="sftp__btn sftp__btn--icon" @click="downloadFilezilla(a.username, a.label)" title="Configuración para FileZilla (.xml)">
+                    <i class="bi bi-filetype-xml"></i>
+                  </button>
+                  <button class="sftp__btn sftp__btn--icon" @click="downloadCyberduck(a.username, a.label)" title="Marcador para Cyberduck (.duck)">
+                    <i class="bi bi-bookmark"></i>
+                  </button>
                   <button class="sftp__btn sftp__btn--icon" @click="openAccPassword(a)" title="Cambiar contraseña">
                     <i class="bi bi-key"></i>
                   </button>
@@ -177,6 +205,7 @@ import { ref, computed, onMounted } from 'vue'
 import api from '../services/api'
 import { formatDateTime } from '../utils/datetime'
 import PasswordField from './PasswordField.vue'
+import { sftpUrl, filezillaXml, cyberduckBookmark, downloadText } from '../utils/sftpClientConfig'
 
 const props = defineProps({
   userId: { type: Number, required: true },
@@ -202,6 +231,17 @@ const formatDate = formatDateTime
 const fullUsername     = computed(() => `${status.value.username}_${newAcc.value.label || 'xxx'}`)
 const previewUsername  = computed(() => fullUsername.value.slice(0, 32))
 const previewTruncated = computed(() => fullUsername.value.length > 32)
+
+// Configuración para programas SFTP (sin contraseña: ver utils/sftpClientConfig)
+function connOf(username, label) {
+  const { host, port } = status.value
+  return { host, port, username, name: label ? `${status.value.username} · ${label}` : `${username} (SFTP)` }
+}
+const clientUrl = username => sftpUrl(connOf(username))
+const downloadFilezilla = (username, label) =>
+  downloadText(`${username}-filezilla.xml`, filezillaXml(connOf(username, label)))
+const downloadCyberduck = (username, label) =>
+  downloadText(`${username}.duck`, cyberduckBookmark(connOf(username, label)))
 
 async function load() {
   loading.value = true
@@ -432,6 +472,8 @@ onMounted(load)
 .sftp__conn { display: grid; grid-template-columns: max-content 1fr; gap: .25rem .75rem; margin: .5rem 0; }
 .sftp__conn code { user-select: all; justify-self: start; }
 .sftp__conn-note { margin-top: .5rem; }
+.sftp__conn-actions { display: flex; flex-wrap: wrap; gap: .5rem; margin: .5rem 0; }
+.sftp__conn-actions a, .sftp__ta-end a { text-decoration: none; }
 .sftp__alert--warn { background: color-mix(in srgb, var(--warning) 10%, transparent); border: 1px solid color-mix(in srgb, var(--warning) 30%, transparent); }
 
 /* Tabla */
