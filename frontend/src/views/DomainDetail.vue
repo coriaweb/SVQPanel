@@ -76,7 +76,7 @@
             En este panel solo se gestionan el <strong>correo</strong> y la <strong>zona DNS</strong>.
           </p>
           <div class="dd-actions-row">
-            <BaseButton variant="subtle" size="sm" icon="envelope" tag="router-link" v-bind="{ to: '/mail' }">Ir a Correo</BaseButton>
+            <BaseButton v-if="showMailLink" variant="subtle" size="sm" icon="envelope" tag="router-link" v-bind="{ to: '/mail' }">Ir a Correo</BaseButton>
             <BaseButton variant="subtle" size="sm" icon="diagram-3" tag="router-link" v-bind="{ to: '/dns' }">Ir a DNS</BaseButton>
           </div>
         </BaseCard>
@@ -1292,7 +1292,7 @@ define('WP_REDIS_PATH', '{{ redisStatus.socket }}');</pre>
           </div>
         </div>
 
-        <div class="adv-field">
+        <div v-if="showApacheField" class="adv-field">
           <label class="adv-label"><i class="bi bi-feather"></i> Apache <span class="dd-muted">(solo si el dominio usa Apache+Nginx)</span></label>
           <textarea class="svq-input mono adv-textarea" rows="8" v-model="advApache"
             placeholder="Header set X-Mi-Cabecera 'valor'"></textarea>
@@ -1456,6 +1456,9 @@ export default {
     // ── Directivas personalizadas (tab Avanzado) ──
     const advNginx  = ref('')
     const advApache = ref('')
+    // Sin Apache instalado el campo no sirve; se deja visible si ya tiene reglas
+    const showMailLink = computed(() => store.hasFeature('mail'))
+    const showApacheField = computed(() => store.hasFeature('apache') || !!advApache.value)
     const advSaving = ref(false)
     const advError  = ref('')
     const showNginxEx = ref(false)
@@ -2620,7 +2623,7 @@ location @maintenance {
       logTab, logLines, logsLoading, logsData, loadLogs, switchLog,
       logSearch, filteredLogLines, logLineClass, highlightLog,
       downloading, downloadSite, suspend, unsuspend, remove, goFiles,
-      advNginx, advApache, advSaving, advError, saveCustomConfig,
+      advNginx, advApache, advSaving, advError, saveCustomConfig, showApacheField, showMailLink,
       templates, tplSelected, tplApplying, tplError, templateCategories, tplPreview, tplPhp, applyTemplate,
       serverIps, ipv4Sel, ipv4Saving, saveIpv4,
       redirForm, redirSaving, redirError, redirChanged, saveRedirect,

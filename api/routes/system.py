@@ -8,9 +8,42 @@ from api.models.database import get_db
 from api.models.models_user import User
 from api.models.models_domain import Domain
 from api.models.models_dns import DnsZone
-from api.dependencies import require_admin
+from api.dependencies import require_admin, require_auth
 
 router = APIRouter()
+
+
+def installed_features() -> dict:
+    """Qué componentes opcionales se instalaron (para ocultarlos en la UI).
+
+    Mismas fuentes que ya usa el backend para rechazar esas rutas: los flags
+    del .env que escribe install.sh y webserver.conf. CrowdSec, por su binario.
+    """
+    import os
+    import shutil
+    from scripts.webserver_config import get_webserver
+
+    def _flag(name):
+        return os.getenv(name, "false").lower() == "true"
+
+    try:
+        apache = get_webserver() in ("apache", "apache+nginx")
+    except Exception:
+        apache = False
+    mail = _flag("MAIL_ENABLED")
+    return {
+        "mail":     mail,
+        "webmail":  mail and _flag("ROUNDCUBE_ENABLED"),
+        "mariadb":  _flag("MARIADB_ENABLED"),
+        "apache":   apache,
+        "crowdsec": bool(shutil.which("cscli")),
+    }
+
+
+@router.get("/system/features")
+async def get_installed_features(_=Depends(require_auth)):
+    """Componentes opcionales instalados en este servidor."""
+    return installed_features()
 
 
 @router.get("/system/stats")

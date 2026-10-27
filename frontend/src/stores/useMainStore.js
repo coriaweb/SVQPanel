@@ -37,6 +37,19 @@ export const useMainStore = defineStore('main', () => {
 
   const closeMobileMenu = () => { mobileMenuOpen.value = false }
 
+  // ── Componentes instalados (correo, MariaDB, Apache…) ─────────────────
+  // Lo no instalado se oculta del menú y el router no deja entrar. Se guarda
+  // en localStorage para que el guard del router lo tenga sin esperar a la red.
+  // Mientras no se sepa (null) se muestra todo.
+  const features = ref(JSON.parse(localStorage.getItem('svq_features') || 'null'))
+  const hasFeature = (name) => !features.value || features.value[name] !== false
+  const loadFeatures = async (api) => {
+    try {
+      features.value = await api.get('/api/system/features')
+      localStorage.setItem('svq_features', JSON.stringify(features.value))
+    } catch { /* sin respuesta: se queda lo que hubiera */ }
+  }
+
   // ── Marca blanca ──────────────────────────────────────────────────────
   // Mezcla dos colores hex (t=0 → a, t=1 → b) para derivar tonos del acento
   const _mixHex = (a, b, t) => {
@@ -175,6 +188,9 @@ export const useMainStore = defineStore('main', () => {
     toggleTheme,
     toggleSidebar,
     closeMobileMenu,
+    features,
+    hasFeature,
+    loadFeatures,
     showNotification,
     dismissNotification,
     setLoading,

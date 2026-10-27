@@ -270,17 +270,17 @@ export default {
         items: [
           { to: '/dashboard', label: 'Inicio',     icon: 'bi-speedometer2' },
           { to: '/domains',   label: 'Dominios',   icon: 'bi-globe2' },
-          { to: '/databases', label: 'Bases de datos', icon: 'bi-database' },
+          { to: '/databases', label: 'Bases de datos', icon: 'bi-database', feature: 'mariadb' },
         ],
       },
       {
         id: 'mail-dns', label: 'Correo y DNS',
         items: [
-          { to: '/mail',       label: 'Correo',         icon: 'bi-envelope' },
+          { to: '/mail',       label: 'Correo',         icon: 'bi-envelope', feature: 'mail' },
           { to: '/dns',        label: 'DNS',            icon: 'bi-diagram-3' },
-          { to: '/mail-queue', label: 'Cola de correo', icon: 'bi-envelope-paper', roles: ['admin'] },
-          { to: '/outbound-mail', label: 'Envío saliente', icon: 'bi-send-check', roles: ['admin'] },
-          { to: '/antispam',   label: 'Antispam',       icon: 'bi-shield-check', roles: ['admin'] },
+          { to: '/mail-queue', label: 'Cola de correo', icon: 'bi-envelope-paper', roles: ['admin'], feature: 'mail' },
+          { to: '/outbound-mail', label: 'Envío saliente', icon: 'bi-send-check', roles: ['admin'], feature: 'mail' },
+          { to: '/antispam',   label: 'Antispam',       icon: 'bi-shield-check', roles: ['admin'], feature: 'mail' },
         ],
       },
       {
@@ -299,8 +299,8 @@ export default {
           { to: '/users',      label: 'Mis clientes', icon: 'bi-people',  roles: ['reseller'] },
           { to: '/plans',      label: 'Planes',   icon: 'bi-stack',       roles: ['admin', 'reseller'] },
           { to: '/server-ips', label: 'IPs',      icon: 'bi-hdd-network', roles: ['admin'] },
-          { to: '/db-tuner',   label: 'Optimizar BD', icon: 'bi-speedometer', roles: ['admin'] },
-          { to: '/mail-monitor', label: 'Monitor de correo', icon: 'bi-envelope-paper', roles: ['admin'] },
+          { to: '/db-tuner',   label: 'Optimizar BD', icon: 'bi-speedometer', roles: ['admin'], feature: 'mariadb' },
+          { to: '/mail-monitor', label: 'Monitor de correo', icon: 'bi-envelope-paper', roles: ['admin'], feature: 'mail' },
           { to: '/migrations', label: 'Migrar / Importar', icon: 'bi-box-arrow-in-down', roles: ['admin'] },
         ],
       },
@@ -327,6 +327,7 @@ export default {
     ]
 
     const canSee = (item) => {
+      if (item.feature && !store.hasFeature(item.feature)) return false
       if (!item.roles) return true
       const u = currentUser.value || {}
       return item.roles.some((r) => {
@@ -459,6 +460,7 @@ export default {
       loadServerLoad()
       loadTimer = setInterval(loadServerLoad, 15000)  // refresco cada 15s
       checkLicense()
+      if (isAuthenticated.value) store.loadFeatures(api)
     })
     onUnmounted(() => {
       if (loadTimer) clearInterval(loadTimer)
@@ -467,7 +469,7 @@ export default {
     // Cargar al iniciar sesión (cuando cambia la autenticación)
     watch(isAuthenticated, (v) => {
       if (v) {
-        loadServerLoad(); checkLicense(); loadPanelTimezone(api)
+        loadServerLoad(); checkLicense(); loadPanelTimezone(api); store.loadFeatures(api)
         api.startSessionRenewal()
       } else {
         api.stopSessionRenewal()

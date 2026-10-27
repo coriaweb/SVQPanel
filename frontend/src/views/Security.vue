@@ -366,7 +366,7 @@
         {key:'connections', icon:'broadcast',       label:'Conexiones'},
         {key:'audit',       icon:'journal-text',    label:'Auditoría'},
         {key:'badbots',     icon:'robot',           label:'Bad Bots'},
-      ]" :key="t.key"
+      ].filter(t => t.key !== 'crowdsec' || store.hasFeature('crowdsec'))" :key="t.key"
         class="sec-tab" :class="{'sec-tab--active': tab===t.key}"
         @click="changeTab(t.key)">
         <i :class="'bi bi-'+t.icon"></i> {{ t.label }}
@@ -1126,6 +1126,9 @@ import { ref, computed, onMounted } from 'vue'
 import api from '../services/api'
 import { formatDateTime } from '../utils/datetime'
 import Modal from '../components/Modal.vue'
+import { useMainStore } from '../stores/useMainStore'
+
+const store = useMainStore()   // store.hasFeature: ocultar CrowdSec si no está instalado
 
 // ─── State ──────────────────────────────────────────────────────────────────
 const tab = ref('firewall')

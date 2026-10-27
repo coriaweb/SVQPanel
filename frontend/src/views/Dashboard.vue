@@ -15,7 +15,7 @@
     </header>
 
     <!-- ===== Alertas de cuentas de correo mal configuradas ===== -->
-    <MailAuthAlert />
+    <MailAuthAlert v-if="hasFeature('mail')" />
 
     <!-- ===== Métricas ===== -->
     <div class="metrics-grid">
@@ -108,7 +108,7 @@
             </span>
             <i class="bi bi-chevron-right qa-chevron"></i>
           </router-link>
-          <router-link to="/databases" class="quick-action-btn">
+          <router-link v-if="hasFeature('mariadb')" to="/databases" class="quick-action-btn">
             <span class="qa-icon"><i class="bi bi-database"></i></span>
             <span class="qa-text">
               <span class="qa-label">Nueva base de datos</span>
@@ -116,7 +116,7 @@
             </span>
             <i class="bi bi-chevron-right qa-chevron"></i>
           </router-link>
-          <router-link to="/mail" class="quick-action-btn">
+          <router-link v-if="hasFeature('mail')" to="/mail" class="quick-action-btn">
             <span class="qa-icon"><i class="bi bi-envelope"></i></span>
             <span class="qa-text">
               <span class="qa-label">Cuenta de correo</span>
@@ -274,6 +274,7 @@ export default {
     }
 
     const loadDbVersion = async () => {
+      if (!store.hasFeature('mariadb')) return
       try {
         const info = await api.get('/api/databases/info')
         if (info?.version) {
@@ -293,6 +294,7 @@ export default {
       totalUsers, totalDomains, activeDomains, totalSSL, recentDomains,
       stats, topServices, loadingDomains, loadingStats, loadingServices,
       sslPct, loadPct, loadTone, loadLabel, reload, fmtGB,
+      hasFeature: store.hasFeature,
     }
   },
 }

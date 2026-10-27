@@ -97,37 +97,37 @@ const routes = [
     path: '/databases',
     name: 'Databases',
     component: Databases,
-    meta: { requiresAuth: true }
+    meta: { feature: 'mariadb', requiresAuth: true }
   },
   {
     path: '/db-tuner',
     name: 'DbTuner',
     component: DbTuner,
-    meta: { requiresAuth: true, requiresAdmin: true }
+    meta: { feature: 'mariadb', requiresAuth: true, requiresAdmin: true }
   },
   {
     path: '/mail-monitor',
     name: 'MailMonitor',
     component: () => import('../views/MailMonitor.vue'),
-    meta: { requiresAuth: true, requiresAdmin: true }
+    meta: { feature: 'mail', requiresAuth: true, requiresAdmin: true }
   },
   {
     path: '/mail-queue',
     name: 'MailQueue',
     component: MailQueue,
-    meta: { requiresAuth: true, requiresAdmin: true }
+    meta: { feature: 'mail', requiresAuth: true, requiresAdmin: true }
   },
   {
     path: '/outbound-mail',
     name: 'OutboundMail',
     component: OutboundMail,
-    meta: { requiresAuth: true, requiresAdmin: true }
+    meta: { feature: 'mail', requiresAuth: true, requiresAdmin: true }
   },
   {
     path: '/antispam',
     name: 'Antispam',
     component: Antispam,
-    meta: { requiresAuth: true, requiresAdmin: true }
+    meta: { feature: 'mail', requiresAuth: true, requiresAdmin: true }
   },
   {
     path: '/processes',
@@ -157,7 +157,7 @@ const routes = [
     path: '/mail',
     name: 'Mail',
     component: Mail,
-    meta: { requiresAuth: true }
+    meta: { feature: 'mail', requiresAuth: true }
   },
   {
     path: '/settings',
@@ -268,6 +268,15 @@ router.beforeEach((to, from, next) => {
   if (to.meta.requiresAuth && !authenticated) {
     next('/login')
     return
+  }
+
+  // Componente no instalado en este servidor (p. ej. /mail sin correo)
+  if (to.meta.feature) {
+    const features = JSON.parse(localStorage.getItem('svq_features') || 'null')
+    if (features && features[to.meta.feature] === false) {
+      next('/dashboard')
+      return
+    }
   }
 
   // Si la ruta requiere admin
