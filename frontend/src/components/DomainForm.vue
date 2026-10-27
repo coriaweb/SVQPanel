@@ -80,11 +80,11 @@
     <div v-if="!isEditing && !form.is_subdomain" class="mb-3 form-check">
       <input id="mail_dns_only" v-model="form.mail_dns_only" type="checkbox" class="form-check-input" />
       <label for="mail_dns_only" class="form-check-label">
-        Solo correo / DNS (sin alojar la web aquí)
+        {{ hasMail ? 'Solo correo / DNS' : 'Solo DNS' }} (sin alojar la web aquí)
       </label>
       <div class="form-text">
         Marca esto si la web del dominio está en otro servidor (su registro A apunta fuera)
-        y aquí solo quieres gestionar el <strong>correo</strong> y/o la <strong>zona DNS</strong>.
+        y aquí solo quieres gestionar <template v-if="hasMail">el <strong>correo</strong> y/o </template>la <strong>zona DNS</strong>.
         No se creará vhost ni PHP.
       </div>
     </div>
@@ -253,7 +253,7 @@
         </label>
       </div>
 
-      <div class="mb-3 form-check">
+      <div v-if="hasMail" class="mb-3 form-check">
         <input id="mail_enabled" v-model="form.mail_enabled" type="checkbox" class="form-check-input" />
         <label for="mail_enabled" class="form-check-label">
           <i class="bi bi-envelope me-1"></i> Soporte Correo
@@ -512,6 +512,7 @@ export default {
     })
 
     return {
+      hasMail: computed(() => store.hasFeature('mail')),
       form, loading, isEditing, users,
       isAdminOrReseller, isWebDomain, isMailDnsOnly, availablePhpVersions, deprecatedPhp,
       templates, templateCategories, templatesByCategory,

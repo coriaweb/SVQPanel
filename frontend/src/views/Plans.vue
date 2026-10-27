@@ -27,7 +27,7 @@
         <thead>
           <tr>
             <th>Nombre</th><th>Propietario</th><th>Disco</th><th>Tráfico/mes</th>
-            <th>Dominios</th><th>BDs</th><th>Buzones</th><th>DNS</th>
+            <th>Dominios</th><th v-if="hasDb">BDs</th><th v-if="hasMail">Buzones</th><th>DNS</th>
             <th style="text-align:center">Usuarios</th><th style="text-align:right">Acciones</th>
           </tr>
         </thead>
@@ -45,8 +45,8 @@
             <td>{{ formatMB(p.disk_quota_mb) }}</td>
             <td>{{ formatMB(p.traffic_quota_mb_month) }}</td>
             <td>{{ unlim(p.domains_limit) }}</td>
-            <td>{{ unlim(p.databases_limit) }}</td>
-            <td>{{ unlim(p.mailboxes_limit) }}</td>
+            <td v-if="hasDb">{{ unlim(p.databases_limit) }}</td>
+            <td v-if="hasMail">{{ unlim(p.mailboxes_limit) }}</td>
             <td>{{ unlim(p.dns_zones_limit) }}</td>
             <td style="text-align:center"><span class="pl-badge pl-badge--off">{{ p.users_count }}</span></td>
             <td style="text-align:right">
@@ -82,8 +82,8 @@
           <div><span>Disco</span><b>{{ formatMB(p.disk_quota_mb) }}</b></div>
           <div><span>Tráfico/mes</span><b>{{ formatMB(p.traffic_quota_mb_month) }}</b></div>
           <div><span>Dominios</span><b>{{ unlim(p.domains_limit) }}</b></div>
-          <div><span>BDs</span><b>{{ unlim(p.databases_limit) }}</b></div>
-          <div><span>Buzones</span><b>{{ unlim(p.mailboxes_limit) }}</b></div>
+          <div v-if="hasDb"><span>BDs</span><b>{{ unlim(p.databases_limit) }}</b></div>
+          <div v-if="hasMail"><span>Buzones</span><b>{{ unlim(p.mailboxes_limit) }}</b></div>
           <div><span>DNS</span><b>{{ unlim(p.dns_zones_limit) }}</b></div>
         </div>
       </div>
@@ -130,11 +130,11 @@
             <label class="form-label small">Dominios</label>
             <input type="number" class="form-control form-control-sm" v-model.number="form.domains_limit" min="0">
           </div>
-          <div class="col-md-3">
+          <div v-if="hasDb" class="col-md-3">
             <label class="form-label small">Bases de datos</label>
             <input type="number" class="form-control form-control-sm" v-model.number="form.databases_limit" min="0">
           </div>
-          <div class="col-md-3">
+          <div v-if="hasMail" class="col-md-3">
             <label class="form-label small">Buzones de correo</label>
             <input type="number" class="form-control form-control-sm" v-model.number="form.mailboxes_limit" min="0">
           </div>
@@ -171,6 +171,12 @@ import { ref, computed, onMounted } from 'vue'
 import api from '../services/api'
 import Modal from '../components/Modal.vue'
 import SizeInput from '../components/SizeInput.vue'
+import { useMainStore } from '../stores/useMainStore'
+
+// Sin correo / MariaDB instalados, sus límites no pintan nada en el plan
+const store   = useMainStore()
+const hasMail = computed(() => store.hasFeature('mail'))
+const hasDb   = computed(() => store.hasFeature('mariadb'))
 
 const plans     = ref([])
 const resellers = ref([])
