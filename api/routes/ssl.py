@@ -80,11 +80,13 @@ def _domain_ssl_response(domain: Domain, ssl_manager: SSLManager) -> SSLResponse
     cert_info = None
     if raw:
         cert_info = SSLCertInfo(**{k: raw[k] for k in SSLCertInfo.model_fields if k in raw})
-    # Si hay cert en disco pero la BD dice false, corregir el flag
-    ssl_enabled = domain.ssl_enabled or bool(cert_info)
+    # El estado es el de la BD: es lo que usa el vhost. Antes, con un certificado en
+    # disco (p. ej. el wildcard del dominio padre) se daba por activo aunque el vhost
+    # no escuchara en 443: la pestaña decía "Activo" y la web daba error de SSL, sin
+    # botón para activarlo (caso real: tienda.techocamper.com).
     return SSLResponse(
         domain_id=domain.id,
-        ssl_enabled=ssl_enabled,
+        ssl_enabled=bool(domain.ssl_enabled),
         force_https=domain.force_https or False,
         hsts_enabled=domain.hsts_enabled or False,
         ssl_expires=domain.ssl_expires,

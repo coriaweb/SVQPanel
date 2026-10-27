@@ -122,6 +122,18 @@ def _rebuild_mail_tls(db) -> None:
         logger.warning(f"No se pudo rehacer el TLS del correo: {e}")
 
 
+def _uncovered_children(db, domain) -> list:
+    """Subdominios de `domain` sin HTTPS que ya cubre su certificado (wildcard)."""
+    from api.models.models_domain import Domain
+    from scripts import ssl_paths
+    if domain.is_subdomain:
+        return []
+    kids = db.query(Domain).filter(Domain.is_subdomain == True,  # noqa: E712
+                                   Domain.parent_domain == domain.domain_name).all()
+    return [k for k in kids if not k.ssl_enabled
+            and ssl_paths.inherited_from(k.domain_name) == domain.domain_name]
+
+
 def run_web_issue(domain_id: int, email: str, hsts: bool = False, wildcard: bool = False) -> None:
     """Emite el cert del dominio, actualiza la BD y regenera el vhost."""
     kind = "web"
@@ -171,6 +183,14 @@ def run_web_issue(domain_id: int, email: str, hsts: bool = False, wildcard: bool
         domain.ssl_renewed_at = datetime.utcnow()
         domain.force_https    = True
         domain.hsts_enabled   = bool(hsts)
+        if wildcard:
+            # Los subdominios que el wildcard cubre y aún no tenían HTTPS lo usan ya
+            # (_regenerate solo rehace los que lo tenían activo).
+            for child in _uncovered_children(db, domain):
+                child.ssl_enabled = True
+                child.force_https = True
+                child.ssl_expires = domain.ssl_expires
+                job_line(kind, domain_id, f"HTTPS activado en {child.domain_name} con el wildcard")
         db.commit()
         db.refresh(domain)
 
