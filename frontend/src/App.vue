@@ -249,6 +249,8 @@ export default {
         licenseBad.value = !st.valid
       } catch (e) { /* silencioso: no bloquear la UI por esto */ }
     }
+    // Tras activar la licencia en su vista, la banda seguía hasta recargar
+    watch(() => route.path, () => { if (licenseBad.value) checkLicense() })
 
     // Navegar y cerrar el drawer móvil
     const navigate = (to) => {

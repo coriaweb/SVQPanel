@@ -62,6 +62,11 @@ async def license_status(
     """Estado de la licencia. refresh=True fuerza una validación contra el
     servidor (admin lo usa tras activar); por defecto lee la caché."""
     result = license_client.validate(force=True) if refresh else license_client.status()
+    if not refresh and not result.get("valid") and result.get("reason") != "no_key":
+        # Sin caché (key puesta por el install, aún sin validar) o caducada:
+        # revalidar como hace el middleware, o la banda decía "no válida" con
+        # una licencia activa hasta que alguien abría la vista Licencia.
+        result = license_client.validate()
     try:
         _persist(db, result)
     except Exception:

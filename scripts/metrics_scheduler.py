@@ -35,11 +35,10 @@ BOUNCER_HEALTH_SECONDS = 600  # salud del firewall-bouncer de CrowdSec: cada 10 
 def _loop():
     logger.info("Tareas periódicas del panel: scheduler iniciado")
     time.sleep(15)
-    last_dns = 0.0
-    last_license = 0.0
-    last_disk = 0.0
-    last_wp_attack = 0.0
-    last_bouncer = 0.0
+    # -inf y no 0.0: time.monotonic() cuenta desde el arranque del SO, así que
+    # en un servidor recién encendido (now < 12h) la primera validación de la
+    # licencia esperaba hasta 12h y la UI la daba por no válida hasta entonces.
+    last_dns = last_license = last_disk = last_wp_attack = last_bouncer = float("-inf")
     while True:
         try:
             _sample_once()
