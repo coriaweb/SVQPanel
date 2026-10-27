@@ -2044,15 +2044,23 @@ def import_dns(backup: "HestiaBackup", zoneinfo: Dict, owner, db, report: Import
 
     mgr = DNSManager()
 
-    # NS/SOA + zona base la crea SVQPanel apuntando a ESTE servidor.
+    # NS/SOA + zona base la crea SVQPanel apuntando a ESTE servidor. Sin pasar
+    # ns1 explícito el SOA quedaba con el placeholder ns1.svqpanel.local
+    # (default de la columna): las zonas importadas lo publicaban en el cluster.
+    from scripts.dns_manager import get_panel_nameservers
     try:
-        serial = mgr.create_zone(domain, ipv4=server_ipv4 or old_ip)
+        ns1, ns2 = get_panel_nameservers(db)
+    except Exception:
+        ns1 = ns2 = None
+    try:
+        serial = mgr.create_zone(domain, ipv4=server_ipv4 or old_ip, ns1=ns1, ns2=ns2)
     except PermissionError:
         from scripts.dns_manager import next_serial
         serial = next_serial()
 
     zone = DnsZone(domain_name=domain, serial=serial,
-                   ip_address=server_ipv4 or old_ip, ttl=int(zoneinfo.get("ttl") or 14400))
+                   ip_address=server_ipv4 or old_ip, soa_ns=ns1 or None,
+                   ttl=int(zoneinfo.get("ttl") or 14400))
     db.add(zone)
     db.commit()
     db.refresh(zone)

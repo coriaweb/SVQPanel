@@ -25,7 +25,10 @@ class DnsZone(Base):
 
     # Configuración de la zona (estilo Hestia)
     ip_address    = Column(String(45), nullable=True)             # IP del servidor para registros A
-    soa_ns        = Column(String(255), default="ns1.svqpanel.local")  # Nameserver SOA
+    # Nameserver del SOA. NULL = los NS del panel (get_panel_nameservers): antes
+    # el default era el placeholder ns1.svqpanel.local y se colaba en el SOA de
+    # cualquier zona creada sin pasarlo (las del importador de Hestia).
+    soa_ns        = Column(String(255), nullable=True)
     ttl           = Column(Integer, default=14400)                # $TTL global de la zona
     template      = Column(String(50), default="default")        # Plantilla DNS usada
     dnssec_enabled = Column(Boolean, default=False)               # DNSSEC activo

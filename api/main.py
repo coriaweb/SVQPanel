@@ -341,7 +341,9 @@ def _run_migrations():
         )""",
         # Fase 7b: campos extra en dns_zones
         "ALTER TABLE dns_zones ADD COLUMN IF NOT EXISTS ip_address VARCHAR(45)",
-        "ALTER TABLE dns_zones ADD COLUMN IF NOT EXISTS soa_ns VARCHAR(255) DEFAULT 'ns1.svqpanel.local'",
+        "ALTER TABLE dns_zones ADD COLUMN IF NOT EXISTS soa_ns VARCHAR(255)",
+        # El default antiguo (placeholder .local) se colaba en el SOA; NULL = NS del panel
+        "ALTER TABLE dns_zones ALTER COLUMN soa_ns DROP DEFAULT",
         "ALTER TABLE dns_zones ADD COLUMN IF NOT EXISTS ttl INTEGER DEFAULT 14400",
         "ALTER TABLE dns_zones ADD COLUMN IF NOT EXISTS template VARCHAR(50) DEFAULT 'default'",
         "ALTER TABLE dns_zones ADD COLUMN IF NOT EXISTS dnssec_enabled BOOLEAN DEFAULT FALSE",

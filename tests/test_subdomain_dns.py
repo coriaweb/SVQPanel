@@ -63,3 +63,37 @@ def test_vhost_dominio_normal_si_lleva_www():
     dom = generate_nginx_config("zococoria.es", "zococori", "8.2",
                                 is_subdomain=False, canonical_domain="www")
     assert "www.zococoria.es" in dom
+
+
+def test_importador_crea_la_zona_con_el_ns_real_en_el_soa(monkeypatch):
+    """import_dns creaba la DnsZone sin soa_ns y caía al default de la columna,
+    el placeholder ns1.svqpanel.local: el SOA de todas las zonas importadas lo
+    publicaba en el cluster (beyuri.com, oct 2026)."""
+    from unittest.mock import MagicMock
+    from scripts import hestia_import as H
+    import scripts.dns_manager as dm
+    import api.routes.dns as routes_dns
+    from api.models.database import load_all_models
+    from api.models.models_dns import DnsZone
+    load_all_models()
+
+    monkeypatch.setattr(routes_dns, "find_parent_zone", lambda db, d: None)
+    monkeypatch.setattr(dm, "get_panel_nameservers", lambda db: ("nssvq1.svqhost.red", "nssvq2.svqhost.red"))
+    creada = {}
+    monkeypatch.setattr(dm.DNSManager, "__init__", lambda self: None)
+    monkeypatch.setattr(dm.DNSManager, "create_zone",
+                        lambda self, domain, ipv4=None, ipv6=None, ns1=None, ns2=None, **k:
+                        creada.update(ns1=ns1, ns2=ns2) or 2026102701)
+    monkeypatch.setattr(dm.DNSManager, "reload_zone", lambda self, *a, **k: None)
+    db = MagicMock()
+    H.import_dns(None, {"domain": "beyuri.com", "ip": "185.104.188.41", "ttl": 14400},
+                 MagicMock(), db, H.ImportReport(), approved_records=[],
+                 server_ipv4="185.104.188.223")
+    zonas = [c.args[0] for c in db.add.call_args_list if isinstance(c.args[0], DnsZone)]
+    assert zonas and zonas[0].soa_ns == "nssvq1.svqhost.red"
+    assert creada == {"ns1": "nssvq1.svqhost.red", "ns2": "nssvq2.svqhost.red"}
+
+
+def test_columna_soa_ns_sin_placeholder_por_defecto():
+    from api.models.models_dns import DnsZone
+    assert DnsZone.__table__.c.soa_ns.default is None
