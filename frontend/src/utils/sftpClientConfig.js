@@ -5,11 +5,6 @@
 const esc = s => String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;')
   .replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&apos;')
 
-// Enlace sftp:// — lo abren WinSCP, FileZilla o Cyberduck si están instalados.
-export function sftpUrl({ host, port, username }) {
-  return `sftp://${encodeURIComponent(username)}@${host}:${port}/`
-}
-
 // FileZilla: Archivo → Importar… (formato del Gestor de sitios).
 // Protocol 1 = SFTP · Logontype 2 = "Pedir contraseña".
 export function filezillaXml({ host, port, username, name }) {

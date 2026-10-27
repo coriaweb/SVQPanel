@@ -90,10 +90,7 @@
             </template>
           </div>
           <div class="sftp__conn-actions">
-            <a class="sftp__btn sftp__btn--primary" :href="clientUrl(status.username)">
-              <i class="bi bi-box-arrow-up-right"></i> Abrir en mi programa SFTP
-            </a>
-            <button class="sftp__btn sftp__btn--ghost" @click="downloadFilezilla(status.username)">
+            <button class="sftp__btn sftp__btn--primary" @click="downloadFilezilla(status.username)">
               <i class="bi bi-download"></i> FileZilla (.xml)
             </button>
             <button class="sftp__btn sftp__btn--ghost" @click="downloadCyberduck(status.username)">
@@ -101,8 +98,8 @@
             </button>
           </div>
           <div class="sftp__muted">
-            «Abrir» funciona si tiene instalado WinSCP, FileZilla o Cyberduck. En FileZilla, el
-            .xml se carga en <em>Archivo → Importar</em>. Ninguno lleva la contraseña: se pide al
+            En FileZilla, el .xml se carga en <em>Archivo → Importar</em>; el .duck de Cyberduck
+            se abre con doble clic. Ninguno lleva la contraseña: se pide al
             conectar. La primera vez, el programa enseña una huella: debe coincidir con la de arriba.
           </div>
           El cliente verá <code>web/</code>, <code>files/</code> y <code>.ssh/</code>.
@@ -171,9 +168,6 @@
                 <td><code>{{ a.target_relative }}</code></td>
                 <td><span class="sftp__chip">{{ a.ssh_keys.length }}</span></td>
                 <td class="sftp__ta-end">
-                  <a class="sftp__btn sftp__btn--icon" :href="clientUrl(a.username)" title="Abrir en mi programa SFTP">
-                    <i class="bi bi-box-arrow-up-right"></i>
-                  </a>
                   <button class="sftp__btn sftp__btn--icon" @click="downloadFilezilla(a.username, a.label)" title="Configuración para FileZilla (.xml)">
                     <i class="bi bi-filetype-xml"></i>
                   </button>
@@ -205,7 +199,7 @@ import { ref, computed, onMounted } from 'vue'
 import api from '../services/api'
 import { formatDateTime } from '../utils/datetime'
 import PasswordField from './PasswordField.vue'
-import { sftpUrl, filezillaXml, cyberduckBookmark, downloadText } from '../utils/sftpClientConfig'
+import { filezillaXml, cyberduckBookmark, downloadText } from '../utils/sftpClientConfig'
 
 const props = defineProps({
   userId: { type: Number, required: true },
@@ -237,7 +231,6 @@ function connOf(username, label) {
   const { host, port } = status.value
   return { host, port, username, name: label ? `${status.value.username} · ${label}` : `${username} (SFTP)` }
 }
-const clientUrl = username => sftpUrl(connOf(username))
 const downloadFilezilla = (username, label) =>
   downloadText(`${username}-filezilla.xml`, filezillaXml(connOf(username, label)))
 const downloadCyberduck = (username, label) =>
