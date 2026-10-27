@@ -1980,6 +1980,26 @@ def _normalize_txt_content(content: str) -> str:
     return c.replace("\\;", ";").strip()
 
 
+def _mark_subdomain(db, d, parent_name: str, owner, server_ipv6: Optional[str], report: ImportReport):
+    """Marca el Domain como subdominio de `parent_name` y regenera su vhost. La web
+    se importa ANTES que el DNS, con vhost de dominio principal (www.sub… + forzar
+    www); si no se regenera, el subdominio redirige a www.sub.dominio, que no
+    existe (caso real: tienda.techocamper.com)."""
+    d.is_subdomain = True
+    d.parent_domain = parent_name
+    # apply_subdomain_dns publica el AAAA con server_ipv6: hay que
+    # reflejarlo en el Domain o el panel creerá que el subdominio no
+    # tiene IPv6 y no actualizará ese registro si la IPv6 cambia.
+    if server_ipv6 and not d.ipv6:
+        d.ipv6 = server_ipv6
+    db.commit()
+    try:
+        from api.routes.domains import _regenerate_domain_vhost
+        _regenerate_domain_vhost(d, owner)
+    except Exception as e:
+        report.fail("web-vhost", d.domain_name, f"vhost de subdominio no regenerado: {e}")
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # Importación de DNS (zona + registros aprobados)
 # ─────────────────────────────────────────────────────────────────────────────
@@ -2016,14 +2036,7 @@ def import_dns(backup: "HestiaBackup", zoneinfo: Dict, owner, db, report: Import
         if res == "parent":
             d = db.query(_Domain).filter(_Domain.domain_name == domain).first()
             if d:
-                d.is_subdomain = True
-                d.parent_domain = parent.domain_name
-                # apply_subdomain_dns publica el AAAA con server_ipv6: hay que
-                # reflejarlo en el Domain o el panel creerá que el subdominio no
-                # tiene IPv6 y no actualizará ese registro si la IPv6 cambia.
-                if server_ipv6 and not d.ipv6:
-                    d.ipv6 = server_ipv6
-                db.commit()
+                _mark_subdomain(db, d, parent.domain_name, owner, server_ipv6, report)
             report.ok("dns", domain,
                       f"subdominio de {parent.domain_name}: A en la zona padre "
                       "(sin zona propia)")
@@ -2642,14 +2655,7 @@ def _ensure_default_zone(domain: str, owner, db, report, server_ipv4, server_ipv
         if res == "parent":
             d = db.query(_Domain).filter(_Domain.domain_name == domain).first()
             if d:
-                d.is_subdomain = True
-                d.parent_domain = parent.domain_name
-                # apply_subdomain_dns publica el AAAA con server_ipv6: hay que
-                # reflejarlo en el Domain o el panel creerá que el subdominio no
-                # tiene IPv6 y no actualizará ese registro si la IPv6 cambia.
-                if server_ipv6 and not d.ipv6:
-                    d.ipv6 = server_ipv6
-                db.commit()
+                _mark_subdomain(db, d, parent.domain_name, owner, server_ipv6, report)
             report.ok("dns", domain, f"subdominio de {parent.domain_name} (A/AAAA en la zona padre)")
             return
 

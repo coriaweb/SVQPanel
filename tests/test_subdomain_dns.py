@@ -37,6 +37,26 @@ def test_vhost_subdominio_sin_www_ni_canonical():
     assert "301" not in sub or "www." not in sub.split("server_name")[1][:200]
 
 
+def test_importador_regenera_el_vhost_al_marcar_subdominio(monkeypatch):
+    """La web se importa antes que el DNS, con vhost de dominio principal (www.sub
+    + forzar www). Al descubrir que es subdominio hay que regenerarlo, o redirige a
+    www.tienda.techocamper.com, que no existe (caso real)."""
+    from types import SimpleNamespace
+    from scripts import hestia_import as H
+    import api.routes.domains as routes_domains
+
+    regen = []
+    monkeypatch.setattr(routes_domains, "_regenerate_domain_vhost",
+                        lambda d, owner: regen.append((d.domain_name, d.is_subdomain)))
+    db = SimpleNamespace(commit=lambda: None)
+    d = SimpleNamespace(domain_name="tienda.techocamper.com", is_subdomain=False,
+                        parent_domain=None, ipv6=None)
+    H._mark_subdomain(db, d, "techocamper.com", SimpleNamespace(username="techocamper"),
+                      "2001:db8::1", H.ImportReport())
+    assert d.is_subdomain and d.parent_domain == "techocamper.com" and d.ipv6 == "2001:db8::1"
+    assert regen == [("tienda.techocamper.com", True)]
+
+
 def test_vhost_dominio_normal_si_lleva_www():
     """Un dominio normal sí incluye www. en server_name."""
     from scripts.utils import generate_nginx_config
