@@ -37,6 +37,31 @@ class PanelSSLManager(SystemManager):
     def __init__(self):
         super().__init__(require_root=True)
 
+    def check_acme_reachable(self, hostname: str, email: str) -> tuple:
+        """Prueba de emisión contra el staging de Let's Encrypt (--dry-run).
+
+        Que el DNS apunte aquí no basta: un cortafuegos perimetral (Proxmox,
+        el del proveedor…) puede cerrar el puerto 80 y desde el propio
+        servidor no se ve. El staging valida DESDE FUERA igual que producción,
+        sin gastar los límites de fallos del certificado real.
+
+        Returns: (ok, detalle del error de certbot)
+        """
+        if not _validate_hostname(hostname):
+            return False, f"Hostname inválido: {hostname}"
+        os.makedirs("/var/www/html/.well-known/acme-challenge", exist_ok=True)
+        self._write_nginx_http_only(hostname)
+        self._nginx_reload()
+        rc, out, err = self.execute_command([
+            "certbot", "certonly", "--dry-run",
+            "--webroot", "-w", "/var/www/html",
+            "-d", hostname,
+            "--non-interactive",
+            "--agree-tos",
+            "-m", email,
+        ], check=False)
+        return rc == 0, (err or out).strip()
+
     # ──────────────────────────────────────────────────────────────────────────
     # Emisión
     # ──────────────────────────────────────────────────────────────────────────
@@ -551,6 +576,31 @@ class PanelSSLManager(SystemManager):
 
     def __init__(self):
         super().__init__(require_root=True)
+
+    def check_acme_reachable(self, hostname: str, email: str) -> tuple:
+        """Prueba de emisión contra el staging de Let's Encrypt (--dry-run).
+
+        Que el DNS apunte aquí no basta: un cortafuegos perimetral (Proxmox,
+        el del proveedor…) puede cerrar el puerto 80 y desde el propio
+        servidor no se ve. El staging valida DESDE FUERA igual que producción,
+        sin gastar los límites de fallos del certificado real.
+
+        Returns: (ok, detalle del error de certbot)
+        """
+        if not _validate_hostname(hostname):
+            return False, f"Hostname inválido: {hostname}"
+        os.makedirs("/var/www/html/.well-known/acme-challenge", exist_ok=True)
+        self._write_nginx_http_only(hostname)
+        self._nginx_reload()
+        rc, out, err = self.execute_command([
+            "certbot", "certonly", "--dry-run",
+            "--webroot", "-w", "/var/www/html",
+            "-d", hostname,
+            "--non-interactive",
+            "--agree-tos",
+            "-m", email,
+        ], check=False)
+        return rc == 0, (err or out).strip()
 
     # ──────────────────────────────────────────────────────────────────────────
     # Emisión

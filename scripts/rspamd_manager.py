@@ -209,7 +209,7 @@ class RspamdManager:
     # ─── multimap.conf (blacklist prefilter) ──────────────────────────────
 
     def _entry_to_map_line(self, entry: str) -> str:
-        """
+        r"""
         Convierte una entrada de blacklist al formato correcto para el mapa regexp.
         @domain.com   →  /.*@domain\.com$/   (bloquea todo el dominio)
         user@domain   →  user@domain         (dirección exacta, sin cambios)

@@ -46,6 +46,20 @@ fi
 
 echo -e "${GREEN}✓ Debian $OS_VERSION detectado${NC}\n"
 
+# En un Debian recién arrancado apt-daily/unattended-upgrades se lanzan solos y
+# cogen el lock de dpkg: con set -e, un apt-get que chocaba con ellos abortaba
+# la instalación a medias. Paramos sus timers mientras dura el install (se
+# reactivan al salir, también si falla) y apt ESPERA al lock en vez de fallar
+# si ya había una ejecución en marcha (no la matamos: podría estar en dpkg).
+APT_LOCK_CONF=/etc/apt/apt.conf.d/99svqpanel-install-lock
+echo 'DPkg::Lock::Timeout "600";' > "$APT_LOCK_CONF"
+systemctl stop apt-daily.timer apt-daily-upgrade.timer 2>/dev/null || true
+_restore_apt_timers() {
+    rm -f "$APT_LOCK_CONF"
+    systemctl start apt-daily.timer apt-daily-upgrade.timer 2>/dev/null || true
+}
+trap _restore_apt_timers EXIT
+
 ###############################################################################
 # 0. MODO DESATENDIDO (opcional) — instalación tipo Hestia por variables de entorno
 ###############################################################################
@@ -2137,10 +2151,15 @@ DROP DATABASE IF EXISTS panel_db;
 DROP ROLE IF EXISTS panel_user;
 EOF
 
+# Contraseña aleatoria por instalación (antes era fija y pública en el repo:
+# cualquier PHP de un cliente podía entrar en panel_db por 127.0.0.1).
+# Hex: sin caracteres que haya que escapar en la DATABASE_URL.
+PANEL_DB_PASS=$(python3 -c "import secrets; print(secrets.token_hex(24))")
+
 # Crear usuario y BD (sin IF NOT EXISTS para compatibilidad con PostgreSQL antiguo)
 sudo -u postgres psql << EOF
 CREATE DATABASE panel_db;
-CREATE USER panel_user WITH PASSWORD 'panel_password_123';
+CREATE USER panel_user WITH PASSWORD '${PANEL_DB_PASS}';
 ALTER ROLE panel_user SET client_encoding TO 'utf8';
 ALTER ROLE panel_user SET default_transaction_isolation TO 'read committed';
 ALTER ROLE panel_user SET default_transaction_deferrable TO off;
@@ -2538,7 +2557,7 @@ SECRET_KEY_VAL=$(python3 -c \
 
 cat > /opt/svqpanel/.env << ENVEOF
 # SVQPanel Configuration
-DATABASE_URL=postgresql://panel_user:panel_password_123@localhost/panel_db
+DATABASE_URL=postgresql://panel_user:${PANEL_DB_PASS}@localhost/panel_db
 PANEL_NAME=SVQPanel
 PANEL_VERSION=0.1.0
 # La API solo escucha en localhost; se sirve al exterior vía nginx.
@@ -3006,6 +3025,12 @@ NFTEOF
 
 # Sustituir el placeholder del puerto del panel en las reglas del firewall.
 sed -i "s|__PANEL_WEB_PORT__|${PANEL_WEB_PORT}|g" /etc/nftables.conf
+
+# Sin servidor de correo no hay nada escuchando en 25/587/465/143/993/110/995:
+# no se abren (si luego hacen falta: Seguridad → Puertos del sistema).
+if [[ "$INSTALL_MAIL" != true ]]; then
+    sed -i "s|elements = { 22, 80, 443, 25, 587, 465, 143, 993, 110, 995, 53, |elements = { 22, 80, 443, 53, |" /etc/nftables.conf
+fi
 
 # Crear los includes vacíos
 mkdir -p /etc/nftables
@@ -4172,20 +4197,23 @@ echo -e "${YELLOW}Endureciendo servicios (ocultar versiones, anti-enumeración).
     echo -e "${YELLOW}⚠ harden_services tuvo incidencias (revisar logs)${NC}"
 echo ""
 
-# Protección anti zip-bomb del antispam (Rspamd): sube el peso de los símbolos
-# de archivo para frenar adjuntos comprimidos maliciosos (ratio de bomba o exe).
-echo -e "${YELLOW}Aplicando protección anti zip-bomb del antispam...${NC}"
-/opt/svqpanel/venv/bin/python -m api.cli setup_archive_protection && \
-    echo -e "${GREEN}✓ Protección anti zip-bomb aplicada${NC}" || \
-    echo -e "${YELLOW}⚠ setup_archive_protection tuvo incidencias (revisar logs)${NC}"
-echo ""
+# Ajustes del antispam (Rspamd): solo si hay servidor de correo.
+if [[ "$INSTALL_MAIL" == true ]]; then
+    # Anti zip-bomb: sube el peso de los símbolos de archivo para frenar
+    # adjuntos comprimidos maliciosos (ratio de bomba o exe).
+    echo -e "${YELLOW}Aplicando protección anti zip-bomb del antispam...${NC}"
+    /opt/svqpanel/venv/bin/python -m api.cli setup_archive_protection && \
+        echo -e "${GREEN}✓ Protección anti zip-bomb aplicada${NC}" || \
+        echo -e "${YELLOW}⚠ setup_archive_protection tuvo incidencias (revisar logs)${NC}"
+    echo ""
 
-# Penalización de correo en cirílico (spam de formularios web ES y spam ruso).
-echo -e "${YELLOW}Aplicando penalización de correo en cirílico...${NC}"
-/opt/svqpanel/venv/bin/python -m api.cli setup_cyrillic_protection && \
-    echo -e "${GREEN}✓ Penalización de cirílico aplicada${NC}" || \
-    echo -e "${YELLOW}⚠ setup_cyrillic_protection tuvo incidencias (revisar logs)${NC}"
-echo ""
+    # Penalización de correo en cirílico (spam de formularios web ES y spam ruso).
+    echo -e "${YELLOW}Aplicando penalización de correo en cirílico...${NC}"
+    /opt/svqpanel/venv/bin/python -m api.cli setup_cyrillic_protection && \
+        echo -e "${GREEN}✓ Penalización de cirílico aplicada${NC}" || \
+        echo -e "${YELLOW}⚠ setup_cyrillic_protection tuvo incidencias (revisar logs)${NC}"
+    echo ""
+fi
 
 # Persistencia de IPv6 vía systemd-networkd + ruta default IPv6 persistente.
 # (Las IPv6 de dominios NO se gestionan con netplan: redefinir eth0 en netplan
@@ -4219,8 +4247,12 @@ if [[ "$PANEL_SSL_READY" == true && -n "$PANEL_HOSTNAME" ]]; then
     sleep 3
     # Email para Let's Encrypt: el del admin si parece real, si no uno del hostname.
     _LE_EMAIL="admin@${PANEL_HOSTNAME#*.}"
+    # Dentro de un if: con set -e, un fallo del heredoc mataba el install aquí
+    # mismo (sin cron de update.sh, sin updates/ ni resumen) en vez de dejar el
+    # panel en HTTP. Salida 2 = el puerto 80 no es alcanzable desde fuera.
+    _PANEL_SSL_RC=0
     PANEL_SSL_HOSTNAME="$PANEL_HOSTNAME" PANEL_SSL_EMAIL="$_LE_EMAIL" \
-    /opt/svqpanel/venv/bin/python << 'PANELSSLEOF'
+    /opt/svqpanel/venv/bin/python << 'PANELSSLEOF' || _PANEL_SSL_RC=$?
 import os, sys
 sys.path.insert(0, "/opt/svqpanel")
 hostname = os.environ["PANEL_SSL_HOSTNAME"]
@@ -4238,13 +4270,18 @@ try:
     db.commit()
     db.close()
 
-    PanelSSLManager().issue_ssl(hostname, email, force_https=True)
+    mgr = PanelSSLManager()
+    ok, detail = mgr.check_acme_reachable(hostname, email)
+    if not ok:
+        print(f"FAIL (prueba en staging): {detail[-600:]}", file=sys.stderr)
+        sys.exit(2)
+    mgr.issue_ssl(hostname, email, force_https=True)
     print("OK")
 except Exception as e:
     print(f"FAIL: {e}", file=sys.stderr)
     sys.exit(1)
 PANELSSLEOF
-    if [[ $? -eq 0 ]]; then
+    if [[ $_PANEL_SSL_RC -eq 0 ]]; then
         # Cinturón y tirantes: el manager ya persiste el estado, pero forzamos
         # una sincronización por si acaso (deja ssl_panel_enabled + fecha en la BD
         # → la UI muestra "SSL activo" en vez de "Sin SSL").
@@ -4252,6 +4289,11 @@ PANELSSLEOF
         echo -e "${GREEN}✓ SSL del panel emitido. Accede por https://$PANEL_HOSTNAME:$PANEL_WEB_PORT${NC}\n"
         PANEL_ACCESS_URL="https://$PANEL_HOSTNAME:$PANEL_WEB_PORT"
     else
+        if [[ $_PANEL_SSL_RC -eq 2 ]]; then
+            echo -e "${YELLOW}⚠ Let's Encrypt no llega a http://$PANEL_HOSTNAME (puerto 80) desde Internet.${NC}"
+            echo -e "${YELLOW}    El DNS sí apunta aquí: revisa el cortafuegos perimetral (Proxmox,${NC}"
+            echo -e "${YELLOW}    proveedor…) y que el puerto 80 TCP esté abierto hacia este servidor.${NC}"
+        fi
         echo -e "${YELLOW}⚠ No se pudo emitir el SSL automáticamente. El panel queda en HTTP;${NC}"
         echo -e "${YELLOW}    emítelo después desde Configuración → SSL del Panel.${NC}\n"
         PANEL_ACCESS_URL="http://${_INSTALL_SERVER_IP}:$PANEL_WEB_PORT"
@@ -4359,7 +4401,7 @@ echo "  perimetral (Proxmox, etc.) y ábrelo solo a tus IPs de administración."
 echo -e "\n${YELLOW}Base de datos:${NC}"
 echo "  • Host: localhost"
 echo "  • User: panel_user"
-echo "  • Password: panel_password_123"
+echo "  • Password: (aleatoria, en DATABASE_URL de /opt/svqpanel/.env)"
 echo "  • Database: panel_db"
 echo -e "\n${YELLOW}Archivos importantes:${NC}"
 echo "  • Configuración:        /opt/svqpanel/.env"

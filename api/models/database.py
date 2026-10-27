@@ -6,10 +6,11 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-# PostgreSQL connection string
+# PostgreSQL connection string. Sin contraseña por defecto: la genera install.sh
+# en /opt/svqpanel/.env (la antigua fija estaba publicada en el repo).
 DATABASE_URL = os.getenv(
     "DATABASE_URL",
-    "postgresql://panel_user:panel_password_123@localhost/panel_db"
+    "postgresql://panel_user@localhost/panel_db"
 )
 
 # Create engine

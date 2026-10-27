@@ -100,7 +100,7 @@ class PanelBackupManager(SystemManager):
 
     def _dump_database(self, out_gz: str) -> None:
         """pg_dump de panel_db comprimido con gzip."""
-        url = os.getenv("DATABASE_URL", "postgresql://panel_user:panel_password_123@localhost/panel_db")
+        url = os.getenv("DATABASE_URL", "postgresql://panel_user@localhost/panel_db")
         db = _parse_db_url(url)
 
         env = os.environ.copy()
@@ -226,7 +226,7 @@ class PanelBackupManager(SystemManager):
         _log(f"  ✓ backup de seguridad: {safety['db_file']}")
 
         # 2) Recrear el esquema y cargar el dump
-        url = os.getenv("DATABASE_URL", "postgresql://panel_user:panel_password_123@localhost/panel_db")
+        url = os.getenv("DATABASE_URL", "postgresql://panel_user@localhost/panel_db")
         db = _parse_db_url(url)
         env = os.environ.copy()
         env["PGPASSWORD"] = db["password"]

@@ -232,7 +232,7 @@ SVQPanel/
 
 ### Variables de Entorno (.env)
 ```
-DATABASE_URL=postgresql://panel_user:panel_password_123@localhost/panel_db
+DATABASE_URL=postgresql://panel_user:<aleatoria, la genera install.sh>@localhost/panel_db
 PANEL_NAME=SVQPanel
 PANEL_HOST=127.0.0.1
 PANEL_PORT=8001
