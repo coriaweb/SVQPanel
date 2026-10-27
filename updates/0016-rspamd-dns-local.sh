@@ -13,7 +13,7 @@ set -euo pipefail
 
 echo "→ 0016: Resolver DNS local para Rspamd (DNSBL)..."
 
-if [ ! -d /etc/rspamd ]; then
+if ! command -v rspamd >/dev/null 2>&1; then
     echo "  Rspamd no instalado (sin correo) — nada que hacer."
     exit 0
 fi

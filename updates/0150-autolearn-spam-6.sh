@@ -47,7 +47,7 @@ set -e
 
 echo "→ 0150: autolearn de spam 10 → 6 (igualar al umbral de rechazo)…"
 
-if [ ! -d /etc/rspamd ]; then
+if ! command -v rspamd >/dev/null 2>&1; then
     echo "  · Rspamd no instalado; nada que hacer"
     exit 0
 fi

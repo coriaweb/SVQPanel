@@ -1588,10 +1588,14 @@ fi
 if [[ "$INSTALL_ROUNDCUBE" == true ]]; then
     echo -e "${YELLOW}Instalando Roundcube Webmail...${NC}"
 
-    # Dependencias PHP necesarias (sin el paquete roundcube de Debian, que es viejo)
+    # Dependencias PHP necesarias (sin el paquete roundcube de Debian, que es viejo).
+    # Extensiones con versión, para el PHP que servirá /webmail (el FPM más alto):
+    # los php-* sin versión instalaban las del PHP por defecto de Debian.
+    RC_PHP_VER=$(printf '%s\n' "${PHP_ARRAY[@]}" | sort -V | tail -1)
     DEBIAN_FRONTEND=noninteractive apt-get install -y -qq \
-        php-net-sieve php-pear php-intl php-zip php-xml \
-        php-mbstring php-gd php-pgsql 2>/dev/null || true
+        php-net-sieve php-pear "php${RC_PHP_VER}-intl" "php${RC_PHP_VER}-zip" \
+        "php${RC_PHP_VER}-xml" "php${RC_PHP_VER}-mbstring" "php${RC_PHP_VER}-gd" \
+        "php${RC_PHP_VER}-pgsql" 2>/dev/null || true
 
     # Generar credenciales aleatorias
     RC_DB_PASS=$(openssl rand -base64 18 | tr -dc 'a-zA-Z0-9' | head -c 20)
@@ -1928,6 +1932,11 @@ for PHP_VER in "${PHP_ARRAY[@]}"; do
         # gmp/bcmath/intl/imagick/apcu: requeridas/recomendadas por Nextcloud.
         # redis: cliente phpredis para el Redis dedicado por dominio (caché de objetos).
         for EXT in opcache intl soap readline gmp imagick apcu redis; do
+            # Desde PHP 8.5 OPcache va integrado (no hay paquete php8.5-opcache)
+            if [[ "$EXT" == opcache ]] && printf '%s\n' 8.5 "$PHP_VER" | sort -CV; then
+                echo "    ✓ OPcache integrado en PHP ${PHP_VER}"
+                continue
+            fi
             apt-get install -y -q "php${PHP_VER}-${EXT}" 2>/dev/null && \
                 echo "    ✓ php${PHP_VER}-${EXT}" || \
                 echo "    ⚠ php${PHP_VER}-${EXT} no disponible (ignorado)"
@@ -2300,7 +2309,12 @@ MDBCREDEOF
     PMA_DL="https://files.phpmyadmin.net/phpMyAdmin/${PMA_VERSION}/phpMyAdmin-${PMA_VERSION}-all-languages.tar.gz"
     PMA_TMP="/tmp/phpmyadmin.tar.gz"
 
-    apt-get install -y php-mbstring php-xml php-curl php-zip > /dev/null 2>&1
+    # Extensiones para el PHP que servirá /pma (el FPM más alto, ver el vhost).
+    # Con versión: los php-* sin versión tiraban del PHP por defecto de Debian
+    # (instalaban php8.4-* sueltos en un servidor solo con 8.5).
+    PMA_PHP_VER=$(printf '%s\n' "${PHP_ARRAY[@]}" | sort -V | tail -1)
+    apt-get install -y "php${PMA_PHP_VER}-mbstring" "php${PMA_PHP_VER}-xml" \
+        "php${PMA_PHP_VER}-curl" "php${PMA_PHP_VER}-zip" > /dev/null 2>&1
 
     curl -Lo "$PMA_TMP" "$PMA_DL" 2>/dev/null || wget -qO "$PMA_TMP" "$PMA_DL"
     if [[ -f "$PMA_TMP" && -s "$PMA_TMP" ]]; then

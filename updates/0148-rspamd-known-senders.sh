@@ -52,7 +52,7 @@ SVQ_GROUPS=/etc/rspamd/local.d/groups.conf
 
 echo "→ 0148: activar known_senders (premiar remitentes conocidos)…"
 
-if [ ! -d /etc/rspamd ]; then
+if ! command -v rspamd >/dev/null 2>&1; then
     echo "  · Rspamd no instalado; nada que hacer"
     exit 0
 fi

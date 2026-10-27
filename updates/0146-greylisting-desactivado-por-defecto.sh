@@ -52,7 +52,7 @@ GREY=/etc/rspamd/local.d/greylist.conf
 
 echo "→ 0146: greylisting desactivado por defecto (pasa a opt-in)…"
 
-if [ ! -d /etc/rspamd ]; then
+if ! command -v rspamd >/dev/null 2>&1; then
     echo "  · Rspamd no instalado; nada que hacer"
     exit 0
 fi

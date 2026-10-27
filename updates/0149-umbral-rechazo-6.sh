@@ -50,7 +50,7 @@ ACTIONS=/etc/rspamd/local.d/actions.conf
 
 echo "→ 0149: umbral de rechazo 10.00 → 6.00…"
 
-if [ ! -d /etc/rspamd ]; then
+if ! command -v rspamd >/dev/null 2>&1; then
     echo "  · Rspamd no instalado; nada que hacer"
     exit 0
 fi

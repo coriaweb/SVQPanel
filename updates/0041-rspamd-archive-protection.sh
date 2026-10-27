@@ -12,7 +12,7 @@ set -euo pipefail
 
 echo "→ 0041: protección anti zip-bomb del antispam (Rspamd)…"
 
-[ -d /etc/rspamd ] || { echo "  Rspamd no instalado — nada que hacer."; exit 0; }
+command -v rspamd >/dev/null 2>&1 || { echo "  Rspamd no instalado — nada que hacer."; exit 0; }
 
 PYBIN=/opt/svqpanel/venv/bin/python
 [ -x "$PYBIN" ] || { echo "  Sin venv del panel — nada que hacer."; exit 0; }

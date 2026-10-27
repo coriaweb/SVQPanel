@@ -23,7 +23,7 @@ echo "-> 0128: backfill DKIM de dominios de correo sin firma..."
 
 PY=/opt/svqpanel/venv/bin/python
 [ -x "$PY" ] || { echo "  . venv del panel no encontrado; nada que hacer."; exit 0; }
-[ -d /etc/rspamd ] || { echo "  . Rspamd no instalado (servidor sin correo); nada que hacer."; exit 0; }
+command -v rspamd >/dev/null 2>&1 || { echo "  . Rspamd no instalado (servidor sin correo); nada que hacer."; exit 0; }
 
 cd /opt/svqpanel
 "$PY" -m api.cli backfill_dkim || { echo "  ⚠️ backfill_dkim falló"; exit 1; }

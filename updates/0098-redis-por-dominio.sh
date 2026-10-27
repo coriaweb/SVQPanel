@@ -26,7 +26,7 @@ if ! command -v redis-server >/dev/null 2>&1; then
     if apt-get install -y -qq redis-server >/dev/null 2>&1; then
         # Sin Rspamd la instancia global no se usa: apagarla (las instancias
         # por dominio tienen su propia unidad; solo necesitamos el binario).
-        if [ ! -d /etc/rspamd ]; then
+        if ! command -v rspamd >/dev/null 2>&1; then
             systemctl disable --now redis-server >/dev/null 2>&1 || true
             echo "  ✓ redis-server instalado (instancia global desactivada)"
         else

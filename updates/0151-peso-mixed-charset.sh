@@ -57,7 +57,7 @@ WANT='  "R_MIXED_CHARSET" { weight = 2.50; }'
 
 echo "→ 0151: peso de R_MIXED_CHARSET 0.63 → 2.50…"
 
-if [ ! -d /etc/rspamd ]; then
+if ! command -v rspamd >/dev/null 2>&1; then
     echo "  · Rspamd no instalado; nada que hacer"
     exit 0
 fi
