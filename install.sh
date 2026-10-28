@@ -2986,7 +2986,8 @@ table inet svqpanel {
 
     # Puertos abiertos del sistema. Gestionados por el panel (Seguridad →
     # Puertos del sistema): abrir/cerrar un puerto = añadir/quitar del set.
-    # Incluye el del panel (__PANEL_WEB_PORT__) en TCP y UDP (UDP por HTTP/3).
+    # Incluye el del panel (__PANEL_WEB_PORT__) en TCP y UDP (UDP por HTTP/3)
+    # y el 443/udp para el HTTP/3 (QUIC) de las webs.
     set base_tcp_ports {
         type inet_service
         flags interval
@@ -2995,7 +2996,7 @@ table inet svqpanel {
     set base_udp_ports {
         type inet_service
         flags interval
-        elements = { 53, __PANEL_WEB_PORT__ }
+        elements = { 53, 443, __PANEL_WEB_PORT__ }
     }
 
     chain input {
@@ -3022,7 +3023,7 @@ table inet svqpanel {
         # ── Puertos PÚBLICOS de los servicios del panel ──────────────────
         # Gestionados vía sets (el panel los abre/cierra). De serie incluyen:
         # SSH(22), web(80,443), panel(__PANEL_WEB_PORT__), correo(25,587,465,
-        # 143,993,110,995) y DNS(53). UDP: 53 (DNS) y el panel (HTTP/3).
+        # 143,993,110,995) y DNS(53). UDP: 53 (DNS), 443 y el panel (HTTP/3).
         tcp dport @base_tcp_ports accept
         udp dport @base_udp_ports accept
 

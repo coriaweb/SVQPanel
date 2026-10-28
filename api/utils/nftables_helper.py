@@ -38,6 +38,7 @@ def base_ports_catalog() -> List[dict]:
         {"port": 22,  "proto": "tcp", "service": "SSH",          "critical": True},
         {"port": 80,  "proto": "tcp", "service": "HTTP",         "critical": True},
         {"port": 443, "proto": "tcp", "service": "HTTPS",        "critical": True},
+        {"port": 443, "proto": "udp", "service": "HTTPS (HTTP/3)", "critical": False},
         {"port": pw,  "proto": "tcp", "service": "Panel SVQ",    "critical": True},
         {"port": pw,  "proto": "udp", "service": "Panel SVQ (HTTP/3)", "critical": True},
         {"port": 25,  "proto": "tcp", "service": "SMTP",         "critical": False},
