@@ -35,7 +35,7 @@ _WRAPPER_CONTENT = '''#!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 # SVQPanel - wrapper de cron. Registra estado/duracion/salida.
 # Generado automaticamente. NO editar. Uso: svq-cron-run <cron_id> "<comando>"
-import sys, os, json, time, uuid, subprocess
+import sys, os, json, time, uuid, subprocess, fcntl
 from datetime import datetime, timezone
 
 QUEUE = "/var/lib/svqpanel/cron-runs"
@@ -43,17 +43,42 @@ CAP = 8000
 cron_id = sys.argv[1] if len(sys.argv) > 1 else "0"
 cmd = sys.argv[2] if len(sys.argv) > 2 else ""
 
+
+def _lock():
+    """Cerrojo por cron: si la ejecucion anterior sigue viva, esta no arranca.
+    Sin el, un servidor lento (swap) solapa tandas de wp-cron que piden mas RAM
+    y lo hunden en bola de nieve. Si no se puede crear el cerrojo, se ejecuta."""
+    dirs = [os.path.join(os.environ.get("HOME") or "/nonexistent", ".svq-cron"), "/tmp"]
+    for d in dirs:
+        try:
+            os.makedirs(d, mode=0o700, exist_ok=True)
+            fd = os.open(os.path.join(d, "svq-cron-%d-%s.lock" % (os.getuid(), cron_id)),
+                         os.O_CREAT | os.O_RDWR, 0o600)
+        except OSError:
+            continue
+        try:
+            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            return fd
+        except OSError:
+            return False
+    return None
+
+
+lock = _lock()
 started = datetime.now(timezone.utc)
 t0 = time.monotonic()
-try:
-    p = subprocess.run(["/bin/bash", "-lc", cmd], capture_output=True, text=True,
-                       timeout=3600)
-    code = p.returncode
-    out = (p.stdout or "") + (("\\n" + p.stderr) if p.stderr else "")
-except subprocess.TimeoutExpired:
-    code, out = 124, "[svq-cron] timeout (>3600s)"
-except Exception as e:
-    code, out = 127, "[svq-cron] error: %s" % e
+if lock is False:
+    code, out = 0, "[svq-cron] omitido: la ejecucion anterior sigue en curso"
+else:
+    try:
+        p = subprocess.run(["/bin/bash", "-lc", cmd], capture_output=True, text=True,
+                           timeout=3600)
+        code = p.returncode
+        out = (p.stdout or "") + (("\\n" + p.stderr) if p.stderr else "")
+    except subprocess.TimeoutExpired:
+        code, out = 124, "[svq-cron] timeout (>3600s)"
+    except Exception as e:
+        code, out = 127, "[svq-cron] error: %s" % e
 dur = int((time.monotonic() - t0) * 1000)
 
 try:
