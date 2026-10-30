@@ -20,6 +20,7 @@ from api.schemas.plan_schemas import PlanCreate, PlanUpdate, PlanResponse
 from api.dependencies import get_current_user, require_admin
 from api.utils.security_audit import log_audit
 from api.utils.scope import can_manage_account
+from api.utils.user_limits import propagate_plan_change
 
 
 router = APIRouter()
@@ -194,6 +195,10 @@ async def update_plan(
     for field, value in data.items():
         setattr(plan, field, value)
 
+    # Los usuarios con este plan reciben los límites nuevos (salvo los que un
+    # admin les ajustó a mano). Antes se quedaban con la copia vieja del plan.
+    users_updated = propagate_plan_change(db, plan, before)
+
     try:
         db.commit()
         db.refresh(plan)
@@ -205,7 +210,8 @@ async def update_plan(
         raise HTTPException(status_code=500, detail=f"Error actualizando plan: {msg}")
 
     log_audit(db, user=user, category="plan", action="update",
-              target=plan.name, before=before, after=plan.snapshot(),
+              target=plan.name, before=before,
+              after={**plan.snapshot(), "users_updated": users_updated},
               request=request, success=True)
     return _to_response(db, plan)
 

@@ -1275,6 +1275,22 @@ def run_migration_job_inproc(job_id: int):
                             cleanup_tar=cleanup_tar,
                             progress=prog)
 
+        # El importador no mira los límites del plan: si el cliente ha quedado por
+        # encima (14 BDs con límite 10), ya no podría crear nada. Se suben a lo
+        # que tiene ahora.
+        try:
+            from api.utils.user_limits import raise_limits_to_usage
+            target = db.query(User).filter(User.id == job.target_user_id).first()
+            if target:
+                raised = raise_limits_to_usage(db, target)
+                if raised:
+                    report["limits_raised"] = {f: {"antes": a, "ahora": b}
+                                               for f, (a, b) in raised.items()}
+                    logger.info(f"Migración: límites de «{target.username}» subidos a lo "
+                                f"importado: {raised}")
+        except Exception:
+            logger.exception("Migración: no se pudieron ajustar los límites del cliente")
+
         job.report_json = json.dumps(report, ensure_ascii=False)
         job.status = "failed" if report["summary"]["errors"] and not report["summary"]["created"] else "success"
         job.progress = 100

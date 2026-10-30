@@ -6,8 +6,8 @@
       <div>
         <h2 class="pl-title"><i class="bi bi-stack"></i> Planes</h2>
         <p class="pl-subtitle">
-          Plantillas de límites que asignas a los usuarios. Al asignar, los valores
-          se <strong>copian</strong> al usuario (snapshot).
+          Plantillas de límites que asignas a los usuarios. Al editar un plan, sus
+          usuarios reciben los límites nuevos (salvo los que les ajustaste a mano).
         </p>
       </div>
       <button class="pl-btn pl-btn--success" @click="openForm()">
