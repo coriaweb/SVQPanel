@@ -13,7 +13,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from api.models.database import create_tables, get_db
 from config.config import PANEL_NAME, PANEL_VERSION
 
-from api.routes import domain_aliases, domain_resources, domain_access, malware
+from api.routes import domain_aliases, domain_resources, domain_access, malware, db_import
 from api.routes import users, domains, php, ssl, ipv6, auth, settings, dns, system, mail, databases, firewall, fail2ban, security_monitor, ip_lists, file_manager, crowdsec, plans, sftp, crons, server_ips, backups, templates, notifications, dns_cluster, git, git_webhook, monitoring, db_tuner, migrations, migration_sources, terminal, license, api_tokens, mail_queue, process_manager, outbound_mail, antispam, branding
 
 # ── Descripción de la API (se muestra en /docs y /redoc) ──────────────────────
@@ -1117,6 +1117,7 @@ app.include_router(dns_cluster.router, prefix="/api", tags=["DNS Cluster"])
 app.include_router(system.router, prefix="/api", tags=["System"])
 app.include_router(mail.router,      prefix="/api", tags=["Mail"])
 app.include_router(databases.router, prefix="/api", tags=["Databases"])
+app.include_router(db_import.router, prefix="/api", tags=["Databases"])
 app.include_router(firewall.router,         prefix="/api", tags=["Firewall"])
 app.include_router(fail2ban.router,         prefix="/api", tags=["Fail2ban"])
 app.include_router(security_monitor.router, prefix="/api", tags=["Security Monitor"])

@@ -114,6 +114,14 @@
                       <i v-else class="bi bi-download"></i>
                     </button>
                     <button
+                      class="btn btn-sm btn-outline-primary"
+                      @click="openImport(db)"
+                      title="Importar volcado (.sql, .sql.gz, .zip) — para ficheros grandes"
+                      v-if="canManage(db) && !db.is_suspended"
+                    >
+                      <i class="bi bi-upload"></i>
+                    </button>
+                    <button
                       class="btn btn-sm btn-outline-info"
                       @click="openEditForm(db)"
                       title="Editar"
@@ -187,6 +195,14 @@
         @cancel="showFormModal = false"
       />
     </Modal>
+
+    <!-- Modal: Importar volcado grande -->
+    <DbImportModal
+      :isOpen="showImportModal"
+      :database="importDatabase"
+      @close="showImportModal = false"
+      @imported="loadDatabases"
+    />
 
     <!-- Modal: Usuarios adicionales de BD -->
     <Modal
@@ -410,10 +426,11 @@ import api from '../services/api'
 import Modal from '../components/Modal.vue'
 import DatabaseForm from '../components/DatabaseForm.vue'
 import PasswordField from '../components/PasswordField.vue'
+import DbImportModal from '../components/DbImportModal.vue'
 
 export default {
   name: 'Databases',
-  components: { Modal, DatabaseForm, PasswordField },
+  components: { Modal, DatabaseForm, PasswordField, DbImportModal },
   setup() {
     const store = useMainStore()
     const databases = ref([])
@@ -438,6 +455,12 @@ export default {
     const isMariaDBDisabled = ref(false)
     const pmaLoading = ref(null)  // id de la BD cuyo botón phpMyAdmin está en carga
     const exportLoading = ref(null)  // id de la BD que se está descargando
+    const showImportModal = ref(false)
+    const importDatabase = ref(null)
+    const openImport = (db) => {
+      importDatabase.value = db
+      showImportModal.value = true
+    }
 
     // ── Estado: usuarios adicionales de BD ──────────────────────────────────
     const showUsersModal     = ref(false)
@@ -856,6 +879,9 @@ export default {
       pmaLoading,
       exportLoading,
       downloadDump,
+      showImportModal,
+      importDatabase,
+      openImport,
       // Usuarios adicionales de BD
       showUsersModal,
       showRemoteModal,

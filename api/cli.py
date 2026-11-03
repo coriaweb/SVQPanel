@@ -1111,6 +1111,12 @@ def cmd_fix_panel_vhost() -> int:
     return 0
 
 
+def cmd_db_import(db_id: int, filename: str, force: bool, delete_after: bool) -> int:
+    """Importa ~/imports/<filename> en la BD (lo lanza el panel como unidad systemd)."""
+    from scripts.db_import import run_import
+    return run_import(db_id, filename, force=force, delete_after=delete_after)
+
+
 def cmd_restore_panel(filename: str) -> int:
     """
     RESCATE (destructivo): restaura panel_db desde un dump panel_db_*.sql.gz.
@@ -2688,6 +2694,11 @@ def main():
     sub.add_parser("backup_panel", help="Backup de la BD y config del propio panel")
     sub.add_parser("sync_panel_ssl", help="Sincroniza el estado SSL del panel en la BD con el cert real")
     sub.add_parser("fix_panel_vhost", help="Límite de subida, timeout de /pma y cabeceras en el vhost del panel")
+    p_dbimp = sub.add_parser("db_import", help="Importa ~/imports/<fichero> en una BD (uso interno del panel)")
+    p_dbimp.add_argument("db_id", type=int)
+    p_dbimp.add_argument("filename")
+    p_dbimp.add_argument("--force", action="store_true")
+    p_dbimp.add_argument("--delete-after", action="store_true")
 
     p_restore = sub.add_parser("restore_panel",
         help="RESCATE: restaura panel_db desde un backup (destructivo; reinicia el panel)")
@@ -2894,6 +2905,8 @@ def main():
         sys.exit(cmd_sync_panel_ssl())
     if args.cmd == "fix_panel_vhost":
         sys.exit(cmd_fix_panel_vhost())
+    if args.cmd == "db_import":
+        sys.exit(cmd_db_import(args.db_id, args.filename, args.force, args.delete_after))
     if args.cmd == "restore_panel":
         sys.exit(cmd_restore_panel(args.filename))
     if args.cmd == "purge_user":
