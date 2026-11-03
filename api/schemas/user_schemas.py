@@ -15,6 +15,7 @@ class UserCreate(BaseModel):
     last_name: Optional[str] = Field(None, max_length=255)
     role: Optional[str] = Field("user", pattern="^(admin|reseller|user)$")
     domains_limit: Optional[int] = Field(10, ge=0)
+    disk_quota_mb: Optional[int] = Field(None, ge=0, description="Cuota de disco en MB; 0 = ilimitado; sin enviar = 1024")
     parent_id: Optional[int] = Field(None, description="ID del reseller propietario")
 
 

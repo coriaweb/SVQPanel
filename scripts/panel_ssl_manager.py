@@ -1,451 +1,10 @@
 """
 Panel SSL Manager — emite y revoca el certificado SSL para el propio hostname del panel.
 
-Flujo:
-  1. Asegura el vhost nginx con el challenge ACME disponible en HTTP.
-  2. Ejecuta certbot --nginx para emitir el certificado.
-  3. Transforma el vhost existente: añade bloque HTTPS conservando TODA
-     la configuración (phpMyAdmin, Roundcube, Rspamd, etc.) y opcionalmente
-     un redirect HTTP → HTTPS.
-  4. Recarga nginx.
+Genera el vhost nginx del panel (puerto dedicado) desde plantilla: HTTP-only
+antes de tener cert y SSL después. ensure_panel_vhost_limits() repara in situ
+los vhosts ya generados (límite de subida, timeouts de /pma, cabeceras).
 """
-
-import logging
-import os
-import re
-import shutil
-from datetime import datetime
-from .base import SystemManager
-from .utils import SSL_PROTOCOLS, SSL_CIPHERS, SSL_SIGN_ALGS
-
-logger = logging.getLogger(__name__)
-
-# Ruta del vhost nginx que gestiona el acceso al panel
-PANEL_NGINX_CONF = "/etc/nginx/sites-available/svqpanel"
-PANEL_NGINX_LINK = "/etc/nginx/sites-enabled/svqpanel"
-
-
-def _validate_hostname(hostname: str) -> bool:
-    """Valida que el hostname sea un FQDN razonable."""
-    pattern = r'^(?:[a-zA-Z0-9](?:[a-zA-Z0-9\-]{0,61}[a-zA-Z0-9])?\.)+[a-zA-Z]{2,}$'
-    return bool(re.match(pattern, hostname))
-
-
-class PanelSSLManager(SystemManager):
-    """Gestiona el certificado SSL del propio hostname del panel."""
-
-    def __init__(self):
-        super().__init__(require_root=True)
-
-    def check_acme_reachable(self, hostname: str, email: str) -> tuple:
-        """Prueba de emisión contra el staging de Let's Encrypt (--dry-run).
-
-        Que el DNS apunte aquí no basta: un cortafuegos perimetral (Proxmox,
-        el del proveedor…) puede cerrar el puerto 80 y desde el propio
-        servidor no se ve. El staging valida DESDE FUERA igual que producción,
-        sin gastar los límites de fallos del certificado real.
-
-        Returns: (ok, detalle del error de certbot)
-        """
-        if not _validate_hostname(hostname):
-            return False, f"Hostname inválido: {hostname}"
-        os.makedirs("/var/www/html/.well-known/acme-challenge", exist_ok=True)
-        self._write_nginx_http_only(hostname)
-        self._nginx_reload()
-        rc, out, err = self.execute_command([
-            "certbot", "certonly", "--dry-run",
-            "--webroot", "-w", "/var/www/html",
-            "-d", hostname,
-            "--non-interactive",
-            "--agree-tos",
-            "-m", email,
-        ], check=False)
-        return rc == 0, (err or out).strip()
-
-    # ──────────────────────────────────────────────────────────────────────────
-    # Emisión
-    # ──────────────────────────────────────────────────────────────────────────
-
-    def issue_ssl(self, hostname: str, email: str, force_https: bool = True) -> dict:
-        """
-        Emite un certificado Let's Encrypt para el hostname del panel.
-
-        Args:
-            hostname:    FQDN del panel (ej: panel.midominio.com)
-            email:       Email para Let's Encrypt
-            force_https: Si True, configura nginx para redirigir HTTP → HTTPS
-
-        Returns:
-            {"success": True, "hostname": "...", "expires": "..."}
-        """
-        if not _validate_hostname(hostname):
-            raise ValueError(f"Hostname inválido: {hostname}")
-
-        logger.info(f"Emitiendo SSL para el panel en {hostname}")
-
-        # 1. Hacer backup del vhost actual
-        self._backup_conf()
-
-        # 2. Aseguramos que el server_name del vhost incluye el hostname
-        #    (certbot lo necesita para el challenge --nginx)
-        self._patch_server_name(hostname)
-        self._nginx_reload()
-
-        # 3. Emitir con certbot --nginx
-        rc, out, err = self.execute_command([
-            "certbot", "certonly",
-            "--nginx",
-            "-d", hostname,
-            "--non-interactive",
-            "--agree-tos",
-            "-m", email,
-        ], check=False)
-
-        if rc != 0:
-            logger.error(f"certbot falló:\n{err}")
-            # Restaurar configuración original
-            self._restore_conf()
-            self._nginx_reload()
-            raise RuntimeError(f"certbot falló (código {rc}): {err.strip()}")
-
-        # 4. Transformar el vhost para incluir SSL
-        self._add_ssl_to_vhost(hostname, force_https)
-        self._nginx_reload()
-
-        # 5. Leer fecha de expiración del certificado
-        expires = self._get_cert_expiry(hostname)
-
-        logger.info(f"SSL del panel emitido correctamente para {hostname}")
-        return {
-            "success": True,
-            "hostname": hostname,
-            "expires": expires.isoformat() if expires else None,
-        }
-
-    # ──────────────────────────────────────────────────────────────────────────
-    # Revocación / eliminación
-    # ──────────────────────────────────────────────────────────────────────────
-
-    def revoke_ssl(self, hostname: str) -> dict:
-        """
-        Revoca el certificado del panel y vuelve a configuración HTTP.
-
-        Args:
-            hostname: FQDN del panel
-
-        Returns:
-            {"success": True}
-        """
-        if not _validate_hostname(hostname):
-            raise ValueError(f"Hostname inválido: {hostname}")
-
-        logger.info(f"Revocando SSL del panel para {hostname}")
-
-        self.execute_command([
-            "certbot", "revoke",
-            "--cert-name", hostname,
-            "--non-interactive",
-        ], check=False)
-
-        self.execute_command([
-            "certbot", "delete",
-            "--cert-name", hostname,
-            "--non-interactive",
-        ], check=False)
-
-        # Restaurar vhost a HTTP (backup o eliminar SSL del vhost actual)
-        self._remove_ssl_from_vhost()
-        self._nginx_reload()
-
-        return {"success": True}
-
-    # ──────────────────────────────────────────────────────────────────────────
-    # Transformaciones del vhost nginx
-    # ──────────────────────────────────────────────────────────────────────────
-
-    def _patch_server_name(self, hostname: str) -> None:
-        """Sustituye 'server_name _;' por el hostname real para que certbot funcione."""
-        config = self._read_conf()
-        # Reemplazar server_name _; o server_name el_viejo; por el hostname
-        new_config = re.sub(
-            r'(server_name\s+)[^;]+;',
-            rf'\g<1>{hostname};',
-            config,
-            count=1,
-        )
-        self._write_conf(new_config)
-
-    def _add_ssl_to_vhost(self, hostname: str, force_https: bool) -> None:
-        """
-        Transforma el vhost HTTP existente en uno HTTPS, conservando todo el
-        contenido (phpMyAdmin, Roundcube, Rspamd, etc.).
-        """
-        cert_path = f"/etc/letsencrypt/live/{hostname}/fullchain.pem"
-        key_path  = f"/etc/letsencrypt/live/{hostname}/privkey.pem"
-
-        config = self._read_conf()
-
-        # Extraer el contenido interior del bloque server { ... }
-        # (todo lo que está entre la primera { y su } de cierre)
-        inner = self._extract_server_inner(config)
-        if inner is None:
-            raise RuntimeError("No se pudo parsear el bloque server{} del vhost")
-
-        # Preparar bloque HTTP (redirect o mantener)
-        if force_https:
-            http_block = (
-                f"server {{\n"
-                f"    listen 80;\n"
-                f"    listen [::]:80;\n"
-                f"    server_name {hostname};\n"
-                f"    return 301 https://$host$request_uri;\n"
-                f"}}\n"
-            )
-        else:
-            # Conservar el bloque HTTP tal cual pero con el listen correcto
-            http_block = (
-                f"server {{\n"
-                f"    listen 80;\n"
-                f"    listen [::]:80;\n"
-                f"    server_name {hostname};\n"
-                + inner +
-                f"}}\n"
-            )
-
-        # Bloque HTTPS: copiar el contenido existente añadiendo directivas SSL
-        ssl_directives = (
-            f"    listen 443 ssl;\n"
-            f"    listen [::]:443 ssl;\n"
-            f"    http2 on;\n"
-            f"    server_name {hostname};\n"
-            f"\n"
-            f"    ssl_certificate     {cert_path};\n"
-            f"    ssl_certificate_key {key_path};\n"
-            f"    ssl_protocols       {SSL_PROTOCOLS};\n"
-            f"    ssl_ciphers         {SSL_CIPHERS};\n"
-            f"    ssl_prefer_server_ciphers on;\n"
-            f"    ssl_conf_command SignatureAlgorithms {SSL_SIGN_ALGS};\n"
-            f"    ssl_session_cache   shared:SSL:10m;\n"
-            f"    ssl_session_timeout 10m;\n"
-            f"    add_header Strict-Transport-Security \"max-age=31536000; includeSubDomains\" always;\n"
-            f"\n"
-        )
-
-        # Eliminar del inner las líneas listen y server_name (las ponemos nosotros)
-        inner_clean = re.sub(r'\s*listen\s+[^;]+;\n', '', inner)
-        inner_clean = re.sub(r'\s*server_name\s+[^;]+;\n', '', inner_clean)
-        inner_clean = re.sub(r'\s*client_max_body_size\s+[^;]+;\n', '', inner_clean)
-
-        https_block = (
-            f"server {{\n"
-            + ssl_directives
-            + f"    client_max_body_size 100M;\n"
-            + inner_clean
-            + f"}}\n"
-        )
-
-        new_config = f"# SVQPanel — vhost SSL (generado automáticamente)\n\n{http_block}\n{https_block}"
-        self._write_conf(new_config)
-
-        # Red de seguridad: reinyectar /pma y /webmail si se perdieron al
-        # reconstruir el bloque (se sirven en este mismo vhost).
-        self._ensure_service_locations()
-
-        # Verificar sintaxis
-        rc, _, err = self.execute_command(["nginx", "-t"], check=False)
-        if rc != 0:
-            # Restaurar backup si falla
-            self._restore_conf()
-            raise RuntimeError(f"nginx -t falló tras añadir SSL: {err.strip()}")
-
-    def _remove_ssl_from_vhost(self) -> None:
-        """
-        Intenta restaurar el backup o, si no existe, elimina los bloques SSL
-        del vhost actual dejando solo HTTP.
-        """
-        backup = PANEL_NGINX_CONF + ".bak"
-        if os.path.exists(backup):
-            shutil.copy2(backup, PANEL_NGINX_CONF)
-            logger.info("Vhost restaurado desde backup")
-        else:
-            # Fallback: reemplazar listen 443 por listen 80 y eliminar ssl_*
-            config = self._read_conf()
-            config = re.sub(r'\s*listen\s+443\s+ssl[^;]*;\n', '', config)
-            config = re.sub(r'\s*listen\s+\[::\]:443\s+ssl[^;]*;\n', '', config)
-            config = re.sub(r'\s*ssl_[^\n]+\n', '', config)
-            # Cambiar server_name a default_server catch-all
-            config = re.sub(
-                r'server_name\s+[^;]+;',
-                'server_name _;',
-                config,
-                count=1,
-            )
-            # Eliminar bloque redirect
-            config = re.sub(
-                r'server\s*\{[^}]*return\s+301[^}]*\}',
-                '',
-                config,
-                flags=re.DOTALL,
-            )
-            self._write_conf(config)
-
-        rc, _, err = self.execute_command(["nginx", "-t"], check=False)
-        if rc != 0:
-            raise RuntimeError(f"nginx -t falló al eliminar SSL: {err.strip()}")
-
-    # ──────────────────────────────────────────────────────────────────────────
-    # I/O de ficheros
-    # ──────────────────────────────────────────────────────────────────────────
-
-    def _read_conf(self) -> str:
-        with open(PANEL_NGINX_CONF, "r") as fh:
-            return fh.read()
-
-    def _write_conf(self, config: str) -> None:
-        """Escribe el fichero y asegura el enlace simbólico."""
-        with open(PANEL_NGINX_CONF, "w") as fh:
-            fh.write(config)
-        if not os.path.exists(PANEL_NGINX_LINK):
-            os.symlink(PANEL_NGINX_CONF, PANEL_NGINX_LINK)
-
-    def _backup_conf(self) -> None:
-        backup = PANEL_NGINX_CONF + ".bak"
-        if os.path.exists(PANEL_NGINX_CONF):
-            shutil.copy2(PANEL_NGINX_CONF, backup)
-
-    def _restore_conf(self) -> None:
-        backup = PANEL_NGINX_CONF + ".bak"
-        if os.path.exists(backup):
-            shutil.copy2(backup, PANEL_NGINX_CONF)
-
-    @staticmethod
-    def _extract_server_inner(config: str) -> str | None:
-        """
-        Extrae el contenido interior del primer bloque server { ... }
-        respetando el anidamiento de llaves.
-        """
-        start = config.find("server {")
-        if start == -1:
-            start = config.find("server{")
-        if start == -1:
-            return None
-
-        brace_start = config.index("{", start)
-        depth = 0
-        for i, ch in enumerate(config[brace_start:], start=brace_start):
-            if ch == "{":
-                depth += 1
-            elif ch == "}":
-                depth -= 1
-                if depth == 0:
-                    return config[brace_start + 1:i]
-        return None
-
-    @staticmethod
-    def _php_fpm_socket() -> str | None:
-        """Devuelve un socket PHP-FPM disponible (el compartido de mayor versión)."""
-        import glob
-        socks = sorted(glob.glob("/run/php/php*-fpm.sock"), reverse=True)
-        return socks[0] if socks else None
-
-    def _ensure_service_locations(self) -> None:
-        """
-        Reinyecta los bloques location de phpMyAdmin (/pma/) y Roundcube
-        (/webmail/) en el vhost del panel si los servicios están instalados y
-        el bloque no está presente. Idempotente: no duplica.
-
-        Esto evita que una regeneración del vhost (p.ej. al activar SSL) deje
-        sin acceso a phpMyAdmin/webmail, que se sirven en el mismo vhost.
-        """
-        sock = self._php_fpm_socket()
-        if not sock:
-            return
-        try:
-            config = self._read_conf()
-        except Exception:
-            return
-
-        changed = False
-
-        # phpMyAdmin
-        if os.path.isdir("/var/www/pma") and "location /pma/" not in config:
-            pma_block = (
-                "\n    # phpMyAdmin — acceso autenticado via panel SVQPanel\n"
-                "    location /pma/ {\n"
-                "        root /var/www;\n"
-                "        index index.php index.html;\n"
-                "        location ~ \\.php$ {\n"
-                "            include snippets/fastcgi-php.conf;\n"
-                f"            fastcgi_pass unix:{sock};\n"
-                "            fastcgi_param SCRIPT_FILENAME $document_root$fastcgi_script_name;\n"
-                "            include fastcgi_params;\n"
-                "        }\n"
-                "    }\n"
-            )
-            config = self._inject_into_https(config, pma_block)
-            changed = True
-
-        # Roundcube webmail
-        if os.path.islink("/var/www/webmail") and "location /webmail" not in config:
-            wm_block = (
-                "\n    # Roundcube Webmail — autologin desde SVQPanel\n"
-                "    location /webmail {\n"
-                "        root /var/www;\n"
-                "        index index.php;\n"
-                "        location ~ ^/webmail/.*\\.php$ {\n"
-                "            include snippets/fastcgi-php.conf;\n"
-                f"            fastcgi_pass unix:{sock};\n"
-                "            fastcgi_param SCRIPT_FILENAME $document_root$fastcgi_script_name;\n"
-                "            include fastcgi_params;\n"
-                "        }\n"
-                "    }\n"
-            )
-            config = self._inject_into_https(config, wm_block)
-            changed = True
-
-        if changed:
-            self._write_conf(config)
-
-    @staticmethod
-    def _inject_into_https(config: str, block: str) -> str:
-        """
-        Inserta `block` justo antes del 'location / {' del bloque HTTPS
-        (el último server{} del fichero, que es el de 443).
-        """
-        # Buscar el último 'location / {' (pertenece al server HTTPS)
-        idx = config.rfind("    location / {")
-        if idx == -1:
-            return config
-        return config[:idx] + block + "\n" + config[idx:]
-
-    # ──────────────────────────────────────────────────────────────────────────
-    # nginx y certbot
-    # ──────────────────────────────────────────────────────────────────────────
-
-    def _nginx_reload(self) -> None:
-        # restart (no reload): un SIGHUP no siempre recarga los certificados SSL
-        # nuevos en los workers; con un cert recién emitido/renovado el restart
-        # garantiza que nginx sirva el certificado correcto y no uno cacheado.
-        self.execute_command(["systemctl", "restart", "nginx"])
-
-    def _get_cert_expiry(self, hostname: str) -> datetime | None:
-        """Devuelve la fecha de expiración del certificado emitido."""
-        cert_file = f"/etc/letsencrypt/live/{hostname}/fullchain.pem"
-        if not os.path.exists(cert_file):
-            return None
-        try:
-            rc, out, _ = self.execute_command(
-                ["openssl", "x509", "-enddate", "-noout", "-in", cert_file],
-                check=False,
-            )
-            # out: "notAfter=Jun 26 12:00:00 2025 GMT"
-            if rc == 0 and "=" in out:
-                date_str = out.strip().split("=", 1)[1]
-                return datetime.strptime(date_str, "%b %d %H:%M:%S %Y %Z")
-        except Exception:
-            pass
-        return None
-
 
 import logging
 import os
@@ -496,6 +55,25 @@ RSPAMD_LOCATION = """    # Rspamd web UI
 """
 
 
+# Directivas a nivel server del panel. Sin client_max_body_size nginx aplica su
+# 1 MB por defecto y corta con 413 los imports de phpMyAdmin, las subidas del
+# gestor de archivos y los .tar de migración (install.sh ponía 6g, pero estas
+# plantillas reescriben el vhost entero al emitir el SSL y lo perdían).
+# El CSP NO va aquí: /webmail, /pma y /rspamd rompen con un CSP estricto.
+PANEL_UPLOAD_LIMIT = "6g"
+PANEL_SERVER_COMMON = f"""    client_max_body_size {PANEL_UPLOAD_LIMIT};
+
+    add_header X-Frame-Options "SAMEORIGIN" always;
+    add_header X-Content-Type-Options "nosniff" always;
+    add_header Referrer-Policy "strict-origin-when-cross-origin" always;
+    add_header Permissions-Policy "geolocation=(), microphone=(), camera=(), payment=()" always;
+"""
+
+# Imports/exports grandes de phpMyAdmin: el fastcgi_read_timeout por defecto
+# (60s) corta antes que el max_execution_time de PHP.
+PMA_FASTCGI_TIMEOUT = "            fastcgi_read_timeout 600s;\n"
+
+
 def _php_fpm_socket() -> str | None:
     """Devuelve un socket PHP-FPM compartido disponible (mayor versión)."""
     import glob
@@ -524,6 +102,7 @@ def _service_locations() -> str:
             f"            fastcgi_pass unix:{sock};\n"
             "            fastcgi_param SCRIPT_FILENAME $document_root$fastcgi_script_name;\n"
             "            include fastcgi_params;\n"
+            + PMA_FASTCGI_TIMEOUT +
             "        }\n"
             "    }\n"
         )
@@ -563,6 +142,75 @@ def _service_locations() -> str:
             "    }\n"
         )
     return ("\n" + "\n".join(blocks)) if blocks else ""
+
+
+def _server_blocks(text: str) -> list[tuple[int, int]]:
+    """(inicio, fin) de cada bloque `server { ... }` de primer nivel."""
+    blocks = []
+    for m in re.finditer(r'(?m)^server\s*\{', text):
+        depth = 0
+        for i in range(text.index("{", m.start()), len(text)):
+            if text[i] == "{":
+                depth += 1
+            elif text[i] == "}":
+                depth -= 1
+                if depth == 0:
+                    blocks.append((m.start(), i + 1))
+                    break
+    return blocks
+
+
+def patch_panel_vhost(text: str) -> str:
+    """Añade al server del panel (el que tiene /api/) lo que le falte de
+    PANEL_SERVER_COMMON y el timeout de /pma. Respeta un client_max_body_size
+    o una cabecera ya presentes (puestos a mano). Idempotente."""
+    for start, end in reversed(_server_blocks(text)):
+        block = text[start:end]
+        if "location /api/" not in block:
+            continue
+        # Clave de cada directiva: el nombre, o "add_header Cabecera".
+        def key(ln):
+            w = ln.split()
+            return " ".join(w[:2]) if w[0] == "add_header" else w[0]
+        missing = [ln for ln in PANEL_SERVER_COMMON.splitlines()
+                   if ln.strip() and key(ln) not in block]
+        if missing:
+            m = re.search(r'\n[ \t]*server_name[^;]*;\n', block)
+            at = m.end() if m else block.index("{") + 2
+            block = block[:at] + "\n" + "\n".join(missing) + "\n" + block[at:]
+        pma = block.find("location /pma/")
+        if pma != -1:
+            close = block.find("\n    }\n", pma)
+            if close != -1 and "fastcgi_read_timeout" not in block[pma:close]:
+                inc = block.find("include fastcgi_params;\n", pma, close)
+                if inc != -1:
+                    at = inc + len("include fastcgi_params;\n")
+                    block = block[:at] + PMA_FASTCGI_TIMEOUT + block[at:]
+        text = text[:start] + block + text[end:]
+    return text
+
+
+def ensure_panel_vhost_limits() -> bool:
+    """Repara in situ el vhost del panel ya generado (ver patch_panel_vhost).
+    Valida con nginx -t y restaura el original si falla. True si cambió algo."""
+    import subprocess
+    try:
+        with open(PANEL_NGINX_CONF) as fh:
+            old = fh.read()
+    except OSError:
+        return False
+    new = patch_panel_vhost(old)
+    if new == old:
+        return False
+    with open(PANEL_NGINX_CONF, "w") as fh:
+        fh.write(new)
+    test = subprocess.run(["nginx", "-t"], capture_output=True, text=True, timeout=30)
+    if test.returncode != 0:
+        with open(PANEL_NGINX_CONF, "w") as fh:
+            fh.write(old)
+        raise RuntimeError(f"nginx -t falló, vhost restaurado: {test.stderr.strip()}")
+    subprocess.run(["systemctl", "reload", "nginx"], check=False, timeout=30)
+    return True
 
 
 def _validate_hostname(hostname: str) -> bool:
@@ -758,6 +406,7 @@ server {{
     listen {PANEL_WEB_PORT};
     server_name {hostname} _;
 
+{PANEL_SERVER_COMMON}
     root {PANEL_FRONTEND_PATH};
     index index.html;
 
@@ -841,6 +490,7 @@ server {{
     # donde no hay nada escuchando -> timeout. Sin HSTS, http(s)://hostname (sin
     # puerto) cae en el vhost de bienvenida y el panel sigue solo en su puerto.
 
+{PANEL_SERVER_COMMON}
     # Si llega HTTP plano a este puerto SSL (p.ej. http://host:{PANEL_WEB_PORT}),
     # nginx devuelve 497; lo redirigimos a HTTPS en el mismo puerto en vez de
     # mostrar "400 Bad Request: plain HTTP request sent to HTTPS port".

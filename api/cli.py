@@ -323,6 +323,34 @@ def _check_renewals_failing(db, days: int = 14) -> None:
         key)
 
 
+QUOTA_EMAIL_EVERY_DAYS = 7
+
+
+def _quota_email(db, user, title, message, dedup_key):
+    """Además del aviso del panel, manda email al usuario: quien solo usa
+    SFTP nunca ve el panel, y SFTP solo devuelve un FAILURE genérico al llenar
+    la cuota. Como mucho uno cada QUOTA_EMAIL_EVERY_DAYS por umbral (se mira
+    si ya hubo aviso con esa clave, leído o no, en ese plazo). Sin SMTP del
+    panel o sin email del usuario no hace nada."""
+    from api.models.models_notification import Notification
+    if not (user.email or "").strip():
+        return
+    since = datetime.utcnow() - timedelta(days=QUOTA_EMAIL_EVERY_DAYS)
+    recent = (db.query(Notification.id)
+                .filter(Notification.user_id == user.id,
+                        Notification.dedup_key == dedup_key,
+                        Notification.created_at >= since)
+                .first())
+    if recent:
+        return
+    try:
+        from scripts.panel_mailer import send_panel_email
+        send_panel_email(db, to=user.email.strip(), subject=title,
+                         body_text=f"Hola {user.username},\n\n{message}\n")
+    except Exception as e:
+        logger.info(f"  sin email de cuota a {user.username}: {e}")
+
+
 def _eval_quota_notifications(db, user, kind, used_mb, quota_mb):
     """
     Genera/limpia avisos para un recurso (kind = 'disco' o 'tráfico').
@@ -346,23 +374,22 @@ def _eval_quota_notifications(db, user, kind, used_mb, quota_mb):
 
     if pct >= 100:
         clear_notification(db, user.id, key90)
-        create_notification(
-            db, user.id, "danger",
-            f"Cuota de {label} superada",
-            f"Has alcanzado el 100% de tu cuota de {label} "
-            f"({used_mb} MB de {quota_mb} MB). No podrás crear nuevos "
-            f"recursos hasta liberar espacio.",
-            dedup_key=key100,
-        )
+        title = f"Cuota de {label} superada"
+        msg = (f"Has alcanzado el 100% de tu cuota de {label} "
+               f"({used_mb} MB de {quota_mb} MB). No podrás crear nuevos "
+               f"recursos hasta liberar espacio.")
+        if kind == "disco":
+            msg += (" Mientras tanto fallarán las subidas por SFTP/FTP y las "
+                    "escrituras de la web.")
+        _quota_email(db, user, title, msg, key100)
+        create_notification(db, user.id, "danger", title, msg, dedup_key=key100)
     elif pct >= 90:
         clear_notification(db, user.id, key100)
-        create_notification(
-            db, user.id, "warning",
-            f"Cuota de {label} casi llena",
-            f"Estás usando el {pct:.0f}% de tu cuota de {label} "
-            f"({used_mb} MB de {quota_mb} MB). Considera liberar espacio.",
-            dedup_key=key90,
-        )
+        title = f"Cuota de {label} casi llena"
+        msg = (f"Estás usando el {pct:.0f}% de tu cuota de {label} "
+               f"({used_mb} MB de {quota_mb} MB). Considera liberar espacio.")
+        _quota_email(db, user, title, msg, key90)
+        create_notification(db, user.id, "warning", title, msg, dedup_key=key90)
     else:
         clear_notification(db, user.id, key90)
         clear_notification(db, user.id, key100)
@@ -1068,6 +1095,20 @@ def cmd_sync_panel_ssl() -> int:
         return 1
     finally:
         db.close()
+
+
+def cmd_fix_panel_vhost() -> int:
+    """Añade al vhost del panel el límite de subida (sin él, 413 a partir de
+    1 MB en phpMyAdmin/gestor de archivos), el timeout de /pma y las cabeceras
+    de seguridad que perdía al emitir el SSL. Idempotente."""
+    from scripts.panel_ssl_manager import ensure_panel_vhost_limits
+    try:
+        changed = ensure_panel_vhost_limits()
+    except Exception as e:
+        print(f"✗ Error: {e}")
+        return 1
+    print("✓ Vhost del panel actualizado" if changed else "Vhost del panel ya estaba al día")
+    return 0
 
 
 def cmd_restore_panel(filename: str) -> int:
@@ -2646,6 +2687,7 @@ def main():
     sub.add_parser("panel_whitelist_disable", help="RESCATE: desactiva la whitelist de IPs del panel")
     sub.add_parser("backup_panel", help="Backup de la BD y config del propio panel")
     sub.add_parser("sync_panel_ssl", help="Sincroniza el estado SSL del panel en la BD con el cert real")
+    sub.add_parser("fix_panel_vhost", help="Límite de subida, timeout de /pma y cabeceras en el vhost del panel")
 
     p_restore = sub.add_parser("restore_panel",
         help="RESCATE: restaura panel_db desde un backup (destructivo; reinicia el panel)")
@@ -2850,6 +2892,8 @@ def main():
         sys.exit(cmd_backup_panel())
     if args.cmd == "sync_panel_ssl":
         sys.exit(cmd_sync_panel_ssl())
+    if args.cmd == "fix_panel_vhost":
+        sys.exit(cmd_fix_panel_vhost())
     if args.cmd == "restore_panel":
         sys.exit(cmd_restore_panel(args.filename))
     if args.cmd == "purge_user":

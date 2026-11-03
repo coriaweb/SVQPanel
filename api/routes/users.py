@@ -147,6 +147,8 @@ async def create_user(
             domains_limit=user.domains_limit if user.domains_limit is not None else 10,
             parent_id=parent_id,
         )
+        if user.disk_quota_mb is not None:
+            db_user.disk_quota_mb = user.disk_quota_mb
         db_user.set_password(user.password)
         db.add(db_user)
         db.commit()
