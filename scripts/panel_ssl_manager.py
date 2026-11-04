@@ -95,6 +95,13 @@ def _php_fpm_socket() -> str | None:
     return socks[0] if socks else None
 
 
+def _pma_socket() -> str | None:
+    """Socket de /pma: su pool propio (scripts/pma_fpm.py) si está escuchando;
+    si no, el compartido (así un pool caído no deja phpMyAdmin en 502)."""
+    from scripts.pma_fpm import PMA_SOCKET
+    return PMA_SOCKET if os.path.exists(PMA_SOCKET) else _php_fpm_socket()
+
+
 def _service_locations() -> str:
     """
     Genera los bloques location de phpMyAdmin (/pma/) y Roundcube (/webmail/)
@@ -113,7 +120,7 @@ def _service_locations() -> str:
             "        index index.php index.html;\n"
             "        location ~ \\.php$ {\n"
             "            include snippets/fastcgi-php.conf;\n"
-            f"            fastcgi_pass unix:{sock};\n"
+            f"            fastcgi_pass unix:{_pma_socket()};\n"
             "            fastcgi_param SCRIPT_FILENAME $document_root$fastcgi_script_name;\n"
             "            include fastcgi_params;\n"
             + PMA_FASTCGI_TIMEOUT + PMA_NO_CACHE +
@@ -174,10 +181,11 @@ def _server_blocks(text: str) -> list[tuple[int, int]]:
     return blocks
 
 
-def patch_panel_vhost(text: str) -> str:
+def patch_panel_vhost(text: str, pma_pass: str | None = None) -> str:
     """Añade al server del panel (el que tiene /api/) lo que le falte de
     PANEL_SERVER_COMMON y el timeout de /pma. Respeta un client_max_body_size
-    o una cabecera ya presentes (puestos a mano). Idempotente."""
+    o una cabecera ya presentes (puestos a mano). Idempotente.
+    pma_pass: socket al que debe apuntar /pma (None = no tocarlo)."""
     for start, end in reversed(_server_blocks(text)):
         block = text[start:end]
         if "location /api/" not in block:
@@ -207,6 +215,11 @@ def patch_panel_vhost(text: str) -> str:
                 if "fastcgi_hide_header Cache-Control" not in block[pma:close]:
                     add += PMA_NO_CACHE
                 block = block[:at] + add + block[at:]
+                close += len(add)
+                if pma_pass:
+                    section = re.sub(r"fastcgi_pass unix:[^;]+;",
+                                     f"fastcgi_pass unix:{pma_pass};", block[pma:close])
+                    block = block[:pma] + section + block[close:]
         text = text[:start] + block + text[end:]
     return text
 
@@ -220,7 +233,7 @@ def ensure_panel_vhost_limits() -> bool:
             old = fh.read()
     except OSError:
         return False
-    new = patch_panel_vhost(old)
+    new = patch_panel_vhost(old, pma_pass=_pma_socket())
     if new == old:
         return False
     with open(PANEL_NGINX_CONF, "w") as fh:

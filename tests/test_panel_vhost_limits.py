@@ -68,6 +68,17 @@ def test_vhost_ya_parcheado_por_0171_recibe_el_no_cache():
     assert nuevo.count("fastcgi_read_timeout") == 1
 
 
+def test_pma_apunta_a_su_pool_y_vuelve_al_compartido():
+    propio = patch_panel_vhost(VHOST, pma_pass="/run/php/svqpanel-pma.sock")
+    pma = propio[propio.index("location /pma/"):propio.index("location /api/")]
+    assert "fastcgi_pass unix:/run/php/svqpanel-pma.sock;" in pma
+    assert "php8.5-fpm.sock" not in pma
+    # Pool caído: se devuelve al compartido.
+    vuelta = patch_panel_vhost(propio, pma_pass="/run/php/php8.5-fpm.sock")
+    assert "svqpanel-pma.sock" not in vuelta
+    assert patch_panel_vhost(propio, pma_pass="/run/php/svqpanel-pma.sock") == propio
+
+
 def test_idempotente():
     once = patch_panel_vhost(VHOST)
     assert patch_panel_vhost(once) == once

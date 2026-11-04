@@ -1111,6 +1111,22 @@ def cmd_fix_panel_vhost() -> int:
     return 0
 
 
+def cmd_pma_fpm() -> int:
+    """Pool PHP-FPM propio de phpMyAdmin + /pma del vhost apuntando a él."""
+    import json
+    from scripts.pma_fpm import ensure_pool
+    from scripts.panel_ssl_manager import ensure_panel_vhost_limits
+    r = ensure_pool()
+    print(("✓ " if r.get("ok") else "✗ ") + json.dumps(r, ensure_ascii=False))
+    try:
+        changed = ensure_panel_vhost_limits()
+    except Exception as e:
+        print(f"✗ vhost: {e}")
+        return 1
+    print("✓ vhost del panel actualizado" if changed else "vhost del panel ya estaba al día")
+    return 0 if r.get("ok") else 1
+
+
 def cmd_db_import(db_id: int, filename: str, force: bool, delete_after: bool) -> int:
     """Importa ~/imports/<filename> en la BD (lo lanza el panel como unidad systemd)."""
     from scripts.db_import import run_import
@@ -2694,6 +2710,7 @@ def main():
     sub.add_parser("backup_panel", help="Backup de la BD y config del propio panel")
     sub.add_parser("sync_panel_ssl", help="Sincroniza el estado SSL del panel en la BD con el cert real")
     sub.add_parser("fix_panel_vhost", help="Límite de subida, timeout de /pma y cabeceras en el vhost del panel")
+    sub.add_parser("pma_fpm", help="Pool PHP-FPM propio de phpMyAdmin (límites de subida altos)")
     p_dbimp = sub.add_parser("db_import", help="Importa ~/imports/<fichero> en una BD (uso interno del panel)")
     p_dbimp.add_argument("db_id", type=int)
     p_dbimp.add_argument("filename")
@@ -2905,6 +2922,8 @@ def main():
         sys.exit(cmd_sync_panel_ssl())
     if args.cmd == "fix_panel_vhost":
         sys.exit(cmd_fix_panel_vhost())
+    if args.cmd == "pma_fpm":
+        sys.exit(cmd_pma_fpm())
     if args.cmd == "db_import":
         sys.exit(cmd_db_import(args.db_id, args.filename, args.force, args.delete_after))
     if args.cmd == "restore_panel":
