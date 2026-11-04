@@ -46,6 +46,28 @@ def test_anade_limite_timeout_y_cabeceras_solo_al_server_del_panel():
     assert out.count("{") == out.count("}")
 
 
+def test_pma_sin_cache_y_conserva_cabeceras():
+    out = patch_panel_vhost(VHOST)
+    pma = out[out.index("location /pma/"):out.index("location /api/")]
+    assert "fastcgi_hide_header Cache-Control;" in pma
+    assert 'add_header Cache-Control "no-store, no-cache, must-revalidate" always;' in pma
+    # add_header en el location anula los del server: tienen que repetirse.
+    assert 'add_header X-Frame-Options "SAMEORIGIN" always;' in pma
+    # Y el server sigue teniendo los suyos (no se confunden con los de /pma).
+    server = out.replace(pma, "")
+    assert server.count('add_header X-Frame-Options') == 1
+
+
+def test_vhost_ya_parcheado_por_0171_recibe_el_no_cache():
+    # Estado tras el 0171: timeout en /pma pero sin el no-cache.
+    viejo = VHOST.replace(
+        "            include fastcgi_params;\n",
+        "            include fastcgi_params;\n            fastcgi_read_timeout 600s;\n")
+    nuevo = patch_panel_vhost(viejo)
+    assert "fastcgi_hide_header Cache-Control;" in nuevo
+    assert nuevo.count("fastcgi_read_timeout") == 1
+
+
 def test_idempotente():
     once = patch_panel_vhost(VHOST)
     assert patch_panel_vhost(once) == once

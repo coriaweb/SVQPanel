@@ -73,6 +73,20 @@ PANEL_SERVER_COMMON = f"""    client_max_body_size {PANEL_UPLOAD_LIMIT};
 # (60s) corta antes que el max_execution_time de PHP.
 PMA_FASTCGI_TIMEOUT = "            fastcgi_read_timeout 600s;\n"
 
+# phpMyAdmin fija session_cache_limiter('private') y su redirección al login
+# (sesión caducada) sale con "Cache-Control: private, max-age=10800": el
+# navegador la guardaba 3 h y, aunque se volviera a entrar bien desde el panel,
+# «Importar» seguía saltando al login sin preguntar al servidor (Oskarbi,
+# nov 2026). Sus páginas ya mandan no-cache; aquí se fuerza no-store en todas.
+# Un add_header dentro del location anula los del server: se repiten aquí.
+PMA_NO_CACHE = (
+    "            fastcgi_hide_header Cache-Control;\n"
+    "            fastcgi_hide_header Expires;\n"
+    "            add_header Cache-Control \"no-store, no-cache, must-revalidate\" always;\n"
+    + "".join("        " + ln + "\n" for ln in PANEL_SERVER_COMMON.splitlines()
+              if ln.strip().startswith("add_header"))
+)
+
 
 def _php_fpm_socket() -> str | None:
     """Devuelve un socket PHP-FPM compartido disponible (mayor versión)."""
@@ -102,7 +116,7 @@ def _service_locations() -> str:
             f"            fastcgi_pass unix:{sock};\n"
             "            fastcgi_param SCRIPT_FILENAME $document_root$fastcgi_script_name;\n"
             "            include fastcgi_params;\n"
-            + PMA_FASTCGI_TIMEOUT +
+            + PMA_FASTCGI_TIMEOUT + PMA_NO_CACHE +
             "        }\n"
             "    }\n"
         )
@@ -172,8 +186,11 @@ def patch_panel_vhost(text: str) -> str:
         def key(ln):
             w = ln.split()
             return " ".join(w[:2]) if w[0] == "add_header" else w[0]
+        # Sin el location /pma/ (repite las cabeceras dentro) para no confundirlas
+        # con las del server.
+        outer = re.sub(r"location /pma/ \{.*?\n    \}\n", "", block, flags=re.S)
         missing = [ln for ln in PANEL_SERVER_COMMON.splitlines()
-                   if ln.strip() and key(ln) not in block]
+                   if ln.strip() and key(ln) not in outer]
         if missing:
             m = re.search(r'\n[ \t]*server_name[^;]*;\n', block)
             at = m.end() if m else block.index("{") + 2
@@ -181,11 +198,15 @@ def patch_panel_vhost(text: str) -> str:
         pma = block.find("location /pma/")
         if pma != -1:
             close = block.find("\n    }\n", pma)
-            if close != -1 and "fastcgi_read_timeout" not in block[pma:close]:
-                inc = block.find("include fastcgi_params;\n", pma, close)
-                if inc != -1:
-                    at = inc + len("include fastcgi_params;\n")
-                    block = block[:at] + PMA_FASTCGI_TIMEOUT + block[at:]
+            inc = block.find("include fastcgi_params;\n", pma, close)
+            if close != -1 and inc != -1:
+                at = inc + len("include fastcgi_params;\n")
+                add = ""
+                if "fastcgi_read_timeout" not in block[pma:close]:
+                    add += PMA_FASTCGI_TIMEOUT
+                if "fastcgi_hide_header Cache-Control" not in block[pma:close]:
+                    add += PMA_NO_CACHE
+                block = block[:at] + add + block[at:]
         text = text[:start] + block + text[end:]
     return text
 
