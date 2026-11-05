@@ -5,6 +5,7 @@ Uso típico (desde systemd timer):
     /opt/svqpanel/venv/bin/python -m api.cli refresh_ip_lists
 """
 
+import os
 import sys
 import argparse
 import logging
@@ -2701,6 +2702,92 @@ def cmd_backfill_dns_ipv6(dry_run: bool = False) -> int:
         db.close()
 
 
+def cmd_migrate_nft_conf() -> int:
+    """
+    Update 0174: lleva /etc/nftables.conf al formato de 0.274.0 (include de
+    svqpanel-ports.nft y svqpanel-mysql-remote.nft, set mysql_remote_allow,
+    chain svq_pre antes de los puertos base) y mueve las reglas custom / listas
+    IP ya generadas a svq_pre. Copia de seguridad, `nft -c` y vuelta atrás si
+    algo no valida. Idempotente; nunca devuelve error (no debe parar la cadena
+    de updates): si el conf no tiene la forma esperada, lo deja como está.
+    """
+    import shutil
+    import subprocess
+
+    conf = nft.NFT_MAIN_CONF
+    if not os.path.isfile(conf):
+        print(f"· {conf} no existe; nada que hacer")
+        return 0
+    with open(conf) as f:
+        old = f.read()
+    new, changes = nft.patch_main_conf(old)
+    if new is None:
+        print(f"⚠ {changes[0]}: no se toca. Añade a mano el include de {nft.NFT_PORTS_FILE}")
+        return 0
+
+    # Archivos de reglas/listas generados con `add rule … input` → svq_pre
+    rule_files = {}
+    for path, chain in ((nft.NFT_RULES_FILE, nft.NFT_PRE_CHAIN),
+                        (nft.NFT_IPLISTS_FILE, nft.NFT_LISTS_CHAIN)):
+        if os.path.isfile(path):
+            with open(path) as f:
+                txt = f.read()
+            moved = nft.move_rules_to_chain(txt, chain)
+            if moved != txt:
+                rule_files[path] = (txt, moved)
+                changes.append(f"reglas de {os.path.basename(path)} → {chain}")
+
+    if not changes:
+        print("✓ nftables.conf ya está al día")
+        return 0
+
+    # Los includes nuevos tienen que existir (nft -f falla si falta el archivo)
+    for path in (nft.NFT_PORTS_FILE, nft.NFT_MYSQL_FILE):
+        if not os.path.exists(path):
+            os.makedirs(os.path.dirname(path), exist_ok=True)
+            open(path, "w").close()
+
+    stamp = ".bak-0174"
+    shutil.copy2(conf, conf + stamp)
+    for path in rule_files:
+        shutil.copy2(path, path + stamp)
+
+    def restore():
+        shutil.copy2(conf + stamp, conf)
+        for path in rule_files:
+            shutil.copy2(path + stamp, path)
+
+    with open(conf, "w") as f:
+        f.write(new)
+    for path, (_, moved) in rule_files.items():
+        with open(path, "w") as f:
+            f.write(moved)
+
+    chk = subprocess.run([nft.NFT_BIN, "-c", "-f", conf], capture_output=True, text=True, timeout=30)
+    if chk.returncode != 0:
+        restore()
+        print(f"⚠ el conf nuevo no valida; se restaura el anterior: {chk.stderr.strip()[:400]}")
+        return 0
+
+    for c in changes:
+        print(f"  · {c}")
+    try:
+        with open(nft.NFT_PORTS_FILE) as f:
+            saved = [l for l in f.read().splitlines() if l.startswith("add element")]
+        print("  · puertos guardados que se aplican ahora: " + ("; ".join(saved) or "(ninguno: los de fábrica)"))
+    except OSError:
+        pass
+
+    ok, msg = nft.reload_nftables()
+    if not ok:
+        restore()
+        nft.reload_nftables()
+        print(f"⚠ la recarga falló; se restaura el anterior: {msg}")
+        return 0
+    print("✓ nftables.conf migrado y recargado")
+    return 0
+
+
 def main():
     parser = argparse.ArgumentParser(prog="api.cli", description="SVQPanel CLI")
     sub = parser.add_subparsers(dest="cmd", required=True)
@@ -2711,6 +2798,7 @@ def main():
     sub.add_parser("sync_panel_ssl", help="Sincroniza el estado SSL del panel en la BD con el cert real")
     sub.add_parser("fix_panel_vhost", help="Límite de subida, timeout de /pma y cabeceras en el vhost del panel")
     sub.add_parser("pma_fpm", help="Pool PHP-FPM propio de phpMyAdmin (límites de subida altos)")
+    sub.add_parser("migrate_nft_conf", help="nftables.conf: persistir puertos cerrados y reglas antes de los puertos base")
     p_dbimp = sub.add_parser("db_import", help="Importa ~/imports/<fichero> en una BD (uso interno del panel)")
     p_dbimp.add_argument("db_id", type=int)
     p_dbimp.add_argument("filename")
@@ -2924,6 +3012,8 @@ def main():
         sys.exit(cmd_fix_panel_vhost())
     if args.cmd == "pma_fpm":
         sys.exit(cmd_pma_fpm())
+    if args.cmd == "migrate_nft_conf":
+        sys.exit(cmd_migrate_nft_conf())
     if args.cmd == "db_import":
         sys.exit(cmd_db_import(args.db_id, args.filename, args.force, args.delete_after))
     if args.cmd == "restore_panel":

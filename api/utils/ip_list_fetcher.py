@@ -225,19 +225,24 @@ def _set_decl(set_name: str, family: str) -> str:
     return f"    set {set_name} {{ type {fam_type}; flags interval; }}"
 
 
-def regenerate_iplists_nft(active_lists: List[Tuple[IpList, List[str], List[str]]]) -> str:
+def regenerate_iplists_nft(active_lists: List[Tuple[IpList, List[str], List[str]]],
+                           chain: Optional[str] = None) -> str:
     """
     Genera el contenido completo de svqpanel-iplists.nft:
       1) Declaración de los sets (en bloque `table inet svqpanel { ... }`,
          nftables hace merge con la tabla declarada en /etc/nftables.conf).
       2) `add element` para poblar los sets.
-      3) `add rule inet svqpanel input ...` para que la chain ya existente
-         (creada en /etc/nftables.conf) consulte cada set.
+      3) `add rule inet svqpanel svq_lists ...` para que la chain ya existente
+         (creada en /etc/nftables.conf) consulte cada set. `svq_lists` se
+         evalúa ANTES del accept de los puertos base (en `input`, al final, un
+         drop de una lista no paraba nada en 22/80/443/correo) y deja fuera el
+         SMTP 25 entrante (`tcp dport 25 return` en el conf).
 
-    OJO: la chain `input` solo se DECLARA en /etc/nftables.conf — aquí solo
-    añadimos reglas a ella con `add rule`. Redeclararla provocaría error
+    OJO: las chains solo se DECLARAN en /etc/nftables.conf — aquí solo
+    añadimos reglas con `add rule`. Redeclarar `input` provocaría error
     de nftables ('Hook clash with chain input').
     """
+    chain = chain or nft.lists_chain()
     set_decls       = []
     elements_block  = []
     rules_block     = []
@@ -251,7 +256,7 @@ def regenerate_iplists_nft(active_lists: List[Tuple[IpList, List[str], List[str]
             s = _set_name_for(iplist, "v4")
             set_decls.append(_set_decl(s, "v4"))
             rules_block.append(
-                f"add rule inet svqpanel input ip  saddr @{s} {nft_action} "
+                f"add rule inet svqpanel {chain} ip  saddr @{s} {nft_action} "
                 f"comment \"iplist:{iplist.name[:48]}\""
             )
             for i in range(0, len(v4), 1024):
@@ -264,7 +269,7 @@ def regenerate_iplists_nft(active_lists: List[Tuple[IpList, List[str], List[str]
             s = _set_name_for(iplist, "v6")
             set_decls.append(_set_decl(s, "v6"))
             rules_block.append(
-                f"add rule inet svqpanel input ip6 saddr @{s} {nft_action} "
+                f"add rule inet svqpanel {chain} ip6 saddr @{s} {nft_action} "
                 f"comment \"iplist:{iplist.name[:48]}\""
             )
             for i in range(0, len(v6), 1024):

@@ -2999,6 +2999,23 @@ table inet svqpanel {
         elements = { 53, 443, __PANEL_WEB_PORT__ }
     }
 
+    # IPs autorizadas a MySQL remoto (Bases de datos → Acceso remoto). Los
+    # elementos los persiste el panel en svqpanel-mysql-remote.nft (include).
+    set mysql_remote_allow { type ipv4_addr; flags interval; }
+
+    # Reglas custom (Seguridad → Firewall): el panel las añade aquí
+    # (svqpanel-rules.nft). `input` salta a esta cadena ANTES de aceptar los
+    # puertos base, así un deny sobre un puerto abierto sí corta el tráfico.
+    chain svq_pre {
+    }
+
+    # Listas IP / bloqueo por país (svqpanel-iplists.nft), también antes de los
+    # puertos base. El SMTP entrante (25) queda fuera: rechazaría correo
+    # legítimo de servidores de esos países (Gmail/Outlook/SES tienen MTAs allí).
+    chain svq_lists {
+        tcp dport 25 return
+    }
+
     chain input {
         # Política DROP: todo lo que no se acepte explícitamente se descarta.
         type filter hook input priority filter; policy drop;
@@ -3020,6 +3037,10 @@ table inet svqpanel {
         ip  saddr @whitelist_v4 accept
         ip6 saddr @whitelist_v6 accept
 
+        # Reglas custom y listas IP (antes de los puertos base)
+        jump svq_pre
+        jump svq_lists
+
         # ── Puertos PÚBLICOS de los servicios del panel ──────────────────
         # Gestionados vía sets (el panel los abre/cierra). De serie incluyen:
         # SSH(22), web(80,443), panel(__PANEL_WEB_PORT__), correo(25,587,465,
@@ -3027,13 +3048,21 @@ table inet svqpanel {
         tcp dport @base_tcp_ports accept
         udp dport @base_udp_ports accept
 
+        # MySQL remoto: solo desde las IPs autorizadas
+        tcp dport 3306 ip saddr @mysql_remote_allow accept
+
         # NOTA: la API del panel (8001) NO se abre: solo escucha en 127.0.0.1
         # y se sirve por nginx en el puerto del panel. MariaDB/PostgreSQL/Redis/
         # rspamd/crowdsec son localhost-only por diseño.
     }
 }
 
-# Includes gestionados por el panel (pueden estar vacíos al inicio)
+# Includes gestionados por el panel (pueden estar vacíos al inicio). Van
+# DESPUÉS de la tabla: svqpanel-ports.nft pisa los puertos de fábrica de los
+# sets con los que se hayan abierto/cerrado desde el panel. Sin ese include,
+# cada arranque o recarga (incluida la diaria de las listas IP) los reabría.
+include "/etc/nftables/svqpanel-ports.nft"
+include "/etc/nftables/svqpanel-mysql-remote.nft"
 include "/etc/nftables/svqpanel-iplists.nft"
 include "/etc/nftables/svqpanel-rules.nft"
 NFTEOF
@@ -3049,6 +3078,8 @@ fi
 
 # Crear los includes vacíos
 mkdir -p /etc/nftables
+: > /etc/nftables/svqpanel-ports.nft
+: > /etc/nftables/svqpanel-mysql-remote.nft
 : > /etc/nftables/svqpanel-iplists.nft
 : > /etc/nftables/svqpanel-rules.nft
 

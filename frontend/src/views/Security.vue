@@ -415,6 +415,13 @@
             </button>
           </div>
         </div>
+        <p class="sec-hint" style="padding:0 16px">
+          Se evalúan por prioridad <strong>antes</strong> que los puertos del sistema: un
+          <em>deny</em> sobre un puerto abierto (p. ej. 22 desde una red) sí lo bloquea, y un
+          <em>allow</em> con IP de origen abre un puerto cerrado solo a esa IP. Las IPs en
+          whitelist pasan siempre. Un <em>deny/reject</em> sin origen ni puerto se ignora
+          (cortaría todo el tráfico).
+        </p>
         <div v-if="loadingFw" class="sec-loading"><div class="spinner-border spinner-border-sm"></div></div>
         <div v-else-if="!rules.length" class="sec-empty"><i class="bi bi-shield"></i><span>No hay reglas.</span></div>
         <div v-else class="sec-table-wrap">
@@ -536,7 +543,9 @@
             Bloquea en el firewall todo el tráfico entrante de un país (rangos IP de
             <a href="https://www.ipdeny.com" target="_blank" rel="noopener">ipdeny.com</a>,
             refresco automático cada 24h). Pincha los que quieras: se aplican en
-            segundo plano, no tienes que esperar entre clic y clic.
+            segundo plano, no tienes que esperar entre clic y clic. El correo entrante
+            (SMTP 25) queda fuera para no rechazar mensajes legítimos de servidores de
+            esos países; las IPs en whitelist pasan siempre.
           </p>
           <div v-if="geoLoading" class="sec-empty"><span class="spinner-border spinner-border-sm"></span></div>
           <div v-else class="geo-grid">
