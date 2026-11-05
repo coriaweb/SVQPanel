@@ -62,7 +62,9 @@ def test_conf_del_dominio():
     assert "map $svq_cc $svq_cl_mi_web_com {\n    default 1;\n    es 0;\n}" in conf
     # ACME es la PRIMERA regex (en un map gana la primera que casa)
     regs = [l.split('"')[1] for l in conf.splitlines() if l.strip().startswith('"~')]
-    assert regs[0] == "~^.:.:.:/\\.well-known/acme-challenge/"
+    assert regs[0] == "~^.:.:.:.:/\\.well-known/acme-challenge/"
+    # Sin «solo Cloudflare» no se usa $svq_from_cf (puede no existir en nginx)
+    assert "$svq_from_cf" not in conf and '"$svq_ip_mi_web_com:1:' in conf
     # Sin filtro de país la variable queda a 0 para todos
     off = g.render_domain_conf("x.com", g.validate_rules({"ip_block": ["1.1.1.1"]})[0])
     assert "map $svq_cc $svq_cs_x_com {\n    default 0;\n}" in off
@@ -141,3 +143,102 @@ def test_endpoint_avisa_antes_de_dejarte_fuera(db, monkeypatch):
     # Quitarlo todo deja la columna a NULL
     R.put_access(1, R.AccessRules(), req, current_user=c1, db=db)
     assert regen[-1] is None
+
+
+# ── «Solo tráfico desde Cloudflare» ─────────────────────────────────────────
+def test_cloudflare_only_activa_y_valida():
+    rules, err = g.validate_rules({"cloudflare_only": True})
+    assert not err and rules["cloudflare_only"] is True
+    assert g.is_active(rules)
+    assert g.parse_rules(json.dumps({"ip_block": ["1.1.1.1"]}))["cloudflare_only"] is False
+
+
+@pytest.mark.parametrize("extra,via_cf,uri,blocked", [
+    ({}, True, "/", False),                                   # llega por Cloudflare
+    ({}, False, "/", True),                                   # directo a la IP del servidor
+    ({}, False, "/.well-known/acme-challenge/x", False),      # Let's Encrypt siempre
+    ({"ip_allow": ["8.8.8.0/24"]}, False, "/", False),        # IP permitida entra directa
+])
+def test_cloudflare_only_would_block(extra, via_cf, uri, blocked):
+    rules, _ = g.validate_rules({"cloudflare_only": True, **extra})
+    assert g.would_block(rules, "8.8.8.8", "US", uri, via_cloudflare=via_cf) is blocked
+
+
+def _nginx_map_eval(conf: str, key: str) -> int:
+    """Evalúa el map final como nginx: primera regex que casa gana."""
+    import re
+    for line in conf.split("$svq_deny_")[1].splitlines()[1:]:
+        m = re.match(r'\s*"~(.*)"\s+(\d);', line)
+        if m and re.search(m.group(1), key):
+            return int(m.group(2))
+    return 0
+
+
+def test_cloudflare_only_conf_y_orden_del_map():
+    rules, _ = g.validate_rules({"cloudflare_only": True, "site_mode": "allow", "site_countries": ["ES"],
+                                 "login_countries": ["ES"], "ip_allow": ["1.2.3.4"]})
+    conf = g.render_domain_conf("w.com", rules)
+    assert 'map "$svq_ip_w_com:$svq_from_cf:$svq_cs_w_com:$svq_cl_w_com:$uri"' in conf
+    ev = lambda k: _nginx_map_eval(conf, k)
+    assert ev("-:0:0:0:/") == 1                                   # directo: fuera
+    assert ev("-:1:0:0:/") == 0                                   # por Cloudflare, país OK
+    assert ev("-:1:1:0:/") == 1                                   # por Cloudflare, país no permitido
+    assert ev("-:1:0:1:/wp-login.php") == 1                       # admin desde otro país
+    assert ev("a:0:1:1:/wp-login.php") == 0                       # IP permitida gana a todo
+    assert ev("-:0:1:1:/.well-known/acme-challenge/t") == 0       # ACME gana a todo
+
+
+def test_cloudflare_ranges_no_se_recortan_si_falla_la_descarga(tmp_path, monkeypatch):
+    from scripts import cloudflare_realip as cf
+    monkeypatch.setattr(cf, "CONF_PATH", tmp_path / "realip.conf")
+    monkeypatch.setattr(cf, "RANGES_FILE", tmp_path / "cf.conf")
+    monkeypatch.setattr(cf, "GEO_CONF", tmp_path / "geo.conf")
+    monkeypatch.setattr(cf, "_reload_nginx", lambda: True)
+    good4 = [f"10.{i}.0.0/16" for i in range(10)]
+    good6 = [f"2001:db8:{i}::/48" for i in range(5)]
+    monkeypatch.setattr(cf, "_fetch", lambda url: good4 if "v4" in url else good6)
+    assert cf.refresh()
+    assert "10.9.0.0/16 1;" in (tmp_path / "cf.conf").read_text()
+    assert "geo $realip_remote_addr $svq_from_cf" in (tmp_path / "geo.conf").read_text()
+    # Descarga rota / sospechosamente corta → se mantienen los anteriores (no la lista embebida)
+    monkeypatch.setattr(cf, "_fetch", lambda url: ["<html>"] if "v4" in url else ["2001:db8::/32"])
+    cf.refresh()
+    ranges = (tmp_path / "cf.conf").read_text()
+    assert "10.9.0.0/16 1;" in ranges and "2001:db8:4::/48 1;" in ranges
+    assert cf.is_cloudflare_ip("10.3.2.1") and not cf.is_cloudflare_ip("8.8.8.8")
+
+
+def test_aviso_dns_sin_cloudflare(db, monkeypatch):
+    from types import SimpleNamespace
+    from fastapi import HTTPException
+    from api.models.models_domain import Domain
+    from api.routes import domain_access as R
+    import api.routes.domain_aliases as A
+    from scripts import cloudflare_realip as cf
+    from tests.test_user_admin_protection import _add
+    c1 = _add(db, 5, "c1")
+    db.add(Domain(id=1, user_id=5, domain_name="a.com", php_version="8.4", public_html="/p"))
+    db.commit()
+    monkeypatch.setattr(g, "country_names", lambda: {"ES": "España"})
+    monkeypatch.setattr(g, "lookup_country", lambda ip: "ES")
+    monkeypatch.setattr(cf, "get_ranges", lambda fetch=True: (["104.16.0.0/13"], []))
+    regen = []
+    monkeypatch.setattr(A, "_regenerate_or_revert", lambda d, db, rv: regen.append(d.access_rules))
+    req = SimpleNamespace(headers={"x-real-ip": "8.8.8.8"}, client=None)
+
+    # DNS apuntando al servidor (nube gris) → 409, no se aplica
+    monkeypatch.setattr(g, "_public_ips", lambda name: ["185.104.188.71"])
+    with pytest.raises(HTTPException) as e:
+        R.put_access(1, R.AccessRules(cloudflare_only=True), req, current_user=c1, db=db)
+    assert e.value.status_code == 409 and "185.104.188.71" in e.value.detail and not regen
+    # Confirmado → se aplica
+    R.put_access(1, R.AccessRules(cloudflare_only=True, confirm_self_block=True), req, current_user=c1, db=db)
+    assert json.loads(regen[-1])["cloudflare_only"] is True
+    # Ya activo: guardar otra vez no vuelve a consultar el DNS
+    monkeypatch.setattr(g, "_public_ips", lambda name: pytest.fail("no debe consultar el DNS"))
+    R.put_access(1, R.AccessRules(cloudflare_only=True), req, current_user=c1, db=db)
+    # Con la nube naranja (IPs de Cloudflare) no hay aviso
+    R.put_access(1, R.AccessRules(), req, current_user=c1, db=db)
+    monkeypatch.setattr(g, "_public_ips", lambda name: ["104.18.1.1"])
+    R.put_access(1, R.AccessRules(cloudflare_only=True), req, current_user=c1, db=db)
+    assert json.loads(regen[-1])["cloudflare_only"] is True

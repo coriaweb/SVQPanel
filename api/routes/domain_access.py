@@ -2,7 +2,8 @@
 Acceso por país e IP de un dominio (lógica y nginx en scripts/geo_access.py).
 
   GET /api/domains/{id}/access   → reglas + catálogo de países + tu IP/país
-  PUT /api/domains/{id}/access   → guardar reglas (regenera el vhost; revierte si no valida)
+  PUT /api/domains/{id}/access   → guardar reglas (regenera el vhost; revierte si no valida).
+                                   Incluye «solo tráfico desde Cloudflare» (cloudflare_only).
   PUT /api/domains/{id}/hotlink  → protección contra hotlinking (ver scripts/hotlink.py)
 
 Si las reglas nuevas dejarían FUERA a quien las está guardando (su IP o su país),
@@ -31,7 +32,8 @@ class AccessRules(BaseModel):
     login_countries: List[str] = Field(default_factory=list, max_length=300)
     ip_allow: List[str] = Field(default_factory=list, max_length=geo_access.MAX_IPS + 1)
     ip_block: List[str] = Field(default_factory=list, max_length=geo_access.MAX_IPS + 1)
-    confirm_self_block: bool = False
+    cloudflare_only: bool = False
+    confirm_self_block: bool = False      # confirma también el aviso de DNS sin Cloudflare
 
 
 def _me(request: Request) -> dict:
@@ -74,18 +76,28 @@ def put_access(domain_id: int, data: AccessRules, request: Request,
     if errors:
         raise HTTPException(400, detail="; ".join(errors))
 
+    previous = domain.access_rules
+    warnings = []
     me = _me(request)
     if me["ip"] and not data.confirm_self_block:
         site = geo_access.would_block(rules, me["ip"], me["country"], "/")
         login = geo_access.would_block(rules, me["ip"], me["country"], "/wp-login.php")
         if site or login:
             where = "la web" if site else "el acceso de administración de WordPress"
-            raise HTTPException(409, detail=(
+            warnings.append(
                 f"Con estas reglas tu conexión actual ({me['ip']}"
                 f"{', ' + names.get(me['country'], me['country']) if me['country'] else ''}) "
-                f"no podría entrar a {where}. Añade tu IP a las permitidas o confirma."))
-
-    previous = domain.access_rules
+                f"no podría entrar a {where}. Añade tu IP a las permitidas o confirma.")
+    # Al ACTIVAR «solo Cloudflare»: si el DNS público no apunta a Cloudflare, la
+    # web se quedaría dando 403 a todo el mundo.
+    if (rules["cloudflare_only"] and not geo_access.parse_rules(previous)["cloudflare_only"]
+            and not data.confirm_self_block):
+        problem = geo_access.cloudflare_dns_problem(
+            domain.domain_name, with_www=not getattr(domain, "is_subdomain", False))
+        if problem:
+            warnings.append(problem)
+    if warnings:
+        raise HTTPException(409, detail="\n\n".join(warnings))
     domain.access_rules = json.dumps(rules) if geo_access.is_active(rules) or rules["ip_allow"] else None
     db.commit()
 

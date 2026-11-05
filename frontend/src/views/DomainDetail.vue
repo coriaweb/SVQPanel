@@ -700,6 +700,20 @@ define('WP_REDIS_PATH', '{{ redisStatus.socket }}');</pre>
                            placeholder="Sin límite: se puede entrar desde cualquier país" />
           </div>
 
+          <div class="acc-sec">
+            <label class="acc-mode" :class="{ on: accForm.cloudflare_only }">
+              <input type="checkbox" v-model="accForm.cloudflare_only" />
+              <span>
+                <strong>Solo tráfico desde Cloudflare</strong>
+                <small>
+                  Para webs con el proxy de Cloudflare activo (nube naranja): quien entre directo a la IP
+                  del servidor, saltándose el cortafuegos de Cloudflare, recibe un <code>403</code>. Los rangos de
+                  Cloudflare se actualizan solos cada día. Las IPs siempre permitidas siguen entrando directas.
+                </small>
+              </span>
+            </label>
+          </div>
+
           <div class="acc-sec acc-ips">
             <label>
               <span class="acc-title">IPs siempre permitidas</span>
@@ -1838,7 +1852,7 @@ location @maintenance {
 
     // ── Acceso por país/IP (pestaña Protección) ──
     const acc = ref(null)
-    const accForm = ref({ site_mode: 'off', site_countries: [], login_countries: [] })
+    const accForm = ref({ site_mode: 'off', site_countries: [], login_countries: [], cloudflare_only: false })
     const accAllowText = ref('')
     const accBlockText = ref('')
     const accSaving = ref(false)
@@ -1855,22 +1869,26 @@ location @maintenance {
       login_countries: accForm.value.login_countries,
       ip_allow: _lines(accAllowText.value),
       ip_block: _lines(accBlockText.value),
+      cloudflare_only: !!accForm.value.cloudflare_only,
     })
     const _accFill = (rules) => {
       accForm.value = { site_mode: rules.site_mode || 'off', site_countries: [...(rules.site_countries || [])],
-                        login_countries: [...(rules.login_countries || [])] }
+                        login_countries: [...(rules.login_countries || [])],
+                        cloudflare_only: !!rules.cloudflare_only }
       accAllowText.value = (rules.ip_allow || []).join('\n')
       accBlockText.value = (rules.ip_block || []).join('\n')
     }
     const accActive = computed(() => {
       const r = acc.value?.rules
-      return !!r && !!((r.site_mode !== 'off' && r.site_countries.length) || r.login_countries.length || r.ip_block.length)
+      return !!r && !!((r.site_mode !== 'off' && r.site_countries.length) || r.login_countries.length
+                       || r.ip_block.length || r.cloudflare_only)
     })
     const accChanged = computed(() => {
       if (!acc.value) return false
       const r = acc.value.rules
       const saved = { site_mode: r.site_mode, site_countries: r.site_mode === 'off' ? [] : r.site_countries,
-                      login_countries: r.login_countries, ip_allow: r.ip_allow, ip_block: r.ip_block }
+                      login_countries: r.login_countries, ip_allow: r.ip_allow, ip_block: r.ip_block,
+                      cloudflare_only: !!r.cloudflare_only }
       return JSON.stringify(saved) !== JSON.stringify(_accPayload())
     })
     const accHasMyIp = computed(() => _lines(accAllowText.value).includes(acc.value?.me?.ip))

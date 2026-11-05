@@ -7,8 +7,15 @@ Reglas de un dominio (Domain.access_rules, JSON):
       "site_countries": ["ES", ...],             # allow = solo estos; block = todos menos estos
       "login_countries": ["ES", ...],            # admin de WordPress: solo desde estos ([] = sin límite)
       "ip_allow": ["1.2.3.4", "10.0.0.0/8"],     # siempre entran (ganan a los países)
-      "ip_block": ["5.6.7.8"]                    # nunca entran
+      "ip_block": ["5.6.7.8"],                   # nunca entran
+      "cloudflare_only": false                   # solo conexiones desde Cloudflare
     }
+
+«Solo tráfico desde Cloudflare»: quien conecte directamente a la IP del servidor
+(saltándose el WAF/anti-DDoS de Cloudflare) recibe 403. Se mira la IP de la
+CONEXIÓN ($realip_remote_addr → $svq_from_cf, ver scripts/cloudflare_realip.py),
+no la del visitante. Las IPs permitidas siguen entrando directas (monitorización,
+la oficina) y el reto ACME queda fuera como siempre.
 
 Cómo se aplica (sin módulos nuevos de nginx: `geo` + `map`, de serie):
 - País de la IP: `geo $svq_cc` GLOBAL (conf.d/svqpanel-geo-global.conf) que
@@ -61,7 +68,7 @@ _cache_lock = threading.Lock()
 # ── Reglas ─────────────────────────────────────────────────────────────────
 def empty_rules() -> dict:
     return {"site_mode": "off", "site_countries": [], "login_countries": [],
-            "ip_allow": [], "ip_block": []}
+            "ip_allow": [], "ip_block": [], "cloudflare_only": False}
 
 
 def parse_rules(raw) -> dict:
@@ -81,7 +88,8 @@ def parse_rules(raw) -> dict:
 def is_active(rules: dict) -> bool:
     """¿Bloquea algo? (las IPs permitidas solas no cambian nada)."""
     return bool((rules.get("site_mode") in ("allow", "block") and rules.get("site_countries"))
-                or rules.get("login_countries") or rules.get("ip_block"))
+                or rules.get("login_countries") or rules.get("ip_block")
+                or rules.get("cloudflare_only"))
 
 
 def _norm_net(value: str) -> str:
@@ -129,15 +137,18 @@ def validate_rules(data: dict, known_countries=None) -> tuple:
         if len(out) > MAX_IPS:
             errors.append(f"Máximo {MAX_IPS} entradas en {label}")
         rules[key] = out
+    rules["cloudflare_only"] = bool(data.get("cloudflare_only"))
     both = set(rules["ip_allow"]) & set(rules["ip_block"])
     if both:
         errors.append("Estas IPs están a la vez en permitidas y bloqueadas: " + ", ".join(sorted(both)))
     return rules, errors
 
 
-def would_block(rules: dict, ip: str, country: str, uri: str = "/") -> bool:
+def would_block(rules: dict, ip: str, country: str, uri: str = "/",
+                via_cloudflare: bool = True) -> bool:
     """Misma lógica que el map de nginx, para avisar al usuario antes de guardar
-    (p. ej. "tu IP quedaría bloqueada")."""
+    (p. ej. "tu IP quedaría bloqueada"). via_cloudflare: si la conexión llega
+    desde Cloudflare (por defecto sí: el aviso de "solo Cloudflare" es aparte)."""
     try:
         addr = ipaddress.ip_address(ip)
     except ValueError:
@@ -149,6 +160,8 @@ def would_block(rules: dict, ip: str, country: str, uri: str = "/") -> bool:
         return False
     if any(addr in n for n in nets("ip_block")):
         return True
+    if rules.get("cloudflare_only") and not via_cloudflare:
+        return True
     cc = (country or "").upper()
     mode, sc = rules.get("site_mode"), set(rules.get("site_countries") or [])
     if mode == "allow" and sc and cc not in sc:
@@ -157,6 +170,52 @@ def would_block(rules: dict, ip: str, country: str, uri: str = "/") -> bool:
         return True
     lc = set(rules.get("login_countries") or [])
     return bool(lc and cc not in lc and re.match(_LOGIN_RE, uri))
+
+
+_PUBLIC_RESOLVERS = ("1.1.1.1", "8.8.8.8", "9.9.9.9")
+
+
+def _public_ips(name: str) -> list:
+    """A + AAAA de `name` según resolvers públicos (no el del sistema: aquí suele
+    ser el named autoritativo, que devolvería la zona local y no la de Cloudflare)."""
+    import subprocess
+    ips = []
+    for rtype in ("A", "AAAA"):
+        for resolver in _PUBLIC_RESOLVERS:
+            try:
+                out = subprocess.run(["dig", "+short", "+time=3", "+tries=1", rtype,
+                                      name.rstrip(".") + ".", f"@{resolver}"],
+                                     capture_output=True, text=True, timeout=8).stdout
+            except (OSError, subprocess.TimeoutExpired):
+                continue
+            found = []
+            for line in out.splitlines():
+                try:
+                    found.append(str(ipaddress.ip_address(line.strip())))
+                except ValueError:
+                    continue            # CNAME intermedios, comentarios
+            if found:
+                ips += found
+                break
+    return ips
+
+
+def cloudflare_dns_problem(domain: str, with_www: bool = True):
+    """¿Activar «solo Cloudflare» dejaría la web caída? Devuelve un texto con el
+    problema, o None si todo lo que resuelve el dominio son IPs de Cloudflare
+    (nube naranja). Si no se puede consultar el DNS, None (no bloquear por eso)."""
+    from scripts import cloudflare_realip
+    names = [domain] + ([f"www.{domain}"] if with_www else [])
+    seen, bad = [], []
+    for name in names:
+        ips = _public_ips(name)
+        seen += ips
+        bad += [f"{name} → {ip}" for ip in ips if not cloudflare_realip.is_cloudflare_ip(ip)]
+    if bad:
+        return ("El DNS público no apunta (solo) a Cloudflare: " + ", ".join(bad[:4])
+                + ". Con «solo tráfico desde Cloudflare» esas visitas recibirían un error 403."
+                  " Activa el proxy (nube naranja) en Cloudflare antes.")
+    return None
 
 
 # ── Config de nginx ────────────────────────────────────────────────────────
@@ -189,15 +248,19 @@ def render_domain_conf(domain: str, rules: dict) -> str:
     geo += [f"    {n} a;" for n in rules.get("ip_allow") or []]
     geo += [f"    {n} b;" for n in rules.get("ip_block") or []]
     geo.append("}")
-    # Clave "IP:país-web:país-admin:URI". Primera regex que casa gana (orden).
+    # Clave "IP:cloudflare:país-web:país-admin:URI". Primera regex que casa gana
+    # (orden). Sin «solo Cloudflare» el campo es un 1 fijo: así no hace falta
+    # que exista $svq_from_cf.
+    cf = "$svq_from_cf" if rules.get("cloudflare_only") else "1"
     final = [
-        f'map "$svq_ip_{k}:$svq_cs_{k}:$svq_cl_{k}:$uri" $svq_deny_{k} {{',
+        f'map "$svq_ip_{k}:{cf}:$svq_cs_{k}:$svq_cl_{k}:$uri" $svq_deny_{k} {{',
         "    default 0;",
-        '    "~^.:.:.:/\\.well-known/acme-challenge/" 0;   # Let\'s Encrypt siempre',
-        '    "~^a:" 0;                                     # IP permitida',
-        '    "~^b:" 1;                                     # IP bloqueada',
-        '    "~^-:1:" 1;                                   # país sin acceso a la web',
-        f'    "~^-:0:1:{_LOGIN_RE}" 1;   # admin de WordPress desde otro país',
+        '    "~^.:.:.:.:/\\.well-known/acme-challenge/" 0;   # Let\'s Encrypt siempre',
+        '    "~^a:" 0;                                       # IP permitida',
+        '    "~^b:" 1;                                       # IP bloqueada',
+        '    "~^-:0:" 1;                                     # no viene de Cloudflare',
+        '    "~^-:1:1:" 1;                                   # país sin acceso a la web',
+        f'    "~^-:1:0:1:{_LOGIN_RE}" 1;   # admin de WordPress desde otro país',
         "}",
     ]
     return (f"# SVQPanel — acceso por país/IP de {domain} (lo genera el panel)\n"
@@ -378,6 +441,9 @@ def apply_domain(domain: str, raw_rules, db=None):
         remove_domain_conf(domain)
         return None
     ensure_global()
+    if rules.get("cloudflare_only"):
+        from scripts import cloudflare_realip
+        cloudflare_realip.ensure_geo()
     with open(domain_conf_path(domain), "w", encoding="utf-8") as f:
         f.write(render_domain_conf(domain, rules))
     own_db = db is None
