@@ -181,6 +181,42 @@ def _server_blocks(text: str) -> list[tuple[int, int]]:
     return blocks
 
 
+def welcome_location(hostname: str | None = None) -> str:
+    """`location /` de la página de bienvenida (default_server del 80 y del 443).
+
+    Antes era `try_files $uri $uri/ =200;`: cualquier ruta que no existiera
+    (p. ej. https://hostname/login, sin el puerto del panel) se quedaba colgada
+    hasta el timeout del navegador. Ahora: el hostname del panel por HTTPS
+    redirige a su puerto, y lo demás que no exista da un 404 normal."""
+    redirect = (f"        # El panel vive en :{PANEL_WEB_PORT}; sin el puerto, redirigir al panel\n"
+                f"        if ($host = {hostname}) {{ return 301 https://$host:{PANEL_WEB_PORT}$request_uri; }}\n"
+                if hostname else "")
+    return ("    location / {\n" + redirect
+            + "        try_files $uri $uri/ =404;\n"
+            + "    }\n")
+
+
+# Sangría variable: hay vhosts generados con `location /` a 8 espacios.
+_OLD_WELCOME_LOCATION = re.compile(r"[ \t]*location / \{\n\s*try_files \$uri \$uri/ =200;\n[ \t]*\}\n")
+
+
+def patch_welcome_fallback(text: str) -> str:
+    """Cambia el `=200` colgante de las páginas de bienvenida (ver
+    welcome_location). En el server del 443 toma el hostname de la ruta del
+    certificado para redirigirlo al panel. Idempotente."""
+    for start, end in reversed(_server_blocks(text)):
+        block = text[start:end]
+        if not _OLD_WELCOME_LOCATION.search(block):
+            continue
+        host = None
+        if re.search(r"listen\s+443\s+ssl", block):
+            m = re.search(r"ssl_certificate\s+/etc/letsencrypt/live/([^/\s]+)/", block)
+            host = m.group(1) if m and _validate_hostname(m.group(1)) else None
+        block = _OLD_WELCOME_LOCATION.sub(lambda _: welcome_location(host), block)
+        text = text[:start] + block + text[end:]
+    return text
+
+
 def patch_panel_vhost(text: str, pma_pass: str | None = None) -> str:
     """Añade al server del panel (el que tiene /api/) lo que le falte de
     PANEL_SERVER_COMMON y el timeout de /pma. Respeta un client_max_body_size
@@ -221,27 +257,38 @@ def patch_panel_vhost(text: str, pma_pass: str | None = None) -> str:
                                      f"fastcgi_pass unix:{pma_pass};", block[pma:close])
                     block = block[:pma] + section + block[close:]
         text = text[:start] + block + text[end:]
-    return text
+    return patch_welcome_fallback(text)
+
+
+WELCOME_NGINX_CONF = "/etc/nginx/sites-available/svqpanel-welcome"
 
 
 def ensure_panel_vhost_limits() -> bool:
-    """Repara in situ el vhost del panel ya generado (ver patch_panel_vhost).
-    Valida con nginx -t y restaura el original si falla. True si cambió algo."""
+    """Repara in situ el vhost del panel ya generado (ver patch_panel_vhost) y
+    la bienvenida del puerto 80 (svqpanel-welcome). Valida con nginx -t y
+    restaura los originales si falla. True si cambió algo."""
     import subprocess
-    try:
-        with open(PANEL_NGINX_CONF) as fh:
-            old = fh.read()
-    except OSError:
+    originals, changed = {}, False
+    for path, patch in ((PANEL_NGINX_CONF, lambda t: patch_panel_vhost(t, pma_pass=_pma_socket())),
+                        (WELCOME_NGINX_CONF, patch_welcome_fallback)):
+        try:
+            with open(path) as fh:
+                old = fh.read()
+        except OSError:
+            continue
+        new = patch(old)
+        if new != old:
+            originals[path] = old
+            with open(path, "w") as fh:
+                fh.write(new)
+            changed = True
+    if not changed:
         return False
-    new = patch_panel_vhost(old, pma_pass=_pma_socket())
-    if new == old:
-        return False
-    with open(PANEL_NGINX_CONF, "w") as fh:
-        fh.write(new)
     test = subprocess.run(["nginx", "-t"], capture_output=True, text=True, timeout=30)
     if test.returncode != 0:
-        with open(PANEL_NGINX_CONF, "w") as fh:
-            fh.write(old)
+        for path, old in originals.items():
+            with open(path, "w") as fh:
+                fh.write(old)
         raise RuntimeError(f"nginx -t falló, vhost restaurado: {test.stderr.strip()}")
     subprocess.run(["systemctl", "reload", "nginx"], check=False, timeout=30)
     return True
@@ -497,10 +544,7 @@ server {{
 
     root /var/www/html;
     index index.html;
-    location / {{
-        try_files $uri $uri/ =200;
-    }}
-}}
+{welcome_location(hostname)}}}
 """
 
         # El panel HTTPS se sirve en el puerto dedicado.

@@ -90,3 +90,73 @@ def test_respeta_valor_puesto_a_mano():
     out = patch_panel_vhost(manual)
     assert "client_max_body_size 2g;" in out
     assert out.count("client_max_body_size") == 1
+
+
+# ── Bienvenida (default_server 80/443): el `=200` colgaba las rutas inexistentes ──
+WELCOME_443 = """server {
+    listen 443 ssl default_server;
+    listen [::]:443 ssl default_server;
+    http2 on;
+    server_name _;
+    ssl_certificate     /etc/letsencrypt/live/panel.ejemplo.com/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/panel.ejemplo.com/privkey.pem;
+    root /var/www/html;
+    index index.html;
+    location / {
+        try_files $uri $uri/ =200;
+    }
+}
+"""
+
+WELCOME_80 = """server {
+    listen 80 default_server;
+    server_name _;
+    location /.well-known/acme-challenge/ {
+        root /var/www/html;
+    }
+    root /var/www/html;
+    location / {
+        try_files $uri $uri/ =200;
+    }
+}
+"""
+
+
+def test_bienvenida_443_redirige_el_hostname_al_panel():
+    from scripts.panel_ssl_manager import patch_welcome_fallback, PANEL_WEB_PORT
+    out = patch_welcome_fallback(WELCOME_443)
+    assert "=200" not in out and "try_files $uri $uri/ =404;" in out
+    assert (f"if ($host = panel.ejemplo.com) {{ return 301 https://$host:{PANEL_WEB_PORT}$request_uri; }}"
+            in out)
+    assert patch_welcome_fallback(out) == out
+
+
+def test_bienvenida_80_solo_404_y_acme_intacto():
+    from scripts.panel_ssl_manager import patch_welcome_fallback
+    out = patch_welcome_fallback(WELCOME_80)
+    assert "=200" not in out and "=404" in out and "return 301" not in out
+    assert "location /.well-known/acme-challenge/ {\n        root /var/www/html;" in out
+
+
+def test_vhost_del_panel_arregla_tambien_la_bienvenida():
+    out = patch_panel_vhost(VHOST + WELCOME_443)
+    assert "=200" not in out and "if ($host = panel.ejemplo.com)" in out
+
+
+def test_plantilla_ssl_sin_200(monkeypatch, tmp_path):
+    from scripts import panel_ssl_manager as P
+    written = {}
+    mgr = P.PanelSSLManager.__new__(P.PanelSSLManager)
+    monkeypatch.setattr(mgr, "_write_conf", lambda c: written.setdefault("c", c), raising=False)
+    mgr._write_nginx_ssl("panel.ejemplo.com", force_https=True)
+    conf = written["c"]
+    assert "=200" not in conf and "if ($host = panel.ejemplo.com)" in conf
+
+
+def test_bienvenida_con_sangria_de_8_espacios():
+    """Así está en servidores reales (vhost generado por una plantilla antigua)."""
+    from scripts.panel_ssl_manager import patch_welcome_fallback
+    viejo = WELCOME_443.replace("    location / {\n", "        location / {\n")
+    out = patch_welcome_fallback(viejo)
+    assert "=200" not in out and "if ($host = panel.ejemplo.com)" in out
+    assert out.count("location / {") == 1

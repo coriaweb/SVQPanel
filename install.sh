@@ -2919,8 +2919,9 @@ server {
 
     root /var/www/html;
     index index.html;
+    # =404 (no =200): con =200 cualquier ruta inexistente se quedaba colgada.
     location / {
-        try_files $uri $uri/ =200;
+        try_files $uri $uri/ =404;
     }
 }
 WELCOMEEOF
