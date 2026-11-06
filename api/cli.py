@@ -2702,6 +2702,34 @@ def cmd_backfill_dns_ipv6(dry_run: bool = False) -> int:
         db.close()
 
 
+def cmd_php_global_policy() -> int:
+    """Update 0177: aplica a TODAS las versiones de PHP instaladas la política
+    del php.ini global (techos 512M / 64M / 64M / 120 s, OPcache, APCu CLI).
+    Las versiones instaladas desde el panel nacían con los 2M/8M de Debian.
+    Solo sube valores; recarga el FPM de las versiones que cambian. Idempotente."""
+    import glob
+    import subprocess
+    from scripts.php_manager import apply_global_ini_policy
+    for ini in sorted(glob.glob("/etc/php/*/fpm/php.ini")):
+        version = ini.split("/")[3]
+        try:
+            changes = apply_global_ini_policy(version)
+        except OSError as e:
+            print(f"⚠ PHP {version}: {e}")
+            continue
+        if not changes:
+            print(f"· PHP {version}: ya estaba al día")
+            continue
+        print(f"✓ PHP {version}: " + "; ".join(changes))
+        test = subprocess.run([f"php-fpm{version}", "-t"], capture_output=True, text=True, timeout=30)
+        if test.returncode != 0:
+            print(f"⚠ PHP {version}: php-fpm -t falla, NO se recarga: {test.stderr.strip()[-300:]}")
+            continue
+        subprocess.run(["systemctl", "reload-or-restart", f"php{version}-fpm"],
+                       capture_output=True, timeout=60)
+    return 0
+
+
 def cmd_migrate_nft_conf() -> int:
     """
     Update 0174: lleva /etc/nftables.conf al formato de 0.274.0 (include de
@@ -2798,6 +2826,7 @@ def main():
     sub.add_parser("sync_panel_ssl", help="Sincroniza el estado SSL del panel en la BD con el cert real")
     sub.add_parser("fix_panel_vhost", help="Límite de subida, timeout de /pma y cabeceras en el vhost del panel")
     sub.add_parser("pma_fpm", help="Pool PHP-FPM propio de phpMyAdmin (límites de subida altos)")
+    sub.add_parser("php_global_policy", help="php.ini global de todas las versiones PHP: techos del panel (512M/64M/120s), OPcache")
     sub.add_parser("migrate_nft_conf", help="nftables.conf: persistir puertos cerrados y reglas antes de los puertos base")
     p_dbimp = sub.add_parser("db_import", help="Importa ~/imports/<fichero> en una BD (uso interno del panel)")
     p_dbimp.add_argument("db_id", type=int)
@@ -3012,6 +3041,8 @@ def main():
         sys.exit(cmd_fix_panel_vhost())
     if args.cmd == "pma_fpm":
         sys.exit(cmd_pma_fpm())
+    if args.cmd == "php_global_policy":
+        sys.exit(cmd_php_global_policy())
     if args.cmd == "migrate_nft_conf":
         sys.exit(cmd_migrate_nft_conf())
     if args.cmd == "db_import":

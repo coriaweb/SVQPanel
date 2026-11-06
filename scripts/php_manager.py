@@ -49,6 +49,117 @@ IONCUBE_URL      = "https://downloads.ioncube.com/loader_downloads/ioncube_loade
 IONCUBE_INI_NAME = "00-ioncube.ini"   # 00- para cargarse ANTES que el resto
 
 
+# ─────────────────────────────────────────────────────────────────────────────
+# Política del php.ini GLOBAL de FPM (= los techos que el panel deja pedir por
+# dominio). DEBE coincidir con lo que aplica install.sh a las versiones que
+# instala (tests/test_php_global_policy.py lo comprueba). Hasta 0.275.1 la
+# versión del panel se había quedado en `memory_limit = 256M` y nada más: un PHP
+# instalado desde el panel nacía con los 2M/8M de subida/POST de Debian.
+# ─────────────────────────────────────────────────────────────────────────────
+# Fijos: se ponen siempre a este valor.
+GLOBAL_INI_FIXED = {
+    # vacío a propósito: el hardening va por pool, y un pool puede AÑADIR
+    # funciones bloqueadas pero no quitar las del global
+    "disable_functions": "",
+    # X-PHP-Originating-Script: identifica qué script de una web envía spam
+    "mail.add_x_header": "On",
+}
+# Techos: solo se SUBEN hasta este valor (si alguien lo subió más a mano, se respeta).
+GLOBAL_INI_MIN = {
+    "memory_limit": "512M",
+    "upload_max_filesize": "64M",
+    "post_max_size": "64M",
+    "max_execution_time": "120",
+    "max_input_time": "120",
+}
+OPCACHE_INI_NAME = "99-svqpanel-opcache.ini"
+OPCACHE_INI = """; SVQPanel: OPcache dimensionado para apps reales (Nextcloud, WordPress, Laravel).
+; Los defaults de Debian (128M / 8 / 10000) se quedan cortos y el OPcache empieza
+; a desalojar clases en caliente, o directamente deja de cachear.
+opcache.enable = 1
+opcache.memory_consumption = 256
+opcache.interned_strings_buffer = 16
+opcache.max_accelerated_files = 20000
+opcache.revalidate_freq = 2
+opcache.save_comments = 1
+"""
+APCU_CLI_INI_NAME = "99-apcu-cli.ini"
+APCU_CLI_INI = "apc.enable_cli = 1\n"
+
+
+def _ini_number(key: str, value: str) -> int:
+    from scripts.php_ini_manager import parse_php_size
+    if key in ("max_execution_time", "max_input_time"):
+        try:
+            n = int(str(value).strip())
+        except ValueError:
+            return 0
+        return 1 << 62 if n <= 0 else n          # 0 / -1 = sin límite
+    return parse_php_size(value)
+
+
+def apply_global_ini_text(text: str):
+    """Aplica la política al texto de un php.ini. Devuelve (texto, cambios).
+    Pura e idempotente: sustituye la primera línea (activa o comentada) de cada
+    directiva y añade al final las que no aparezcan."""
+    lines = text.splitlines()
+    changes = []
+    rx = re.compile(r"^\s*(;?)\s*([A-Za-z0-9_.]+)\s*=\s*(.*?)\s*$")
+    # Por directiva: la primera línea ACTIVA; si no hay, la primera comentada
+    # (una comentada = vale el interno de PHP, así que se fija explícito).
+    found = {}
+    for i, line in enumerate(lines):
+        m = rx.match(line)
+        if not m or (m.group(2) not in GLOBAL_INI_FIXED and m.group(2) not in GLOBAL_INI_MIN):
+            continue
+        key, commented = m.group(2), bool(m.group(1))
+        prev = found.get(key)
+        if prev is None or (prev[1] and not commented):
+            found[key] = (i, commented, m.group(3))
+    seen = set(found)
+    for key, (i, commented, val) in sorted(found.items(), key=lambda kv: kv[1][0]):
+        if key in GLOBAL_INI_FIXED:
+            want = GLOBAL_INI_FIXED[key]
+            if commented or val != want:
+                lines[i] = f"{key} = {want}".rstrip()
+                changes.append(f"{key}: {val or '(vacío)'} → {want or '(vacío)'}")
+        else:
+            want = GLOBAL_INI_MIN[key]
+            if commented or _ini_number(key, val) < _ini_number(key, want):
+                lines[i] = f"{key} = {want}"
+                changes.append(f"{key}: {val} → {want}")
+    for key, want in list(GLOBAL_INI_FIXED.items()) + list(GLOBAL_INI_MIN.items()):
+        if key not in seen:
+            lines.append(f"{key} = {want}".rstrip())
+            changes.append(f"{key}: (no estaba) → {want or '(vacío)'}")
+    return "\n".join(lines) + "\n", changes
+
+
+def apply_global_ini_policy(version: str) -> list:
+    """Aplica la política global a /etc/php/{version}: php.ini de FPM, OPcache y
+    APCu en CLI. Idempotente. Devuelve la lista de cambios (vacía = ya estaba)."""
+    changes = []
+    ini = f"/etc/php/{version}/fpm/php.ini"
+    if os.path.exists(ini):
+        with open(ini) as f:
+            old = f.read()
+        new, ch = apply_global_ini_text(old)
+        if ch:
+            tmp = ini + ".tmp"
+            with open(tmp, "w") as f:
+                f.write(new)
+            os.replace(tmp, ini)
+            changes += ch
+    for path, content in ((f"/etc/php/{version}/fpm/conf.d/{OPCACHE_INI_NAME}", OPCACHE_INI),
+                          (f"/etc/php/{version}/cli/conf.d/{APCU_CLI_INI_NAME}", APCU_CLI_INI)):
+        # Solo si falta: si existe (quizá retocado a mano) no se pisa
+        if os.path.isdir(os.path.dirname(path)) and not os.path.exists(path):
+            with open(path, "w") as f:
+                f.write(content)
+            changes.append(f"{os.path.basename(path)} creado")
+    return changes
+
+
 class PHPManager(SystemManager):
     """Manage PHP versions and FPM services on Debian/Ubuntu systems"""
 
@@ -159,9 +270,7 @@ class PHPManager(SystemManager):
 
         # Ajustes del php.ini global — los MISMOS que aplica install.sh, para
         # que una versión instalada desde el panel nazca igual que una del
-        # install: disable_functions vacío (el hardening va por pool, y un pool
-        # puede añadir pero no quitar), cabecera X-PHP-Originating-Script para
-        # rastrear spam, y memory_limit global = techo de los overrides (256M).
+        # install (ver GLOBAL_INI_* arriba).
         self._apply_global_ini_policy(version)
 
         # Enable and start FPM
@@ -172,38 +281,9 @@ class PHPManager(SystemManager):
         return self.get_status(version)
 
     def _apply_global_ini_policy(self, version: str) -> None:
-        """Aplica al php.ini de FPM la política global del panel (best-effort)."""
-        ini = f"/etc/php/{version}/fpm/php.ini"
-        if not os.path.exists(ini):
-            return
+        """Aplica la política global del panel (best-effort; ver apply_global_ini_policy)."""
         try:
-            with open(ini) as f:
-                lines = f.read().splitlines()
-            wanted = {
-                "disable_functions": "disable_functions =",
-                "mail.add_x_header": "mail.add_x_header = On",
-                "memory_limit": "memory_limit = 256M",
-            }
-            seen = set()
-            out = []
-            for line in lines:
-                stripped = line.lstrip(" \t;").strip()
-                replaced = False
-                for key, repl in wanted.items():
-                    if stripped.startswith(key) and "=" in stripped and key not in seen:
-                        out.append(repl)
-                        seen.add(key)
-                        replaced = True
-                        break
-                if not replaced:
-                    out.append(line)
-            for key, repl in wanted.items():
-                if key not in seen:
-                    out.append(repl)
-            tmp = ini + ".tmp"
-            with open(tmp, "w") as f:
-                f.write("\n".join(out) + "\n")
-            os.replace(tmp, ini)
+            apply_global_ini_policy(version)
         except OSError as e:
             logger.warning(f"No se pudo ajustar el php.ini global de {version}: {e}")
 
