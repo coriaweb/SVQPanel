@@ -509,6 +509,11 @@
                             @click="openExtensions(php.version)">
                       <i class="bi bi-puzzle me-1"></i>Extensiones
                     </button>
+                    <button v-if="php.installed" class="btn btn-sm btn-outline-secondary"
+                            @click="openLimits(php.version)"
+                            title="Memoria, subida, tiempos… máximos de esta versión">
+                      <i class="bi bi-sliders me-1"></i>Límites
+                    </button>
                   </div>
                 </div>
                 <div v-if="sitesShown === php.version" class="php-sites">
@@ -1204,6 +1209,70 @@
               <span v-if="phpActionLoading === uninstallTarget" class="spinner-border spinner-border-sm me-1"></span>
               Confirmar desinstalación
             </button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Modal de límites globales (php.ini de FPM) por versión -->
+    <div v-if="limTarget" class="modal d-block" tabindex="-1" style="background:rgba(0,0,0,.5)">
+      <div class="modal-dialog modal-dialog-centered modal-lg modal-dialog-scrollable">
+        <div class="modal-content">
+          <div class="modal-header">
+            <h5 class="modal-title"><i class="bi bi-sliders me-2"></i> Límites globales de PHP {{ limTarget }}</h5>
+            <button type="button" class="btn-close" @click="limTarget = null"></button>
+          </div>
+          <div class="modal-body">
+            <p class="text-muted small">
+              Son el <strong>máximo</strong> que cualquier dominio con PHP {{ limTarget }} puede pedir en su
+              pestaña PHP, y el valor que <strong>heredan</strong> los dominios que no tienen uno propio
+              <span v-if="limData">({{ limData.domains_count }} {{ limData.domains_count === 1 ? 'dominio usa' : 'dominios usan' }} esta versión)</span>.
+              Se guarda en el <code>php.ini</code> de PHP-FPM {{ limTarget }}, se valida y se recarga sin cortar conexiones.
+            </p>
+            <div v-if="limLoading" class="text-center py-4"><span class="spinner-border spinner-border-sm"></span></div>
+            <div v-else-if="limError && !limData" class="alert alert-danger mb-0">{{ limError }}</div>
+            <template v-else-if="limData">
+              <div v-for="s in limData.spec" :key="s.key" class="d-flex align-items-center gap-3 py-2 border-bottom">
+                <div class="flex-grow-1" style="min-width:0">
+                  <div>{{ s.label }}</div>
+                  <code class="small text-muted">{{ s.key }}</code>
+                </div>
+                <div class="text-muted small text-end" style="width:120px">
+                  actual <strong class="font-monospace">{{ limData.limits[s.key] }}</strong>
+                </div>
+                <input class="form-control form-control-sm font-monospace" style="width:140px"
+                       v-model.trim="limForm[s.key]"
+                       :placeholder="s.type === 'size' ? 'p. ej. 512M' : 'número'"
+                       :title="`Entre ${s.min} y ${s.max}`" />
+              </div>
+              <div v-if="limError" class="alert alert-danger small mt-3 mb-0">{{ limError }}</div>
+              <div v-if="limResult" class="alert alert-success small mt-3 mb-0">
+                <div v-for="c in limResult.changes" :key="c" class="font-monospace">{{ c }}</div>
+                <div v-if="limResult.regenerating_vhosts" class="mt-1">
+                  <i class="bi bi-arrow-repeat me-1"></i>Actualizando el límite de subida de nginx de los dominios
+                  de esta versión en segundo plano (tarda unos segundos por dominio).
+                </div>
+                <div v-if="!limResult.changes.length">{{ limResult.message }}</div>
+              </div>
+              <div v-if="limResult?.domains_above?.length" class="alert alert-warning small mt-2 mb-0">
+                Estos dominios tienen un valor propio por encima del nuevo máximo. Lo conservan, pero si
+                guardan su PHP tendrán que bajarlo:
+                <div v-for="d in limResult.domains_above" :key="d.id" class="font-monospace">
+                  {{ d.name }} — {{ d.values.join(', ') }}
+                </div>
+              </div>
+            </template>
+          </div>
+          <div class="modal-footer justify-content-between">
+            <small class="text-muted"><i class="bi bi-info-circle me-1"></i>
+              El POST debe ser igual o mayor que la subida.</small>
+            <div class="d-flex gap-2">
+              <button class="btn btn-secondary" @click="limTarget = null">Cerrar</button>
+              <button class="btn btn-primary" :disabled="limSaving || !limChanged" @click="saveLimits">
+                <span v-if="limSaving" class="spinner-border spinner-border-sm me-1"></span>
+                Guardar y aplicar
+              </button>
+            </div>
           </div>
         </div>
       </div>
@@ -1975,6 +2044,58 @@ export default {
       }
     }
 
+    // ─── Límites globales de PHP por versión ─────────────────────────────────
+
+    const limTarget = ref(null)
+    const limData = ref(null)
+    const limForm = ref({})
+    const limLoading = ref(false)
+    const limSaving = ref(false)
+    const limError = ref('')
+    const limResult = ref(null)
+
+    const limChanged = computed(() => !!limData.value && Object.keys(limForm.value)
+      .some(k => String(limForm.value[k] || '').toUpperCase() !== String(limData.value.limits[k] || '').toUpperCase()))
+
+    const openLimits = async (version) => {
+      limTarget.value = version
+      limData.value = null
+      limResult.value = null
+      limError.value = ''
+      limLoading.value = true
+      try {
+        limData.value = await api.getPHPGlobalLimits(version)
+        limForm.value = { ...limData.value.limits }
+      } catch (e) {
+        limError.value = `No se pudieron leer los límites: ${e.message}`
+      } finally {
+        limLoading.value = false
+      }
+    }
+
+    const saveLimits = async () => {
+      limSaving.value = true
+      limError.value = ''
+      limResult.value = null
+      const changed = {}
+      for (const k of Object.keys(limForm.value)) {
+        if (String(limForm.value[k] || '').toUpperCase() !== String(limData.value.limits[k] || '').toUpperCase()) {
+          changed[k] = limForm.value[k]
+        }
+      }
+      try {
+        const r = await api.setPHPGlobalLimits(limTarget.value, changed)
+        limResult.value = r
+        limData.value = { ...limData.value, limits: r.limits }
+        limForm.value = { ...r.limits }
+        store.showNotification(r.message, 'success')
+      } catch (e) {
+        limError.value = e.message
+      } finally {
+        limSaving.value = false
+      }
+    }
+
     // ─── Timezone ─────────────────────────────────────────────────────────────
 
     const tzCurrent   = ref('')
@@ -2097,6 +2218,8 @@ export default {
       confirmUninstall, uninstallPHP,
       extTarget, extList, extSearch, extLoading, extError, extActionLoading,
       filteredExtensions, openExtensions, installExtension, removeExtension,
+      limTarget, limData, limForm, limLoading, limSaving, limError, limResult, limChanged,
+      openLimits, saveLimits,
       sitesShown,
       sslForm, sslLoading, showRevokeConfirm,
       issueSSL, revokeSSL, formatExpiry,

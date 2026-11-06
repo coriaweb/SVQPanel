@@ -98,41 +98,154 @@ def _ini_number(key: str, value: str) -> int:
     return parse_php_size(value)
 
 
-def apply_global_ini_text(text: str):
-    """Aplica la política al texto de un php.ini. Devuelve (texto, cambios).
-    Pura e idempotente: sustituye la primera línea (activa o comentada) de cada
-    directiva y añade al final las que no aparezcan."""
+_INI_LINE = re.compile(r"^\s*(;?)\s*([A-Za-z0-9_.]+)\s*=\s*(.*?)\s*$")
+
+
+def _edit_ini(text: str, keys, decide):
+    """Editor genérico de php.ini. Para cada directiva de `keys` localiza la
+    línea que CUENTA: la ÚLTIMA activa (PHP se queda con la última, y así lo lee
+    php_ini_manager.read_server_ini_value); si no hay ninguna activa, la primera
+    comentada. decide(key, valor_actual|None, comentada) → valor nuevo o None
+    (no tocar). Las que no aparecen se añaden al final. Devuelve (texto, cambios)."""
     lines = text.splitlines()
     changes = []
-    rx = re.compile(r"^\s*(;?)\s*([A-Za-z0-9_.]+)\s*=\s*(.*?)\s*$")
-    # Por directiva: la primera línea ACTIVA; si no hay, la primera comentada
-    # (una comentada = vale el interno de PHP, así que se fija explícito).
     found = {}
     for i, line in enumerate(lines):
-        m = rx.match(line)
-        if not m or (m.group(2) not in GLOBAL_INI_FIXED and m.group(2) not in GLOBAL_INI_MIN):
+        m = _INI_LINE.match(line)
+        if not m or m.group(2) not in keys:
             continue
         key, commented = m.group(2), bool(m.group(1))
-        prev = found.get(key)
-        if prev is None or (prev[1] and not commented):
-            found[key] = (i, commented, m.group(3))
-    seen = set(found)
+        # Una activa siempre sustituye a lo anterior (gana la última activa);
+        # una comentada solo cuenta si no había nada.
+        if key not in found or not commented:
+            found[key] = (i, commented, m.group(3).strip().strip('"'))
     for key, (i, commented, val) in sorted(found.items(), key=lambda kv: kv[1][0]):
+        want = decide(key, None if commented else val, commented)
+        if want is not None:
+            lines[i] = f"{key} = {want}".rstrip()
+            old = "(comentada)" if commented else (val or "(vacío)")
+            changes.append(f"{key}: {old} → {want or '(vacío)'}")
+    for key in keys:
+        if key not in found:
+            want = decide(key, None, True)
+            if want is not None:
+                lines.append(f"{key} = {want}".rstrip())
+                changes.append(f"{key}: (no estaba) → {want or '(vacío)'}")
+    return "\n".join(lines) + "\n", changes
+
+
+def apply_global_ini_text(text: str):
+    """Aplica la política al texto de un php.ini. Devuelve (texto, cambios).
+    Pura e idempotente: fijos siempre a su valor; techos solo se suben."""
+    def decide(key, val, commented):
         if key in GLOBAL_INI_FIXED:
             want = GLOBAL_INI_FIXED[key]
-            if commented or val != want:
-                lines[i] = f"{key} = {want}".rstrip()
-                changes.append(f"{key}: {val or '(vacío)'} → {want or '(vacío)'}")
+            return want if (val is None or val != want) else None
+        want = GLOBAL_INI_MIN[key]
+        if val is None or _ini_number(key, val) < _ini_number(key, want):
+            return want
+        return None
+    return _edit_ini(text, list(GLOBAL_INI_FIXED) + list(GLOBAL_INI_MIN), decide)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Límites GLOBALES editables por el admin (Ajustes → PHP → «Límites»). Son el
+# techo que cada dominio puede pedir y el valor que heredan los dominios sin
+# ajuste propio. (key, tipo, mínimo, máximo, etiqueta, valor de PHP si no está)
+# ─────────────────────────────────────────────────────────────────────────────
+GLOBAL_LIMITS = [
+    ("memory_limit",        "size", "64M",  "8G",   "Memoria máxima",           "128M"),
+    ("upload_max_filesize", "size", "2M",   "20G",  "Tamaño máx. de subida",    "2M"),
+    ("post_max_size",       "size", "2M",   "20G",  "Tamaño máx. POST",         "8M"),
+    ("max_execution_time",  "int",  "10",   "3600", "Tiempo de ejecución (s)",  "30"),
+    ("max_input_time",      "int",  "10",   "3600", "Tiempo de input (s)",      "60"),
+    ("max_input_vars",      "int",  "1000", "100000", "Máx. variables de input", "1000"),
+]
+_GLOBAL_LIMIT_KEYS = [k for k, *_ in GLOBAL_LIMITS]
+_SIZE_RE = re.compile(r"^(\d+)\s*([KMG])$", re.I)
+
+
+def read_global_limits(version: str) -> dict:
+    """Valores actuales del php.ini global de FPM (o el de PHP si no está puesto)."""
+    from scripts.php_ini_manager import read_server_ini_value
+    out = {}
+    for key, _t, _mn, _mx, _lbl, php_default in GLOBAL_LIMITS:
+        out[key] = read_server_ini_value(version, key) or php_default
+    return out
+
+
+def validate_global_limits(data: dict):
+    """Normaliza y valida. Devuelve (valores, errores). Solo las claves enviadas."""
+    from scripts.php_ini_manager import parse_php_size
+    vals, errors = {}, []
+    spec = {k: (t, mn, mx, lbl) for k, t, mn, mx, lbl, _ in GLOBAL_LIMITS}
+    for key, raw in (data or {}).items():
+        if key not in spec:
+            errors.append(f"Directiva no permitida: {key}")
+            continue
+        t, mn, mx, lbl = spec[key]
+        s = str(raw).strip().upper()
+        if t == "size":
+            m = _SIZE_RE.match(s)
+            if not m:
+                errors.append(f"{lbl}: «{raw}» no es un tamaño válido (p. ej. 512M o 2G)")
+                continue
+            s = f"{int(m.group(1))}{m.group(2)}"
+            if not (parse_php_size(mn) <= parse_php_size(s) <= parse_php_size(mx)):
+                errors.append(f"{lbl}: debe estar entre {mn} y {mx}")
+                continue
         else:
-            want = GLOBAL_INI_MIN[key]
-            if commented or _ini_number(key, val) < _ini_number(key, want):
-                lines[i] = f"{key} = {want}"
-                changes.append(f"{key}: {val} → {want}")
-    for key, want in list(GLOBAL_INI_FIXED.items()) + list(GLOBAL_INI_MIN.items()):
-        if key not in seen:
-            lines.append(f"{key} = {want}".rstrip())
-            changes.append(f"{key}: (no estaba) → {want or '(vacío)'}")
-    return "\n".join(lines) + "\n", changes
+            if not s.isdigit() or not (int(mn) <= int(s) <= int(mx)):
+                errors.append(f"{lbl}: debe ser un número entre {mn} y {mx}")
+                continue
+            s = str(int(s))
+        vals[key] = s
+    return vals, errors
+
+
+def check_limits_coherence(merged: dict) -> list:
+    """Reglas entre directivas, sobre el conjunto final (actual + cambios)."""
+    from scripts.php_ini_manager import parse_php_size
+    errors = []
+    up, post = merged.get("upload_max_filesize"), merged.get("post_max_size")
+    if up and post and parse_php_size(post) < parse_php_size(up):
+        errors.append("El tamaño máx. POST no puede ser menor que el de subida "
+                      "(el fichero va dentro del POST)")
+    return errors
+
+
+def set_global_ini_text(text: str, values: dict):
+    """Pone EXACTAMENTE estos valores (sube o baja). Devuelve (texto, cambios)."""
+    def decide(key, val, commented):
+        want = values.get(key)
+        return want if want is not None and (val is None or val != want) else None
+    return _edit_ini(text, [k for k in _GLOBAL_LIMIT_KEYS if k in values], decide)
+
+
+def set_global_limits(version: str, values: dict) -> list:
+    """Escribe los límites en /etc/php/{version}/fpm/php.ini, valida con
+    php-fpm -t (si falla restaura y lanza RuntimeError) y recarga FPM.
+    Devuelve la lista de cambios ([] = ya estaban)."""
+    import subprocess
+    ini = f"/etc/php/{version}/fpm/php.ini"
+    with open(ini) as f:
+        old = f.read()
+    new, changes = set_global_ini_text(old, values)
+    if not changes:
+        return []
+    tmp = ini + ".tmp"
+    with open(tmp, "w") as f:
+        f.write(new)
+    os.replace(tmp, ini)
+    test = subprocess.run([f"php-fpm{version}", "-t"], capture_output=True, text=True, timeout=30)
+    if test.returncode != 0:
+        with open(ini, "w") as f:
+            f.write(old)
+        raise RuntimeError(f"php-fpm{version} -t falla; se deja como estaba: "
+                           f"{(test.stderr or test.stdout).strip()[-300:]}")
+    subprocess.run(["systemctl", "reload-or-restart", f"php{version}-fpm"],
+                   capture_output=True, timeout=60)
+    return changes
 
 
 def apply_global_ini_policy(version: str) -> list:

@@ -1495,7 +1495,8 @@ async def set_domain_php_config(
             canonical_domain=domain.canonical_domain or "www",
             # Los overrides nuevos aún no están en BD: el límite de subida de nginx
             # se calcula de ellos (si no, iría un cambio por detrás).
-            upload_max_mb=upload_mb_from_php(json.dumps(overrides) if overrides else None),
+            upload_max_mb=upload_mb_from_php(json.dumps(overrides) if overrides else None,
+                                             php_version=domain.php_version),
         )
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error regenerando vhost: {e}")

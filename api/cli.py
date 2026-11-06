@@ -2289,9 +2289,11 @@ def cmd_refresh_suspended_vhosts() -> int:
     return 0
 
 
-def cmd_regenerate_all_vhosts() -> int:
+def cmd_regenerate_all_vhosts(php_version: str = None) -> int:
     """Regenera el vhost de TODOS los dominios desde la BD (aplica cambios de la
     plantilla de vhost a dominios existentes). Idempotente.
+    php_version: solo los de esa versión (p. ej. tras cambiar sus límites
+    globales: el client_max_body_size de nginx parte de ellos).
     """
     try:
         from api.models.database import SessionLocal, load_all_models
@@ -2307,7 +2309,10 @@ def cmd_regenerate_all_vhosts() -> int:
     db = SessionLocal()
     mgr = DomainManager()
     ok = fail = skip = 0
-    for d in db.query(Domain).all():
+    q = db.query(Domain)
+    if php_version:
+        q = q.filter(Domain.php_version == php_version)
+    for d in q.all():
         # Los dominios solo-correo/DNS no tienen web → no hay vhost que regenerar.
         # Generarles uno apunta a un public_html inexistente y, como Apache valida
         # TODA la config de golpe, un único vhost así hace fallar el configtest y
@@ -2898,8 +2903,10 @@ def main():
         help="Protección anti zip-bomb de Rspamd (sube peso de símbolos de archivo)")
     sub.add_parser("setup_cyrillic_protection",
         help="Marca como spam el correo con cuerpo en cirílico (spam de formularios/ruso)")
-    sub.add_parser("regenerate_all_vhosts",
+    p_regen = sub.add_parser("regenerate_all_vhosts",
         help="Regenera el vhost de todos los dominios desde la BD")
+    p_regen.add_argument("--php-version", default=None,
+        help="Solo los dominios con esta versión de PHP")
     sub.add_parser("optimize_all_wp_cron",
         help="Optimiza el wp-cron de todos los WordPress (DISABLE_WP_CRON + cron sistema)")
     sub.add_parser("restagger_wp_cron",
@@ -3092,7 +3099,7 @@ def main():
     if args.cmd == "setup_cyrillic_protection":
         sys.exit(cmd_setup_cyrillic_protection())
     if args.cmd == "regenerate_all_vhosts":
-        sys.exit(cmd_regenerate_all_vhosts())
+        sys.exit(cmd_regenerate_all_vhosts(args.php_version))
     if args.cmd == "optimize_all_wp_cron":
         sys.exit(cmd_optimize_all_wp_cron())
     if args.cmd == "restagger_wp_cron":

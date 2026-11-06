@@ -96,3 +96,83 @@ def test_ficheros_conf_d(tmp_path, monkeypatch):
     (base / "fpm" / "conf.d" / "99-svqpanel-opcache.ini").write_text("opcache.enable = 0\n")
     assert pm.apply_global_ini_policy("8.3") == []
     assert (base / "fpm" / "conf.d" / "99-svqpanel-opcache.ini").read_text() == "opcache.enable = 0\n"
+
+
+# ── Límites globales editables por el admin ──────────────────────────────────
+def test_gana_la_ultima_activa_como_en_php():
+    """PHP (y read_server_ini_value) se quedan con la ÚLTIMA activa: es la que hay que tocar."""
+    ini = "upload_max_filesize = 2M\n;upload_max_filesize = 9M\nupload_max_filesize = 8M\n"
+    out, _ = pm.set_global_ini_text(ini, {"upload_max_filesize": "512M"})
+    assert out == "upload_max_filesize = 2M\n;upload_max_filesize = 9M\nupload_max_filesize = 512M\n"
+    out2, _ = pm.apply_global_ini_text(ini)
+    assert out2.splitlines()[2] == "upload_max_filesize = 64M"
+
+
+def test_set_exacto_sube_y_baja():
+    out, ch = pm.set_global_ini_text(DEBIAN_INI, {"memory_limit": "64M", "upload_max_filesize": "1G"})
+    assert "memory_limit = 64M" in out and "upload_max_filesize = 1G" in out
+    assert len(ch) == 2
+    assert "post_max_size = 8M" in out                       # lo no enviado no se toca
+    assert pm.set_global_ini_text(out, {"memory_limit": "64M"})[1] == []
+
+
+def test_validacion_de_limites():
+    vals, err = pm.validate_global_limits({"memory_limit": "1g", "upload_max_filesize": " 300m ",
+                                           "max_execution_time": "300"})
+    assert not err and vals == {"memory_limit": "1G", "upload_max_filesize": "300M",
+                                "max_execution_time": "300"}
+    for bad in ({"memory_limit": "32M"}, {"memory_limit": "-1"}, {"upload_max_filesize": "lots"},
+                {"max_execution_time": "5"}, {"max_input_vars": "999999"}, {"disable_functions": ""}):
+        assert pm.validate_global_limits(bad)[1], bad
+    assert pm.check_limits_coherence({"upload_max_filesize": "512M", "post_max_size": "64M"})
+    assert not pm.check_limits_coherence({"upload_max_filesize": "512M", "post_max_size": "520M"})
+
+
+def test_nginx_hereda_el_global_de_la_version(monkeypatch):
+    from scripts import utils, php_ini_manager
+    monkeypatch.setattr(php_ini_manager, "read_server_ini_value",
+                        lambda v, k: {"upload_max_filesize": "512M", "post_max_size": "520M"}[k])
+    # Sin valor propio → el global de la versión
+    assert utils.upload_mb_from_php(None, php_version="8.3") == 520
+    # Con valor propio → el suyo (aunque sea menor que el global), nunca < 64
+    assert utils.upload_mb_from_php('{"upload_max_filesize": "10M", "post_max_size": "10M"}',
+                                    php_version="8.3") == 64
+    # Sin versión: comportamiento de siempre
+    assert utils.upload_mb_from_php(None) == 64
+
+
+def test_endpoint_limites(monkeypatch):
+    import asyncio
+    from types import SimpleNamespace
+    from fastapi import HTTPException
+    from api.routes import php as R
+    import api.utils.security_audit as audit
+    state = {"memory_limit": "512M", "upload_max_filesize": "64M", "post_max_size": "64M",
+             "max_execution_time": "120", "max_input_time": "120", "max_input_vars": "1000"}
+    written, regen = [], []
+    monkeypatch.setattr("os.path.isfile", lambda p: True)          # php.ini "instalado"
+    monkeypatch.setattr(pm, "read_global_limits", lambda v: dict(state))
+    def fake_set(v, values):
+        written.append(values); state.update(values); return [f"{k}: → {x}" for k, x in values.items()]
+    monkeypatch.setattr(pm, "set_global_limits", fake_set)
+    monkeypatch.setattr(audit, "log_audit", lambda *a, **k: None)
+    monkeypatch.setattr(R, "_domains_on", lambda db, v: [SimpleNamespace(
+        id=1, domain_name="a.com", php_ini_overrides='{"memory_limit": "1G"}')])
+    monkeypatch.setattr(R, "_regen_vhosts_async", lambda v: regen.append(v) or True)
+    req = SimpleNamespace(headers={}, client=None)
+    run = lambda body: asyncio.run(R.set_php_global_limits("8.3", R.PHPLimitsUpdate(limits=body),
+                                                           req, current_user=None, db=None))
+    # POST menor que la subida → 400 y no se escribe nada
+    try:
+        run({"upload_max_filesize": "512M"})
+        assert False, "debía fallar"
+    except HTTPException as e:
+        assert e.status_code == 400 and "POST" in e.detail and not written
+    # Subida + POST → se aplica y se regeneran los vhosts de la versión
+    r = run({"upload_max_filesize": "512M", "post_max_size": "520M", "memory_limit": "512M"})
+    assert written[-1] == {"upload_max_filesize": "512M", "post_max_size": "520M"}   # memory sin cambio
+    assert regen == ["8.3"] and r["regenerating_vhosts"]
+    # Bajar la memoria por debajo de un dominio con valor propio → aviso
+    r = run({"memory_limit": "256M"})
+    assert r["domains_above"] == [{"id": 1, "name": "a.com", "values": ["memory_limit=1G"]}]
+    assert regen == ["8.3"]                                   # sin cambio de subida, no regenera

@@ -382,6 +382,14 @@ class APIClient {
     return this.delete(`/api/php/versions/${version}/extensions/${ext}`)
   }
 
+  // Límites globales del php.ini de FPM por versión (admin)
+  getPHPGlobalLimits(version) {
+    return this.get(`/api/php/versions/${version}/limits`)
+  }
+  setPHPGlobalLimits(version, limits) {
+    return this.put(`/api/php/versions/${version}/limits`, { limits })
+  }
+
   changePHPVersion(domainId, phpVersion) {
     return this.put(`/api/domains/${domainId}/php`, {
       php_version: phpVersion

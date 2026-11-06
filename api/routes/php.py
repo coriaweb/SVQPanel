@@ -2,7 +2,7 @@
 Rutas API para gestión de versiones PHP
 """
 
-from fastapi import APIRouter, Depends, HTTPException, status, BackgroundTasks
+from fastapi import APIRouter, Depends, HTTPException, Request, status, BackgroundTasks
 from pydantic import BaseModel
 from typing import List, Optional
 from sqlalchemy.orm import Session
@@ -300,6 +300,143 @@ async def remove_php_extension(
         raise HTTPException(status_code=403, detail=str(e))
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error desinstalando php{version}-{ext}: {e}")
+
+
+# ──────────────────────────── Límites globales (php.ini) ─────────────────────
+
+class PHPLimitsUpdate(BaseModel):
+    limits: dict
+
+
+def _domains_on(db: Session, version: str):
+    return (db.query(Domain).filter(Domain.php_version == version)
+              .filter(Domain.mail_dns_only.isnot(True))
+              .order_by(Domain.domain_name).all())
+
+
+def _above_new_limits(db: Session, version: str, limits: dict) -> list:
+    """Dominios con un valor PROPIO por encima del global (lo conservan: el
+    pool lo fija con php_admin_value, pero ya no podrían volver a guardarlo)."""
+    import json
+    from scripts.php_ini_manager import parse_php_size
+    from scripts.php_manager import GLOBAL_LIMITS
+    is_size = {k: t == "size" for k, t, *_ in GLOBAL_LIMITS}
+    out = []
+    for d in _domains_on(db, version):
+        try:
+            ov = json.loads(d.php_ini_overrides) if d.php_ini_overrides else {}
+        except (ValueError, TypeError):
+            continue
+        over = []
+        for key, val in limits.items():
+            mine = ov.get(key)
+            if mine is None:
+                continue
+            try:
+                bigger = (parse_php_size(mine) > parse_php_size(val)) if is_size.get(key) \
+                    else int(mine) > int(val)
+            except (ValueError, TypeError):
+                continue
+            if bigger:
+                over.append(f"{key}={mine}")
+        if over:
+            out.append({"id": d.id, "name": d.domain_name, "values": over})
+    return out
+
+
+def _regen_vhosts_async(version: str) -> bool:
+    """Regenera en segundo plano los vhosts de esa versión (client_max_body_size
+    de nginx). En una unidad systemd propia, no en un hilo del panel (con 1
+    worker, un hilo colgado lo tumba todo)."""
+    import subprocess
+    import time
+    cmd = ["/opt/svqpanel/venv/bin/python", "-m", "api.cli", "regenerate_all_vhosts",
+           "--php-version", version]
+    try:
+        r = subprocess.run(["systemd-run", "--no-block", "--collect", "--quiet",
+                            f"--unit=svqpanel-regen-php{version.replace('.', '')}-{int(time.time())}",
+                            "--working-directory=/opt/svqpanel"] + cmd,
+                           capture_output=True, text=True, timeout=20)
+        return r.returncode == 0
+    except Exception:
+        return False
+
+
+@router.get("/php/versions/{version}/limits")
+async def get_php_global_limits(
+    version: str,
+    current_user: User = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
+    """[Admin] Límites globales del php.ini de FPM de una versión: el techo que
+    cada dominio puede pedir y lo que heredan los dominios sin valor propio."""
+    import os
+    from scripts.php_manager import GLOBAL_LIMITS, read_global_limits
+    if version not in ALL_VERSIONS:
+        raise HTTPException(status_code=400, detail=f"Versión PHP desconocida: {version}")
+    if not os.path.isfile(f"/etc/php/{version}/fpm/php.ini"):
+        raise HTTPException(status_code=404, detail=f"PHP {version} no está instalado")
+    domains = _domains_on(db, version)
+    return {
+        "version": version,
+        "limits": read_global_limits(version),
+        "spec": [{"key": k, "type": t, "min": mn, "max": mx, "label": lbl}
+                 for k, t, mn, mx, lbl, _ in GLOBAL_LIMITS],
+        "domains_count": len(domains),
+    }
+
+
+@router.put("/php/versions/{version}/limits")
+async def set_php_global_limits(
+    version: str,
+    payload: PHPLimitsUpdate,
+    request: Request,
+    current_user: User = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
+    """[Admin] Cambia los límites globales del php.ini de FPM de una versión.
+    Valida, comprueba con php-fpm -t (deshace si falla) y recarga FPM. Si cambia
+    la subida/POST, regenera en segundo plano los vhosts de esa versión (nginx)."""
+    import os
+    from scripts.php_manager import (validate_global_limits, check_limits_coherence,
+                                     read_global_limits, set_global_limits)
+    from api.utils.security_audit import log_audit
+    if version not in ALL_VERSIONS:
+        raise HTTPException(status_code=400, detail=f"Versión PHP desconocida: {version}")
+    if not os.path.isfile(f"/etc/php/{version}/fpm/php.ini"):
+        raise HTTPException(status_code=404, detail=f"PHP {version} no está instalado")
+
+    values, errors = validate_global_limits(payload.limits)
+    current = read_global_limits(version)
+    errors += check_limits_coherence({**current, **values})
+    if errors:
+        raise HTTPException(status_code=400, detail="; ".join(errors))
+    values = {k: v for k, v in values.items() if current.get(k) != v}
+    if not values:
+        return {"success": True, "changes": [], "limits": current,
+                "message": "No había nada que cambiar"}
+
+    try:
+        changes = set_global_limits(version, values)
+    except RuntimeError as e:
+        raise HTTPException(status_code=500, detail=str(e))
+    except OSError as e:
+        raise HTTPException(status_code=500, detail=f"No se pudo escribir el php.ini: {e}")
+
+    log_audit(db, user=current_user, category="php", action="global_limits",
+              target=f"PHP {version}: " + "; ".join(changes), request=request)
+
+    regen = False
+    if {"upload_max_filesize", "post_max_size"} & set(values) and _domains_on(db, version):
+        regen = _regen_vhosts_async(version)
+    return {
+        "success": True,
+        "changes": changes,
+        "limits": read_global_limits(version),
+        "regenerating_vhosts": regen,
+        "domains_above": _above_new_limits(db, version, values),
+        "message": f"Límites de PHP {version} actualizados",
+    }
 
 
 # ──────────────────────────── Cambiar PHP de un dominio ──────────────────────

@@ -436,12 +436,25 @@ def template_owns_root_location(extra: Optional[str]) -> bool:
     return bool(extra and _ROOT_LOCATION_RE.search(extra))
 
 
-def upload_mb_from_php(php_ini_overrides: Optional[str], default: int = 64) -> int:
+def _size_to_mb(value) -> Optional[int]:
+    m = re.match(r"^\s*(\d+)\s*([KMG]?)\s*$", str(value or ""), re.I)
+    if not m:
+        return None
+    n, unit = int(m.group(1)), m.group(2).upper()
+    return n * 1024 if unit == "G" else (max(1, n // 1024) if unit == "K" else n)
+
+
+def upload_mb_from_php(php_ini_overrides: Optional[str], default: int = 64,
+                       php_version: Optional[str] = None) -> int:
     """MB para client_max_body_size a partir del PHP del dominio.
 
     Antes nginx tenía siempre 64 MB: aunque el dominio subiera
     upload_max_filesize/post_max_size (Nextcloud 16G, Moodle 256M…), nginx cortaba
     con 413 antes de llegar a PHP. Toma el mayor de los dos; nunca baja de `default`.
+
+    php_version: un dominio SIN valor propio hereda el php.ini global de su
+    versión, que el admin puede subir (Ajustes → PHP → Límites): nginx no debe
+    cortar por debajo de ese global.
     """
     import json as _json
     try:
@@ -450,12 +463,15 @@ def upload_mb_from_php(php_ini_overrides: Optional[str], default: int = 64) -> i
         vals = {}
     best = default
     for key in ("upload_max_filesize", "post_max_size"):
-        m = re.match(r"^\s*(\d+)\s*([KMG]?)\s*$", str(vals.get(key, "")), re.I)
-        if not m:
-            continue
-        n, unit = int(m.group(1)), m.group(2).upper()
-        mb = n * 1024 if unit == "G" else (max(1, n // 1024) if unit == "K" else n)
-        best = max(best, mb)
+        mb = _size_to_mb(vals.get(key))
+        if mb is None and php_version:
+            try:
+                from scripts.php_ini_manager import read_server_ini_value
+                mb = _size_to_mb(read_server_ini_value(php_version, key))
+            except Exception:
+                mb = None
+        if mb is not None:
+            best = max(best, mb)
     return best
 
 

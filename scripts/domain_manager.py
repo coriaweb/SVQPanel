@@ -541,7 +541,8 @@ class DomainManager(SystemManager):
                         if upload_max_mb is None:
                             from scripts.utils import upload_mb_from_php
                             upload_max_mb = upload_mb_from_php(
-                                getattr(_d, "php_ini_overrides", None))
+                                getattr(_d, "php_ini_overrides", None),
+                                php_version=php_version)
                         if aliases is None:
                             from api.models.models_domain_alias import DomainAlias as _DA
                             aliases = [
