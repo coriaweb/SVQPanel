@@ -2707,6 +2707,29 @@ def cmd_backfill_dns_ipv6(dry_run: bool = False) -> int:
         db.close()
 
 
+def cmd_sftp_owner_acl() -> int:
+    """Update 0178: en las subcuentas SFTP existentes, la web (owner) no podía
+    escribir en lo que subía la subcuenta. Aplica grant_owner_access a cada una.
+    Idempotente."""
+    from scripts.sftp_account_manager import grant_owner_access
+    from api.models.models_sftp_account import SftpAccount
+    load_all_models()
+    db = SessionLocal()
+    try:
+        accounts = db.query(SftpAccount).all()
+        if not accounts:
+            print("· no hay subcuentas SFTP")
+        for a in accounts:
+            owner = a.owner.username if a.owner else None
+            if not owner:
+                continue
+            ok, msg = grant_owner_access(owner, a.username, a.target_path)
+            print(("✓ " if ok else "⚠ ") + f"{a.username} → {a.target_path}: {msg}")
+    finally:
+        db.close()
+    return 0
+
+
 def cmd_php_global_policy() -> int:
     """Update 0177: aplica a TODAS las versiones de PHP instaladas la política
     del php.ini global (techos 512M / 64M / 64M / 120 s, OPcache, APCu CLI).
@@ -2831,6 +2854,7 @@ def main():
     sub.add_parser("sync_panel_ssl", help="Sincroniza el estado SSL del panel en la BD con el cert real")
     sub.add_parser("fix_panel_vhost", help="Límite de subida, timeout de /pma y cabeceras en el vhost del panel")
     sub.add_parser("pma_fpm", help="Pool PHP-FPM propio de phpMyAdmin (límites de subida altos)")
+    sub.add_parser("sftp_owner_acl", help="Subcuentas SFTP: que la web pueda escribir en lo que suben")
     sub.add_parser("php_global_policy", help="php.ini global de todas las versiones PHP: techos del panel (512M/64M/120s), OPcache")
     sub.add_parser("migrate_nft_conf", help="nftables.conf: persistir puertos cerrados y reglas antes de los puertos base")
     p_dbimp = sub.add_parser("db_import", help="Importa ~/imports/<fichero> en una BD (uso interno del panel)")
@@ -3048,6 +3072,8 @@ def main():
         sys.exit(cmd_fix_panel_vhost())
     if args.cmd == "pma_fpm":
         sys.exit(cmd_pma_fpm())
+    if args.cmd == "sftp_owner_acl":
+        sys.exit(cmd_sftp_owner_acl())
     if args.cmd == "php_global_policy":
         sys.exit(cmd_php_global_policy())
     if args.cmd == "migrate_nft_conf":

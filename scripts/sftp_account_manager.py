@@ -123,6 +123,35 @@ def _is_mounted(mountpoint: str) -> bool:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# Escritura del owner (la web) sobre lo que crea la subcuenta
+# ─────────────────────────────────────────────────────────────────────────────
+def grant_owner_access(owner: str, subuser: str, target: str) -> Tuple[bool, str]:
+    """
+    El PHP de la web corre como el owner. Lo que sube la subcuenta SFTP es
+    propiedad de la subcuenta, con el grupo (el del owner) en r-x: como el owner
+    es de ese grupo, Linux le aplica la entrada del grupo y NO puede escribir,
+    aunque «otros» tenga rwx (chmod 777 no lo arregla). Visto en
+    social.beyuri.com: «no deja escribir en uploads/2026/11».
+
+      - ACL por defecto u:{owner}:rwX en las carpetas (salvo las de root, como
+        los logs) → lo nuevo nace escribible por la web;
+      - ACL u:{owner}:rwX SOLO en lo que ya creó la subcuenta (no se amplía
+        nada más: ni logs ni ficheros del sistema).
+    Idempotente.
+    """
+    if not (target and os.path.isdir(target)):
+        return False, "target inexistente"
+    # Carpetas de root (logs del dominio…) fuera: no deben volverse editables
+    rc1, _, e1 = _run(["find", target, "-xdev", "-type", "d", "!", "-user", "root",
+                       "-exec", "setfacl", "-d", "-m", f"u:{owner}:rwX", "{}", "+"], timeout=600)
+    rc2, _, e2 = _run(["find", target, "-xdev", "-user", subuser,
+                       "-exec", "setfacl", "-m", f"u:{owner}:rwX", "{}", "+"], timeout=600)
+    if rc1 or rc2:
+        return False, (e1 or e2).strip()[-300:]
+    return True, "ok"
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # Crear / borrar subcuenta
 # ─────────────────────────────────────────────────────────────────────────────
 def create_account(owner: str, label: str, target_subpath: str,
@@ -202,6 +231,10 @@ def create_account(owner: str, label: str, target_subpath: str,
     #    No toca owner:grupo:modo → nginx/php siguen igual.
     _run(["setfacl", "-R",  "-m", f"u:{username}:rwX", target])
     _run(["setfacl", "-R", "-d", "-m", f"u:{username}:rwX", target])
+    #    …y que la WEB (PHP corre como el owner) pueda escribir en lo que suba
+    #    la subcuenta: sin esto, sus carpetas nacen suyas con el grupo en r-x y
+    #    el owner (mismo grupo) no puede escribir aunque se ponga 777.
+    grant_owner_access(owner, username, target)
     # Permitir al subusuario atravesar la jaula hasta el mountpoint
     _run(["setfacl", "-m", f"u:{username}:rx", jail])
 
@@ -229,7 +262,9 @@ def delete_account(owner: str, username: str, jail: str, target: str, mount_name
             _run(["umount", "-l", mountpoint])
     _remove_fstab(mountpoint)
 
-    # 2. Quitar ACL del subusuario sobre el target
+    # 2. Quitar ACL del subusuario sobre el target. La del owner (la web) se
+    #    deja: es el propio dueño de la web y lo que subió la subcuenta sigue
+    #    teniendo que ser escribible por ella.
     if target and os.path.isdir(target):
         _run(["setfacl", "-R", "-x", f"u:{username}", target])
         _run(["setfacl", "-R", "-d", "-x", f"u:{username}", target])
