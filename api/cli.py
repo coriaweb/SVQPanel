@@ -2750,6 +2750,75 @@ def cmd_svq_plan(host: str, username: str, port: int = 22, ssh_user: str = "root
     return 0 if plan["importable"] else 1
 
 
+def _svq_cfg(host: str, port: int, ssh_user: str) -> dict:
+    return {"host": host, "port": port, "user": ssh_user,
+            "password": os.environ.get("SVQ_SSH_PASSWORD") or None}
+
+
+def cmd_svq_migrate(host: str, username: str, port: int = 22, ssh_user: str = "root",
+                    yes: bool = False) -> int:
+    """Migrador SVQPanel→SVQPanel: trae la cuenta ENTERA (fases 2+3) a este
+    servidor: la recrea y copia web, correo y BDs. El DNS NO se publica (las
+    zonas quedan inactivas hasta el corte). Exige --yes."""
+    import json
+    from scripts.svq_import import fetch_export, plan_import, apply_import, SvqImportError
+    from scripts.svq_copy import run_copy
+    from scripts.hestia_import import ImportReport
+    if not yes:
+        print("Esto CREA la cuenta en este servidor y copia sus datos. Repite con --yes.",
+              file=sys.stderr)
+        return 2
+    load_all_models()
+    cfg = _svq_cfg(host, port, ssh_user)
+    db = SessionLocal()
+    try:
+        data = fetch_export(cfg, username)
+        plan = plan_import(data, db)
+        if not plan["importable"]:
+            print(json.dumps(plan, ensure_ascii=False, indent=2))
+            return 1
+        report = ImportReport()
+        result = apply_import(data, db, report=report)
+        copy = run_copy(cfg, data, report)
+        result.update(report.to_dict())
+        result["copy"] = copy
+    except SvqImportError as e:
+        print(f"ERROR: {e}", file=sys.stderr)
+        return 2
+    finally:
+        db.close()
+    print(json.dumps(result, ensure_ascii=False, indent=2, default=str))
+    return 0 if not result.get("errors") else 1
+
+
+def cmd_svq_resync(host: str, username: str, port: int = 22, ssh_user: str = "root") -> int:
+    """Vuelve a copiar web, correo y BDs desde el origen (solo lo que cambió en
+    los ficheros; las BDs se vuelcan enteras) y verifica. Para justo antes del corte."""
+    import json
+    from scripts.svq_import import fetch_export, SvqImportError
+    from scripts.svq_copy import run_copy
+    from scripts.hestia_import import ImportReport
+    load_all_models()
+    cfg = _svq_cfg(host, port, ssh_user)
+    db = SessionLocal()
+    try:
+        from api.models.models_user import User
+        if not db.query(User).filter(User.username == username).first():
+            print(f"ERROR: «{username}» no está en este panel: primero svq_migrate.", file=sys.stderr)
+            return 2
+        data = fetch_export(cfg, username)
+    except SvqImportError as e:
+        print(f"ERROR: {e}", file=sys.stderr)
+        return 2
+    finally:
+        db.close()
+    report = ImportReport()
+    copy = run_copy(cfg, data, report)
+    out = {**report.to_dict(), "copy": copy}
+    print(json.dumps(out, ensure_ascii=False, indent=2, default=str))
+    return 0 if not out["errors"] else 1
+
+
 def cmd_sftp_owner_acl() -> int:
     """Update 0178: en las subcuentas SFTP existentes, la web (owner) no podía
     escribir en lo que subía la subcuenta. Aplica grant_owner_access a cada una.
@@ -2908,6 +2977,19 @@ def main():
     p_plan.add_argument("username")
     p_plan.add_argument("--port", type=int, default=22)
     p_plan.add_argument("--ssh-user", default="root")
+    p_mig = sub.add_parser("svq_migrate",
+                           help="Migrador SVQPanel→SVQPanel: trae USUARIO desde HOST (crea y copia; DNS sin publicar)")
+    p_mig.add_argument("host")
+    p_mig.add_argument("username")
+    p_mig.add_argument("--port", type=int, default=22)
+    p_mig.add_argument("--ssh-user", default="root")
+    p_mig.add_argument("--yes", action="store_true")
+    p_rs = sub.add_parser("svq_resync",
+                          help="Migrador SVQPanel→SVQPanel: vuelve a copiar web/correo/BDs de USUARIO desde HOST")
+    p_rs.add_argument("host")
+    p_rs.add_argument("username")
+    p_rs.add_argument("--port", type=int, default=22)
+    p_rs.add_argument("--ssh-user", default="root")
     sub.add_parser("php_global_policy", help="php.ini global de todas las versiones PHP: techos del panel (512M/64M/120s), OPcache")
     sub.add_parser("migrate_nft_conf", help="nftables.conf: persistir puertos cerrados y reglas antes de los puertos base")
     p_dbimp = sub.add_parser("db_import", help="Importa ~/imports/<fichero> en una BD (uso interno del panel)")
@@ -3131,6 +3213,11 @@ def main():
         sys.exit(cmd_export_account(args.username, summary_only=args.summary))
     if args.cmd == "svq_plan":
         sys.exit(cmd_svq_plan(args.host, args.username, port=args.port, ssh_user=args.ssh_user))
+    if args.cmd == "svq_migrate":
+        sys.exit(cmd_svq_migrate(args.host, args.username, port=args.port,
+                                 ssh_user=args.ssh_user, yes=args.yes))
+    if args.cmd == "svq_resync":
+        sys.exit(cmd_svq_resync(args.host, args.username, port=args.port, ssh_user=args.ssh_user))
     if args.cmd == "php_global_policy":
         sys.exit(cmd_php_global_policy())
     if args.cmd == "migrate_nft_conf":
