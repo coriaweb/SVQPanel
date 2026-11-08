@@ -346,6 +346,17 @@ def export_ssl(tables_out: Dict) -> List[Dict]:
     return out
 
 
+def export_shadow(usernames: List[str], shadow_path: str = "/etc/shadow") -> Dict[str, str]:
+    """Hash de la contraseña de SISTEMA (SSH/SFTP) del cliente y de sus
+    subcuentas SFTP: no está en la BD del panel. Las bloqueadas (!, *) no viajan."""
+    want, out = set(usernames), {}
+    for line in (_read(shadow_path) or "").splitlines():
+        parts = line.split(":")
+        if len(parts) > 1 and parts[0] in want and parts[1] and parts[1][0] not in "!*":
+            out[parts[0]] = parts[1]
+    return out
+
+
 def _du_bytes(path: str) -> Optional[int]:
     try:
         r = _run(["du", "-sb", "--", path], timeout=600)
@@ -392,6 +403,7 @@ def export_account(db, username: str, with_sizes: bool = True) -> Dict:
         "mariadb": export_mariadb(tables_out, warnings),
         "dkim": export_dkim(tables_out, warnings),
         "ssl": export_ssl(tables_out),
+        "shadow": export_shadow([username] + [s["username"] for s in tables_out.get("sftp_accounts", [])]),
         "sizes": {"home_bytes": _du_bytes(home) if with_sizes else None},
         "warnings": warnings,
     }

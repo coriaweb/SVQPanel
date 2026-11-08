@@ -2728,6 +2728,28 @@ def cmd_export_account(username: str, summary_only: bool = False) -> int:
     return 0
 
 
+def cmd_svq_plan(host: str, username: str, port: int = 22, ssh_user: str = "root") -> int:
+    """Migrador SVQPanel→SVQPanel: ANALIZA (no crea nada) qué pasaría al traer la
+    cuenta `username` del SVQPanel `host`. Solo lectura en los dos servidores.
+    Autenticación: clave SSH de root (agente/~/.ssh) o SVQ_SSH_PASSWORD en el entorno."""
+    import json
+    from scripts.svq_import import fetch_export, plan_import, SvqImportError
+    load_all_models()
+    cfg = {"host": host, "port": port, "user": ssh_user,
+           "password": os.environ.get("SVQ_SSH_PASSWORD") or None}
+    db = SessionLocal()
+    try:
+        data = fetch_export(cfg, username)
+        plan = plan_import(data, db)
+    except SvqImportError as e:
+        print(f"ERROR: {e}", file=sys.stderr)
+        return 2
+    finally:
+        db.close()
+    print(json.dumps(plan, ensure_ascii=False, indent=2))
+    return 0 if plan["importable"] else 1
+
+
 def cmd_sftp_owner_acl() -> int:
     """Update 0178: en las subcuentas SFTP existentes, la web (owner) no podía
     escribir en lo que subía la subcuenta. Aplica grant_owner_access a cada una.
@@ -2880,6 +2902,12 @@ def main():
                            help="Migrador SVQPanel→SVQPanel: vuelca una cuenta en JSON (stdout; contiene secretos)")
     p_exp.add_argument("username")
     p_exp.add_argument("--summary", action="store_true", help="Solo un resumen legible, sin secretos")
+    p_plan = sub.add_parser("svq_plan",
+                            help="Migrador SVQPanel→SVQPanel: analiza (sin crear nada) traer USUARIO desde HOST")
+    p_plan.add_argument("host")
+    p_plan.add_argument("username")
+    p_plan.add_argument("--port", type=int, default=22)
+    p_plan.add_argument("--ssh-user", default="root")
     sub.add_parser("php_global_policy", help="php.ini global de todas las versiones PHP: techos del panel (512M/64M/120s), OPcache")
     sub.add_parser("migrate_nft_conf", help="nftables.conf: persistir puertos cerrados y reglas antes de los puertos base")
     p_dbimp = sub.add_parser("db_import", help="Importa ~/imports/<fichero> en una BD (uso interno del panel)")
@@ -3101,6 +3129,8 @@ def main():
         sys.exit(cmd_sftp_owner_acl())
     if args.cmd == "export_account":
         sys.exit(cmd_export_account(args.username, summary_only=args.summary))
+    if args.cmd == "svq_plan":
+        sys.exit(cmd_svq_plan(args.host, args.username, port=args.port, ssh_user=args.ssh_user))
     if args.cmd == "php_global_policy":
         sys.exit(cmd_php_global_policy())
     if args.cmd == "migrate_nft_conf":
