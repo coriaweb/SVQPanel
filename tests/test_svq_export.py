@@ -90,7 +90,23 @@ def test_solo_lo_del_cliente_y_sin_ids(db):
 
 def test_secretos_descifrados_para_recifrar_en_destino(db):
     t = X.export_panel_rows(db, "marta", [])["tables"]
-    assert t["client_databases"][0]["db_password_enc"] == {"$enc": "secreta-123"}
+    assert t["client_databases"][0]["db_password_enc"] == {"$enc": "secreta-123", "key": "panel"}
+
+
+def test_autologin_webmail_usa_la_clave_de_secret_key(db, monkeypatch):
+    """El autologin del webmail cifra con una clave derivada de SECRET_KEY, no con
+    PANEL_ENCRYPTION_KEY (lo cazó la prueba real en el .71: 3 buzones sin descifrar)."""
+    from api.routes import mail as M
+    from api.models.models_mail import Mailbox
+    import api.utils.secret as S
+    monkeypatch.setattr(S, "get_secret_key", lambda: "secreto-del-origen")
+    mb = db.query(Mailbox).one()
+    mb.encrypted_password = M._encrypt_password("buzon-pass")
+    db.commit()
+    w = []
+    t = X.export_panel_rows(db, "marta", w)["tables"]
+    assert t["mailboxes"][0]["encrypted_password"] == {"$enc": "buzon-pass", "key": "secret"}
+    assert not w
 
 
 def test_clave_distinta_avisa_y_no_filtra_el_cifrado(db, monkeypatch):

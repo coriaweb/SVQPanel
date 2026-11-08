@@ -79,14 +79,32 @@ class ExportError(RuntimeError):
 
 # ── valores ──────────────────────────────────────────────────────────────────
 def _fernet():
-    key = os.getenv("PANEL_ENCRYPTION_KEY", "")
-    if not key:
-        return None
+    """Cifradores del panel, por nombre. Hay DOS esquemas:
+      - "panel":  PANEL_ENCRYPTION_KEY (BDs, 2FA, backups, relay, orígenes…)
+      - "secret": derivado de SECRET_KEY (autologin del webmail,
+                  Mailbox.encrypted_password; ver api/routes/mail.py)
+    El valor exportado lleva el nombre para que el destino lo recifre igual."""
+    out = []
     try:
         from cryptography.fernet import Fernet
-        return Fernet(key.encode())
+    except ImportError:
+        return out
+    key = os.getenv("PANEL_ENCRYPTION_KEY", "")
+    if key:
+        try:
+            out.append(("panel", Fernet(key.encode())))
+        except Exception:
+            pass
+    try:
+        import base64 as _b64, hashlib
+        from api.utils.secret import get_secret_key
+        secret = get_secret_key()
+        if secret:
+            out.append(("secret", Fernet(_b64.urlsafe_b64encode(
+                hashlib.sha256(secret.encode()).digest()))))
     except Exception:
-        return None
+        pass
+    return out
 
 
 def _looks_fernet(v: str) -> bool:
@@ -102,14 +120,14 @@ def encode_value(v, fernet=None, warnings: Optional[list] = None, where: str = "
     if isinstance(v, (bytes, bytearray, memoryview)):
         return {"$b64": base64.b64encode(bytes(v)).decode()}
     if _looks_fernet(v):
-        if fernet is not None:
+        for name, f in (fernet or []):
             try:
-                return {"$enc": fernet.decrypt(v.encode()).decode()}
+                return {"$enc": f.decrypt(v.encode()).decode(), "key": name}
             except Exception:
-                pass
+                continue
         if warnings is not None:
-            warnings.append(f"{where}: valor cifrado que no se pudo descifrar "
-                            "(¿PANEL_ENCRYPTION_KEY cambió?); se omite")
+            warnings.append(f"{where}: valor cifrado que no se pudo descifrar con "
+                            "ninguna clave del panel; se omite")
         return None
     return v
 
@@ -215,6 +233,11 @@ def export_panel_rows(db, username: str, warnings: list) -> Dict:
         tt = tables["web_templates"]
         extra["web_templates"] = [_row_to_json(r, tt, refs, fernet, warnings) for r in
                                   db.execute(select(tt).where(tt.c.id.in_(sorted(tpl_ids)))).mappings()]
+    # Avisos repetidos (uno por fila) → uno solo con el recuento
+    counts: Dict[str, int] = {}
+    for w in warnings:
+        counts[w] = counts.get(w, 0) + 1
+    warnings[:] = [w if n == 1 else f"{w} (×{n})" for w, n in counts.items()]
     return {"tables": out, **extra}
 
 
