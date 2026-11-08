@@ -2707,6 +2707,27 @@ def cmd_backfill_dns_ipv6(dry_run: bool = False) -> int:
         db.close()
 
 
+def cmd_export_account(username: str, summary_only: bool = False) -> int:
+    """Migrador SVQPanel → SVQPanel (fase 1): vuelca la cuenta en JSON por stdout.
+    Lo ejecuta el servidor DESTINO por SSH. La salida lleva secretos descifrados:
+    no redirigirla a un fichero. Los logs van a stderr (stdout = solo el JSON)."""
+    import json
+    from scripts.svq_export import export_account, summary, ExportError
+    load_all_models()
+    db = SessionLocal()
+    try:
+        data = export_account(db, username, with_sizes=True)
+    except ExportError as e:
+        print(f"ERROR: {e}", file=sys.stderr)
+        return 2
+    finally:
+        db.close()
+    out = summary(data) if summary_only else data
+    json.dump(out, sys.stdout, ensure_ascii=False, indent=2 if summary_only else None)
+    sys.stdout.write("\n")
+    return 0
+
+
 def cmd_sftp_owner_acl() -> int:
     """Update 0178: en las subcuentas SFTP existentes, la web (owner) no podía
     escribir en lo que subía la subcuenta. Aplica grant_owner_access a cada una.
@@ -2855,6 +2876,10 @@ def main():
     sub.add_parser("fix_panel_vhost", help="Límite de subida, timeout de /pma y cabeceras en el vhost del panel")
     sub.add_parser("pma_fpm", help="Pool PHP-FPM propio de phpMyAdmin (límites de subida altos)")
     sub.add_parser("sftp_owner_acl", help="Subcuentas SFTP: que la web pueda escribir en lo que suben")
+    p_exp = sub.add_parser("export_account",
+                           help="Migrador SVQPanel→SVQPanel: vuelca una cuenta en JSON (stdout; contiene secretos)")
+    p_exp.add_argument("username")
+    p_exp.add_argument("--summary", action="store_true", help="Solo un resumen legible, sin secretos")
     sub.add_parser("php_global_policy", help="php.ini global de todas las versiones PHP: techos del panel (512M/64M/120s), OPcache")
     sub.add_parser("migrate_nft_conf", help="nftables.conf: persistir puertos cerrados y reglas antes de los puertos base")
     p_dbimp = sub.add_parser("db_import", help="Importa ~/imports/<fichero> en una BD (uso interno del panel)")
@@ -3074,6 +3099,8 @@ def main():
         sys.exit(cmd_pma_fpm())
     if args.cmd == "sftp_owner_acl":
         sys.exit(cmd_sftp_owner_acl())
+    if args.cmd == "export_account":
+        sys.exit(cmd_export_account(args.username, summary_only=args.summary))
     if args.cmd == "php_global_policy":
         sys.exit(cmd_php_global_policy())
     if args.cmd == "migrate_nft_conf":
