@@ -179,8 +179,11 @@ def test_subidas_a_disco(tmp_path, monkeypatch):
     try:
         assert upload_tmp.install(str(tmp_path / "up"))
         f = fp.SpooledTemporaryFile(max_size=10)
+        # El directorio con el que se creará el fichero al pasar de max_size. (En
+        # Linux el temporal es anónimo, O_TMPFILE: no tiene un nombre que mirar.)
+        assert f._TemporaryFileArgs["dir"] == str(tmp_path / "up")
         f.write(b"x" * 100)                      # supera max_size → a disco
-        assert os.path.dirname(f._file.name) == str(tmp_path / "up")
+        assert f._rolled
         f.close()
     finally:
         fp.SpooledTemporaryFile = orig
