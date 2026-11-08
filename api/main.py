@@ -14,6 +14,7 @@ from api.models.database import create_tables, get_db
 from config.config import PANEL_NAME, PANEL_VERSION
 
 from api.routes import domain_aliases, domain_resources, domain_access, malware, db_import
+from api.routes import svq_migrations
 from api.routes import users, domains, php, ssl, ipv6, auth, settings, dns, system, mail, databases, firewall, fail2ban, security_monitor, ip_lists, file_manager, crowdsec, plans, sftp, crons, server_ips, backups, templates, notifications, dns_cluster, git, git_webhook, monitoring, db_tuner, migrations, migration_sources, terminal, license, api_tokens, mail_queue, process_manager, outbound_mail, antispam, branding
 
 # ── Descripción de la API (se muestra en /docs y /redoc) ──────────────────────
@@ -405,6 +406,11 @@ def _run_migrations():
         # Progreso en vivo del import (porcentaje por bytes + fase actual)
         "ALTER TABLE migration_jobs ADD COLUMN IF NOT EXISTS progress INTEGER DEFAULT 0 NOT NULL",
         "ALTER TABLE migration_jobs ADD COLUMN IF NOT EXISTS progress_detail TEXT",
+        # Migrador SVQPanel→SVQPanel: credenciales SSH del origen cifradas mientras
+        # dura el job (se borran al terminar) + marca «migrada» en la cuenta origen
+        "ALTER TABLE migration_jobs ADD COLUMN IF NOT EXISTS ssh_cfg_enc TEXT",
+        "ALTER TABLE users ADD COLUMN IF NOT EXISTS migrated_to VARCHAR(255)",
+        "ALTER TABLE users ADD COLUMN IF NOT EXISTS migrated_at TIMESTAMP",
         # Suspensión administrativa (cascada de usuario + granular)
         "ALTER TABLE users ADD COLUMN IF NOT EXISTS is_suspended BOOLEAN DEFAULT FALSE",
         "ALTER TABLE mail_domains ADD COLUMN IF NOT EXISTS is_suspended BOOLEAN DEFAULT FALSE",
@@ -1141,6 +1147,7 @@ app.include_router(git.router,               prefix="/api", tags=["Git Deploy"])
 app.include_router(monitoring.router,        prefix="/api", tags=["Monitoring"])
 app.include_router(db_tuner.router,          prefix="/api", tags=["DB Tuner"])
 app.include_router(migrations.router,        prefix="/api", tags=["Migrations"])
+app.include_router(svq_migrations.router,    prefix="/api", tags=["Migrations"])
 app.include_router(migration_sources.router, prefix="/api", tags=["Migration Sources"])
 app.include_router(api_tokens.router,        prefix="/api", tags=["API Tokens"])
 app.include_router(mail_queue.router,        prefix="/api", tags=["Mail Queue"])

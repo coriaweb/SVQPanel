@@ -1295,7 +1295,19 @@ def cmd_run_migration_job(job_id: int) -> int:
     en run_migration_job_inproc, que lee los datos del job en la BD."""
     from api.routes.migrations import run_migration_job_inproc
     try:
-        run_migration_job_inproc(job_id)
+        load_all_models()
+        db = SessionLocal()
+        try:
+            from api.models.models_migration import MigrationJob
+            job = db.query(MigrationJob).filter(MigrationJob.id == job_id).first()
+            kind = job.source_kind if job else None
+        finally:
+            db.close()
+        if kind == "svq":
+            from api.routes.svq_migrations import run_svq_job_inproc
+            run_svq_job_inproc(job_id)
+        else:
+            run_migration_job_inproc(job_id)
         return 0
     except Exception as e:
         # El estado del job ya quedó marcado 'failed' dentro de la función; aquí
@@ -2819,6 +2831,25 @@ def cmd_svq_resync(host: str, username: str, port: int = 22, ssh_user: str = "ro
     return 0 if not out["errors"] else 1
 
 
+def cmd_svq_mark_migrated(username: str, to_host: str) -> int:
+    """EN EL ORIGEN, tras el corte: marca la cuenta como migrada a `to_host` y
+    pausa crons, backups programados y auto-update de WordPress (no borra nada).
+    Lo lanza el destino por SSH. Salida: JSON con lo cambiado."""
+    import json
+    from scripts.svq_cutover import mark_migrated
+    load_all_models()
+    db = SessionLocal()
+    try:
+        changed = mark_migrated(db, username, to_host)
+    except ValueError as e:
+        print(f"ERROR: {e}", file=sys.stderr)
+        return 2
+    finally:
+        db.close()
+    print(json.dumps(changed, ensure_ascii=False))
+    return 0
+
+
 def cmd_sftp_owner_acl() -> int:
     """Update 0178: en las subcuentas SFTP existentes, la web (owner) no podía
     escribir en lo que subía la subcuenta. Aplica grant_owner_access a cada una.
@@ -2990,6 +3021,10 @@ def main():
     p_rs.add_argument("username")
     p_rs.add_argument("--port", type=int, default=22)
     p_rs.add_argument("--ssh-user", default="root")
+    p_mk = sub.add_parser("svq_mark_migrated",
+                          help="(En el ORIGEN) marca USUARIO como migrado y pausa sus crons/backups")
+    p_mk.add_argument("username")
+    p_mk.add_argument("--to", required=True)
     sub.add_parser("php_global_policy", help="php.ini global de todas las versiones PHP: techos del panel (512M/64M/120s), OPcache")
     sub.add_parser("migrate_nft_conf", help="nftables.conf: persistir puertos cerrados y reglas antes de los puertos base")
     p_dbimp = sub.add_parser("db_import", help="Importa ~/imports/<fichero> en una BD (uso interno del panel)")
@@ -3216,6 +3251,8 @@ def main():
     if args.cmd == "svq_migrate":
         sys.exit(cmd_svq_migrate(args.host, args.username, port=args.port,
                                  ssh_user=args.ssh_user, yes=args.yes))
+    if args.cmd == "svq_mark_migrated":
+        sys.exit(cmd_svq_mark_migrated(args.username, args.to))
     if args.cmd == "svq_resync":
         sys.exit(cmd_svq_resync(args.host, args.username, port=args.port, ssh_user=args.ssh_user))
     if args.cmd == "php_global_policy":

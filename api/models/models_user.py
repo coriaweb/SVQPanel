@@ -80,6 +80,11 @@ class User(Base):
     totp_enabled    = Column(Boolean, default=False, nullable=False)
     totp_enabled_at = Column(DateTime, nullable=True)
 
+    # Migrador SVQPanel→SVQPanel: la cuenta se trasladó a otro servidor (se marca
+    # en el ORIGEN tras el corte; no se borra nada). NULL = no migrada.
+    migrated_to = Column(String(255), nullable=True)
+    migrated_at = Column(DateTime, nullable=True)
+
     # Relaciones
     domains      = relationship("Domain",         back_populates="user", cascade="all, delete-orphan")
     mail_domains = relationship("MailDomain",     back_populates="user", cascade="all, delete-orphan")

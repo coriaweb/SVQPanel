@@ -102,6 +102,25 @@ class Remote:
         return self._wrap(argv)
 
 
+def rsync_mail_catchup_argv(remote: "Remote", username: str) -> List[str]:
+    """Correo que siga llegando al ORIGEN tras el corte (DNS en caché). SIN
+    --delete y con --ignore-existing: el destino ya es el bueno y tiene correo
+    que el origen no; solo se AÑADE lo que falte, nunca se borra ni pisa nada."""
+    ssh_cmd = " ".join(shlex.quote(x) for x in ["ssh"] + remote.ssh_opts())
+    return remote._wrap(["rsync", "-aHAX", "--ignore-existing", "--stats", "-e", ssh_cmd,
+                         f"{remote.target}:/home/{username}/mail/", f"/home/{username}/mail/"])
+
+
+def copy_mail_catchup(remote: "Remote", username: str, runner: Callable = subprocess.run) -> Dict:
+    _check_user(username)
+    r = runner(rsync_mail_catchup_argv(remote, username), capture_output=True, text=True,
+               env=remote.env(), timeout=6 * 3600)
+    if r.returncode not in (0, 24):
+        raise CopyError(f"rsync del correo falló ({r.returncode}): {(r.stderr or '').strip()[-400:]}")
+    m = re.search(r"Number of regular files transferred: ([\d,.]+)", r.stdout or "")
+    return {"files": int(re.sub(r"[,.]", "", m.group(1))) if m else None}
+
+
 def _check_user(username: str):
     if not re.fullmatch(r"[a-z_][a-z0-9_-]{0,31}", username or ""):
         raise CopyError(f"Usuario no válido: {username!r}")

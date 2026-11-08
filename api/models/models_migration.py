@@ -42,6 +42,9 @@ class MigrationJob(Base):
     tar_path = Column(Text, nullable=True)         # ruta del .tar a importar
     cleanup_tar = Column(Integer, nullable=False, default=0)  # 1 = borrarlo al acabar
     dns_records_json = Column(Text, nullable=True) # registros DNS propuestos (JSON)
+    # Migrador SVQPanel→SVQPanel: SSH del origen cifrado (Fernet) mientras corre
+    # el job; el subproceso lo lee y lo BORRA al terminar.
+    ssh_cfg_enc = Column(Text, nullable=True)
 
     created_at = Column(DateTime, default=datetime.utcnow)
     started_at = Column(DateTime, nullable=True)

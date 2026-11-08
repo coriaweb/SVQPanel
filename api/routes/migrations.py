@@ -1326,7 +1326,7 @@ def run_migration_job_inproc(job_id: int):
                 pass
 
 
-def _spawn_import_subprocess(job_id: int):
+def _spawn_import_subprocess(job_id: int, timeout: int = 7200):
     """Lanza la importación en un subproceso AISLADO y vigila su salida.
 
     Corre como background task del panel, pero es ligero: solo arranca el hijo
@@ -1353,11 +1353,11 @@ def _spawn_import_subprocess(job_id: int):
         cmd = base
     try:
         proc = subprocess.run(
-            cmd, cwd=root, capture_output=True, text=True, timeout=7200)
+            cmd, cwd=root, capture_output=True, text=True, timeout=timeout)
         rc = proc.returncode
         stderr = (proc.stderr or "")[-2000:]
     except subprocess.TimeoutExpired:
-        rc, stderr = -1, "La importación superó el tiempo máximo (2h) y se abortó."
+        rc, stderr = -1, f"La importación superó el tiempo máximo ({timeout // 3600} h) y se abortó."
     except Exception as e:
         rc, stderr = -1, f"No se pudo lanzar el subproceso de importación: {e}"
 

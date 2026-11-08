@@ -15,9 +15,10 @@
           <select class="svq-select" v-model="sourcePanel">
             <option value="hestia">HestiaCP</option>
             <option value="cpanel">cPanel</option>
+            <option value="svqpanel">Otro SVQPanel (beta)</option>
           </select>
         </label>
-        <label class="mig-field">
+        <label v-if="sourcePanel !== 'svqpanel'" class="mig-field">
           <span>Origen</span>
           <select class="svq-select" v-model="source">
             <option value="upload">Subir archivo</option>
@@ -27,20 +28,22 @@
           </select>
         </label>
 
-        <label class="mig-field" v-if="source === 'upload'">
+        <label class="mig-field" v-if="sourcePanel !== 'svqpanel' && source === 'upload'">
           <span>Archivo de backup ({{ sourcePanel === 'cpanel' ? '.tar.gz' : '.tar' }})</span>
           <input type="file" accept=".tar,.gz,.tgz" class="svq-input" @change="onFile" />
         </label>
-        <label class="mig-field" v-else-if="source === 'path'">
+        <label class="mig-field" v-else-if="sourcePanel !== 'svqpanel' && source === 'path'">
           <span>Ruta del .tar en el servidor</span>
           <input class="svq-input mono" v-model="serverPath" placeholder="/backups/usuario.YYYY-MM-DD.tar" />
         </label>
-        <label class="mig-field" v-else-if="source === 'url'">
+        <label class="mig-field" v-else-if="sourcePanel !== 'svqpanel' && source === 'url'">
           <span>URL del backup (.tar)</span>
           <input class="svq-input mono" v-model="url" placeholder="https://servidor/backup/usuario.tar" />
         </label>
       </div>
 
+      <SvqMigration v-if="sourcePanel === 'svqpanel'" />
+      <template v-else>
       <p class="mig-hint dd-muted">
         <i class="bi bi-info-circle"></i>
         <template v-if="sourcePanel === 'cpanel'">
@@ -143,6 +146,7 @@
         <BaseButton variant="primary" icon="search" :loading="analyzing" :disabled="!canAnalyze" @click="analyze">Analizar backup</BaseButton>
         <small class="dd-muted">El análisis no modifica nada del servidor.</small>
       </div>
+      </template>
     </BaseCard>
 
     <!-- Paso 2: manifiesto -->
@@ -353,10 +357,11 @@ import { useMainStore } from '../stores/useMainStore'
 import BaseCard from '../components/ui/BaseCard.vue'
 import BaseButton from '../components/ui/BaseButton.vue'
 import PasswordField from '../components/PasswordField.vue'
+import SvqMigration from '../components/SvqMigration.vue'
 
 export default {
   name: 'Migrations',
-  components: { BaseCard, BaseButton, PasswordField },
+  components: { BaseCard, BaseButton, PasswordField, SvqMigration },
   setup() {
     const store = useMainStore()
     const sourcePanel = ref('hestia')
@@ -578,7 +583,8 @@ export default {
     const resumeActiveJob = async () => {
       try {
         const r = await api.getActiveMigrationJobs()
-        const active = (r.data || [])[0]
+        // Las de «otro SVQPanel» las sigue su propio componente
+        const active = (r.data || []).filter(j => j.source_kind !== 'svq')[0]
         if (!active || job.value) return
         resumedFor.value = active.target_username || `cliente #${active.target_user_id}`
         job.value = { ...active, report: null }
