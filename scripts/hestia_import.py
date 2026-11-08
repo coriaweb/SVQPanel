@@ -1707,6 +1707,9 @@ def import_mail(backup: "HestiaBackup", mailinfo: Dict, owner, db, report: Impor
             db.rollback()
             report.fail("mail-account", email, e)
 
+    # 2b) Reenviadores sin buzón (cPanel): alias puros, sin crear un buzón vacío.
+    _import_mail_aliases(mgr, mail_domain, mailinfo.get("aliases") or [], db, report)
+
     # 3) Restaurar los maildir reales. Hestia los trae en accounts.tar(.gz);
     #    cPanel los trae descomprimidos en una carpeta (_accounts_dir).
     acc_dir = mailinfo.get("_accounts_dir")
@@ -1759,6 +1762,37 @@ def import_mail(backup: "HestiaBackup", mailinfo: Dict, owner, db, report: Impor
         report.fail("mail-suspend", domain, e)
 
     report.ok("mail", domain, f"{n_ok} buzón(es)")
+
+
+def _import_mail_aliases(mgr, mail_domain, aliases: List[Dict], db, report: "ImportReport"):
+    """Crea los alias de correo del backup ({source, destinations}); source '@'
+    = catch-all. Destinos validados (vienen de un servidor ajeno)."""
+    from api.models.models_mail import MailAlias
+    from api.schemas.mail_schemas import validate_email_address
+    domain = mail_domain.domain_name
+    for al in aliases:
+        src = (al.get("source") or "").strip().lower()
+        label = "catch-all" if src == "@" else f"{src}@{domain}"
+        dests = []
+        for d in al.get("destinations") or []:
+            try:
+                dests.append(validate_email_address(d, "dirección de destino"))
+            except ValueError as e:
+                report.fail("mail-alias", label, f"destino descartado {d!r}: {e}")
+        if not src or not dests:
+            continue
+        dest = ",".join(dests)
+        try:
+            db.add(MailAlias(mail_domain_id=mail_domain.id, source=src, destination=dest))
+            db.commit()
+            if src == "@":
+                mgr.set_catch_all(domain, dest)
+            else:
+                mgr.create_alias(domain, src, dest)
+            report.ok("mail-alias", label, f"→ {', '.join(dests)}")
+        except Exception as e:
+            db.rollback()
+            report.fail("mail-alias", label, e)
 
 
 def _subscribe_mailboxes(email: str) -> None:
@@ -2223,7 +2257,7 @@ def import_cron(job: Dict, owner, db, report: "ImportReport"):
         day=job.get("day", "*"), month=job.get("month", "*"),
         weekday=job.get("wday", "*"),
         command=new_cmd,
-        comment="Importado de Hestia",
+        comment=f"Importado de {job.get('origin') or 'Hestia'}",
         is_active=not job.get("suspended", False),
     )
     db.add(cj)

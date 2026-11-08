@@ -977,6 +977,10 @@ class APIClient {
     return this.get(`/api/migrations/jobs/${jobId}`)
   }
 
+  getActiveMigrationJobs() {
+    return this.get('/api/migrations/jobs')
+  }
+
   // ── Detección y gestión de app instalada (WP Toolkit) ──
   getDomainApp(domainId)         { return this.get(`/api/domains/${domainId}/app`) }
   getWpInfo(domainId, updates = false) {

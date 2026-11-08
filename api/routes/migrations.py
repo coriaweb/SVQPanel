@@ -264,7 +264,8 @@ async def _receive_backup(upload: Optional[UploadFile], local_path: Optional[str
     el prefijo svq_hestia_up_).
     """
     if upload is not None and upload.filename:
-        fd, tmp = tempfile.mkstemp(prefix="svq_hestia_up_", suffix=".tar")
+        fd, tmp = tempfile.mkstemp(prefix="svq_hestia_up_", suffix=".tar",
+                                   dir=migration_tmp_dir())
         os.close(fd)
         max_bytes = MAX_BACKUP_MB * 1024 * 1024
         written = 0
@@ -1658,6 +1659,28 @@ async def migration_import(
     else:
         background_tasks.add_task(_spawn_import_subprocess, job.id)
     return {"status": "success", "data": {"job_id": job.id, "status": "pending"}}
+
+
+@router.get("/migrations/jobs")
+async def migration_active_jobs(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_admin),
+):
+    """Importaciones en curso (pending/running), la más reciente primero. La UI
+    lo consulta al abrir la vista para retomar el progreso tras recargar."""
+    from api.models.models_migration import MigrationJob
+    jobs = (db.query(MigrationJob)
+            .filter(MigrationJob.status.in_(("pending", "running")))
+            .order_by(MigrationJob.id.desc()).limit(10).all())
+    users = {u.id: u.username for u in db.query(User).filter(
+        User.id.in_([j.target_user_id for j in jobs if j.target_user_id])).all()} if jobs else {}
+    return {"status": "success", "data": [{
+        "id": j.id, "status": j.status, "source_kind": j.source_kind,
+        "target_user_id": j.target_user_id,
+        "target_username": users.get(j.target_user_id),
+        "progress": j.progress or 0, "progress_detail": j.progress_detail,
+        "created_at": j.created_at.isoformat() if j.created_at else None,
+    } for j in jobs]}
 
 
 @router.get("/migrations/jobs/{job_id}")

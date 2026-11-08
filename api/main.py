@@ -94,6 +94,11 @@ TAGS_METADATA = [
     {"name": "System", "description": "Estado del servidor y servicios (solo admin)."},
 ]
 
+# Subidas multipart a disco real, no a /tmp (tmpfs en Debian 13): un backup de
+# varios GB para el importador llenaba la RAM antes de llegar a nuestro código.
+from api.utils import upload_tmp as _upload_tmp
+_upload_tmp.install()
+
 # Crear app FastAPI
 app = FastAPI(
     title=f"{PANEL_NAME} — API",

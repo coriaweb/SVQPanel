@@ -182,7 +182,7 @@
         <div v-if="manifest.mail.length">
           <h4 class="mig-h">Correo</h4>
           <ul class="mig-ul">
-            <li v-for="m in manifest.mail" :key="m.domain"><strong>{{ m.domain }}</strong> · {{ m.accounts_count }} buzón(es)</li>
+            <li v-for="m in manifest.mail" :key="m.domain"><strong>{{ m.domain }}</strong> · {{ m.accounts_count }} buzón(es)<span v-if="m.aliases && m.aliases.length"> · {{ m.aliases.length }} reenvío(s) sin buzón</span></li>
           </ul>
         </div>
         <div v-if="manifest.dns.length">
@@ -274,6 +274,9 @@
 
     <!-- Paso 3: progreso / informe -->
     <BaseCard v-if="job" title="3 · Importación" icon="hourglass-split">
+      <p v-if="resumedFor" class="dd-muted">
+        <i class="bi bi-arrow-repeat"></i> Importación en curso hacia «{{ resumedFor }}», retomada al abrir esta página.
+      </p>
       <div v-if="job.status === 'pending' || job.status === 'running'" class="mig-progress">
         <div class="mig-progress__head">
           <span class="spinner"></span>
@@ -378,6 +381,7 @@ export default {
     const manifest = ref(null)
     const dnsZones = ref([])   // zonas DNS con registros editables (clon de proposed_records)
     const job = ref(null)
+    const resumedFor = ref('')    // importación retomada tras recargar (cliente destino)
     const cacheToken = ref(null)  // backup ya descargado en el análisis (reutilizable)
     const instantDns = ref(false) // migración instantánea: apuntar el DNS del Hestia aquí al terminar
     let pollTimer = null
@@ -499,7 +503,7 @@ export default {
     }
 
     const analyze = async () => {
-      analyzing.value = true; manifest.value = null; job.value = null; dnsZones.value = []; cacheToken.value = null
+      analyzing.value = true; manifest.value = null; job.value = null; resumedFor.value = ''; dnsZones.value = []; cacheToken.value = null
       try {
         const r = await api.migrationAnalyze(_formData())
         manifest.value = r.data
@@ -535,6 +539,7 @@ export default {
       try {
         const r = await api.migrationImport(_formData(true))
         const jobId = r.data.job_id
+        resumedFor.value = ''
         job.value = { status: 'pending', report: null }
         _poll(jobId)
       } catch (e) {
@@ -568,14 +573,28 @@ export default {
       manifest.value = null; dnsZones.value = []; job.value = null
     })
 
+    // Al abrir la vista: si hay una importación en marcha (p. ej. se recargó la
+    // página a mitad), retomar su progreso en vez de dejar la pantalla vacía.
+    const resumeActiveJob = async () => {
+      try {
+        const r = await api.getActiveMigrationJobs()
+        const active = (r.data || [])[0]
+        if (!active || job.value) return
+        resumedFor.value = active.target_username || `cliente #${active.target_user_id}`
+        job.value = { ...active, report: null }
+        _poll(active.id)
+      } catch (e) { /* opcional: sin esto solo no se retoma */ }
+    }
+
     onUnmounted(() => { if (pollTimer) clearTimeout(pollTimer) })
     loadUsers()
     loadSources()
+    resumeActiveJob()
 
     return {
       sourcePanel, source, file, serverPath, url, ssh, targetUserId, newUser, clientUsers, scope, scopeOptions,
       savedSources, selectedSource, applySource, saveSource, deleteSource, instantDns,
-      analyzing, importing, manifest, dnsZones, job, canAnalyze, mailAccounts, targetUsername,
+      analyzing, importing, manifest, dnsZones, job, resumedFor, canAnalyze, mailAccounts, targetUsername,
       onFile, analyze, startImport, fmtMb,
     }
   },
