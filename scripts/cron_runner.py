@@ -168,10 +168,11 @@ def _username_uid(username: str):
         return None
 
 
-def record_manual_run(db, cron_id: int, command: str, run_as: str,
-                      timeout: int = 120) -> dict:
-    """'Ejecutar ahora' (endpoint, ya como root): ejecuta como el usuario y
-    escribe el historial directo en BD (sin cola). trigger='manual'."""
+def run_as_user(command: str, run_as: str, timeout: int = 120) -> dict:
+    """Ejecuta `command` como el usuario del sistema `run_as` (el panel es root).
+    Devuelve {started, exit_code, duration_ms, output}. No escribe en BD.
+    BLOQUEA hasta que termina: llamarlo desde un endpoint `def` (threadpool),
+    nunca desde uno `async def`, o congela el panel entero (1 worker)."""
     env = {**os.environ,
            "PATH": "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"}
     started = datetime.utcnow()
@@ -186,6 +187,16 @@ def record_manual_run(db, cron_id: int, command: str, run_as: str,
         exit_code = 124
         output = f"[svq-cron] La tarea superó el límite de {timeout}s y se canceló."
     duration_ms = int((time.monotonic() - t0) * 1000)
-    _write_run(db, cron_id, started, duration_ms, exit_code, output, "manual")
-    return {"exit_code": exit_code, "duration_ms": duration_ms,
+    return {"started": started, "exit_code": exit_code, "duration_ms": duration_ms,
             "output": output.strip()[:OUTPUT_CAP]}
+
+
+def record_manual_run(db, cron_id: int, command: str, run_as: str,
+                      timeout: int = 120) -> dict:
+    """'Ejecutar ahora' (endpoint, ya como root): ejecuta como el usuario y
+    escribe el historial directo en BD (sin cola). trigger='manual'."""
+    r = run_as_user(command, run_as, timeout)
+    _write_run(db, cron_id, r["started"], r["duration_ms"], r["exit_code"],
+               r["output"], "manual")
+    return {"exit_code": r["exit_code"], "duration_ms": r["duration_ms"],
+            "output": r["output"]}

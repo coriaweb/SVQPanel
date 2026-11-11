@@ -134,6 +134,10 @@ def _cron_line(minute, hour, day, month, weekday, command, cron_id, comment=""):
         wrapped = f"{CRON_WRAPPER} {cron_id} '{safe}'"
     else:
         wrapped = command  # sin wrapper (compat): se ejecuta tal cual
+    # En crontab un '%' sin escapar es un SALTO DE LÍNEA (lo de detrás va al
+    # stdin del comando), también dentro de comillas: una URL con %20 o un
+    # `date +%F` quedaban cortados. Escapado (\%), cron entrega un '%' literal.
+    wrapped = wrapped.replace("%", "\\%")
     parts.append(f"{minute} {hour} {day} {month} {weekday} {wrapped}")
     parts.append(_BLOCK_END.format(cron_id=cron_id))
     return "\n".join(parts)

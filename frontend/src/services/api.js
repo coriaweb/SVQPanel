@@ -1236,6 +1236,22 @@ class APIClient {
   cronLastRuns() {
     return this.get('/api/crons/last-runs')
   }
+  // Asistente de crons
+  cronAssistantDomains() {
+    return this.get('/api/crons/assistant/domains')
+  }
+  cronAssistantBrowse(domainId, path = '') {
+    return this.get(`/api/crons/assistant/browse?domain_id=${domainId}&path=${encodeURIComponent(path)}`)
+  }
+  cronAssistantBuild(data) {
+    return this.post('/api/crons/assistant/build', data)
+  }
+  cronNextRuns(schedule) {
+    return this.post('/api/crons/assistant/next-runs', schedule)
+  }
+  testCron(command, userId = null) {
+    return this.post('/api/crons/test', { command, user_id: userId })
+  }
 
   // Backups
   getBackupJobs() {

@@ -108,7 +108,7 @@
 
     <!-- Modal crear/editar -->
     <div v-if="showForm" class="cr-modal" v-backdrop-close="closeForm">
-      <div class="cr-modal__dialog">
+      <div class="cr-modal__dialog cr-modal__dialog--wide">
         <div class="cr-modal__head">
           <h5 class="cr-modal__title">
             <i class="bi" :class="editing ? 'bi-pencil' : 'bi-plus-circle'"></i>
@@ -118,72 +118,64 @@
         </div>
         <div class="cr-modal__body">
 
-          <!-- Usuario propietario (admin/reseller, solo al crear) -->
-          <div v-if="isAdminOrReseller && !editing" class="cr-field">
-            <label>Usuario propietario</label>
-            <select v-model.number="form.user_id" class="svq-input">
-              <option :value="null">Yo (administrador — se ejecuta como root)</option>
-              <option v-for="u in clientUsers" :key="u.id" :value="u.id">
-                {{ u.username }} ({{ u.email }})
-              </option>
-            </select>
-            <small class="cr-muted">
-              Si eliges un cliente, la tarea se ejecuta <strong>bajo su usuario</strong> del sistema (aislada), no como root.
-            </small>
-          </div>
+          <!-- 1. Qué ejecutar -->
+          <section class="cr-step">
+            <h6 class="cr-step__title"><span class="cr-step__n">1</span> ¿Qué quieres ejecutar?</h6>
+            <CronCommandBuilder
+              :key="builderKey"
+              v-model="form.command"
+              :initial-type="editing ? 'custom' : 'script'"
+              :show-owner="isAdminOrReseller"
+              @owner="onBuilderOwner" @domain="(id) => (form.domain_id = id)"
+              @suggest="onSuggest" />
 
-          <!-- Presets -->
-          <div class="cr-field">
-            <label>Presets</label>
-            <div class="cr-presets">
-              <button v-for="p in presets" :key="p.label" type="button"
-                      class="cr-preset" @click="applyPreset(p)">{{ p.label }}</button>
+            <!-- Propietario: solo admin/reseller, al crear y si el comando NO sale de un dominio
+                 (en ese caso el dueño es el del dominio, automáticamente). -->
+            <div v-if="isAdminOrReseller && !editing && !ownerFromDomain" class="cr-field">
+              <label>Se ejecuta como</label>
+              <select v-model.number="form.user_id" class="svq-input">
+                <option :value="null">Yo (administrador — se ejecuta como root)</option>
+                <option v-for="u in clientUsers" :key="u.id" :value="u.id">
+                  {{ u.username }} ({{ u.email }})
+                </option>
+              </select>
+              <small class="cr-muted">
+                Si eliges un cliente, la tarea se ejecuta <strong>bajo su usuario</strong> del sistema (aislada), no como root.
+              </small>
             </div>
-          </div>
+          </section>
 
-          <!-- Campos de tiempo -->
-          <div class="cr-timegrid">
-            <div class="cr-field">
-              <label>Minuto</label>
-              <input v-model="form.minute" class="svq-input mono" placeholder="*" />
-            </div>
-            <div class="cr-field">
-              <label>Hora</label>
-              <input v-model="form.hour" class="svq-input mono" placeholder="*" />
-            </div>
-            <div class="cr-field">
-              <label>Día</label>
-              <input v-model="form.day" class="svq-input mono" placeholder="*" />
-            </div>
-            <div class="cr-field">
-              <label>Mes</label>
-              <input v-model="form.month" class="svq-input mono" placeholder="*" />
-            </div>
-            <div class="cr-field">
-              <label>Día semana</label>
-              <input v-model="form.weekday" class="svq-input mono" placeholder="*" />
-            </div>
-          </div>
+          <!-- 2. Cuándo -->
+          <section class="cr-step">
+            <h6 class="cr-step__title"><span class="cr-step__n">2</span> ¿Cada cuánto?</h6>
+            <CronSchedulePicker v-model="schedule" />
+          </section>
 
-          <!-- Vista previa expresión -->
-          <div class="cr-preview">
-            <code class="cr-preview__expr">{{ form.minute }} {{ form.hour }} {{ form.day }} {{ form.month }} {{ form.weekday }}</code>
-            <span class="cr-muted">{{ describeCron(form) }}</span>
-          </div>
-
-          <!-- Comando -->
-          <div class="cr-field">
-            <label>Comando <span class="cr-req">*</span></label>
-            <input v-model="form.command" class="svq-input mono"
-                   placeholder="/usr/bin/php /home/usuario/web/dominio.com/public_html/artisan schedule:run" />
-            <small class="cr-muted">Ruta absoluta al script o ejecutable. No se permiten <code>;</code> ni <code>&amp;&amp;</code>.</small>
-          </div>
-
-          <!-- Comentario -->
-          <div class="cr-field">
-            <label>Comentario (opcional)</label>
-            <input v-model="form.comment" class="svq-input" placeholder="Ej: Limpieza de sesiones" />
-          </div>
+          <!-- 3. Comentario + probar -->
+          <section class="cr-step">
+            <h6 class="cr-step__title"><span class="cr-step__n">3</span> Nombre y prueba</h6>
+            <div class="cr-field">
+              <label>Comentario (opcional)</label>
+              <input v-model="form.comment" class="svq-input" placeholder="Ej: Sincronizar tablas con el ERP" />
+            </div>
+            <div class="cr-test">
+              <BaseButton variant="secondary" size="sm" :loading="testing"
+                          :disabled="!form.command.trim()" @click="testCommand">
+                <i class="bi bi-play-circle"></i> Probar ahora
+              </BaseButton>
+              <span class="cr-muted">Lo ejecuta una vez (máx. 60 s) para comprobar que funciona, sin guardar nada.</span>
+            </div>
+            <div v-if="testResult" class="cr-testres">
+              <p class="cr-run-meta">
+                <span :class="testResult.exit_code === 0 ? 'cr-badge cr-badge--ok' : 'cr-badge cr-badge--err'">
+                  {{ testResult.exit_code === 0 ? 'Funciona' : 'Falló (código ' + testResult.exit_code + ')' }}
+                </span>
+                <span class="cr-muted">{{ fmtDur(testResult.duration_ms) }} · como {{ testResult.run_as }}</span>
+              </p>
+              <pre v-if="testResult.output" class="cr-run-out">{{ testResult.output }}</pre>
+              <p v-else class="cr-run-empty">(sin salida)</p>
+            </div>
+          </section>
 
           <div v-if="formError" class="cr-alert-error">{{ formError }}</div>
         </div>
@@ -266,36 +258,19 @@ import { useMainStore } from '../stores/useMainStore.js'
 import BaseCard from '../components/ui/BaseCard.vue'
 import BaseButton from '../components/ui/BaseButton.vue'
 import EmptyState from '../components/ui/EmptyState.vue'
-
-const PRESETS = [
-  { label: 'Cada minuto',   minute: '*',  hour: '*', day: '*', month: '*', weekday: '*' },
-  { label: 'Cada hora',     minute: '0',  hour: '*', day: '*', month: '*', weekday: '*' },
-  { label: 'Diario 02:00',  minute: '0',  hour: '2', day: '*', month: '*', weekday: '*' },
-  { label: 'Semanal (dom)', minute: '0',  hour: '3', day: '*', month: '*', weekday: '0' },
-  { label: 'Mensual (1º)',  minute: '0',  hour: '4', day: '1', month: '*', weekday: '*' },
-  { label: 'Cada 5 min',    minute: '*/5',hour: '*', day: '*', month: '*', weekday: '*' },
-  { label: 'Cada 15 min',   minute: '*/15',hour:'*', day: '*', month: '*', weekday: '*' },
-  { label: 'Cada 30 min',   minute: '*/30',hour:'*', day: '*', month: '*', weekday: '*' },
-]
-
-function describeCron(c) {
-  const { minute, hour, day, month, weekday } = c
-  if (minute === '*' && hour === '*' && day === '*' && month === '*' && weekday === '*')
-    return 'Cada minuto'
-  if (minute === '0' && hour === '*') return 'Cada hora'
-  if (minute === '0' && day === '*' && month === '*' && weekday === '*') return `Diario a las ${hour}:00`
-  if (minute === '0' && day === '1') return `Mensual (día 1 a las ${hour}:00)`
-  if (minute?.startsWith('*/')) return `Cada ${minute.slice(2)} minutos`
-  return `${minute} ${hour} ${day} ${month} ${weekday}`
-}
+import CronCommandBuilder from '../components/cron/CronCommandBuilder.vue'
+import CronSchedulePicker from '../components/cron/CronSchedulePicker.vue'
+import { describeCron } from '../utils/cronSimple'
 
 function emptyForm() {
-  return { minute: '*', hour: '*', day: '*', month: '*', weekday: '*', command: '', comment: '', user_id: null }
+  return { minute: '0', hour: '*', day: '*', month: '*', weekday: '*', command: '', comment: '',
+           user_id: null, domain_id: null }
 }
+const pickSchedule = (f) => ({ minute: f.minute, hour: f.hour, day: f.day, month: f.month, weekday: f.weekday })
 
 export default {
   name: 'Crons',
-  components: { BaseCard, BaseButton, EmptyState },
+  components: { BaseCard, BaseButton, EmptyState, CronCommandBuilder, CronSchedulePicker },
   setup() {
     const store = useMainStore()
     const crons   = ref([])
@@ -391,11 +366,46 @@ export default {
       }
     }
 
+    // Asistente: horario (CronSchedulePicker), dueño derivado del dominio, prueba
+    const schedule = ref(pickSchedule(emptyForm()))
+    const builderKey = ref(0)          // remonta el constructor en cada apertura
+    const ownerFromDomain = ref(false) // el comando sale de un dominio → dueño = el suyo
+    const testing = ref(false)
+    const testResult = ref(null)
+
+    const resetAssistant = () => {
+      builderKey.value++
+      ownerFromDomain.value = false
+      testResult.value = null
+    }
+    const onBuilderOwner = (userId) => {
+      ownerFromDomain.value = userId != null
+      if (userId != null) form.value.user_id = userId
+      else if (!editing.value) form.value.user_id = filterUserId.value || null
+    }
+    const onSuggest = (expr) => {
+      // Frecuencia recomendada por la app (Laravel: cada minuto, Nextcloud: cada 5…)
+      const [minute, hour, day, month, weekday] = expr.split(' ')
+      schedule.value = { minute, hour, day, month, weekday }
+    }
+    const testCommand = async () => {
+      testing.value = true
+      testResult.value = null
+      try {
+        testResult.value = await api.testCron(form.value.command.trim(),
+          editing.value ? editing.value.user_id : form.value.user_id)
+      } catch (e) {
+        testResult.value = { exit_code: -1, duration_ms: null, run_as: '—', output: e.message || String(e) }
+      } finally { testing.value = false }
+    }
+
     const openCreate = () => {
       editing.value = null
       form.value = emptyForm()
       // Si hay un usuario filtrado, preasignarlo como propietario por comodidad
       if (filterUserId.value) form.value.user_id = filterUserId.value
+      schedule.value = pickSchedule(form.value)
+      resetAssistant()
       formError.value = ''
       showForm.value = true
     }
@@ -411,33 +421,30 @@ export default {
         command: cron.command,
         comment: cron.comment || '',
       }
+      schedule.value = pickSchedule(form.value)
+      resetAssistant()
       formError.value = ''
       showForm.value = true
     }
 
     const closeForm = () => { showForm.value = false }
 
-    const applyPreset = (p) => {
-      form.value.minute  = p.minute
-      form.value.hour    = p.hour
-      form.value.day     = p.day
-      form.value.month   = p.month
-      form.value.weekday = p.weekday
-    }
-
     const submitForm = async () => {
       formError.value = ''
       if (!form.value.command.trim()) {
-        formError.value = 'El comando es obligatorio.'
+        formError.value = 'Falta indicar qué ejecutar (paso 1).'
         return
       }
       saving.value = true
       try {
+        const data = { ...form.value, ...schedule.value }
         if (editing.value) {
-          await api.updateCron(editing.value.id, form.value)
+          delete data.user_id
+          if (data.domain_id == null) delete data.domain_id
+          await api.updateCron(editing.value.id, data)
           store.showNotification('Tarea cron actualizada', 'success')
         } else {
-          await api.createCron(form.value)
+          await api.createCron(data)
           store.showNotification('Tarea cron creada', 'success')
         }
         showForm.value = false
@@ -504,9 +511,9 @@ export default {
       crons, loading,
       showForm, editing, form, formError, saving,
       isAdminOrReseller, clientUsers, filterUserId,
-      presets: PRESETS,
-      openCreate, openEdit, closeForm,
-      applyPreset, submitForm,
+      openCreate, openEdit, closeForm, submitForm,
+      schedule, builderKey, ownerFromDomain, onBuilderOwner, onSuggest,
+      testing, testResult, testCommand,
       search, expandedCmd, filteredCrons,
       toggleCron, deleteCron, runCron,
       runningId, runResult, showRunResult,
@@ -616,6 +623,15 @@ export default {
 .cr-req { color: var(--danger); }
 .cr-timegrid { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: var(--sp-2); }
 @media (max-width: 560px) { .cr-timegrid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+
+/* Pasos del asistente */
+.cr-step { display: flex; flex-direction: column; gap: var(--sp-3); }
+.cr-step + .cr-step { padding-top: var(--sp-4); border-top: 1px solid var(--border); }
+.cr-step__title { margin: 0; display: flex; align-items: center; gap: .5rem; font-size: var(--fs-sm); font-weight: var(--fw-semibold); }
+.cr-step__n { width: 22px; height: 22px; border-radius: 50%; display: inline-grid; place-items: center;
+  background: var(--svq-orange); color: #fff; font-size: var(--fs-xs); }
+.cr-test { display: flex; align-items: center; gap: var(--sp-3); flex-wrap: wrap; }
+.cr-testres { display: flex; flex-direction: column; }
 
 .cr-presets { display: flex; flex-wrap: wrap; gap: 6px; }
 .cr-preset {

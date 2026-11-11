@@ -57,6 +57,19 @@ _DANGEROUS_OPERATORS = (
 )
 
 
+# Única excepción a los operadores: «visitar una URL» del asistente. Una URL con
+# varios parámetros lleva '&' (?a=1&b=2), que está prohibido. Se admite SOLO este
+# comando exacto, con la URL entre comillas simples y sin comillas, espacios ni
+# barras invertidas dentro: dentro de '…' el shell no interpreta & ; | $ ` > <,
+# y sin una ' no hay forma de cerrar las comillas para inyectar nada.
+_URL_CHARS = r"https?://[^\s'\"\\]{1,2000}"
+URL_COMMAND_RE = re.compile(rf"/usr/bin/curl -fsS -L --max-time [0-9]{{1,4}} '{_URL_CHARS}'")
+
+
+def build_url_command(url: str, max_time: int = 300) -> str:
+    return f"/usr/bin/curl -fsS -L --max-time {int(max_time)} '{url}'"
+
+
 def _validate_cron_command(value: str) -> str:
     """Valida el comando de un cron: no vacío, sin saltos de línea y sin
     metacaracteres de shell. Único punto de verdad para Create y Update."""
@@ -64,6 +77,8 @@ def _validate_cron_command(value: str) -> str:
     if not value:
         raise ValueError("El comando no puede estar vacío")
     _reject_newlines(value, "command")
+    if URL_COMMAND_RE.fullmatch(value):
+        return value
     for op in _DANGEROUS_OPERATORS:
         if op in value:
             raise ValueError(
@@ -190,3 +205,37 @@ class CronJobResponse(BaseModel):
 
     class Config:
         from_attributes = True
+
+
+# ── Asistente ─────────────────────────────────────────────────────────────────
+class CronBuildRequest(BaseModel):
+    """Montar el comando de una plantilla del asistente."""
+    template:  str                      # script | url
+    domain_id: Optional[int] = None     # script: obligatorio
+    path:      Optional[str] = None     # script: ruta relativa a la carpeta del dominio
+    args:      Optional[str] = None     # script: argumentos opcionales
+    url:       Optional[str] = None     # url
+
+
+class CronTestRequest(BaseModel):
+    """Probar un comando ANTES de guardar el cron (no deja historial)."""
+    command: str
+    user_id: Optional[int] = None
+
+    @field_validator("command")
+    @classmethod
+    def val_command(cls, v):
+        return _validate_cron_command(v)
+
+
+class CronScheduleRequest(BaseModel):
+    minute:  str = "*"
+    hour:    str = "*"
+    day:     str = "*"
+    month:   str = "*"
+    weekday: str = "*"
+
+    @field_validator("minute", "hour", "day", "month", "weekday")
+    @classmethod
+    def val_field(cls, v, info):
+        return _validate_cron_field(v, info.field_name)

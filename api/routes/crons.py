@@ -2,6 +2,8 @@
 Rutas API para gestión de cron jobs de clientes.
 """
 
+import threading
+
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 from datetime import datetime
@@ -10,11 +12,17 @@ from api.models.database import get_db
 from api.models.models_user import User
 from api.models.models_cron import CronJob
 from api.models.models_domain import Domain
-from api.schemas.cron_schemas import CronJobCreate, CronJobUpdate, CronJobResponse
+from api.schemas.cron_schemas import (
+    CronJobCreate, CronJobUpdate, CronJobResponse,
+    CronBuildRequest, CronTestRequest, CronScheduleRequest,
+)
 from api.dependencies import require_auth, require_admin
 from api.utils.scope import managed_user_ids, can_manage_owner
 
 router = APIRouter()
+
+_TESTS_LOCK = threading.Lock()
+_TESTS_RUNNING: set[int] = set()   # user_id con una prueba de cron en curso
 
 
 def _get_cron_or_404(cron_id: int, db: Session) -> CronJob:
@@ -36,6 +44,22 @@ def _get_username_for_user(user: User) -> str:
     if user.is_admin:
         return "root"
     return user.username
+
+
+def _resolve_owner(current_user: User, user_id: int | None, db: Session) -> User:
+    """Propietario de un cron nuevo. Admin/reseller puede asignarlo a un cliente:
+    entonces se ejecuta BAJO el usuario de sistema de ese cliente (aislado), no
+    como root. Si no se indica user_id, es del propio usuario que lo crea."""
+    is_admin_or_reseller = current_user.is_admin or getattr(current_user, "role", None) == "reseller"
+    if not (user_id and is_admin_or_reseller):
+        return current_user
+    target = db.query(User).filter(User.id == user_id).first()
+    if not target:
+        raise HTTPException(status_code=404, detail="Usuario propietario no encontrado")
+    # Un reseller solo puede crear crons para sus propios clientes
+    if not current_user.is_admin and target.id != current_user.id and target.parent_id != current_user.id:
+        raise HTTPException(status_code=403, detail="Ese usuario no es tu cliente")
+    return target
 
 
 def _cron_to_response(cron: CronJob, db: Session) -> dict:
@@ -77,20 +101,7 @@ async def create_cron(
     db: Session = Depends(get_db),
 ):
     """Crea un nuevo cron job."""
-    # ── Determinar propietario ────────────────────────────────────────────────
-    # Admin/reseller puede asignar el cron a un cliente: entonces se ejecuta BAJO
-    # el usuario de sistema de ese cliente (aislado), no como root. Si no se
-    # indica user_id, el cron es del propio usuario que lo crea.
-    is_admin_or_reseller = current_user.is_admin or getattr(current_user, "role", None) == "reseller"
-    owner = current_user
-    if payload.user_id and is_admin_or_reseller:
-        target = db.query(User).filter(User.id == payload.user_id).first()
-        if not target:
-            raise HTTPException(status_code=404, detail="Usuario propietario no encontrado")
-        # Un reseller solo puede crear crons para sus propios clientes
-        if not current_user.is_admin and target.id != current_user.id and target.parent_id != current_user.id:
-            raise HTTPException(status_code=403, detail="Ese usuario no es tu cliente")
-        owner = target
+    owner = _resolve_owner(current_user, payload.user_id, db)
 
     # Verificar que el dominio pertenece al propietario (si se especificó)
     if payload.domain_id:
@@ -139,6 +150,137 @@ async def create_cron(
         logging.getLogger(__name__).warning(f"No se pudo escribir crontab: {e}")
 
     return _cron_to_response(cron, db)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Asistente (plantillas, explorador, próximas ejecuciones, probar)
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _assistant_domain(domain_id: int, current_user: User, db: Session):
+    """Dominio accesible + su carpeta base (/home/DUEÑO/web/DOMINIO)."""
+    from scripts.cron_assistant import domain_base_dir
+    domain = db.query(Domain).filter(Domain.id == domain_id).first()
+    if not domain or not can_manage_owner(db, current_user, domain.user_id):
+        raise HTTPException(status_code=404, detail="Dominio no encontrado")
+    owner = db.query(User).filter(User.id == domain.user_id).first()
+    if not owner:
+        raise HTTPException(status_code=404, detail="Propietario del dominio no encontrado")
+    return domain, owner, domain_base_dir(owner.username, domain.domain_name)
+
+
+@router.get("/crons/assistant/domains")
+def assistant_domains(
+    current_user: User = Depends(require_auth),
+    db: Session = Depends(get_db),
+):
+    """Dominios con web del usuario (o de sus clientes) con el PHP que usarán
+    sus crons y las apps detectadas que tienen tarea programada conocida."""
+    from scripts.cron_assistant import detect_apps, domain_base_dir, php_binary
+    q = db.query(Domain).filter(Domain.mail_dns_only.is_(False))
+    ids = managed_user_ids(db, current_user)
+    if ids is not None:
+        q = q.filter(Domain.user_id.in_(ids))
+    owners = {u.id: u.username for u in db.query(User.id, User.username).all()}
+    out = []
+    for d in q.order_by(Domain.domain_name.asc()).all():
+        owner = owners.get(d.user_id)
+        if not owner:
+            continue
+        base = domain_base_dir(owner, d.domain_name)
+        try:
+            apps = detect_apps(base, d.public_html, d.php_version)
+        except Exception:
+            apps = []
+        out.append({"id": d.id, "domain_name": d.domain_name, "user_id": d.user_id,
+                    "owner": owner, "php_version": d.php_version,
+                    "php_bin": php_binary(d.php_version), "base_dir": base,
+                    "apps": apps})
+    return out
+
+
+@router.get("/crons/assistant/browse")
+def assistant_browse(
+    domain_id: int,
+    path: str = "",
+    current_user: User = Depends(require_auth),
+    db: Session = Depends(get_db),
+):
+    """Carpetas y scripts (.php/.sh) dentro de la carpeta del dominio."""
+    from scripts.cron_assistant import AssistantError, browse
+    _domain, _owner, base = _assistant_domain(domain_id, current_user, db)
+    try:
+        return browse(base, path)
+    except AssistantError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@router.post("/crons/assistant/build")
+def assistant_build(
+    payload: CronBuildRequest,
+    current_user: User = Depends(require_auth),
+    db: Session = Depends(get_db),
+):
+    """Monta el comando de una plantilla. Devuelve también el dueño con el que
+    se ejecutará (el del dominio) para que el cron se cree bajo ese usuario."""
+    from scripts.cron_assistant import AssistantError, build_script_command, build_url_cmd
+    try:
+        if payload.template == "url":
+            return {"command": build_url_cmd(payload.url), "user_id": None}
+        if payload.template == "script":
+            if not payload.domain_id or not payload.path:
+                raise AssistantError("Elige el dominio y el script")
+            domain, owner, base = _assistant_domain(payload.domain_id, current_user, db)
+            cmd = build_script_command(base, payload.path, domain.php_version, payload.args or "")
+            return {"command": cmd, "user_id": owner.id}
+        raise AssistantError("Plantilla desconocida")
+    except AssistantError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@router.post("/crons/assistant/next-runs")
+def assistant_next_runs(
+    payload: CronScheduleRequest,
+    current_user: User = Depends(require_auth),
+):
+    """Próximas 5 ejecuciones de la expresión, en la hora del servidor (la que
+    usa cron y la que muestra el panel)."""
+    from scripts.cron_assistant import AssistantError, next_runs
+    try:
+        runs = next_runs(payload.minute, payload.hour, payload.day,
+                         payload.month, payload.weekday, count=5)
+    except AssistantError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    # naive local → con offset, para que el navegador la sitúe bien
+    return {"runs": [r.astimezone().isoformat() for r in runs]}
+
+
+@router.post("/crons/test")
+def test_cron_command(  # def (no async): bloquea hasta 60 s → threadpool
+    payload: CronTestRequest,
+    current_user: User = Depends(require_auth),
+    db: Session = Depends(get_db),
+):
+    """Ejecuta un comando ANTES de guardar el cron, como el usuario con el que
+    se ejecutará, y devuelve la salida. No deja historial. Límite 60 s."""
+    from scripts.cron_runner import run_as_user
+    owner = _resolve_owner(current_user, payload.user_id, db)
+    # Una prueba a la vez por usuario: cada una ocupa un hilo del threadpool
+    # hasta 60 s; sin esto, pulsar en bucle agotaría los hilos del panel.
+    with _TESTS_LOCK:
+        if current_user.id in _TESTS_RUNNING:
+            raise HTTPException(status_code=429, detail="Ya hay una prueba en curso; espera a que termine.")
+        _TESTS_RUNNING.add(current_user.id)
+    try:
+        r = run_as_user(payload.command, _get_username_for_user(owner), timeout=60)
+    except FileNotFoundError:
+        raise HTTPException(status_code=500, detail="No se pudo lanzar la tarea (runuser no disponible).")
+    finally:
+        with _TESTS_LOCK:
+            _TESTS_RUNNING.discard(current_user.id)
+    return {"status": "success" if r["exit_code"] == 0 else "error",
+            "exit_code": r["exit_code"], "duration_ms": r["duration_ms"],
+            "output": r["output"], "command": payload.command,
+            "run_as": _get_username_for_user(owner)}
 
 
 @router.get("/crons/last-runs")
@@ -295,7 +437,7 @@ async def toggle_cron(
 
 
 @router.post("/crons/{cron_id}/run")
-async def run_cron_now(
+def run_cron_now(  # def (no async): el subprocess bloquea; así va al threadpool
     cron_id: int,
     current_user: User = Depends(require_auth),
     db: Session = Depends(get_db),
