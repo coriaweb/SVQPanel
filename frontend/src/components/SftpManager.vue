@@ -136,10 +136,9 @@
             </div>
             <div class="sftp__field">
               <label>Carpeta destino</label>
-              <select class="sftp__input" v-model="newAcc.target_subpath">
-                <option value="" disabled>— elige carpeta —</option>
-                <option v-for="f in folders" :key="f" :value="f">{{ f }}</option>
-              </select>
+              <input class="sftp__input sftp__input--mono" v-model="newAcc.target_subpath"
+                     list="sftp-folders" placeholder="web/midominio.com/public_html">
+              <span class="sftp__muted">Elige una o escribe cualquier subcarpeta (ruta desde el home).</span>
             </div>
             <div class="sftp__field">
               <label>Contraseña</label>
@@ -151,6 +150,30 @@
             <button class="sftp__btn sftp__btn--primary" @click="createAccount"
                     :disabled="busy || !newAcc.label || !newAcc.target_subpath">
               <span v-if="busy" class="sftp__spinner sftp__spinner--sm"></span>Crear cuenta
+            </button>
+          </div>
+        </div>
+
+        <datalist id="sftp-folders">
+          <option v-for="f in folders" :key="f" :value="f"></option>
+        </datalist>
+
+        <!-- Cambiar carpeta de una cuenta -->
+        <div v-if="editTarget" class="sftp__box sftp__box--inset sftp__mb">
+          <div class="sftp__field">
+            <label>Nueva carpeta para <span class="sftp__mono">{{ editTarget.username }}</span></label>
+            <input class="sftp__input sftp__input--mono" v-model="editTarget.path" list="sftp-folders"
+                   placeholder="web/midominio.com/public_html/carpeta" @keyup.enter="saveTarget">
+            <span class="sftp__muted">
+              Ahora: <code>{{ editTarget.current }}</code>. Conserva usuario, contraseña y claves.
+              Si está conectado ahora mismo, tendrá que reconectar.
+            </span>
+          </div>
+          <div class="sftp__form-foot sftp__form-foot--end">
+            <button class="sftp__btn sftp__btn--ghost" @click="editTarget = null" :disabled="busy">Cancelar</button>
+            <button class="sftp__btn sftp__btn--primary" @click="saveTarget"
+                    :disabled="busy || !editTarget.path.trim() || editTarget.path.trim() === editTarget.current">
+              <span v-if="busy" class="sftp__spinner sftp__spinner--sm"></span>Cambiar carpeta
             </button>
           </div>
         </div>
@@ -173,6 +196,9 @@
                   </button>
                   <button class="sftp__btn sftp__btn--icon" @click="downloadCyberduck(a.username, a.label)" title="Marcador para Cyberduck (.duck)">
                     <i class="bi bi-bookmark"></i>
+                  </button>
+                  <button class="sftp__btn sftp__btn--icon" @click="openTarget(a)" title="Cambiar carpeta">
+                    <i class="bi bi-folder-symlink"></i>
                   </button>
                   <button class="sftp__btn sftp__btn--icon" @click="openAccPassword(a)" title="Cambiar contraseña">
                     <i class="bi bi-key"></i>
@@ -278,6 +304,28 @@ async function deleteAccount(a) {
   busy.value = true
   try {
     await api.deleteSftpAccount(props.userId, a.id)
+    await loadAccounts()
+  } catch (e) {
+    alert('Error: ' + e.message)
+  } finally {
+    busy.value = false
+  }
+}
+
+const editTarget = ref(null)   // { id, username, current, path }
+
+function openTarget(a) {
+  showCreate.value = false
+  editTarget.value = { id: a.id, username: a.username, current: a.target_relative, path: a.target_relative }
+}
+
+async function saveTarget() {
+  const t = editTarget.value
+  if (!t || !t.path.trim() || t.path.trim() === t.current) return
+  busy.value = true
+  try {
+    await api.setSftpAccountTarget(props.userId, t.id, t.path.trim())
+    editTarget.value = null
     await loadAccounts()
   } catch (e) {
     alert('Error: ' + e.message)

@@ -375,6 +375,42 @@ async def delete_sftp_account(
     return {"status": "deleted"}
 
 
+class SftpAccountTarget(BaseModel):
+    target_subpath: str = Field(..., min_length=1, max_length=512)
+
+
+@router.put("/users/{user_id}/sftp/accounts/{account_id}/target")
+def change_sftp_account_target(
+    user_id:    int,
+    account_id: int,
+    payload:    SftpAccountTarget,
+    request:    Request,
+    db:         Session = Depends(get_db),
+    actor:      User    = Depends(get_current_user),
+):
+    """Cambia la carpeta de la jaula conservando usuario, contraseña y claves.
+    def (no async): umount/mount/setfacl -R bloquean y hay 1 worker."""
+    target = _resolve_target(user_id, actor, db)
+    acc = _account_or_404(db, target, account_id)
+    old = acc.target_path
+    ok, msg, info = sftpacc.change_target(
+        owner=target.username, username=acc.username, jail=acc.jail_path,
+        old_target=acc.target_path, old_mount_name=acc.mount_name,
+        new_subpath=payload.target_subpath,
+    )
+    if not ok:
+        log_audit(db, user=actor, category="sftp", action="subaccount_target",
+                  target=f"{acc.username}: {msg}", request=request, success=False)
+        raise HTTPException(status_code=400, detail=msg)
+    acc.target_path = info["target_path"]
+    acc.mount_name = info["mount_name"]
+    db.commit()
+    log_audit(db, user=actor, category="sftp", action="subaccount_target",
+              target=f"{acc.username}: {old} → {acc.target_path}", request=request, success=True)
+    return {"status": msg, "target_path": acc.target_path,
+            "target_relative": acc.target_path.replace(sftpacc.owner_home(target.username) + "/", "")}
+
+
 @router.put("/users/{user_id}/sftp/accounts/{account_id}/password")
 async def set_sftp_account_password(
     user_id:    int,

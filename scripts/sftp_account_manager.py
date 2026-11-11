@@ -95,7 +95,8 @@ def _add_fstab(target: str, mountpoint: str) -> None:
     try:
         with open(FSTAB) as f:
             content = f.read()
-        if mountpoint in content:
+        if any(FSTAB_MARK in l and l.split()[1:2] == [mountpoint]
+               for l in content.splitlines()):
             return
         with open(FSTAB, "a") as f:
             if not content.endswith("\n"):
@@ -109,7 +110,10 @@ def _remove_fstab(mountpoint: str) -> None:
     try:
         with open(FSTAB) as f:
             lines = f.readlines()
-        kept = [l for l in lines if not (FSTAB_MARK in l and mountpoint in l)]
+        # Comparar el CAMPO del punto de montaje, no una subcadena: «…/resources»
+        # está contenido en «…/resources2» y se llevaría la línea de otra cuenta.
+        kept = [l for l in lines
+                if not (FSTAB_MARK in l and l.split()[1:2] == [mountpoint])]
         if len(kept) != len(lines):
             with open(FSTAB, "w") as f:
                 f.writelines(kept)
@@ -163,15 +167,13 @@ def create_account(owner: str, label: str, target_subpath: str,
     if not LABEL_RE.match(label):
         return False, "label inválido (a-z, 0-9, _, empezar por letra, 2-16 chars)", {}
 
-    target = resolve_target(owner, target_subpath)
+    target, why = validate_target(owner, target_subpath)
     if not target:
-        return False, "la carpeta destino debe estar dentro del espacio del cliente", {}
-    if not os.path.isdir(target):
-        return False, f"la carpeta destino no existe: {target_subpath}", {}
+        return False, why, {}
 
     username = make_username(owner, label)
     jail = jail_path(owner, label)
-    mount_name = os.path.basename(target.rstrip("/")) or "data"
+    mount_name = mount_name_for(target)
 
     # Asegurar grupo sftponly
     ok, msg = sftp_manager.ensure_sftp_group()
@@ -248,6 +250,103 @@ def create_account(owner: str, label: str, target_subpath: str,
         "target_path": target,
         "mount_name": mount_name,
     }
+
+
+def mount_name_for(target: str) -> str:
+    """Nombre de la carpeta que ve la subcuenta dentro de su jaula."""
+    name = os.path.basename(target.rstrip("/")) or "data"
+    return "data" if name == ".ssh" else name   # .ssh es de la jaula (authorized_keys)
+
+
+def validate_target(owner: str, subpath: str) -> Tuple[Optional[str], str]:
+    """(ruta canónica, "") o (None, motivo). Dentro del home y fuera de las jaulas."""
+    target = resolve_target(owner, subpath)
+    if not target:
+        return None, "la carpeta destino debe estar dentro del espacio del cliente"
+    jails = os.path.realpath(os.path.join(owner_home(owner), JAILS_SUBDIR))
+    if target == jails or target.startswith(jails + os.sep):
+        return None, "no se puede apuntar a la carpeta interna de las jaulas SFTP"
+    if not os.path.isdir(target):
+        return None, f"la carpeta destino no existe: {subpath}"
+    return target, ""
+
+
+def _mount_into(target: str, mountpoint: str) -> Tuple[bool, str]:
+    os.makedirs(mountpoint, exist_ok=True)
+    _run(["chown", "root:root", mountpoint])
+    _run(["chmod", "755", mountpoint])
+    if not _is_mounted(mountpoint):
+        rc, _, err = _run(["mount", "--bind", target, mountpoint])
+        if rc != 0:
+            return False, err.strip() or f"rc={rc}"
+    _add_fstab(target, mountpoint)
+    return True, "ok"
+
+
+def _grant_subuser(owner: str, username: str, jail: str, target: str) -> None:
+    _run(["setfacl", "-R",  "-m", f"u:{username}:rwX", target])
+    _run(["setfacl", "-R", "-d", "-m", f"u:{username}:rwX", target])
+    grant_owner_access(owner, username, target)
+    _run(["setfacl", "-m", f"u:{username}:rx", jail])
+
+
+def _revoke_subuser(username: str, target: str) -> None:
+    if target and os.path.isdir(target):
+        _run(["setfacl", "-R", "-x", f"u:{username}", target])
+        _run(["setfacl", "-R", "-d", "-x", f"u:{username}", target])
+
+
+def change_target(owner: str, username: str, jail: str, old_target: str,
+                  old_mount_name: str, new_subpath: str) -> Tuple[bool, str, Dict]:
+    """
+    Re-enjaula una subcuenta en otra carpeta SIN recrearla (conserva usuario,
+    contraseña y claves): desmonta la carpeta vieja, actualiza fstab, monta la
+    nueva y mueve las ACL. Si el montaje nuevo falla, vuelve a montar la vieja.
+
+    Por qué hace falta: el bind-mount persiste en fstab con la RUTA. Si el
+    cliente mueve la carpeta con mv, la cuenta la sigue viendo hasta el próximo
+    reinicio y entonces fstab monta la ruta vieja (vacía o inexistente).
+    """
+    new_target, why = validate_target(owner, new_subpath)
+    if not new_target:
+        return False, why, {}
+    if not os.path.isdir(jail):
+        return False, "la jaula de la subcuenta no existe en el disco", {}
+
+    old_mp = os.path.join(jail, old_mount_name)
+    new_mount = mount_name_for(new_target)
+    new_mp = os.path.join(jail, new_mount)
+    info = {"target_path": new_target, "mount_name": new_mount}
+
+    if new_target == old_target and new_mp == old_mp and _is_mounted(old_mp):
+        return True, "sin cambios", info
+
+    # 1. Soltar la carpeta vieja (lazy si hay una sesión SFTP abierta dentro)
+    if _is_mounted(old_mp):
+        rc, _, err = _run(["umount", old_mp])
+        if rc != 0:
+            _run(["umount", "-l", old_mp])
+        if _is_mounted(old_mp):
+            return False, f"no se pudo desmontar la carpeta actual: {err.strip()}", {}
+    _remove_fstab(old_mp)
+    if old_mp != new_mp:
+        try:
+            os.rmdir(old_mp)          # solo si está vacío: nunca recursivo
+        except OSError:
+            pass
+
+    # 2. Montar la nueva; si falla, restaurar la vieja
+    ok, err = _mount_into(new_target, new_mp)
+    if not ok:
+        if old_target and os.path.isdir(old_target):
+            _mount_into(old_target, old_mp)
+        return False, f"mount --bind falló: {err}", {}
+
+    # 3. Permisos: fuera de la vieja (antes de dar los nuevos, por si se solapan)
+    if old_target != new_target:
+        _revoke_subuser(username, old_target)
+    _grant_subuser(owner, username, jail, new_target)
+    return True, "changed", info
 
 
 def delete_account(owner: str, username: str, jail: str, target: str, mount_name: str) -> Tuple[bool, str]:

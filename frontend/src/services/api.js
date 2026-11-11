@@ -1035,6 +1035,9 @@ class APIClient {
   deleteSftpAccount(userId, accId) {
     return this.delete(`/api/users/${userId}/sftp/accounts/${accId}`)
   }
+  setSftpAccountTarget(userId, accId, targetSubpath) {
+    return this.put(`/api/users/${userId}/sftp/accounts/${accId}/target`, { target_subpath: targetSubpath })
+  }
   setSftpAccountPassword(userId, accId, password) {
     return this.put(`/api/users/${userId}/sftp/accounts/${accId}/password`, { password })
   }
