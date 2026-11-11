@@ -101,7 +101,7 @@
     </div>
 
     <!-- Modal: editar token -->
-    <div v-if="showEdit" class="modal-backdrop-custom" @click.self="showEdit = false">
+    <div v-if="showEdit" class="modal-backdrop-custom" v-backdrop-close="() => { showEdit = false }">
       <div class="modal-card">
         <h4 class="mb-3"><i class="bi bi-pencil"></i> Editar token</h4>
 
@@ -148,7 +148,7 @@
     </div>
 
     <!-- Modal: crear token -->
-    <div v-if="showCreate" class="modal-backdrop-custom" @click.self="showCreate = false">
+    <div v-if="showCreate" class="modal-backdrop-custom" v-backdrop-close="() => { showCreate = false }">
       <div class="modal-card">
         <h4 class="mb-3"><i class="bi bi-key"></i> Nuevo API token</h4>
 

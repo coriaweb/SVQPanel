@@ -1,6 +1,6 @@
 <template>
   <transition name="cmdk">
-    <div v-if="open" class="cmdk-overlay" @click.self="close">
+    <div v-if="open" class="cmdk-overlay" v-backdrop-close="close">
       <div class="cmdk" role="dialog" aria-modal="true">
         <div class="cmdk__input-wrap">
           <i class="bi bi-search"></i>

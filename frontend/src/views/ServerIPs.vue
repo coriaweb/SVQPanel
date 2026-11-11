@@ -106,7 +106,7 @@
     </div>
 
     <!-- Modal crear / editar -->
-    <div v-if="showModal" class="modal" @click.self="closeModal">
+    <div v-if="showModal" class="modal" v-backdrop-close="closeModal">
       <div class="modal-dialog">
         <div class="modal-content">
           <div class="modal-header">
@@ -164,7 +164,7 @@
     </div>
 
     <!-- Modal confirmar borrado -->
-    <div v-if="ipToDelete" class="modal" @click.self="ipToDelete = null">
+    <div v-if="ipToDelete" class="modal" v-backdrop-close="() => { ipToDelete = null }">
       <div class="modal-dialog">
         <div class="modal-content">
           <div class="modal-header" style="background:var(--danger);color:#fff">

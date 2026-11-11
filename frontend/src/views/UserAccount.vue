@@ -202,7 +202,7 @@
 
     <!-- Modal: Gestionar Dominio -->
     <div v-if="showDomainManager && selectedDomain" class="modal d-block" tabindex="-1"
-         style="background:rgba(0,0,0,.55)" @click.self="closeDomainManager">
+         style="background:rgba(0,0,0,.55)" v-backdrop-close="closeDomainManager">
       <div class="modal-dialog modal-lg modal-dialog-scrollable">
         <div class="modal-content">
           <div class="modal-header">

@@ -57,7 +57,7 @@
     </div>
 
     <!-- Modal ver contenido -->
-    <div v-if="viewing" class="mq-modal" @click.self="viewing = null">
+    <div v-if="viewing" class="mq-modal" v-backdrop-close="() => { viewing = null }">
       <div class="mq-modal-box">
         <div class="mq-modal-head">
           <strong>Mensaje {{ viewing.id }}</strong>

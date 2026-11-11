@@ -21,12 +21,17 @@ import './assets/bootstrap-bridge.css'
 import App from './App.vue'
 import router from './router'
 import { useMainStore } from './stores/useMainStore'
+import backdropClose from './directives/backdropClose'
 
 // Aplicar el tema guardado antes de montar para evitar el flash de color
 const savedTheme = localStorage.getItem('theme') || 'light'
 document.documentElement.dataset.theme = savedTheme
 
 const app = createApp(App)
+
+// Cierre de modales por clic en el fondo SIN cerrarlos al arrastrar una
+// selección de texto fuera del recuadro (ver directives/backdropClose.js).
+app.directive('backdrop-close', backdropClose)
 
 app.use(createPinia())
 app.use(router)

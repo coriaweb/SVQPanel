@@ -1,6 +1,6 @@
 <template>
   <transition name="modal">
-    <div v-if="isOpen" class="modal-overlay" @click.self="close">
+    <div v-if="isOpen" class="modal-overlay" v-backdrop-close="close">
       <div class="modal-content" :class="sizeClass" role="dialog" aria-modal="true">
         <div class="modal-header">
           <h5>{{ title }}</h5>

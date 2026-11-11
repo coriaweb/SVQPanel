@@ -1246,7 +1246,7 @@
 
     <!-- ══════════ Modal: Editar buzón (cuota + límite envío) ══════════ -->
     <div v-if="showEditModal" class="modal d-block" tabindex="-1"
-         style="background:rgba(0,0,0,.5)" @click.self="showEditModal = false">
+         style="background:rgba(0,0,0,.5)" v-backdrop-close="() => { showEditModal = false }">
       <div class="modal-dialog">
         <div class="modal-content">
           <div class="modal-header">
@@ -1290,7 +1290,7 @@
 
     <!-- ══════════ Modal: Reenvío ══════════ -->
     <div v-if="showForwardModal" class="modal d-block" tabindex="-1"
-         style="background:rgba(0,0,0,.5)" @click.self="showForwardModal = false">
+         style="background:rgba(0,0,0,.5)" v-backdrop-close="() => { showForwardModal = false }">
       <div class="modal-dialog">
         <div class="modal-content">
           <div class="modal-header">
@@ -1329,7 +1329,7 @@
 
     <!-- ══════════ Modal: Auto-respuesta ══════════ -->
     <div v-if="showAutoreplyModal" class="modal d-block" tabindex="-1"
-         style="background:rgba(0,0,0,.5)" @click.self="showAutoreplyModal = false">
+         style="background:rgba(0,0,0,.5)" v-backdrop-close="() => { showAutoreplyModal = false }">
       <div class="modal-dialog" :class="{ 'modal-lg': autoreplyForm.autoreply_is_html }">
         <div class="modal-content">
           <div class="modal-header">

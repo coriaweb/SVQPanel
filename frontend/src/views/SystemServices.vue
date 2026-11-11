@@ -146,7 +146,7 @@
     </div>
 
     <!-- Modal: Editor de configuración -->
-    <div v-if="showConfigModal" class="modal" tabindex="-1" @click.self="showConfigModal = false">
+    <div v-if="showConfigModal" class="modal" tabindex="-1" v-backdrop-close="() => { showConfigModal = false }">
       <div class="modal-dialog modal-dialog-lg">
         <div class="modal-content">
           <div class="modal-header">
@@ -205,7 +205,7 @@
     </div>
 
     <!-- Modal: confirmar parada -->
-    <div v-if="serviceToStop" class="modal" @click.self="serviceToStop = null">
+    <div v-if="serviceToStop" class="modal" v-backdrop-close="() => { serviceToStop = null }">
       <div class="modal-dialog">
         <div class="modal-content">
           <div class="modal-header" style="background:var(--danger);color:#fff">

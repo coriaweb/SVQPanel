@@ -151,7 +151,7 @@
     </BaseCard>
 
     <!-- Modal crear/editar -->
-    <div v-if="showForm" class="bk-modal" @click.self="closeForm">
+    <div v-if="showForm" class="bk-modal" v-backdrop-close="closeForm">
       <div class="bk-modal__dialog bk-modal__dialog--xl">
         <div class="bk-modal__head">
           <h5 class="bk-modal__title"><i class="bi bi-archive"></i>{{ editing ? 'Editar backup' : 'Nuevo backup' }}</h5>
@@ -479,7 +479,7 @@
     </div>
 
     <!-- Modal historial -->
-    <div v-if="showHistory" class="bk-modal" @click.self="showHistory = false">
+    <div v-if="showHistory" class="bk-modal" v-backdrop-close="() => { showHistory = false }">
       <div class="bk-modal__dialog bk-modal__dialog--lg">
         <div class="bk-modal__head">
           <h5 class="bk-modal__title"><i class="bi bi-clock-history"></i>Historial · {{ historyJob?.name }}</h5>
@@ -537,7 +537,7 @@
     </div>
 
     <!-- Modal restaurar -->
-    <div v-if="showRestore" class="bk-modal" @click.self="showRestore = false">
+    <div v-if="showRestore" class="bk-modal" v-backdrop-close="() => { showRestore = false }">
       <div class="bk-modal__dialog bk-modal__dialog--lg">
         <div class="bk-modal__head">
           <h5 class="bk-modal__title"><i class="bi bi-arrow-counterclockwise"></i>Restaurar · {{ restoreJob?.name }}</h5>
@@ -658,7 +658,7 @@
     </div>
 
     <!-- Modal: contraseña de cifrado restic (se muestra UNA vez al crear) -->
-    <div v-if="showResticPassword" class="bk-modal-backdrop" @click.self="showResticPassword = false">
+    <div v-if="showResticPassword" class="bk-modal-backdrop" v-backdrop-close="() => { showResticPassword = false }">
       <div class="bk-modal" style="max-width:520px">
         <div class="bk-modal__head">
           <h3><i class="bi bi-key-fill" style="color:var(--svq-orange)"></i> Guarda esta contraseña</h3>

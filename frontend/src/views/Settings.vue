@@ -808,7 +808,7 @@
             </details>
 
             <!-- Modal de confirmación de restauración -->
-            <div v-if="pbRestoreTarget" class="pb-modal-backdrop" @click.self="cancelRestore">
+            <div v-if="pbRestoreTarget" class="pb-modal-backdrop" v-backdrop-close="cancelRestore">
               <div class="pb-modal-card">
                 <h5 class="text-danger"><i class="bi bi-exclamation-triangle-fill"></i> Restaurar el panel</h5>
                 <p class="small mb-2">
@@ -1100,7 +1100,7 @@
     </div>
 
     <!-- Modal: email de prueba -->
-    <div v-if="showSmtpTest" class="modal d-block" tabindex="-1" style="background:rgba(0,0,0,.5)" @click.self="showSmtpTest=false">
+    <div v-if="showSmtpTest" class="modal d-block" tabindex="-1" style="background:rgba(0,0,0,.5)" v-backdrop-close="() => { showSmtpTest=false }">
       <div class="modal-dialog modal-dialog-centered modal-sm">
         <div class="modal-content">
           <div class="modal-header">
@@ -1124,7 +1124,7 @@
     </div>
 
     <!-- Modal de confirmación para activar whitelist -->
-    <div v-if="showWlConfirm" class="modal d-block" tabindex="-1" style="background:rgba(0,0,0,.5)" @click.self="showWlConfirm=false">
+    <div v-if="showWlConfirm" class="modal d-block" tabindex="-1" style="background:rgba(0,0,0,.5)" v-backdrop-close="() => { showWlConfirm=false }">
       <div class="modal-dialog modal-dialog-centered">
         <div class="modal-content">
           <div class="modal-header bg-warning text-dark">

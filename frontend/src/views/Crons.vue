@@ -107,7 +107,7 @@
     </BaseCard>
 
     <!-- Modal crear/editar -->
-    <div v-if="showForm" class="cr-modal" @click.self="closeForm">
+    <div v-if="showForm" class="cr-modal" v-backdrop-close="closeForm">
       <div class="cr-modal__dialog">
         <div class="cr-modal__head">
           <h5 class="cr-modal__title">
@@ -197,7 +197,7 @@
     </div>
 
     <!-- Modal: resultado de "Ejecutar ahora" -->
-    <div v-if="showRunResult" class="cr-modal" @click.self="showRunResult = false">
+    <div v-if="showRunResult" class="cr-modal" v-backdrop-close="() => { showRunResult = false }">
       <div class="cr-modal__dialog">
         <div class="cr-modal__head">
           <h5 class="cr-modal__title">
@@ -223,7 +223,7 @@
     </div>
 
     <!-- Modal: historial de ejecuciones -->
-    <div v-if="showHistory" class="cr-modal" @click.self="showHistory = false">
+    <div v-if="showHistory" class="cr-modal" v-backdrop-close="() => { showHistory = false }">
       <div class="cr-modal__dialog cr-modal__dialog--wide">
         <div class="cr-modal__head">
           <h5 class="cr-modal__title"><i class="bi bi-clock-history"></i> Últimas ejecuciones</h5>
