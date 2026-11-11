@@ -141,6 +141,41 @@ async def create_cron(
     return _cron_to_response(cron, db)
 
 
+@router.get("/crons/last-runs")
+async def crons_last_runs(
+    current_user: User = Depends(require_auth),
+    db: Session = Depends(get_db),
+):
+    """Última ejecución de cada cron visible para el usuario, en UNA consulta y
+    sin la salida (para la columna «Última ejecución» del listado). Antes la vista
+    pedía /crons/{id}/runs por cada cron: con 200 crons, 200 peticiones y ~8 MB.
+    Devuelve {cron_id: {started_at, duration_ms, exit_code, trigger}}."""
+    from sqlalchemy import func
+    from api.models.models_cron_run import CronRun
+
+    latest = (db.query(CronRun.cron_id, func.max(CronRun.started_at).label("mx"))
+              .group_by(CronRun.cron_id))
+    ids = managed_user_ids(db, current_user)
+    if ids is not None:
+        latest = (latest.join(CronJob, CronJob.id == CronRun.cron_id)
+                  .filter(CronJob.user_id.in_(ids)))
+    latest = latest.subquery()
+
+    rows = (db.query(CronRun.cron_id, CronRun.started_at, CronRun.duration_ms,
+                     CronRun.exit_code, CronRun.trigger)
+            .join(latest, (CronRun.cron_id == latest.c.cron_id)
+                  & (CronRun.started_at == latest.c.mx))
+            .all())
+    return {
+        str(r.cron_id): {
+            "started_at": r.started_at.isoformat() if r.started_at else None,
+            "duration_ms": r.duration_ms,
+            "exit_code": r.exit_code,
+            "trigger": r.trigger,
+        } for r in rows
+    }
+
+
 @router.get("/crons/{cron_id}", response_model=CronJobResponse)
 async def get_cron(
     cron_id: int,

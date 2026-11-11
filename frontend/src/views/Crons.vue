@@ -259,9 +259,9 @@
 </template>
 
 <script>
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, onMounted, onUnmounted } from 'vue'
 import api from '../services/api.js'
-import { formatDate as fmtDate } from '../utils/datetime'
+import { formatDateTime as fmtDate } from '../utils/datetime'
 import { useMainStore } from '../stores/useMainStore.js'
 import BaseCard from '../components/ui/BaseCard.vue'
 import BaseButton from '../components/ui/BaseButton.vue'
@@ -336,15 +336,18 @@ export default {
     }
 
     const loadLastRuns = async () => {
-      // Carga la última ejecución de cada cron para la columna de estado.
-      const map = {}
-      await Promise.all((crons.value || []).map(async (c) => {
-        try {
-          const runs = await api.cronRuns(c.id)
-          if (runs && runs.length) map[c.id] = runs[0]
-        } catch { /* sin historial */ }
-      }))
-      lastRun.value = map
+      // Última ejecución de TODOS los crons en una sola petición (sin la salida;
+      // el detalle lo trae el modal de Historial).
+      try {
+        lastRun.value = (await api.cronLastRuns()) || {}
+      } catch { /* sin historial: la columna muestra «Sin ejecuciones aún» */ }
+    }
+
+    // Refrescar al volver a la pestaña (no con un temporizador): si la vista se
+    // quedó abierta horas, al mirarla de nuevo enseña el dato real, y mientras
+    // nadie mira no se hace ninguna petición.
+    const onVisible = () => {
+      if (document.visibilityState === 'visible' && crons.value.length) loadLastRuns()
     }
 
     const openHistory = async (cron) => {
@@ -491,7 +494,11 @@ export default {
 
     const formatDate = fmtDate
 
-    onMounted(() => { loadCrons(); loadUsers() })
+    onMounted(() => {
+      loadCrons(); loadUsers()
+      document.addEventListener('visibilitychange', onVisible)
+    })
+    onUnmounted(() => document.removeEventListener('visibilitychange', onVisible))
 
     return {
       crons, loading,

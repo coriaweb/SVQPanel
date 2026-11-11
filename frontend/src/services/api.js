@@ -1233,6 +1233,9 @@ class APIClient {
   cronRuns(cronId) {
     return this.get(`/api/crons/${cronId}/runs`)
   }
+  cronLastRuns() {
+    return this.get('/api/crons/last-runs')
+  }
 
   // Backups
   getBackupJobs() {
