@@ -618,6 +618,21 @@ def _httpauth_maps(key: str, folders: list) -> str:
             f"map $uri $svq_authf_{key} {{\n" + "\n".join(files) + "\n}\n")
 
 
+# PHP que NUNCA se ejecuta por URL, aunque exista en disco. Va ANTES de cualquier
+# `location ~ \.php$` (el de la app o el de una plantilla): nginx usa el PRIMER
+# regex que casa. Hasta 0.284.0 el deny de uploads iba al final del server y no
+# se aplicaba nunca en modo solo-nginx (el .php lo cogía antes el bloque FPM).
+#  - wp-content/uploads: anti-webshell de WordPress.
+#  - vendor/ (a cualquier profundidad, p. ej. el de un plugin): las librerías
+#    Composer se cargan con require, nunca por URL; ejecutarlas por URL es el
+#    vector clásico (phpunit/.../eval-stdin.php, CVE-2017-9841).
+PHP_DENY_BLOCK = (
+    "    # PHP que nunca se ejecuta por URL (webshells en uploads, librerias de vendor/).\n"
+    "    location ~* /wp-content/uploads/.*\\.php$ { deny all; }\n"
+    "    location ~* /vendor/.*\\.php$ { deny all; }\n"
+)
+
+
 def generate_nginx_config(
     domain: str,
     user: str,
@@ -1019,7 +1034,7 @@ def generate_nginx_config(
     # Pasamos el upstream al template via variable para que los location blocks
     # de la plantilla puedan usar $phpfpm_backend en lugar del nombre hardcodeado
     set $phpfpm_backend php_{backend_name};
-{canonical_block}{tpl_extra}{bots_block}{wp_protect_http}{wellknown_block}{app_block_http}
+{canonical_block}{PHP_DENY_BLOCK}{tpl_extra}{bots_block}{wp_protect_http}{wellknown_block}{app_block_http}
     location ~ /\\.ht {{
         deny all;
     }}
@@ -1052,8 +1067,6 @@ def generate_nginx_config(
     location = /package.json {{ deny all; }}
     location = /.user.ini {{ deny all; }}
     location = /wp-config.php.bak {{ deny all; }}
-    # Anti-webshell: nunca ejecutar PHP subido a wp-content/uploads (WordPress).
-    location ~* /wp-content/uploads/.*\\.php$ {{ deny all; }}
 
     error_log {logs_dir}/nginx.error.log;
     access_log {logs_dir}/nginx.access.log;
@@ -1078,7 +1091,7 @@ server {{
 
     index index.php index.html index.htm;
 {skip_block}    set $phpfpm_backend php_{backend_name};
-{canonical_block}{tpl_extra}{bots_block}{wp_protect_ssl}{wellknown_block}{app_block_ssl}
+{canonical_block}{PHP_DENY_BLOCK}{tpl_extra}{bots_block}{wp_protect_ssl}{wellknown_block}{app_block_ssl}
     location ~ /\\.ht {{
         deny all;
     }}
@@ -1106,8 +1119,6 @@ server {{
     location = /package.json {{ deny all; }}
     location = /.user.ini {{ deny all; }}
     location = /wp-config.php.bak {{ deny all; }}
-    # Anti-webshell: nunca ejecutar PHP subido a wp-content/uploads (WordPress).
-    location ~* /wp-content/uploads/.*\\.php$ {{ deny all; }}
 
     error_log {logs_dir}/nginx.error.log;
     access_log {logs_dir}/nginx.access.log;

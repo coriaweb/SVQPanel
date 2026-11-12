@@ -2978,39 +2978,70 @@ class ComposerActionRequest(BaseModel):
     package: Optional[str] = _Field(None, max_length=180,
                                     description="vendor/paquete, p. ej. phpmailer/phpmailer")
     dev:     Optional[bool] = False
+    dir:     Optional[str] = _Field(None, max_length=300,
+                                    description="Carpeta de trabajo relativa a la raíz del "
+                                                "dominio (public_html, private, private/api…)")
+
+
+def _composer_ctx(domain_id: int, rel_dir: Optional[str], db: Session, current_user: User):
+    """(owner, carpeta de trabajo real, docroot, php_version, raíz del dominio).
+    Valida propiedad (_get_owned_domain) y que la carpeta caiga dentro de
+    public_html/ o private/ del dominio (realpath: sin '..' ni symlinks fuera)."""
+    domain, owner, docroot = _resolve_docroot_owner(domain_id, db, current_user)
+    from scripts.composer_manager import resolve_workdir, ComposerError
+    domain_root = get_domain_root(owner, domain.domain_name)
+    try:
+        workdir = resolve_workdir(domain_root, docroot, rel_dir)
+    except ComposerError as e:
+        raise HTTPException(status_code=422, detail=str(e))
+    return owner, workdir, docroot, domain.php_version, domain_root
+
+
+@router.get("/domains/{domain_id}/composer/locations")
+def composer_get_locations(domain_id: int,
+                           current_user: User = Depends(require_auth),
+                           db: Session = Depends(get_db)):
+    """Carpetas donde se puede usar Composer (public_html, private, subcarpetas
+    con composer.json) y la que conviene preseleccionar."""
+    domain, owner, docroot = _resolve_docroot_owner(domain_id, db, current_user)
+    from scripts.composer_manager import composer_locations
+    return {"status": "success",
+            "data": composer_locations(get_domain_root(owner, domain.domain_name), docroot)}
 
 
 @router.get("/domains/{domain_id}/composer/status")
-async def composer_get_status(domain_id: int,
-                              current_user: User = Depends(require_auth),
-                              db: Session = Depends(get_db)):
-    """Estado de Composer en el docroot: composer.json/lock/vendor + versión."""
-    _domain, owner, docroot = _resolve_docroot_owner(domain_id, db, current_user)
-    from scripts.composer_manager import composer_status, ComposerError
+def composer_get_status(domain_id: int, dir: Optional[str] = None,
+                        current_user: User = Depends(require_auth),
+                        db: Session = Depends(get_db)):
+    """Estado de Composer en la carpeta de trabajo: composer.json/lock/vendor + versión."""
+    owner, workdir, docroot, php_ver, _root = _composer_ctx(domain_id, dir, db, current_user)
+    from scripts.composer_manager import composer_status, is_public, ComposerError
     try:
-        return {"status": "success", "data": composer_status(docroot, owner)}
+        data = composer_status(workdir, owner, php_ver)
+        data["public"] = is_public(workdir, docroot)
+        return {"status": "success", "data": data}
     except ComposerError as e:
         raise HTTPException(status_code=422, detail=str(e))
 
 
 @router.get("/domains/{domain_id}/composer/packages")
-async def composer_get_packages(domain_id: int,
-                                current_user: User = Depends(require_auth),
-                                db: Session = Depends(get_db)):
+def composer_get_packages(domain_id: int, dir: Optional[str] = None,
+                          current_user: User = Depends(require_auth),
+                          db: Session = Depends(get_db)):
     """Paquetes instalados (vendor/) con su versión."""
-    _domain, owner, docroot = _resolve_docroot_owner(domain_id, db, current_user)
+    owner, workdir, _docroot, php_ver, _root = _composer_ctx(domain_id, dir, db, current_user)
     from scripts.composer_manager import composer_packages, ComposerError
     try:
-        return {"status": "success", "data": composer_packages(docroot, owner)}
+        return {"status": "success", "data": composer_packages(workdir, owner, php_ver)}
     except ComposerError as e:
         raise HTTPException(status_code=422, detail=str(e))
 
 
 @router.post("/domains/{domain_id}/composer/{action}")
-async def composer_action(domain_id: int, action: str,
-                          payload: ComposerActionRequest,
-                          current_user: User = Depends(require_auth),
-                          db: Session = Depends(get_db)):
+def composer_action(domain_id: int, action: str,
+                    payload: ComposerActionRequest,
+                    current_user: User = Depends(require_auth),
+                    db: Session = Depends(get_db)):
     """Ejecuta una acción Composer sobre el proyecto del dominio.
 
     action: require | remove | update | install
@@ -3018,23 +3049,29 @@ async def composer_action(domain_id: int, action: str,
       - require/remove: package obligatorio.
       - update: package opcional (sin él, actualiza todo el proyecto).
       - install: instala lo declarado en composer.json/lock.
+    dir: carpeta de trabajo (ver _composer_ctx); sin ella, el docroot.
+    Es `def` (no async): composer tarda minutos y un subprocess bloqueante en una
+    corrutina congelaba el panel entero (1 worker) mientras duraba.
     """
-    _domain, owner, docroot = _resolve_docroot_owner(domain_id, db, current_user)
+    owner, workdir, _docroot, php_ver, _root = _composer_ctx(
+        domain_id, payload.dir, db, current_user)
     import scripts.composer_manager as cm
     from scripts.composer_manager import ComposerError
     try:
         if action == "require":
             if not payload.package:
                 raise HTTPException(status_code=400, detail="package es obligatorio")
-            data = cm.composer_require(docroot, owner, payload.package, bool(payload.dev))
+            data = cm.composer_require(workdir, owner, payload.package, bool(payload.dev),
+                                       php_version=php_ver)
         elif action == "remove":
             if not payload.package:
                 raise HTTPException(status_code=400, detail="package es obligatorio")
-            data = cm.composer_remove(docroot, owner, payload.package)
+            data = cm.composer_remove(workdir, owner, payload.package, php_version=php_ver)
         elif action == "update":
-            data = cm.composer_update(docroot, owner, payload.package or None)
+            data = cm.composer_update(workdir, owner, payload.package or None,
+                                      php_version=php_ver)
         elif action == "install":
-            data = cm.composer_install(docroot, owner)
+            data = cm.composer_install(workdir, owner, php_version=php_ver)
         else:
             raise HTTPException(status_code=400, detail=f"Acción no soportada: {action}")
         return {"status": "success", "data": data}

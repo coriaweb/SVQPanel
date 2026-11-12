@@ -186,6 +186,11 @@ def generate_apache_vhost(
             Require all denied
         </FilesMatch>
     </Directory>
+    # Librerías Composer (vendor/ a cualquier profundidad): se cargan con require,
+    # nunca por URL (vector clásico: phpunit/.../eval-stdin.php, CVE-2017-9841).
+    <LocationMatch "(?i)/vendor/.*\\.php$">
+        Require all denied
+    </LocationMatch>
 </VirtualHost>
 """
 

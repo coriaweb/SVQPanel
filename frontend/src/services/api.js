@@ -1008,10 +1008,16 @@ class APIClient {
   }
 
   // ── Composer (dependencias PHP del proyecto del dominio) ──
-  getComposerStatus(domainId)    { return this.get(`/api/domains/${domainId}/composer/status`) }
-  getComposerPackages(domainId)  { return this.get(`/api/domains/${domainId}/composer/packages`) }
-  composerAction(domainId, action, data = {}) {
-    return this.post(`/api/domains/${domainId}/composer/${action}`, data)
+  // dir = carpeta de trabajo relativa a la raíz del dominio (public_html, private…)
+  getComposerLocations(domainId) { return this.get(`/api/domains/${domainId}/composer/locations`) }
+  getComposerStatus(domainId, dir = '') {
+    return this.get(`/api/domains/${domainId}/composer/status` + (dir ? `?dir=${encodeURIComponent(dir)}` : ''))
+  }
+  getComposerPackages(domainId, dir = '') {
+    return this.get(`/api/domains/${domainId}/composer/packages` + (dir ? `?dir=${encodeURIComponent(dir)}` : ''))
+  }
+  composerAction(domainId, action, data = {}, dir = '') {
+    return this.post(`/api/domains/${domainId}/composer/${action}`, dir ? { ...data, dir } : data)
   }
 
   // SFTP

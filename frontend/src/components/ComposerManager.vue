@@ -6,14 +6,53 @@
 
     <p class="cm-intro dd-muted">
       Gestiona las dependencias PHP de tu proyecto (PhpMailer, Guzzle, etc.). Los
-      comandos se ejecutan en el directorio de tu web como tu usuario, igual que
-      en la terminal. <b>No</b> actualiza el propio Composer, solo tus paquetes.
+      comandos se ejecutan en la carpeta que elijas, como tu usuario y con el PHP
+      de tu dominio, igual que en la terminal. <b>No</b> actualiza el propio Composer, solo tus paquetes.
     </p>
+
+    <!-- Carpeta de trabajo -->
+    <div v-if="locations.length" class="cm-where">
+      <span class="cm-where__label">Carpeta del proyecto</span>
+      <div class="cm-where__opts">
+        <button v-for="l in locations" :key="l.dir" type="button"
+                class="cm-chip" :class="{ 'cm-chip--on': !customMode && dir === l.dir }"
+                :disabled="!!busy" @click="selectDir(l.dir)">
+          <i class="bi" :class="l.public ? 'bi-globe2' : 'bi-lock'"></i>
+          {{ l.dir }}/
+          <span v-if="l.has_json" class="cm-chip__tag">composer.json</span>
+        </button>
+        <button type="button" class="cm-chip" :class="{ 'cm-chip--on': customMode }"
+                :disabled="!!busy" @click="customMode = true">
+          <i class="bi bi-folder2-open"></i> Otra subcarpeta…
+        </button>
+      </div>
+      <div v-if="customMode" class="cm-where__custom">
+        <input class="svq-input mono" v-model.trim="customDir" placeholder="private/mi-proyecto"
+               :disabled="!!busy" @keyup.enter="applyCustom" />
+        <BaseButton variant="ghost" size="sm" icon="check-lg" :disabled="!customDir || !!busy" @click="applyCustom">Usar</BaseButton>
+        <small class="dd-muted">Relativa a la raíz del dominio y dentro de <code>public_html/</code> o <code>private/</code>.</small>
+      </div>
+      <div v-if="multipleJson" class="cm-note dd-muted">
+        <i class="bi bi-info-circle"></i> Hay varios proyectos con composer.json en este dominio; elige con cuál trabajar.
+      </div>
+    </div>
 
     <div v-if="loading && !status" class="cm-loading"><span class="spinner"></span> Analizando…</div>
     <div v-else-if="errorMsg" class="cm-error"><i class="bi bi-exclamation-triangle"></i> {{ errorMsg }}</div>
 
     <template v-else-if="status">
+      <div class="cm-path">
+        <i class="bi bi-terminal"></i> Se ejecuta en <code class="mono">{{ status.docroot }}</code>
+        <span class="dd-muted">· {{ status.php }}</span>
+      </div>
+      <div v-if="status.public" class="cm-warn">
+        <i class="bi bi-exclamation-triangle"></i>
+        <div>
+          Esta carpeta es <b>pública</b> (la sirve tu web): <code>vendor/</code> quedará dentro de la web.
+          El panel bloquea que se ejecute su PHP por URL, pero sus demás ficheros se pueden descargar.
+          Si tu código no está en esta carpeta, usa mejor <b>private/</b>.
+        </div>
+      </div>
       <!-- Resumen -->
       <div class="cm-summary">
         <div class="cm-stat"><span class="cm-stat__k">Composer</span><span class="cm-stat__v mono">{{ status.composer_version || '—' }}</span></div>
@@ -125,27 +164,63 @@ export default {
     const lastOutput = ref('')
     const newPkg = ref('')
     const newDev = ref(false)
+    // Carpeta de trabajo (relativa a la raíz del dominio). '' = docroot.
+    const locations = ref([])
+    const dir = ref('')
+    const customMode = ref(false)
+    const customDir = ref('')
+    const multipleJson = computed(() => locations.value.filter(l => l.has_json).length > 1)
+
+    const loadLocations = async () => {
+      if (did.value == null) return
+      try {
+        const r = await api.getComposerLocations(did.value)
+        locations.value = r.data?.locations || []
+        // Preselección: la que ya tiene composer.json (privadas primero) la
+        // primera vez; después se respeta la que eligió el usuario.
+        if (!dir.value) dir.value = r.data?.suggested || ''
+      } catch (e) { locations.value = [] }
+    }
 
     const loadStatus = async () => {
       if (did.value == null) { loading.value = false; return }
       try {
-        const r = await api.getComposerStatus(did.value)
+        const r = await api.getComposerStatus(did.value, dir.value)
         status.value = r.data
-      } catch (e) { errorMsg.value = e.message || 'No pude leer el estado de Composer' }
+      } catch (e) { status.value = null; errorMsg.value = e.message || 'No pude leer el estado de Composer' }
     }
 
     const loadPackages = async () => {
       if (did.value == null) return
       loadingPkgs.value = true
-      try { const r = await api.getComposerPackages(did.value); packages.value = r.data || [] }
+      packages.value = []
+      try { const r = await api.getComposerPackages(did.value, dir.value); packages.value = r.data || [] }
       catch (e) { /* silencioso: sin vendor/ no hay paquetes */ }
       finally { loadingPkgs.value = false }
     }
 
     const loadAll = async () => {
       loading.value = true; errorMsg.value = ''
+      await loadLocations()
       await loadStatus()
       await loadPackages()
+      loading.value = false
+    }
+
+    const selectDir = async (d) => {
+      customMode.value = false
+      if (d === dir.value && status.value) return
+      dir.value = d; lastOutput.value = ''
+      loading.value = true; errorMsg.value = ''
+      await loadStatus(); await loadPackages()
+      loading.value = false
+    }
+    const applyCustom = async () => {
+      const d = (customDir.value || '').replace(/^\/+|\/+$/g, '')
+      if (!d) return
+      dir.value = d; lastOutput.value = ''
+      loading.value = true; errorMsg.value = ''
+      await loadStatus(); await loadPackages()
       loading.value = false
     }
 
@@ -154,11 +229,12 @@ export default {
       if (did.value == null) return
       busy.value = busyId || action
       try {
-        const r = await api.composerAction(did.value, action, payload)
+        const r = await api.composerAction(did.value, action, payload, dir.value)
         lastOutput.value = r.data?.output || 'Hecho.'
         store.showNotification('Composer: ' + action + ' completado', 'success')
         await loadStatus()
         await loadPackages()
+        loadLocations()   // refresca los indicadores composer.json de los chips
       } catch (e) {
         lastOutput.value = e.message || 'Error'
         store.showNotification('Error: ' + (e.message || 'falló el comando'), 'danger')
@@ -188,6 +264,7 @@ export default {
     return {
       status, packages, loading, loadingPkgs, errorMsg, busy, lastOutput,
       newPkg, newDev, loadAll,
+      locations, dir, customMode, customDir, multipleJson, selectDir, applyCustom,
       doRequire, doRemove, doUpdateOne, doInstall, confirmUpdateAll,
     }
   },
@@ -196,6 +273,22 @@ export default {
 
 <style scoped>
 .cm-intro { font-size:.88rem; margin:0 0 1rem; line-height:1.5; }
+.cm-where { margin-bottom:1rem; }
+.cm-where__label { display:block; font-weight:600; font-size:.88rem; margin-bottom:.4rem; }
+.cm-where__opts { display:flex; flex-wrap:wrap; gap:.4rem; }
+.cm-chip { display:inline-flex; align-items:center; gap:.35rem; background: var(--surface); border:1px solid var(--border); border-radius: var(--radius-md); padding:.3rem .65rem; font-size:.82rem; font-family: var(--font-mono, monospace); color: var(--text); cursor:pointer; max-width:100%; overflow:hidden; text-overflow:ellipsis; }
+.cm-chip:hover:not(:disabled) { background: var(--surface-inset); }
+.cm-chip:disabled { opacity:.6; cursor:not-allowed; }
+.cm-chip--on { border-color: var(--color-primary); background: color-mix(in srgb, var(--color-primary) 10%, transparent); }
+.cm-chip__tag { font-family: var(--font-sans, inherit); font-size:.68rem; padding:.05rem .35rem; border-radius:4px; background: color-mix(in srgb, var(--success, #16a34a) 15%, transparent); color: var(--success, #16a34a); }
+.cm-where__custom { display:flex; flex-wrap:wrap; gap:.5rem; align-items:center; margin-top:.5rem; }
+.cm-where__custom .svq-input { flex:1; min-width:200px; }
+.cm-where__custom small { flex-basis:100%; }
+.cm-note { font-size:.8rem; margin-top:.4rem; }
+.cm-path { font-size:.82rem; margin-bottom:.6rem; word-break:break-all; }
+.cm-path code, .cm-warn code, .cm-where code { background: var(--surface-inset); padding:.05rem .3rem; border-radius:4px; font-size:.8rem; }
+.cm-warn { display:flex; gap:.5rem; align-items:flex-start; font-size:.84rem; line-height:1.45; padding:.6rem .75rem; margin-bottom:1rem; border-radius: var(--radius-md); border:1px solid color-mix(in srgb, var(--warning, #d97706) 40%, var(--border)); background: color-mix(in srgb, var(--warning, #d97706) 10%, transparent); }
+.cm-warn > i { color: var(--warning, #d97706); margin-top:.1rem; }
 .cm-loading, .cm-error { display:flex; align-items:center; gap:.5rem; padding:.75rem 0; color: var(--text-muted); }
 .cm-error { color: var(--danger); }
 .cm-summary { display:grid; grid-template-columns: repeat(auto-fit, minmax(130px,1fr)); gap:.5rem; margin-bottom:1rem; }

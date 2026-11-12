@@ -4,7 +4,9 @@ Gestión de Composer por dominio (estilo "WP Toolkit", para dependencias PHP).
 Permite a un cliente gestionar las dependencias Composer de SU proyecto
 (instalar/quitar/actualizar paquetes como PhpMailer, Guzzle, etc.) sin tocar la
 terminal. Se ejecuta SIEMPRE como el usuario del dominio (cada archivo/pool es de
-ese usuario; ver svqpanel-php-pool-user), sobre el docroot del dominio.
+ese usuario; ver svqpanel-php-pool-user) y con el PHP del dominio, sobre la
+carpeta elegida: public_html/, private/ o una subcarpeta de ambas
+(resolve_workdir; por defecto, el docroot).
 
 Aclaración de alcance (dos "composer" distintos):
   - El BINARIO composer (/usr/local/bin/composer) es del sistema; solo el admin
@@ -66,18 +68,154 @@ def _env_for(owner_home: Optional[str]) -> Dict[str, str]:
     return env
 
 
-def _composer(docroot: str, owner: str, args: List[str], timeout: int = 600
-              ) -> Tuple[int, str, str]:
-    """Ejecuta `composer <args>` en el docroot como el usuario del dominio."""
+_PHP_VER_RE = re.compile(r"^\d\.\d$")
+
+
+def php_bin_for(php_version: Optional[str]) -> Optional[str]:
+    """El PHP CLI del DOMINIO (/usr/bin/phpX.Y) si existe. Composer resuelve las
+    versiones de los paquetes según el PHP con el que corre: con el del sistema
+    podía instalar librerías que luego no funcionan con el PHP de la web (el
+    mismo desfase que tuvo wp-cli, ver svqpanel-wpcli-php-sistema)."""
+    if php_version and _PHP_VER_RE.match(str(php_version)):
+        cand = f"/usr/bin/php{php_version}"
+        if os.path.exists(cand):
+            return cand
+    return None
+
+
+def _composer(docroot: str, owner: str, args: List[str], timeout: int = 600,
+              php_version: Optional[str] = None) -> Tuple[int, str, str]:
+    """Ejecuta `composer <args>` en `docroot` (la carpeta de trabajo) como el
+    usuario del dominio y con el PHP del dominio si está instalado."""
     env = _env_for(f"/home/{owner}")
-    return _run([COMPOSER_PATH] + args, cwd=docroot, as_user=owner,
-                timeout=timeout, env=env)
+    php = php_bin_for(php_version)
+    cmd = ([php, COMPOSER_PATH] if php else [COMPOSER_PATH]) + args
+    return _run(cmd, cwd=docroot, as_user=owner, timeout=timeout, env=env)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Carpeta de trabajo: public_html, private/ o una subcarpeta de ambas
+# ─────────────────────────────────────────────────────────────────────────────
+# El código de muchos proyectos vive FUERA de la web pública (private/, o la raíz
+# de un Laravel cuyo docroot es su public/). Solo se admiten carpetas dentro de
+# public_html/ o private/: son las únicas del open_basedir del pool PHP, así que
+# un vendor/ en cualquier otro sitio (la raíz del dominio, logs/…) PHP no podría
+# cargarlo.
+_SKIP_SCAN = {"vendor", "node_modules", "wp-content", "wp-includes", "wp-admin",
+              ".git", "cache", "tmp"}
+
+
+def _inside(path: str, base: str) -> bool:
+    return path == base or path.startswith(base.rstrip("/") + "/")
+
+
+def _bases(domain_root: str) -> Dict[str, str]:
+    """Raíces permitidas (rutas reales): {"public_html": ..., "private": ...}."""
+    out = {}
+    for name in ("public_html", "private"):
+        p = os.path.join(domain_root, name)
+        if os.path.isdir(p):
+            out[name] = os.path.realpath(p)
+    return out
+
+
+def resolve_workdir(domain_root: str, docroot: str, rel: Optional[str]) -> str:
+    """Ruta ABSOLUTA y real de la carpeta de trabajo pedida.
+
+    rel: relativa a la raíz del dominio ("public_html", "private",
+    "private/api"…). Vacía/None = el docroot del dominio (comportamiento de
+    siempre). Rechaza rutas absolutas, '..', y cualquier ruta cuya ruta REAL
+    (symlinks resueltos) salga de public_html/ o private/ del dominio."""
+    if not rel or not str(rel).strip():
+        return os.path.realpath(docroot)
+    rel = str(rel).strip().strip("/")
+    if (len(rel) > 300 or "\x00" in rel or "\\" in rel
+            or any(part in ("..", ".") for part in rel.split("/"))
+            or rel.startswith("~")):
+        raise ComposerError(f"Carpeta no válida: {rel!r}")
+    bases = _bases(domain_root)
+    real = os.path.realpath(os.path.join(domain_root, rel))
+    real_docroot = os.path.realpath(docroot)
+    if not any(_inside(real, b) for b in bases.values()) and real != real_docroot:
+        raise ComposerError(
+            "La carpeta debe estar dentro de public_html/ o private/ del dominio.")
+    if not os.path.isdir(real):
+        raise ComposerError(f"La carpeta {rel}/ no existe.")
+    return real
+
+
+def is_public(path: str, docroot: str) -> bool:
+    """¿La carpeta queda dentro de lo que sirve la web (el docroot)?"""
+    return _inside(os.path.realpath(path), os.path.realpath(docroot))
+
+
+def _loc(domain_root: str, docroot: str, path: str) -> Dict:
+    real = os.path.realpath(path)
+    rel = os.path.relpath(real, os.path.realpath(domain_root))
+    return {
+        "dir": rel,
+        "path": real,
+        "has_json": os.path.isfile(os.path.join(real, "composer.json")),
+        "has_vendor": os.path.isdir(os.path.join(real, "vendor")),
+        "public": is_public(real, docroot),
+    }
+
+
+def composer_locations(domain_root: str, docroot: str, max_found: int = 30) -> Dict:
+    """Carpetas candidatas para Composer y cuál preseleccionar.
+
+    Siempre ofrece public_html/ y private/; además, el docroot personalizado y su
+    carpeta padre (raíz de un Laravel) y cualquier subcarpeta de primer nivel de
+    public_html/ o private/ que ya tenga composer.json. No sigue symlinks.
+    `suggested` = la primera con composer.json (prefiriendo las NO públicas)."""
+    bases = _bases(domain_root)
+    seen, locs = set(), []
+
+    def add(p: str, always: bool = False):
+        real = os.path.realpath(p)
+        if real in seen or not os.path.isdir(real):
+            return
+        if not (any(_inside(real, b) for b in bases.values())
+                or real == os.path.realpath(docroot)):
+            return
+        loc = _loc(domain_root, docroot, real)
+        if always or loc["has_json"]:
+            seen.add(real)
+            locs.append(loc)
+
+    for name in ("public_html", "private"):
+        if name in bases:
+            add(bases[name], always=True)
+    add(docroot, always=True)
+    add(os.path.dirname(os.path.realpath(docroot)))
+    for b in bases.values():
+        try:
+            entries = sorted(os.scandir(b), key=lambda e: e.name)
+        except OSError:
+            continue
+        for e in entries:
+            if len(locs) >= max_found:
+                break
+            if e.name in _SKIP_SCAN or e.name.startswith("."):
+                continue
+            try:
+                if e.is_dir(follow_symlinks=False):
+                    add(e.path)
+            except OSError:
+                continue
+
+    with_json = [l for l in locs if l["has_json"]]
+    with_json.sort(key=lambda l: l["public"])     # privadas primero
+    suggested = with_json[0]["dir"] if with_json else \
+        os.path.relpath(os.path.realpath(docroot), os.path.realpath(domain_root))
+    return {"locations": locs, "suggested": suggested,
+            "domain_root": os.path.realpath(domain_root)}
 
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Estado / lectura
 # ─────────────────────────────────────────────────────────────────────────────
-def composer_status(docroot: str, owner: str) -> Dict:
+def composer_status(docroot: str, owner: str, php_version: Optional[str] = None) -> Dict:
     """Estado de Composer en el docroot: si hay composer.json/lock/vendor y la
     versión del binario. No falla si no hay proyecto: devuelve has_json=False."""
     json_path = os.path.join(docroot, "composer.json")
@@ -99,7 +237,8 @@ def composer_status(docroot: str, owner: str) -> Dict:
             require = {}
 
     version = ""
-    rc, out, _ = _composer(docroot, owner, ["--version", "--no-ansi"], timeout=60)
+    rc, out, _ = _composer(docroot, owner, ["--version", "--no-ansi"], timeout=60,
+                           php_version=php_version)
     if rc == 0 and out:
         m = re.search(r"Composer version\s+(\S+)", out)
         version = m.group(1) if m else out.splitlines()[0][:80]
@@ -111,16 +250,18 @@ def composer_status(docroot: str, owner: str) -> Dict:
         "declared": require,          # {paquete: restricción} del composer.json
         "declared_count": len(require),
         "composer_version": version,
-        "docroot": docroot,
+        "docroot": docroot,           # carpeta de trabajo (ruta absoluta)
+        "php": php_bin_for(php_version) or "php (sistema)",
     }
 
 
-def composer_packages(docroot: str, owner: str) -> List[Dict]:
+def composer_packages(docroot: str, owner: str, php_version: Optional[str] = None) -> List[Dict]:
     """Lista los paquetes instalados (vendor/) con su versión, vía
     `composer show --format=json`. Devuelve [] si no hay nada instalado."""
     if not os.path.isfile(os.path.join(docroot, "composer.json")):
         return []
-    rc, out, err = _composer(docroot, owner, ["show", "--format=json"], timeout=120)
+    rc, out, err = _composer(docroot, owner, ["show", "--format=json"], timeout=120,
+                             php_version=php_version)
     if rc != 0 or not out.strip():
         # Sin vendor/ o sin lock: no es un error, aún no hay instalados.
         return []
@@ -151,7 +292,8 @@ def _result(rc: int, out: str, err: str, action: str) -> Dict:
     return {"ok": True, "action": action, "output": output}
 
 
-def composer_require(docroot: str, owner: str, package: str, dev: bool = False
+def composer_require(docroot: str, owner: str, package: str, dev: bool = False,
+                     php_version: Optional[str] = None
                      ) -> Dict:
     """`composer require [--dev] <paquete>` — instala un paquete nuevo."""
     if not ensure_composer():
@@ -161,37 +303,42 @@ def composer_require(docroot: str, owner: str, package: str, dev: bool = False
     if dev:
         args.append("--dev")
     args += ["--no-interaction", "--prefer-dist", pkg]
-    rc, out, err = _composer(docroot, owner, args, timeout=900)
+    rc, out, err = _composer(docroot, owner, args, timeout=900,
+                             php_version=php_version)
     return _result(rc, out, err, "require")
 
 
-def composer_remove(docroot: str, owner: str, package: str) -> Dict:
+def composer_remove(docroot: str, owner: str, package: str,
+                    php_version: Optional[str] = None) -> Dict:
     """`composer remove <paquete>` — quita un paquete."""
     pkg = _safe_package(package)
     rc, out, err = _composer(docroot, owner,
-                             ["remove", "--no-interaction", pkg], timeout=900)
+                             ["remove", "--no-interaction", pkg], timeout=900,
+                             php_version=php_version)
     return _result(rc, out, err, "remove")
 
 
-def composer_update(docroot: str, owner: str, package: Optional[str] = None
+def composer_update(docroot: str, owner: str, package: Optional[str] = None,
+                    php_version: Optional[str] = None
                     ) -> Dict:
     """`composer update [<paquete>]` — actualiza las dependencias del proyecto
     (todo o un paquete). NO actualiza el binario composer (eso es self-update)."""
     args = ["update", "--no-interaction", "--prefer-dist"]
     if package:
         args.append(_safe_package(package))
-    rc, out, err = _composer(docroot, owner, args, timeout=1200)
+    rc, out, err = _composer(docroot, owner, args, timeout=1200,
+                             php_version=php_version)
     return _result(rc, out, err, "update")
 
 
-def composer_install(docroot: str, owner: str) -> Dict:
+def composer_install(docroot: str, owner: str, php_version: Optional[str] = None) -> Dict:
     """`composer install` — instala lo declarado en composer.json/lock."""
     if not os.path.isfile(os.path.join(docroot, "composer.json")):
-        raise ComposerError("No hay composer.json en este dominio; usa 'require' "
+        raise ComposerError("No hay composer.json en esta carpeta; usa 'require' "
                             "para añadir el primer paquete.")
     if not ensure_composer():
         raise ComposerError("Composer no está disponible en el servidor")
     rc, out, err = _composer(docroot, owner,
                              ["install", "--no-interaction", "--prefer-dist"],
-                             timeout=1200)
+                             timeout=1200, php_version=php_version)
     return _result(rc, out, err, "install")
