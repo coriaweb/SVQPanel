@@ -34,17 +34,28 @@ class DomainUpdate(BaseModel):
     @classmethod
     def validate_redirect_url(cls, v):
         if v is not None and v != '':
+            v = v.strip()
             if not re.match(r'^https?://', v):
                 raise ValueError('redirect_to debe empezar por http:// o https://')
+            # Va tal cual en `return 301 <url>$request_uri;` del vhost: un ';',
+            # llave, comilla, espacio o salto de línea inyectaría directivas nginx.
+            if not re.match(r'''^https?://[^\s;{}"'`\\$<>]+$''', v):
+                raise ValueError('redirect_to contiene caracteres no permitidos '
+                                 '(espacios, ; { } comillas, \\ o $)')
         return v or None
 
     @field_validator('custom_docroot')
     @classmethod
     def validate_docroot_path(cls, v):
+        # Forma básica aquí; la pertenencia al árbol del DUEÑO (/home/<dueño>/web/)
+        # y la ruta real (symlinks) se validan en la ruta con
+        # scripts.utils.validate_custom_docroot, que necesita saber el dueño.
         if v is not None and v != '':
-            if not v.startswith('/'):
-                raise ValueError('custom_docroot debe ser una ruta absoluta (empieza por /)')
-            if '..' in v:
+            v = v.strip()
+            if not re.match(r'^/[A-Za-z0-9._@+/-]+$', v):
+                raise ValueError('custom_docroot debe ser una ruta absoluta con letras, '
+                                 'números y . _ - @ + /')
+            if '..' in v.split('/'):
                 raise ValueError('custom_docroot no puede contener ..')
         return v or None
 

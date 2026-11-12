@@ -3,7 +3,7 @@
     <div class="page-head">
       <div>
         <h1 class="page-head__title">Migrar desde otro panel</h1>
-        <p class="page-head__sub">Importa un backup de HestiaCP o cPanel y recrea sus webs, bases de datos, correo y DNS en SVQPanel.</p>
+        <p class="page-head__sub">Importa una cuenta de HestiaCP, cPanel o CWP y recrea sus webs, bases de datos, correo y DNS en SVQPanel.</p>
       </div>
     </div>
 
@@ -15,6 +15,7 @@
           <select class="svq-select" v-model="sourcePanel">
             <option value="hestia">HestiaCP</option>
             <option value="cpanel">cPanel</option>
+            <option value="cwp">CWP (CentOS Web Panel)</option>
             <option value="svqpanel">Otro SVQPanel (beta)</option>
           </select>
         </label>
@@ -24,7 +25,7 @@
             <option value="upload">Subir archivo</option>
             <option value="path">Ruta en el servidor</option>
             <option value="url">Descargar desde URL</option>
-            <option v-if="sourcePanel === 'hestia'" value="ssh">SSH al servidor remoto</option>
+            <option v-if="sshCapable" value="ssh">SSH al servidor remoto</option>
           </select>
         </label>
 
@@ -46,7 +47,14 @@
       <template v-else>
       <p class="mig-hint dd-muted">
         <i class="bi bi-info-circle"></i>
-        <template v-if="sourcePanel === 'cpanel'">
+        <template v-if="sourcePanel === 'cwp'">
+          Cuenta de CWP. Lo recomendable es el origen <strong>SSH</strong>: el panel ejecuta su exportador en el CWP
+          (no deja nada en ese servidor) y trae webs, bases de datos, correo con sus contraseñas, DNS, DKIM y crons.
+          El análisis solo lee la configuración (segundos); los datos se traen al pulsar «Importar».
+          Sin SSH: en el CWP, como root, <code>bash cwp_export.sh usuario &gt; usuario.tar</code> (el script está en
+          <code>/opt/svqpanel/scripts/</code> de este servidor) y sube ese <code>.tar</code>.
+        </template>
+        <template v-else-if="sourcePanel === 'cpanel'">
           Backup completo de cPanel (cpmove). En cPanel: <strong>Archivos → Copia de seguridad → Descargar una copia de seguridad completa</strong>, o por terminal <code>/scripts/pkgacct usuario</code>. El archivo es un <code>.tar.gz</code> que empieza por <code>cpmove-</code> o <code>backup-</code>.
         </template>
         <template v-else>
@@ -81,13 +89,13 @@
 
       <!-- Campos SSH (origen = ssh, solo Hestia) -->
       <div v-if="source === 'ssh'" class="mig-grid mig-ssh">
-        <label class="mig-field"><span>Host del servidor Hestia origen</span>
+        <label class="mig-field"><span>Host del servidor {{ panelName }} origen</span>
           <input class="svq-input mono" v-model="ssh.host" placeholder="1.2.3.4" /></label>
         <label class="mig-field"><span>Usuario SSH</span>
           <input class="svq-input mono" v-model="ssh.user" placeholder="root" /></label>
         <label class="mig-field"><span>Puerto SSH</span>
           <input class="svq-input mono" v-model="ssh.port" placeholder="22" /></label>
-        <label class="mig-field"><span>Usuario de Hestia a exportar</span>
+        <label class="mig-field"><span>Usuario de {{ panelName }} a exportar</span>
           <input class="svq-input mono" v-model="ssh.hestia_user" placeholder="cliente1" /></label>
         <label class="mig-field"><span>Contraseña SSH (o usa clave)</span>
           <input type="password" class="svq-input" v-model="ssh.password" /></label>
@@ -390,6 +398,9 @@ export default {
     const cacheToken = ref(null)  // backup ya descargado en el análisis (reutilizable)
     const instantDns = ref(false) // migración instantánea: apuntar el DNS del Hestia aquí al terminar
     let pollTimer = null
+    // Paneles que el servidor sabe exportar solo por SSH (v-backup-user / cwp_export.sh).
+    const sshCapable = computed(() => ['hestia', 'cwp'].includes(sourcePanel.value))
+    const panelName = computed(() => ({ hestia: 'Hestia', cwp: 'CWP' }[sourcePanel.value] || 'origen'))
 
     const canAnalyze = computed(() => {
       if (targetUserId.value == null) return false
@@ -570,11 +581,18 @@ export default {
       tick()
     }
 
-    // El origen SSH (v-backup-user) solo aplica a Hestia; si se cambia a cPanel
-    // con SSH activo, volvemos a "subir archivo". Además, al cambiar de panel se
-    // limpia el análisis previo (es de otro formato).
+    // CWP escucha SSH en el 9443 por defecto.
+    const cwpPort = () => {
+      if (source.value === 'ssh' && sourcePanel.value === 'cwp' && ssh.value.port === '22') ssh.value.port = '9443'
+    }
+    watch(source, cwpPort)
+
+    // El origen SSH solo aplica a Hestia y CWP; si se cambia a cPanel con SSH
+    // activo, volvemos a "subir archivo". Además, al cambiar de panel se limpia
+    // el análisis previo (es de otro formato).
     watch(sourcePanel, () => {
-      if (source.value === 'ssh') source.value = 'upload'
+      if (source.value === 'ssh' && !sshCapable.value) source.value = 'upload'
+      cwpPort()
       manifest.value = null; dnsZones.value = []; job.value = null
     })
 
@@ -598,7 +616,7 @@ export default {
     resumeActiveJob()
 
     return {
-      sourcePanel, source, file, serverPath, url, ssh, targetUserId, newUser, clientUsers, scope, scopeOptions,
+      sourcePanel, sshCapable, panelName, source, file, serverPath, url, ssh, targetUserId, newUser, clientUsers, scope, scopeOptions,
       savedSources, selectedSource, applySource, saveSource, deleteSource, instantDns,
       analyzing, importing, manifest, dnsZones, job, resumedFor, canAnalyze, mailAccounts, targetUsername,
       onFile, analyze, startImport, fmtMb,

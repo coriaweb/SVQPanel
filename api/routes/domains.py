@@ -644,6 +644,18 @@ async def update_domain(
                 redir_changed = True
         if 'custom_docroot' in domain_update.model_fields_set:
             new_docroot = domain_update.custom_docroot or None
+            if new_docroot:
+                # Solo dentro de /home/<DUEÑO del dominio>/web/ (ruta real, sin
+                # symlinks que salgan). Antes valía cualquier ruta absoluta: un
+                # cliente podía servir la carpeta de otro cliente o /etc vía nginx.
+                from scripts.utils import validate_custom_docroot
+                _owner = db.query(User).filter(User.id == db_domain.user_id).first()
+                if not _owner:
+                    raise HTTPException(status_code=409, detail="El dominio no tiene propietario")
+                try:
+                    new_docroot = validate_custom_docroot(new_docroot, _owner.username)
+                except ValueError as e:
+                    raise HTTPException(status_code=400, detail=str(e))
             if new_docroot != db_domain.custom_docroot:
                 db_domain.custom_docroot = new_docroot
                 docroot_changed = True
@@ -676,6 +688,24 @@ async def update_domain(
 
         db.commit()
         db.refresh(db_domain)
+
+        # El open_basedir del pool incluye el custom_docroot (write_pool lo lee de
+        # la BD, ya commiteada): sin reescribirlo, PHP no podría abrir la carpeta
+        # nueva. Va DESPUÉS del commit aunque el cambio de PHP ya lo reescribiera
+        # (ese write_pool corrió antes del commit y leyó el docroot viejo).
+        if docroot_changed and not getattr(db_domain, "mail_dns_only", False):
+            import json as _json
+            from scripts import php_ini_manager as _phpini
+            _own = db.query(User).filter(User.id == db_domain.user_id).first()
+            try:
+                _ovr = _json.loads(db_domain.php_ini_overrides) if db_domain.php_ini_overrides else {}
+            except (ValueError, TypeError):
+                _ovr = {}
+            if _own and _phpini.has_pool(db_domain.domain_name):
+                _phpini.write_pool(db_domain.domain_name, db_domain.php_version or "8.2",
+                                   _own.username, _ovr,
+                                   relax_hardening=db_domain.php_hardening_relaxed or False,
+                                   fpm_tuning=_fpm_tuning_of(db_domain))
 
         # Si cambió el PHP y el dominio tiene el wp-cron optimizado, su CronJob
         # sigue con la versión vieja: si esa ya no cumple el mínimo de WordPress,
@@ -1178,6 +1208,12 @@ async def set_domain_bad_bots(
     if not isinstance(patterns, list):
         raise HTTPException(status_code=400, detail="patterns debe ser una lista")
     patterns = [str(p).strip() for p in patterns if str(p).strip()]
+    from scripts.utils import is_safe_ua_pattern
+    bad = [p for p in patterns if not is_safe_ua_pattern(p)]
+    if bad:
+        raise HTTPException(status_code=400, detail=(
+            f"Patrón no válido: {bad[0][:60]!r}. No se admiten saltos de línea, "
+            "; { } \", ni acabar en \\ (y máximo 200 caracteres)."))
 
     domain = _get_owned_domain(domain_id, db, current_user)
     if not domain:
@@ -1888,12 +1924,17 @@ _FORBIDDEN_APACHE = ("<virtualhost", "</virtualhost")
 async def update_custom_config(
     domain_id:    int,
     payload:      CustomConfigRequest,
-    current_user: User = Depends(require_auth),
+    current_user: User = Depends(require_admin),
     db:           Session = Depends(get_db),
 ):
     """Guarda directivas nginx/apache personalizadas del dominio y regenera el
     vhost. Valida (nginx -t / apache configtest vía regenerate_vhost); si falla,
-    revierte al valor anterior y devuelve 422 con el error."""
+    revierte al valor anterior y devuelve 422 con el error.
+
+    SOLO ADMIN: son directivas libres dentro del server{}/VirtualHost. Un cliente
+    podía servir carpetas de otros (`alias /home/otro/…`) o, en Apache, ejecutar
+    comandos como root (`CustomLog "|cmd"`, los logs a programa los lanza el
+    proceso padre). Filtrar directivas una a una no es fiable → solo el admin."""
     domain = _get_owned_domain(domain_id, db, current_user)
     owner = db.query(User).filter(User.id == domain.user_id).first()
     if not owner:

@@ -137,12 +137,18 @@ def domain_tmp_dir(owner: str, domain: str) -> str:
     return f"{get_domain_root(owner, domain)}/tmp"
 
 
-def _security_block(owner: str, domain: str, relax_hardening: bool = False) -> List[str]:
+def _security_block(owner: str, domain: str, relax_hardening: bool = False,
+                    custom_docroot: Optional[str] = None) -> List[str]:
     """
     Líneas php_admin_value de seguridad que se inyectan SIEMPRE en el pool.
     El cliente no puede sobrescribirlas (php_admin_value = cap duro).
+
+    custom_docroot: si el dominio sirve otra carpeta (p. ej. un subdominio que
+    comparte el public_html del principal), se añade al open_basedir; sin ella
+    PHP no podría ni abrir su index.php. Solo se acepta dentro de
+    /home/{owner}/web/ (validate_custom_docroot); si no, se ignora.
     """
-    from scripts.utils import get_public_html, get_domain_private
+    from scripts.utils import get_public_html, get_domain_private, validate_custom_docroot
     public_html = get_public_html(owner, domain)
     private     = get_domain_private(owner, domain)
     tmp         = domain_tmp_dir(owner, domain)
@@ -150,6 +156,13 @@ def _security_block(owner: str, domain: str, relax_hardening: bool = False) -> L
     # propio (/home/{owner}/web/{domain}/tmp). Así un sitio no puede leer los
     # temporales de otro a través de /tmp compartido.
     open_basedir = f"{public_html}:{private}:{tmp}"
+    if custom_docroot:
+        try:
+            cd = validate_custom_docroot(custom_docroot, owner, must_exist=False)
+        except ValueError:
+            cd = None
+        if cd and not any(cd == b or cd.startswith(b + "/") for b in (public_html, private)):
+            open_basedir += f":{cd}"
     disable_fns = DISABLE_FUNCTIONS_RELAXED if relax_hardening else DISABLE_FUNCTIONS_FULL
     return [
         f"php_admin_value[open_basedir] = {open_basedir}",
@@ -295,7 +308,8 @@ def validate_overrides(version: str, overrides: Dict[str, str]) -> Tuple[bool, L
 # ─────────────────────────────────────────────────────────────────────────────
 def _pool_content(domain: str, owner: str, overrides: Dict[str, str],
                   relax_hardening: bool = False,
-                  fpm_tuning: Optional[dict] = None) -> str:
+                  fpm_tuning: Optional[dict] = None,
+                  custom_docroot: Optional[str] = None) -> str:
     backend = domain.replace(".", "_").replace("-", "_")
     socket = pool_socket_path(domain)
     lines = [
@@ -331,7 +345,7 @@ def _pool_content(domain: str, owner: str, overrides: Dict[str, str],
         "; --- Seguridad (cap duro, no overridable por el cliente) ---",
     ])
     # Bloque de seguridad SIEMPRE (open_basedir, disable_functions, tmp aislado)
-    lines.extend(_security_block(owner, domain, relax_hardening))
+    lines.extend(_security_block(owner, domain, relax_hardening, custom_docroot))
     lines.append("")
     # Directivas por dominio = defaults del panel (memory_limit 128M…) + overrides
     # del cliente. El override explícito del dominio GANA sobre el default. Así
@@ -367,14 +381,38 @@ def _reload_fpm(version: str) -> Tuple[bool, str]:
     return (r.returncode == 0), (r.stderr.strip() or "ok")
 
 
+def _custom_docroot_from_db(domain: str) -> Optional[str]:
+    """custom_docroot del dominio leído de la BD del panel (None si no hay o si
+    la BD no está accesible, p. ej. en tests)."""
+    try:
+        from sqlalchemy import text
+        from api.models.database import engine
+        with engine.connect() as conn:
+            row = conn.execute(
+                text("SELECT custom_docroot FROM domains WHERE domain_name = :d"),
+                {"d": domain}).first()
+        return (row[0] or None) if row else None
+    except Exception:
+        return None
+
+
+_UNSET = object()
+
+
 def write_pool(domain: str, version: str, owner: str, overrides: Dict[str, str],
                relax_hardening: bool = False,
-               fpm_tuning: Optional[dict] = None) -> Tuple[bool, str]:
+               fpm_tuning: Optional[dict] = None,
+               custom_docroot=_UNSET) -> Tuple[bool, str]:
     """Escribe el pool del dominio para la versión dada y recarga FPM.
 
     fpm_tuning: dict {"preset": ..., "manual": {...}} para los pm.* del pool.
                 Si None, se usa el preset por defecto (medium).
+    custom_docroot: si no se pasa, se LEE de la BD. Así ningún caller (auditoría,
+                plantillas, cambio de PHP…) puede reescribir el pool olvidándose
+                del docroot y dejar la web en "open_basedir restriction".
     """
+    if custom_docroot is _UNSET:
+        custom_docroot = _custom_docroot_from_db(domain)
     # VALIDAR ANTES DE DESTRUIR. Si la versión destino no está instalada y ya
     # hubiéramos borrado el pool actual, el dominio se quedaría SIN NINGÚN pool
     # → el socket desaparece → 503 en todo el sitio. (Pasó de verdad al mover un
@@ -392,7 +430,8 @@ def write_pool(domain: str, version: str, owner: str, overrides: Dict[str, str],
 
     try:
         with open(path, "w") as f:
-            f.write(_pool_content(domain, owner, overrides, relax_hardening, fpm_tuning))
+            f.write(_pool_content(domain, owner, overrides, relax_hardening, fpm_tuning,
+                                  custom_docroot))
     except OSError as e:
         return False, f"no pude escribir el pool: {e}"
 

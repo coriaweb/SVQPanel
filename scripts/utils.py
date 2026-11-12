@@ -132,6 +132,62 @@ def get_domain_private(username: str, domain: str) -> str:
     return f"/home/{username}/web/{domain}/private"
 
 
+def is_safe_ua_pattern(p: str) -> bool:
+    """Patrón de user-agent por dominio: va dentro de `if ($http_user_agent ~*
+    "<patrón>")` en el vhost. Sin control chars ni ; { } y sin '\\' final (que
+    escaparía la comilla de cierre y dejaría inyectar directivas)."""
+    if not p or len(p) > 200:
+        return False
+    # '"' fuera: con '\"' en el patrón, el escape del generador ('"'→'\"')
+    # dejaría '\\"', que CIERRA la cadena.
+    if any(ord(c) < 32 or ord(c) == 127 for c in p) or any(c in p for c in ';{}"'):
+        return False
+    trailing = len(p) - len(p.rstrip("\\"))
+    return trailing % 2 == 0
+
+
+# Caracteres admitidos en un docroot: va TAL CUAL en `root ...;` (nginx) y en
+# DocumentRoot (Apache) y en el open_basedir del pool. Un ';', '{', espacio o
+# salto de línea permitiría inyectar directivas en el vhost.
+_DOCROOT_RE = re.compile(r"^/[A-Za-z0-9._@+/-]+$")
+
+
+def validate_custom_docroot(path: Optional[str], owner: str,
+                            must_exist: bool = True) -> Optional[str]:
+    """Valida un docroot personalizado y lo devuelve normalizado (o None si vacío).
+
+    Solo se admite DENTRO de /home/{owner}/web/<algo>/ del DUEÑO del dominio, y
+    se comprueba también la ruta REAL (un symlink no puede sacarlo de ahí). Sin
+    esto un cliente podía apuntar su vhost a la carpeta de otro cliente o a /etc
+    y nginx (www-data) le serviría esos ficheros. Lanza ValueError con el motivo.
+    """
+    import os
+    import posixpath
+    p = (path or "").strip()
+    if not p:
+        return None
+    if not _DOCROOT_RE.match(p):
+        raise ValueError("El docroot solo puede contener letras, números y . _ - @ + /")
+    parts = p.split("/")[1:]
+    if any(x in ("", ".", "..") for x in parts[:-1]) or parts[-1] in (".", ".."):
+        raise ValueError("El docroot no puede contener '..', '.' ni '//'")
+    p = p.rstrip("/")
+    base = f"{get_web_root(owner)}/"
+
+    def _inside(x: str) -> bool:
+        # /home/u/web/<dominio-o-carpeta>/... (no la raíz web/ entera)
+        return x.startswith(base) and len(x) > len(base)
+
+    if not _inside(p):
+        raise ValueError(f"El docroot debe estar dentro de {base}")
+    real = os.path.realpath(p) if os.name == "posix" else posixpath.normpath(p)
+    if not _inside(real):
+        raise ValueError(f"El docroot apunta (por un enlace) fuera de {base}")
+    if must_exist and not os.path.isdir(real):
+        raise ValueError(f"La carpeta {p} no existe")
+    return p
+
+
 def get_nginx_config_path(domain: str) -> str:
     """Get nginx config file path"""
     return f"/etc/nginx/sites-available/{domain}"
@@ -759,7 +815,9 @@ def generate_nginx_config(
     if blocked_user_agents:
         for pattern in blocked_user_agents:
             pattern = pattern.strip()
-            if pattern:
+            # Los que podrían romper la cadena entre comillas (y meter
+            # directivas) se ignoran, aunque vengan de la BD.
+            if pattern and is_safe_ua_pattern(pattern):
                 safe = pattern.replace('"', '\\"').replace("'", "\\'")
                 bot_lines.append(f'    if ($http_user_agent ~* "{safe}") {{ return 444; }}')
     # Acceso por país/IP del dominio (scripts/geo_access.py): la variable la

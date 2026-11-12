@@ -916,6 +916,84 @@ def _fetch_via_ssh(cfg: dict, progress=None, expected_bytes: int = 0) -> str:
         s.close()
 
 
+_CWP_EXPORTER = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(
+    os.path.abspath(__file__)))), "scripts", "cwp_export.sh")
+
+
+def _fetch_cwp_via_ssh(cfg: dict, progress=None, expected_bytes: int = 0,
+                       config_only: bool = False, warnings: Optional[list] = None) -> str:
+    """Exporta una cuenta de CWP y la trae por SSH a un .tar temporal.
+
+    Manda scripts/cwp_export.sh por la entrada estándar (`bash -s`) y recoge el
+    .tar por la salida: en el CWP no queda nada (ni se necesita sitio para el
+    tar). `config_only`: solo configuración, sin webs/correo/volcados (análisis,
+    segundos). `warnings`: lista donde dejar los avisos del export (SVQWARN).
+    Bloqueante: desde un hilo o el job, nunca en el event loop.
+    """
+    import subprocess, shlex
+    s = _SshSession(cfg)
+    user = s.hestia_user
+    if not _safe_hestia_user(user):
+        s.close()
+        raise HTTPException(status_code=400, detail=f"Usuario de CWP no válido: {user}")
+    fd, tmp = tempfile.mkstemp(prefix="svq_hestia_up_", suffix=".tar", dir=migration_tmp_dir())
+    os.close(fd)
+    remote_cmd = f"bash -s -- {shlex.quote(user)}" + (" --config-only" if config_only else "")
+    expected = f" de ~{_human_bytes(expected_bytes)}" if expected_bytes else ""
+    try:
+        cmd, env = s.ssh(remote_cmd)
+        with open(_CWP_EXPORTER, "rb") as script, open(tmp, "wb") as out, \
+                tempfile.TemporaryFile() as err:
+            proc = subprocess.Popen(cmd, stdin=script, stdout=out, stderr=err, env=env)
+            deadline = time.time() + (600 if config_only else 12 * 3600)
+            while True:
+                try:
+                    proc.wait(timeout=3)
+                    break
+                except subprocess.TimeoutExpired:
+                    if time.time() > deadline:
+                        proc.kill()
+                        proc.wait()
+                        raise subprocess.TimeoutExpired(cmd, 0)
+                    if progress is not None and not config_only:
+                        done = os.path.getsize(tmp)
+                        txt = (f"Exportando la cuenta del CWP y descargándola · "
+                               f"{_human_bytes(done)}{expected}")
+                        if hasattr(progress, "set_percent"):
+                            progress.set_percent(
+                                PROGRESS_GENERATE[0] + int((PROGRESS_DOWNLOAD[1] - PROGRESS_GENERATE[0])
+                                                           * min(done / expected_bytes, 0.99))
+                                if expected_bytes else PROGRESS_GENERATE[1], txt)
+                        else:
+                            progress.set_phase(txt)
+            err.seek(0)
+            errtxt = err.read().decode("utf-8", "replace")
+        for line in errtxt.splitlines():
+            if line.startswith("SVQWARN"):
+                logger.warning(f"[cwp-export {user}] {line[8:]}")
+                if warnings is not None:
+                    warnings.append(f"Export del CWP: {line[8:]}")
+        if "SVQNOUSER" in errtxt:
+            raise HTTPException(status_code=422,
+                detail=f"La cuenta «{user}» no existe en el CWP de origen.")
+        if proc.returncode != 0 or "SVQDONE" not in errtxt:
+            raise HTTPException(status_code=502,
+                detail="El export del CWP falló: "
+                       + (errtxt.strip()[-400:] or f"código {proc.returncode}"))
+        return tmp
+    except HTTPException:
+        os.path.exists(tmp) and os.remove(tmp)
+        raise
+    except FileNotFoundError as e:
+        os.path.exists(tmp) and os.remove(tmp)
+        raise HTTPException(status_code=500, detail=f"Falta una herramienta (ssh/sshpass): {e}")
+    except subprocess.TimeoutExpired:
+        os.path.exists(tmp) and os.remove(tmp)
+        raise HTTPException(status_code=504, detail="El CWP de origen tardó demasiado en exportar.")
+    finally:
+        s.close()
+
+
 def _is_temp_upload(path: str) -> bool:
     return os.path.basename(path).startswith("svq_hestia_up_")
 
@@ -1053,6 +1131,25 @@ async def migration_analyze(
                 _analyze_live, ssh, db, scope_list, _dns_proposals)
         except HestiaImportError as e:
             raise HTTPException(status_code=422, detail=str(e))
+    elif ssh and (source_panel or "").lower() == "cwp":
+        # CWP por SSH: export SOLO de configuración (segundos). Webs, correo y
+        # volcados se exportan al importar, dentro del job.
+        export_warnings: list = []
+
+        def _analyze_cwp():
+            tar = _fetch_cwp_via_ssh(ssh, config_only=True, warnings=export_warnings)
+            try:
+                with open_backup("cwp", tar, config_only=True) as backup:
+                    m = backup.analyze()
+                    return m, find_conflicts(m, db, scope_list), _dns_proposals(m)
+            finally:
+                os.path.exists(tar) and os.remove(tar)
+
+        try:
+            manifest, conflicts, dns_proposals = await run_in_threadpool(_analyze_cwp)
+        except (HestiaImportError, CpanelImportError) as e:
+            raise HTTPException(status_code=422, detail=str(e))
+        manifest.setdefault("warnings", []).extend(export_warnings)
     else:
         tar_path = await _receive_backup(file, path, url, ssh)
         downloaded = _is_temp_upload(tar_path)  # subido/URL → es nuestro temporal
@@ -1088,7 +1185,7 @@ async def migration_analyze(
                     os.remove(tar_path)
 
     # ¿Hay datos comprimidos en zst y no tenemos soporte? Avisar (no bloquea analyze).
-    warnings = []
+    warnings = list(manifest.get("warnings") or [])   # los del panel de origen (CWP)
     if manifest.get("backup_enabled") is False:
         warnings.append(BACKUP_DISABLED_MSG)
     space_warning = _disk_space_warning(manifest.get("size_mb") or 0)
@@ -1415,9 +1512,19 @@ def _fetch_then_import(job_id: int, ssh: dict, expected_bytes: int = 0, instant:
     finally:
         db.close()
 
+    db = SessionLocal()
+    try:
+        job = db.query(MigrationJob).filter(MigrationJob.id == job_id).first()
+        kind = (job.source_kind if job else "") or "hestia"
+    finally:
+        db.close()
     prog = _JobProgress(job_id, window=PROGRESS_GENERATE)
     try:
-        tar_path = _fetch_via_ssh(ssh, progress=prog, expected_bytes=expected_bytes)
+        if kind == "cwp":
+            # Export y descarga van juntos (stream): llenan la primera mitad de la barra.
+            tar_path = _fetch_cwp_via_ssh(ssh, progress=prog, expected_bytes=expected_bytes)
+        else:
+            tar_path = _fetch_via_ssh(ssh, progress=prog, expected_bytes=expected_bytes)
     except HTTPException as e:
         _fail(f"No se pudo traer el backup del origen: {e.detail}")
         return
@@ -1557,8 +1664,8 @@ async def migration_import(
     # SSH sin backup en caché: el backup (v-backup-user + scp, minutos u horas)
     # se genera y descarga DENTRO del job en segundo plano. Aquí solo el
     # preflight contra la config en vivo, que tarda segundos.
-    fetch_in_job = bool(not staged and ssh
-                        and (source_panel or "hestia").lower() == "hestia")
+    panel = (source_panel or "hestia").lower()
+    fetch_in_job = bool(not staged and ssh and panel in ("hestia", "cwp"))
     tar_path = None
     cleanup_tar = True
     try:
@@ -1576,6 +1683,14 @@ async def migration_import(
         # config_only: el preflight no necesita extraer los datos pesados; el job
         # de importación (en background) reabre el backup y extrae todo.
         def _preflight():
+            if fetch_in_job and panel == "cwp":
+                tar = _fetch_cwp_via_ssh(ssh, config_only=True)
+                try:
+                    with open_backup("cwp", tar, config_only=True) as backup:
+                        m = backup.analyze()
+                        return m, find_conflicts(m, db, scope_list)
+                finally:
+                    os.path.exists(tar) and os.remove(tar)
             if fetch_in_job:
                 m, c, _ = _analyze_live(ssh, db, scope_list)
                 # Sin backups activados en el origen, v-backup-user fallará:

@@ -1105,6 +1105,34 @@ def import_web(backup: "HestiaBackup", web: Dict, owner, db, report: ImportRepor
     #    cPanel trae los archivos ya descomprimidos en una carpeta (_data_dir).
     data_tar = web.get("_data_tar")
     data_dir = web.get("_data_dir")
+
+    # Docroot personalizado. Viene del backup (semi-confiable: lo generó el
+    # servidor de origen) → solo se acepta dentro de /home/<dueño>/web/.
+    custom_docroot = None
+    if web.get("custom_docroot"):
+        from scripts.utils import validate_custom_docroot
+        try:
+            custom_docroot = validate_custom_docroot(web["custom_docroot"], owner.username,
+                                                     must_exist=False)
+        except ValueError as e:
+            report.fail("web-docroot", domain_name,
+                        f"docroot {web['custom_docroot']} descartado: {e}")
+    # Web cuyo docroot estaba DENTRO de la de otro dominio (CWP: subdominios
+    # que sirven public_html/carpeta del principal, o varios que comparten la
+    # misma). No se copia otra vez: se apunta a la carpeta ya importada.
+    nested = web.get("_nested_in")
+    if nested:
+        from scripts.utils import get_public_html as _gph
+        target = _gph(owner.username, nested["domain"])
+        if nested.get("rel"):
+            target = f"{target}/{nested['rel'].strip('/')}"
+        if os.path.isdir(target):
+            custom_docroot = target
+            report.ok("web-docroot", domain_name,
+                      f"comparte carpeta con {nested['domain']}: {target}")
+        else:
+            # El principal no se importó (o no traía esa carpeta): copia propia.
+            data_dir = web.get("_nested_data_dir") or data_dir
     public_html = f"/home/{owner.username}/web/{domain_name}/public_html"
     has_data = (data_tar and os.path.isfile(data_tar)) or (data_dir and os.path.isdir(data_dir))
     if has_data:
@@ -1169,12 +1197,21 @@ def import_web(backup: "HestiaBackup", web: Dict, owner, db, report: ImportRepor
         php_version=php_version,
         public_html=public_html,
         ipv4=ipv4,
-        custom_docroot=web.get("custom_docroot") or None,
+        custom_docroot=custom_docroot,
         redirect_to=web.get("redirect") or None,
     )
     db.add(db_domain)
     db.commit()
     db.refresh(db_domain)
+
+    # El pool lo creó create_domain() ANTES de existir la fila → su open_basedir
+    # no incluye el docroot personalizado. Reescribirlo (write_pool lo lee de BD).
+    if custom_docroot:
+        try:
+            from scripts import php_ini_manager as _phpini
+            _phpini.write_pool(domain_name, php_version, owner.username, {})
+        except Exception as e:
+            report.fail("web-pool", domain_name, f"pool no actualizado con el docroot: {e}")
 
     # 4) Regenerar el vhost con los ajustes reales (docroot, redirect…). SSL se
     #    deja para emisión posterior (Let's Encrypt) — restaurar certs de Hestia
@@ -1182,7 +1219,7 @@ def import_web(backup: "HestiaBackup", web: Dict, owner, db, report: ImportRepor
     try:
         mgr.regenerate_vhost(
             owner.username, domain_name, php_version,
-            custom_docroot=web.get("custom_docroot") or None,
+            custom_docroot=custom_docroot,
             redirect_to=web.get("redirect") or None,
         )
     except Exception as e:
@@ -2186,6 +2223,9 @@ def open_backup(source_panel: str, tar_path: str, config_only: bool = False,
     La importación real abre el backup SIN config_only (extrae todo).
     `progress_cb(n)`: bytes extraídos del tar (progreso del import en la UI).
     """
+    if (source_panel or "hestia").lower() == "cwp":
+        from scripts.cwp_import import CwpBackup
+        return CwpBackup(tar_path, config_only=config_only, progress_cb=progress_cb)
     if (source_panel or "hestia").lower() == "cpanel":
         from scripts.cpanel_import import CpanelBackup
         try:
@@ -2290,7 +2330,7 @@ def run_import(tar_path: str, target_user_id: int, scope: List[str], db,
     un fallo en uno no aborta los demás.
     `dns_records`: {domain: [registros aprobados]} desde la UI. Si una zona no
     está, se usa la propuesta automática.
-    `source_panel`: 'hestia' | 'cpanel'.
+    `source_panel`: 'hestia' | 'cpanel' | 'cwp'.
     `cleanup_tar`: el .tar es un temporal NUESTRO (upload/descarga, no una ruta
     del admin) → se borra en cuanto está extraído, liberando su tamaño para el
     resto de la importación (baja el pico de disco en backups grandes).
@@ -2466,6 +2506,16 @@ def run_import(tar_path: str, target_user_id: int, scope: List[str], db,
                 except Exception as e:
                     db.rollback()
                     report.fail("wp-ajustes", web["domain"], e)
+
+        # Pasos propios del panel de origen (CWP: rutas de las webs, DKIM con su
+        # selector, Sieve, autorespuestas). Antes de reconciliar el DKIM: si el
+        # origen trae la clave, el TXT se reconcilia con ESA clave.
+        if hasattr(backup, "post_import"):
+            try:
+                backup.post_import(manifest, owner, db, report, scope)
+            except Exception as e:
+                db.rollback()
+                report.fail("post-import", manifest.get("system") or "?", e)
 
         # DKIM: la zona importada del backup publica la clave pública VIEJA
         # del servidor origen, pero aquí Rspamd firma con una clave nueva →

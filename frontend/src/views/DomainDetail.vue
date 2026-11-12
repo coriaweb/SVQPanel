@@ -1284,12 +1284,16 @@ define('WP_REDIS_PATH', '{{ redisStatus.socket }}');</pre>
           (p. ej. <code>location</code>, <code>add_header</code>, <code>rewrite</code>…). Se valida antes de aplicar;
           si hay un error, se descarta y el sitio sigue intacto.
         </p>
+        <div v-if="!canEditAdv" class="adv-error" style="background:var(--surface-2,transparent)">
+          <i class="bi bi-lock"></i> Solo el administrador del servidor puede modificar estas directivas
+          (dan acceso directo a la configuración del servidor web). Si necesitas una regla, pídesela.
+        </div>
 
         <div class="adv-field">
           <label class="adv-label"><i class="bi bi-hdd-network"></i> Nginx</label>
-          <textarea class="svq-input mono adv-textarea" rows="10" v-model="advNginx"
+          <textarea class="svq-input mono adv-textarea" rows="10" v-model="advNginx" :readonly="!canEditAdv"
             placeholder="location /healthz { return 200 'ok'; }"></textarea>
-          <button type="button" class="adv-toggle" @click="showNginxEx = !showNginxEx">
+          <button v-if="canEditAdv" type="button" class="adv-toggle" @click="showNginxEx = !showNginxEx">
             <i class="bi" :class="showNginxEx ? 'bi-chevron-down' : 'bi-chevron-right'"></i>
             Ver ejemplos de reglas Nginx
           </button>
@@ -1308,9 +1312,9 @@ define('WP_REDIS_PATH', '{{ redisStatus.socket }}');</pre>
 
         <div v-if="showApacheField" class="adv-field">
           <label class="adv-label"><i class="bi bi-feather"></i> Apache <span class="dd-muted">(solo si el dominio usa Apache+Nginx)</span></label>
-          <textarea class="svq-input mono adv-textarea" rows="8" v-model="advApache"
+          <textarea class="svq-input mono adv-textarea" rows="8" v-model="advApache" :readonly="!canEditAdv"
             placeholder="Header set X-Mi-Cabecera 'valor'"></textarea>
-          <button type="button" class="adv-toggle" @click="showApacheEx = !showApacheEx">
+          <button v-if="canEditAdv" type="button" class="adv-toggle" @click="showApacheEx = !showApacheEx">
             <i class="bi" :class="showApacheEx ? 'bi-chevron-down' : 'bi-chevron-right'"></i>
             Ver ejemplos de reglas Apache
           </button>
@@ -1329,7 +1333,7 @@ define('WP_REDIS_PATH', '{{ redisStatus.socket }}');</pre>
 
         <div v-if="advError" class="adv-error"><i class="bi bi-exclamation-triangle"></i> {{ advError }}</div>
 
-        <div class="adv-actions">
+        <div v-if="canEditAdv" class="adv-actions">
           <BaseButton variant="primary" icon="check2" :loading="advSaving" @click="saveCustomConfig">Guardar y aplicar</BaseButton>
           <small class="dd-muted">Se ejecuta <code>nginx -t</code> / <code>apachectl configtest</code> antes de recargar.</small>
         </div>
@@ -1474,6 +1478,9 @@ export default {
     const showMailLink = computed(() => store.hasFeature('mail'))
     const showApacheField = computed(() => store.hasFeature('apache') || !!advApache.value)
     const advSaving = ref(false)
+    // Directivas libres en el vhost = acceso a la config del servidor web (alias a
+    // carpetas ajenas, logs a programa en Apache → root). Solo admin.
+    const canEditAdv = computed(() => !!store.currentUser?.is_admin)
     const advError  = ref('')
     const showNginxEx = ref(false)
     const showApacheEx = ref(false)
@@ -2641,7 +2648,7 @@ location @maintenance {
       logTab, logLines, logsLoading, logsData, loadLogs, switchLog,
       logSearch, filteredLogLines, logLineClass, highlightLog,
       downloading, downloadSite, suspend, unsuspend, remove, goFiles,
-      advNginx, advApache, advSaving, advError, saveCustomConfig, showApacheField, showMailLink,
+      advNginx, advApache, advSaving, advError, saveCustomConfig, canEditAdv, showApacheField, showMailLink,
       templates, tplSelected, tplApplying, tplError, templateCategories, tplPreview, tplPhp, applyTemplate,
       serverIps, ipv4Sel, ipv4Saving, saveIpv4,
       redirForm, redirSaving, redirError, redirChanged, saveRedirect,
