@@ -157,6 +157,13 @@
                              :show-policy="false" />
             </div>
           </div>
+          <label class="sftp__check">
+            <input type="checkbox" v-model="newAcc.read_only">
+            <span>
+              <strong>Solo lectura (solo descargar)</strong>
+              <span class="sftp__muted"> — podrá ver y descargar, pero no subir, crear carpetas, renombrar ni borrar.</span>
+            </span>
+          </label>
           <div class="sftp__form-foot sftp__form-foot--end">
             <button class="sftp__btn sftp__btn--ghost" @click="showCreate=false" :disabled="busy">Cancelar</button>
             <button class="sftp__btn sftp__btn--primary" @click="createAccount"
@@ -212,12 +219,20 @@
         <div v-else class="sftp__table-wrap">
           <table class="sftp__table">
             <thead>
-              <tr><th>Usuario</th><th>Carpeta (jaula)</th><th>Claves</th><th class="sftp__ta-end">Acciones</th></tr>
+              <tr><th>Usuario</th><th>Carpeta (jaula)</th><th>Acceso</th><th>Claves</th><th class="sftp__ta-end">Acciones</th></tr>
             </thead>
             <tbody>
               <tr v-for="a in accounts" :key="a.id">
                 <td class="sftp__mono">{{ a.username }}</td>
                 <td><code>{{ a.target_relative }}</code></td>
+                <td>
+                  <button class="sftp__mode" :class="a.read_only ? 'sftp__mode--ro' : 'sftp__mode--rw'"
+                          :disabled="busy" @click="toggleReadOnly(a)"
+                          :title="a.read_only ? 'Pulsa para permitir también subir y modificar' : 'Pulsa para dejarla en solo lectura'">
+                    <i class="bi" :class="a.read_only ? 'bi-lock' : 'bi-pencil'"></i>
+                    {{ a.read_only ? 'Solo lectura' : 'Lectura y escritura' }}
+                  </button>
+                </td>
                 <td><span class="sftp__chip">{{ a.ssh_keys.length }}</span></td>
                 <td class="sftp__ta-end">
                   <button class="sftp__btn sftp__btn--icon" @click="downloadFilezilla(a.username, a.label)" title="Configuración para FileZilla (.xml)">
@@ -271,7 +286,7 @@ const newKey      = ref('')
 const accounts   = ref([])
 const folders    = ref([])
 const showCreate = ref(false)
-const newAcc     = ref({ label: '', target_subpath: '', password: '' })
+const newAcc     = ref({ label: '', target_subpath: '', password: '', read_only: false })
 
 const formatDate = formatDateTime
 
@@ -330,10 +345,12 @@ async function loadAccounts() {
 async function createAccount() {
   busy.value = true
   try {
-    const payload = { label: newAcc.value.label, target_subpath: newAcc.value.target_subpath }
+    const payload = { label: newAcc.value.label, target_subpath: newAcc.value.target_subpath,
+                      read_only: !!newAcc.value.read_only }
     if (newAcc.value.password) payload.password = newAcc.value.password
-    await api.createSftpAccount(props.userId, payload)
-    newAcc.value = { label: '', target_subpath: '', password: '' }
+    const r = await api.createSftpAccount(props.userId, payload)
+    if (r && r.sshd_warning) alert('Cuenta creada, pero no se pudo fijar su carpeta de inicio en SSH: ' + r.sshd_warning)
+    newAcc.value = { label: '', target_subpath: '', password: '', read_only: false }
     showCreate.value = false
     await loadAccounts()
   } catch (e) {
@@ -348,6 +365,23 @@ async function deleteAccount(a) {
   busy.value = true
   try {
     await api.deleteSftpAccount(props.userId, a.id)
+    await loadAccounts()
+  } catch (e) {
+    alert('Error: ' + e.message)
+  } finally {
+    busy.value = false
+  }
+}
+
+async function toggleReadOnly(a) {
+  const next = !a.read_only
+  const msg = next
+    ? `¿Dejar ${a.username} en SOLO LECTURA? Podrá ver y descargar, pero no subir, crear, renombrar ni borrar. Si está conectado, se aplica al reconectar.`
+    : `¿Permitir a ${a.username} SUBIR y MODIFICAR ficheros en su carpeta?`
+  if (!confirm(msg)) return
+  busy.value = true
+  try {
+    await api.setSftpAccountReadOnly(props.userId, a.id, next)
     await loadAccounts()
   } catch (e) {
     alert('Error: ' + e.message)
@@ -477,6 +511,12 @@ onMounted(load)
 
 .sftp__muted { font-size: .8rem; color: var(--text-muted); }
 .sftp__err { color: var(--danger); }
+.sftp__check { display: flex; gap: .5rem; align-items: flex-start; margin-top: .75rem; font-size: .88rem; cursor: pointer; }
+.sftp__check input { margin-top: .2rem; }
+.sftp__mode { display: inline-flex; align-items: center; gap: .3rem; font-size: .78rem; padding: .15rem .55rem; border-radius: 999px; border: 1px solid var(--border); background: var(--surface); color: var(--text); cursor: pointer; white-space: nowrap; }
+.sftp__mode:disabled { opacity: .6; cursor: not-allowed; }
+.sftp__mode--ro { color: var(--warning); border-color: var(--warning-border, var(--warning)); background: var(--warning-bg, transparent); }
+.sftp__mode--rw { color: var(--text-muted); }
 .sftp__danger { font-size: .8rem; color: var(--danger); }
 .sftp__mb { margin-bottom: .6rem; }
 .sftp code {

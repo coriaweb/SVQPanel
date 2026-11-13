@@ -7,7 +7,7 @@ El acceso de escritura se concede con ACLs para no alterar la propiedad
 owner:www-data que usan nginx y PHP-FPM.
 """
 
-from sqlalchemy import Column, Integer, String, DateTime, ForeignKey
+from sqlalchemy import Column, Integer, String, DateTime, ForeignKey, Boolean
 from sqlalchemy.orm import relationship
 from datetime import datetime
 
@@ -26,6 +26,9 @@ class SftpAccount(Base):
     target_path = Column(String(512), nullable=False)              # carpeta destino (abs)
     jail_path   = Column(String(512), nullable=False)              # dir del chroot (abs)
     mount_name  = Column(String(64),  nullable=False)              # subdir dentro de la jaula
+    # Solo lectura: internal-sftp -R (listar y descargar; nada de subir, crear,
+    # renombrar ni borrar). Lo aplica sshd, no los permisos del disco.
+    read_only   = Column(Boolean, default=False, nullable=False)
 
     password_set_at = Column(DateTime, nullable=True)
     ssh_keys_count  = Column(Integer, default=0, nullable=False)

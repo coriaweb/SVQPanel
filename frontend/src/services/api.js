@@ -1044,6 +1044,9 @@ class APIClient {
   setSftpAccountTarget(userId, accId, targetSubpath) {
     return this.put(`/api/users/${userId}/sftp/accounts/${accId}/target`, { target_subpath: targetSubpath })
   }
+  setSftpAccountReadOnly(userId, accId, readOnly) {
+    return this.put(`/api/users/${userId}/sftp/accounts/${accId}/read-only`, { read_only: !!readOnly })
+  }
   setSftpAccountPassword(userId, accId, password) {
     return this.put(`/api/users/${userId}/sftp/accounts/${accId}/password`, { password })
   }

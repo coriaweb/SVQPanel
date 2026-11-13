@@ -595,6 +595,8 @@ def _run_migrations():
             created_at      TIMESTAMP    NOT NULL DEFAULT NOW()
         )""",
         "CREATE INDEX IF NOT EXISTS ix_sftp_accounts_owner_id ON sftp_accounts(owner_id)",
+        # Subcuenta SFTP de solo lectura (internal-sftp -R)
+        "ALTER TABLE sftp_accounts ADD COLUMN IF NOT EXISTS read_only BOOLEAN NOT NULL DEFAULT FALSE",
         # ─────────────────────────────────────────────────────────────────
         # SSL del propio panel (hostname + certificado)
         # ─────────────────────────────────────────────────────────────────

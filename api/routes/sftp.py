@@ -7,7 +7,7 @@ SSH públicas en authorized_keys.
 """
 
 from datetime import datetime
-from typing import Optional
+from typing import List, Optional, Tuple
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
@@ -41,6 +41,20 @@ class SftpAccountCreate(BaseModel):
     label:          str = Field(..., min_length=2, max_length=16)
     target_subpath: str = Field(..., max_length=512)
     password:       Optional[str] = Field(None, min_length=8, max_length=128)
+    read_only:      bool = False
+
+
+class SftpAccountReadOnly(BaseModel):
+    read_only: bool
+
+
+def _sync_sshd(db: Session) -> Tuple[bool, str]:
+    """Regenera el drop-in de sshd de las subcuentas (carpeta de inicio + solo
+    lectura) con TODAS las de la BD. No lanza: devuelve (ok, motivo)."""
+    try:
+        return sftpacc.sync_sshd_from_db(db)
+    except Exception as e:  # noqa: BLE001
+        return False, str(e)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -312,6 +326,7 @@ async def list_sftp_accounts(
             "target_path":     a.target_path,
             "target_relative": a.target_path.replace(sftpacc.owner_home(target.username) + "/", ""),
             "password_set_at": a.password_set_at,
+            "read_only":       bool(getattr(a, "read_only", False)),
             "ssh_keys":        sftpacc.list_keys(a.jail_path, a.username),
             "created_at":      a.created_at,
         })
@@ -319,7 +334,7 @@ async def list_sftp_accounts(
 
 
 @router.post("/users/{user_id}/sftp/accounts")
-async def create_sftp_account(
+def create_sftp_account(
     user_id: int,
     payload: SftpAccountCreate,
     request: Request,
@@ -353,22 +368,38 @@ async def create_sftp_account(
         target_path=info["target_path"],
         jail_path=info["jail_path"],
         mount_name=info["mount_name"],
+        read_only=bool(payload.read_only),
     )
     if payload.password:
-        from datetime import datetime
         acc.password_set_at = datetime.utcnow()
     db.add(acc)
     db.commit()
     db.refresh(acc)
 
+    # Carpeta de inicio (-d) y, si se pidió, solo lectura (-R) en sshd.
+    ok_sshd, why = _sync_sshd(db)
+    if not ok_sshd and acc.read_only:
+        # Pidió solo lectura y no se pudo aplicar: NO dejar una cuenta con
+        # escritura que el admin cree de solo lectura.
+        sftpacc.delete_account(target.username, acc.username, acc.jail_path,
+                               acc.target_path, acc.mount_name)
+        db.delete(acc)
+        db.commit()
+        raise HTTPException(status_code=500,
+                            detail=f"No se pudo aplicar el modo solo lectura en SSH: {why}. "
+                                   "No se ha creado la cuenta.")
+
     log_audit(db, user=actor, category="sftp", action="create_subaccount",
-              target=f"{info['username']} → {info['target_path']}", request=request, success=True)
+              target=f"{info['username']} → {info['target_path']}"
+                     + (" (solo lectura)" if acc.read_only else ""),
+              request=request, success=True)
     return {"status": "created", "id": acc.id, "username": acc.username,
-            "target_path": acc.target_path}
+            "target_path": acc.target_path, "read_only": acc.read_only,
+            "sshd_warning": None if ok_sshd else why}
 
 
 @router.delete("/users/{user_id}/sftp/accounts/{account_id}")
-async def delete_sftp_account(
+def delete_sftp_account(
     user_id:    int,
     account_id: int,
     request:    Request,
@@ -382,6 +413,7 @@ async def delete_sftp_account(
                            acc.target_path, acc.mount_name)
     db.delete(acc)
     db.commit()
+    _sync_sshd(db)   # quita su bloque Match User
 
     log_audit(db, user=actor, category="sftp", action="delete_subaccount",
               target=acc.username, request=request, success=True)
@@ -418,10 +450,43 @@ def change_sftp_account_target(
     acc.target_path = info["target_path"]
     acc.mount_name = info["mount_name"]
     db.commit()
+    ok_sshd, why = _sync_sshd(db)   # la carpeta de inicio (-d) cambia de nombre
     log_audit(db, user=actor, category="sftp", action="subaccount_target",
               target=f"{acc.username}: {old} → {acc.target_path}", request=request, success=True)
     return {"status": msg, "target_path": acc.target_path,
-            "target_relative": acc.target_path.replace(sftpacc.owner_home(target.username) + "/", "")}
+            "target_relative": acc.target_path.replace(sftpacc.owner_home(target.username) + "/", ""),
+            "sshd_warning": None if ok_sshd else why}
+
+
+@router.put("/users/{user_id}/sftp/accounts/{account_id}/read-only")
+def set_sftp_account_read_only(
+    user_id:    int,
+    account_id: int,
+    payload:    SftpAccountReadOnly,
+    request:    Request,
+    db:         Session = Depends(get_db),
+    actor:      User    = Depends(get_current_user),
+):
+    """Activa/desactiva el modo solo lectura (internal-sftp -R). Si sshd no
+    acepta la configuración, se deshace el cambio en la BD y da error.
+    Las sesiones ya abiertas siguen con el modo anterior hasta reconectar."""
+    target = _resolve_target(user_id, actor, db)
+    acc = _account_or_404(db, target, account_id)
+    before = bool(acc.read_only)
+    acc.read_only = bool(payload.read_only)
+    db.commit()
+    ok_sshd, why = _sync_sshd(db)
+    if not ok_sshd:
+        acc.read_only = before
+        db.commit()
+        _sync_sshd(db)
+        log_audit(db, user=actor, category="sftp", action="subaccount_read_only",
+                  target=f"{acc.username}: {why}", request=request, success=False)
+        raise HTTPException(status_code=500, detail=f"No se pudo aplicar en SSH: {why}")
+    log_audit(db, user=actor, category="sftp", action="subaccount_read_only",
+              target=f"{acc.username}: {'solo lectura' if acc.read_only else 'lectura y escritura'}",
+              request=request, success=True)
+    return {"status": "ok", "read_only": acc.read_only}
 
 
 @router.put("/users/{user_id}/sftp/accounts/{account_id}/password")

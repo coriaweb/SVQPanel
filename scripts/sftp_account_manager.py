@@ -48,6 +48,98 @@ def _run(cmd: List[str], input_text: Optional[str] = None, timeout: int = 15) ->
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# sshd por subcuenta: entrar YA dentro de la carpeta (-d) y solo lectura (-R)
+# ─────────────────────────────────────────────────────────────────────────────
+# Un bloque `Match User` por subcuenta con su propio ForceCommand. sshd se queda
+# con el PRIMER valor de cada directiva, así que este fichero tiene que cargarse
+# ANTES que svqpanel-sftponly.conf (el `Match Group sftponly` genérico, que pone
+# ChrootDirectory y el ForceCommand sin opciones): sshd_config.d/*.conf se lee en
+# orden alfabético y "svqpanel-sftp-accounts" < "svqpanel-sftponly" ('-' < 'o').
+# El chroot sigue viniendo del bloque del grupo.
+SSHD_ACCOUNTS_PATH = "/etc/ssh/sshd_config.d/svqpanel-sftp-accounts.conf"
+_SAFE_MOUNT = re.compile(r"^[A-Za-z0-9._@+-]{1,64}$")
+_SAFE_USER = re.compile(r"^[a-z_][a-z0-9_-]{0,31}$")
+
+
+def sshd_accounts_content(accounts: List[Dict]) -> str:
+    """Contenido del drop-in. accounts: [{username, mount_name, read_only}].
+    -d solo con un nombre de carpeta seguro (sin espacios ni %: internal-sftp
+    trocea los argumentos y expande %); si no, entra en la raíz de la jaula."""
+    lines = [
+        "# SVQPanel — subcuentas SFTP: carpeta de inicio (-d) y solo lectura (-R).",
+        "# Generado por el panel (sftp_account_manager.sync_sshd); no editar a mano.",
+        "# Va antes que svqpanel-sftponly.conf: sshd usa el PRIMER ForceCommand.",
+        "",
+    ]
+    for a in sorted(accounts, key=lambda x: x["username"]):
+        user = a["username"]
+        if not _SAFE_USER.match(user or ""):
+            continue
+        cmd = "internal-sftp"
+        if a.get("read_only"):
+            cmd += " -R"
+        mount = a.get("mount_name") or ""
+        if _SAFE_MOUNT.match(mount) and mount not in (".", ".."):
+            cmd += f" -d /{mount}"
+        lines += [f"Match User {user}", f"    ForceCommand {cmd}", ""]
+    return "\n".join(lines)
+
+
+def _reload_sshd() -> Tuple[bool, str]:
+    rc, _, err = _run(["systemctl", "reload", "ssh"], timeout=8)
+    if rc != 0:
+        rc, _, err = _run(["systemctl", "reload", "sshd"], timeout=8)
+    return rc == 0, err.strip()
+
+
+def sync_sshd(accounts: List[Dict]) -> Tuple[bool, str]:
+    """Escribe el drop-in, valida con `sshd -t` y recarga sshd. Si la validación
+    falla, deja el fichero anterior y NO recarga (nunca tumbar el SSH del
+    servidor). Recargar no corta las sesiones abiertas. Idempotente."""
+    content = sshd_accounts_content(accounts)
+    previous = None
+    if os.path.isfile(SSHD_ACCOUNTS_PATH):
+        try:
+            with open(SSHD_ACCOUNTS_PATH) as f:
+                previous = f.read()
+        except OSError:
+            previous = None
+    if previous == content:
+        return True, "unchanged"
+    tmp = SSHD_ACCOUNTS_PATH + ".tmp"
+    try:
+        with open(tmp, "w") as f:
+            f.write(content)
+        os.chmod(tmp, 0o644)
+        os.replace(tmp, SSHD_ACCOUNTS_PATH)
+    except OSError as e:
+        return False, f"no se pudo escribir {SSHD_ACCOUNTS_PATH}: {e}"
+    rc, _, err = _run(["sshd", "-t"], timeout=8)
+    if rc != 0:
+        try:
+            if previous is None:
+                os.remove(SSHD_ACCOUNTS_PATH)
+            else:
+                with open(SSHD_ACCOUNTS_PATH, "w") as f:
+                    f.write(previous)
+        except OSError:
+            pass
+        return False, f"sshd -t falló (se deja la configuración anterior): {err.strip()}"
+    ok, err = _reload_sshd()
+    if not ok:
+        return False, f"reload de sshd falló: {err}"
+    return True, "updated"
+
+
+def sync_sshd_from_db(db) -> Tuple[bool, str]:
+    """sync_sshd con TODAS las subcuentas de la BD (el fichero es global)."""
+    from api.models.models_sftp_account import SftpAccount
+    rows = db.query(SftpAccount).all()
+    return sync_sshd([{"username": r.username, "mount_name": r.mount_name,
+                       "read_only": bool(getattr(r, "read_only", False))} for r in rows])
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # Rutas / validación
 # ─────────────────────────────────────────────────────────────────────────────
 def owner_home(owner: str) -> str:

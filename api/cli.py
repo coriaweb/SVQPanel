@@ -2873,6 +2873,28 @@ def cmd_sftp_owner_acl() -> int:
     return 0
 
 
+def cmd_sftp_sshd_sync() -> int:
+    """Update 0180: genera /etc/ssh/sshd_config.d/svqpanel-sftp-accounts.conf con
+    todas las subcuentas SFTP (entran ya dentro de su carpeta; las de solo
+    lectura con internal-sftp -R). Valida con sshd -t antes de recargar; si
+    falla deja la configuración anterior. Idempotente."""
+    from sqlalchemy import text
+    from scripts.sftp_account_manager import sync_sshd_from_db
+    load_all_models()
+    db = SessionLocal()
+    try:
+        # update.sh aplica los updates ANTES de reiniciar el panel (que es quien
+        # crea las columnas nuevas): sin esto el SELECT de read_only fallaría.
+        db.execute(text("ALTER TABLE sftp_accounts ADD COLUMN IF NOT EXISTS "
+                        "read_only BOOLEAN NOT NULL DEFAULT FALSE"))
+        db.commit()
+        ok, msg = sync_sshd_from_db(db)
+    finally:
+        db.close()
+    print(("✓ " if ok else "⚠ ") + f"sshd subcuentas SFTP: {msg}")
+    return 0 if ok else 1
+
+
 def cmd_php_global_policy() -> int:
     """Update 0177: aplica a TODAS las versiones de PHP instaladas la política
     del php.ini global (techos 512M / 64M / 64M / 120 s, OPcache, APCu CLI).
@@ -2998,6 +3020,7 @@ def main():
     sub.add_parser("fix_panel_vhost", help="Límite de subida, timeout de /pma y cabeceras en el vhost del panel")
     sub.add_parser("pma_fpm", help="Pool PHP-FPM propio de phpMyAdmin (límites de subida altos)")
     sub.add_parser("sftp_owner_acl", help="Subcuentas SFTP: que la web pueda escribir en lo que suben")
+    sub.add_parser("sftp_sshd_sync", help="Subcuentas SFTP: carpeta de inicio y solo lectura en sshd")
     p_exp = sub.add_parser("export_account",
                            help="Migrador SVQPanel→SVQPanel: vuelca una cuenta en JSON (stdout; contiene secretos)")
     p_exp.add_argument("username")
@@ -3244,6 +3267,8 @@ def main():
         sys.exit(cmd_pma_fpm())
     if args.cmd == "sftp_owner_acl":
         sys.exit(cmd_sftp_owner_acl())
+    if args.cmd == "sftp_sshd_sync":
+        sys.exit(cmd_sftp_sshd_sync())
     if args.cmd == "export_account":
         sys.exit(cmd_export_account(args.username, summary_only=args.summary))
     if args.cmd == "svq_plan":
