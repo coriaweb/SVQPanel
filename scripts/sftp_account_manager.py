@@ -64,17 +64,33 @@ def jail_path(owner: str, label: str) -> str:
     return os.path.join(owner_home(owner), JAILS_SUBDIR, label)
 
 
+def normalize_subpath(owner: str, subpath: str) -> str:
+    """Ruta relativa al home a partir de lo que escriba el cliente. Acepta:
+      - web/dominio/private/x            (relativa al home, la forma «oficial»)
+      - /home/{owner}/web/dominio/…      (absoluta)
+      - /web/dominio/…                   (lo que enseña FileZilla: su raíz ES el home)
+      - {owner}/web/dominio/…  o  ~/web/… (Chrome autorrellenaba el usuario delante)
+    Solo quita prefijos: la contención en el home la sigue validando resolve_target."""
+    home = owner_home(owner).rstrip("/")
+    p = (subpath or "").strip().replace("\\", "/")
+    if p == home or p.startswith(home + "/"):
+        p = p[len(home):]
+    elif p.startswith("~/") or p == "~":
+        p = p[1:]
+    p = p.lstrip("/")
+    if (p == owner or p.startswith(owner + "/")) and \
+            not os.path.isdir(os.path.join(home, owner)):
+        p = p[len(owner):].lstrip("/")
+    return p.rstrip("/")
+
+
 def resolve_target(owner: str, subpath: str) -> Optional[str]:
     """
     Resuelve subpath (relativo al home del cliente o absoluto) y valida que
     cae ESTRICTAMENTE dentro de /home/{owner}/. Devuelve la ruta canónica o None.
     """
     home = owner_home(owner)
-    subpath = (subpath or "").strip()
-    if subpath.startswith("/"):
-        candidate = subpath
-    else:
-        candidate = os.path.join(home, subpath)
+    candidate = os.path.join(home, normalize_subpath(owner, subpath))
     # Normalizar resolviendo .. y symlinks
     real_home = os.path.realpath(home)
     real_cand = os.path.realpath(candidate)
@@ -165,7 +181,8 @@ def create_account(owner: str, label: str, target_subpath: str,
     info incluye username, jail_path, target_path, mount_name.
     """
     if not LABEL_RE.match(label):
-        return False, "label inválido (a-z, 0-9, _, empezar por letra, 2-16 chars)", {}
+        return False, ("nombre no válido: solo minúsculas, números y _ (sin guiones ni "
+                       "espacios), empezando por letra, de 2 a 16 caracteres"), {}
 
     target, why = validate_target(owner, target_subpath)
     if not target:
@@ -267,7 +284,8 @@ def validate_target(owner: str, subpath: str) -> Tuple[Optional[str], str]:
     if target == jails or target.startswith(jails + os.sep):
         return None, "no se puede apuntar a la carpeta interna de las jaulas SFTP"
     if not os.path.isdir(target):
-        return None, f"la carpeta destino no existe: {subpath}"
+        return None, (f"la carpeta destino no existe: {target} "
+                      "(se escribe desde tu home, p. ej. web/midominio.com/private/carpeta)")
     return target, ""
 
 

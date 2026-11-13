@@ -128,9 +128,14 @@
           <div class="sftp__grid">
             <div class="sftp__field">
               <label>Nombre (etiqueta)</label>
-              <input class="sftp__input" v-model="newAcc.label" placeholder="dev1" pattern="[a-z][a-z0-9_]+"
-                     name="sftp-label" autocomplete="off">
+              <!-- Se normaliza al escribir (minúsculas; guion/espacio/punto → _; máx. 16):
+                   antes «inovpecas-sa» se aceptaba aquí y fallaba al crear con un alert. -->
+              <input class="sftp__input" :value="newAcc.label" @input="onLabelInput" placeholder="dev1"
+                     maxlength="16" name="sftp-label" autocomplete="off">
               <span class="sftp__muted">usuario: {{ previewUsername }}</span>
+              <span v-if="labelError" class="sftp__muted sftp__err">
+                <i class="bi bi-exclamation-circle"></i> {{ labelError }}
+              </span>
               <span v-if="previewTruncated" class="sftp__muted">
                 <i class="bi bi-info-circle"></i> Linux admite 32 caracteres: el usuario se recorta.
               </span>
@@ -155,7 +160,7 @@
           <div class="sftp__form-foot sftp__form-foot--end">
             <button class="sftp__btn sftp__btn--ghost" @click="showCreate=false" :disabled="busy">Cancelar</button>
             <button class="sftp__btn sftp__btn--primary" @click="createAccount"
-                    :disabled="busy || !newAcc.label || !newAcc.target_subpath">
+                    :disabled="busy || !newAcc.label || !!labelError || !newAcc.target_subpath">
               <span v-if="busy" class="sftp__spinner sftp__spinner--sm"></span>Crear cuenta
             </button>
           </div>
@@ -269,6 +274,21 @@ const showCreate = ref(false)
 const newAcc     = ref({ label: '', target_subpath: '', password: '' })
 
 const formatDate = formatDateTime
+
+// Etiqueta = sufijo del usuario Linux: igual que sftp_account_manager.LABEL_RE
+// (^[a-z][a-z0-9_]{1,15}$).
+function onLabelInput(e) {
+  const clean = e.target.value.toLowerCase().replace(/[-.\s]/g, '_').replace(/[^a-z0-9_]/g, '').slice(0, 16)
+  newAcc.value.label = clean
+  if (e.target.value !== clean) e.target.value = clean
+}
+const labelError = computed(() => {
+  const l = newAcc.value.label
+  if (!l) return ''
+  if (!/^[a-z]/.test(l)) return 'Debe empezar por una letra.'
+  if (l.length < 2) return 'Mínimo 2 caracteres.'
+  return ''
+})
 
 // Igual que sftp_account_manager.make_username: Linux corta el usuario a 32
 // caracteres. Mostrarlo sin cortar hizo que un cliente tecleara uno inexistente.
@@ -456,6 +476,7 @@ onMounted(load)
 @keyframes sftp-spin { to { transform: rotate(360deg); } }
 
 .sftp__muted { font-size: .8rem; color: var(--text-muted); }
+.sftp__err { color: var(--danger); }
 .sftp__danger { font-size: .8rem; color: var(--danger); }
 .sftp__mb { margin-bottom: .6rem; }
 .sftp code {
