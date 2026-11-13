@@ -261,12 +261,21 @@ async def list_target_folders(
 ):
     """
     Carpetas candidatas (relativas al home) para enjaular una subcuenta:
-    raíz de cada dominio, su public_html, y la carpeta files.
+    raíz de cada dominio, su public_html y su private/ con sus subcarpetas de
+    primer nivel (p. ej. private/sftp_clientes), y la carpeta files. Son solo
+    sugerencias: el campo admite cualquier subcarpeta.
     """
     import os
     target = _resolve_target(user_id, actor, db)
     home = sftpacc.owner_home(target.username)
     folders: List[str] = []
+
+    def _subdirs(path: str):
+        try:
+            return sorted(e.name for e in os.scandir(path)
+                          if e.is_dir(follow_symlinks=False) and not e.name.startswith("."))
+        except OSError:
+            return []
 
     web = os.path.join(home, "web")
     if os.path.isdir(web):
@@ -276,6 +285,10 @@ async def list_target_folders(
                 ph = os.path.join(entry.path, "public_html")
                 if os.path.isdir(ph):
                     folders.append(f"web/{entry.name}/public_html")
+                pv = os.path.join(entry.path, "private")
+                if os.path.isdir(pv):
+                    folders.append(f"web/{entry.name}/private")
+                    folders += [f"web/{entry.name}/private/{n}" for n in _subdirs(pv)[:50]]
     if os.path.isdir(os.path.join(home, "files")):
         folders.append("files")
 

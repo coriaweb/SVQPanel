@@ -128,7 +128,8 @@
           <div class="sftp__grid">
             <div class="sftp__field">
               <label>Nombre (etiqueta)</label>
-              <input class="sftp__input" v-model="newAcc.label" placeholder="dev1" pattern="[a-z][a-z0-9_]+">
+              <input class="sftp__input" v-model="newAcc.label" placeholder="dev1" pattern="[a-z][a-z0-9_]+"
+                     name="sftp-label" autocomplete="off">
               <span class="sftp__muted">usuario: {{ previewUsername }}</span>
               <span v-if="previewTruncated" class="sftp__muted">
                 <i class="bi bi-info-circle"></i> Linux admite 32 caracteres: el usuario se recorta.
@@ -136,13 +137,19 @@
             </div>
             <div class="sftp__field">
               <label>Carpeta destino</label>
+              <!-- autocomplete=off + new-password en la contraseña: si no, Chrome toma
+                   este campo (el texto justo antes de un password) por el USUARIO y lo
+                   rellena con el login guardado del panel, tapando las sugerencias del
+                   datalist (Oskarbi, 13-nov-2026: «el desplegable no funciona»). -->
               <input class="sftp__input sftp__input--mono" v-model="newAcc.target_subpath"
-                     list="sftp-folders" placeholder="web/midominio.com/public_html">
+                     list="sftp-folders" placeholder="web/midominio.com/public_html"
+                     name="sftp-target" autocomplete="off">
               <span class="sftp__muted">Elige una o escribe cualquier subcarpeta (ruta desde el home).</span>
             </div>
             <div class="sftp__field">
-              <label>Contraseña</label>
-              <input type="password" class="sftp__input" v-model="newAcc.password" placeholder="(opcional)" minlength="8">
+              <label>Contraseña <span class="sftp__muted">(opcional)</span></label>
+              <PasswordField v-model="newAcc.password" placeholder="Contraseña de la cuenta"
+                             :show-policy="false" />
             </div>
           </div>
           <div class="sftp__form-foot sftp__form-foot--end">
@@ -163,7 +170,8 @@
           <div class="sftp__field">
             <label>Nueva carpeta para <span class="sftp__mono">{{ editTarget.username }}</span></label>
             <input class="sftp__input sftp__input--mono" v-model="editTarget.path" list="sftp-folders"
-                   placeholder="web/midominio.com/public_html/carpeta" @keyup.enter="saveTarget">
+                   placeholder="web/midominio.com/public_html/carpeta" @keyup.enter="saveTarget"
+                   name="sftp-target-edit" autocomplete="off">
             <span class="sftp__muted">
               Ahora: <code>{{ editTarget.current }}</code>. Conserva usuario, contraseña y claves.
               Si está conectado ahora mismo, tendrá que reconectar.
@@ -174,6 +182,22 @@
             <button class="sftp__btn sftp__btn--primary" @click="saveTarget"
                     :disabled="busy || !editTarget.path.trim() || editTarget.path.trim() === editTarget.current">
               <span v-if="busy" class="sftp__spinner sftp__spinner--sm"></span>Cambiar carpeta
+            </button>
+          </div>
+        </div>
+
+        <!-- Cambiar contraseña de una cuenta -->
+        <div v-if="pwdTarget" class="sftp__box sftp__box--inset sftp__mb">
+          <div class="sftp__field">
+            <label>Nueva contraseña para <span class="sftp__mono">{{ pwdTarget.username }}</span></label>
+            <PasswordField v-model="pwdTarget.password" placeholder="Nueva contraseña"
+                           @valid="pwdTarget.valid = $event" />
+          </div>
+          <div class="sftp__form-foot sftp__form-foot--end">
+            <button class="sftp__btn sftp__btn--ghost" @click="pwdTarget = null" :disabled="busy">Cancelar</button>
+            <button class="sftp__btn sftp__btn--primary" @click="savePassword"
+                    :disabled="busy || !pwdTarget.password">
+              <span v-if="busy" class="sftp__spinner sftp__spinner--sm"></span>Cambiar contraseña
             </button>
           </div>
         </div>
@@ -316,6 +340,7 @@ const editTarget = ref(null)   // { id, username, current, path }
 
 function openTarget(a) {
   showCreate.value = false
+  pwdTarget.value = null
   editTarget.value = { id: a.id, username: a.username, current: a.target_relative, path: a.target_relative }
 }
 
@@ -334,13 +359,23 @@ async function saveTarget() {
   }
 }
 
-async function openAccPassword(a) {
-  const pwd = prompt(`Nueva contraseña para ${a.username} (mín. 8 caracteres):`)
-  if (!pwd) return
-  if (pwd.length < 8) { alert('Mínimo 8 caracteres'); return }
+// Formulario en línea con PasswordField (generar + política del panel), en vez del
+// prompt() de antes: sin generador y anunciando «mín. 8» cuando la política pide más.
+const pwdTarget = ref(null)   // { id, username, password, valid }
+
+function openAccPassword(a) {
+  showCreate.value = false
+  editTarget.value = null
+  pwdTarget.value = { id: a.id, username: a.username, password: '', valid: false }
+}
+
+async function savePassword() {
+  const t = pwdTarget.value
+  if (!t || !t.password) return
   busy.value = true
   try {
-    await api.setSftpAccountPassword(props.userId, a.id, pwd)
+    await api.setSftpAccountPassword(props.userId, t.id, t.password)
+    pwdTarget.value = null
     alert('Contraseña actualizada')
     await loadAccounts()
   } catch (e) {
