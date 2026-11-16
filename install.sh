@@ -1523,7 +1523,7 @@ RSPAMDRLCONFEOF
     freshclam 2>&1 | tail -1 || echo -e "  ${YELLOW}  (freshclam se reintentará por el servicio)${NC}"
     systemctl enable --now clamav-freshclam 2>/dev/null || true
 
-    # Contener el consumo de RAM: clamd carga sus firmas en memoria y llega a ~1 GB.
+    # Contener el consumo de RAM: clamd carga sus firmas en memoria y llega a ~1,3 GB.
     # En un servidor de 4 GB el OOM killer acaba matándolo, y la unit de Debian trae
     # Restart=no → se queda MUERTO sin avisar y el correo deja de escanearse en
     # silencio. (Visto en producción: 6 h sin antivirus sin que saltara ninguna alarma.)
@@ -1539,9 +1539,10 @@ RSPAMDRLCONFEOF
     mkdir -p /etc/systemd/system/clamav-daemon.service.d
     cat > /etc/systemd/system/clamav-daemon.service.d/99-svqpanel-memory.conf << 'CLAMMEMEOF'
 # SVQPanel: techo de RAM y reinicio automático (ver install.sh).
+# OJO: NO poner MemoryHigh. No mata, estrangula: clamd necesita ~1,3 GB en reposo
+# y por debajo de eso queda parado esperando memoria e infla la carga (updates/0181).
 [Service]
-MemoryMax=900M
-MemoryHigh=700M
+MemoryMax=2G
 Restart=on-failure
 RestartSec=30s
 CLAMMEMEOF
