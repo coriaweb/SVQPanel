@@ -259,7 +259,7 @@
     </div>
 
     <!-- Registros de la zona seleccionada -->
-    <div v-if="selectedZone" class="dns-card">
+    <div v-if="selectedZone" id="dns-records-card" class="dns-card" style="scroll-margin-top:80px">
       <div class="dns-card-head">
         <span class="dns-card-title">
           <i class="bi bi-list-ul"></i>
@@ -680,7 +680,7 @@
 </template>
 
 <script>
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, onMounted, nextTick } from 'vue'
 import { useMainStore } from '../stores/useMainStore'
 import api from '../services/api'
 import { formatDateTime } from '../utils/datetime'
@@ -815,6 +815,11 @@ export default {
 
     const openZoneRecords = async (zone) => {
       selectedZone.value = zone
+      // La tarjeta de registros sale DEBAJO de la tabla de zonas: con varias
+      // zonas queda fuera de pantalla y parece que el botón «no abre nada».
+      await nextTick()
+      document.getElementById('dns-records-card')
+        ?.scrollIntoView({ behavior: 'smooth', block: 'start' })
       await loadRecords(zone.id)
     }
 
