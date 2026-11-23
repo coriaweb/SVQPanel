@@ -324,7 +324,7 @@
             <BaseButton v-if="!domain.mail_dns_only" variant="ghost" size="sm" icon="download" block :loading="downloading" @click="downloadSite">Descargar sitio</BaseButton>
             <BaseButton v-if="!domain.is_suspended" variant="ghost" size="sm" icon="pause-circle" block @click="suspend">Suspender</BaseButton>
             <BaseButton v-else variant="ghost" size="sm" icon="play-circle" block @click="unsuspend">Reactivar</BaseButton>
-            <BaseButton variant="danger" size="sm" icon="trash" block @click="remove">Eliminar dominio</BaseButton>
+            <BaseButton variant="danger" size="sm" icon="trash" block :loading="removing" @click="remove">{{ removing ? 'Eliminando…' : 'Eliminar dominio' }}</BaseButton>
           </div>
         </BaseCard>
       </div>
@@ -2317,10 +2317,17 @@ location @maintenance {
       try { await api.unsuspendDomain(domainId.value); store.showNotification('Dominio reactivado', 'success'); await reloadDomain() }
       catch (e) { store.showNotification('Error: ' + e.message, 'danger') }
     }
+    // El borrado tarda (archivos, vhost, pool PHP, DNS, correo…): el botón queda
+    // en «Eliminando…» y bloqueado hasta que el servidor responde.
+    const removing = ref(false)
     const remove = async () => {
+      if (removing.value) return
       if (!confirm('¿Eliminar este dominio? Se borrarán todos sus archivos.')) return
+      removing.value = true
+      store.showNotification(`Eliminando ${domain.value?.domain_name || 'el dominio'}… puede tardar unos segundos`, 'info')
       try { await api.deleteDomain(domainId.value); store.showNotification('Dominio eliminado', 'success'); router.push('/domains') }
       catch (e) { store.showNotification('Error: ' + e.message, 'danger') }
+      finally { removing.value = false }
     }
     const goFiles = () => router.push({ path: '/files', query: { domain: domainId.value } })
 
@@ -2647,7 +2654,7 @@ location @maintenance {
       selectFpmPreset, fpmEffectiveChildren, fpmEstimatedRamMb, saveFpm,
       logTab, logLines, logsLoading, logsData, loadLogs, switchLog,
       logSearch, filteredLogLines, logLineClass, highlightLog,
-      downloading, downloadSite, suspend, unsuspend, remove, goFiles,
+      downloading, downloadSite, suspend, unsuspend, remove, removing, goFiles,
       advNginx, advApache, advSaving, advError, saveCustomConfig, canEditAdv, showApacheField, showMailLink,
       templates, tplSelected, tplApplying, tplError, templateCategories, tplPreview, tplPhp, applyTemplate,
       serverIps, ipv4Sel, ipv4Saving, saveIpv4,

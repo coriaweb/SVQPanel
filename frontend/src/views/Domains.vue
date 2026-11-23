@@ -56,7 +56,7 @@
             </tr>
           </thead>
           <tbody>
-            <tr v-for="domain in groupedDomains" :key="domain.id" :class="{ 't-row--suspended': domain.is_suspended, 't-row--sub': domain.is_subdomain }">
+            <tr v-for="domain in groupedDomains" :key="domain.id" :class="{ 't-row--suspended': domain.is_suspended, 't-row--sub': domain.is_subdomain, 't-row--deleting': deletingIds[domain.id] }">
               <td>
                 <span v-if="domain.is_subdomain" class="sub-indent" :title="'Subdominio de ' + domain.parent_domain">└</span>
                 <router-link :to="`/domains/${domain.id}`" class="t-domain"><i class="bi" :class="domain.mail_dns_only ? 'bi-envelope' : (domain.is_subdomain ? 'bi-diagram-3' : 'bi-globe2')"></i>{{ domain.domain_name }}</router-link>
@@ -78,17 +78,18 @@
                 </template>
               </td>
               <td>
-                <StatusBadge :status="domain.is_suspended ? 'warning' : (domain.is_active ? 'active' : 'error')"
+                <span v-if="deletingIds[domain.id]" class="deleting-chip"><i class="bi bi-arrow-repeat spin"></i> Eliminando…</span>
+                <StatusBadge v-else :status="domain.is_suspended ? 'warning' : (domain.is_active ? 'active' : 'error')"
                   :label="domain.is_suspended ? 'Suspendido' : (domain.is_active ? 'Activo' : 'Inactivo')" />
               </td>
               <td class="ta-end">
-                <div class="t-actions">
+                <div class="t-actions" :class="{ 'is-busy': deletingIds[domain.id] }">
                   <router-link class="icon-act" :to="`/domains/${domain.id}`" title="Ver y configurar el dominio"><i class="bi bi-box-arrow-in-right"></i></router-link>
                   <button v-if="!domain.mail_dns_only" class="icon-act" @click="openSSLManager(domain)" title="SSL"><i class="bi bi-lock"></i></button>
                   <button v-if="!domain.mail_dns_only" class="icon-act" @click="openFileManager(domain)" title="Archivos"><i class="bi bi-folder2-open"></i></button>
                   <button v-if="!domain.is_suspended" class="icon-act is-warn" @click="suspendDomain(domain)" title="Suspender"><i class="bi bi-pause-circle"></i></button>
                   <button v-else class="icon-act is-ok" @click="unsuspendDomain(domain)" title="Reactivar"><i class="bi bi-play-circle"></i></button>
-                  <button class="icon-act is-danger" @click="deleteDomainConfirm(domain.id)" title="Eliminar"><i class="bi bi-trash"></i></button>
+                  <button class="icon-act is-danger" :disabled="deletingIds[domain.id]" @click="deleteDomainConfirm(domain)" :title="deletingIds[domain.id] ? 'Eliminando…' : 'Eliminar'"><i class="bi" :class="deletingIds[domain.id] ? 'bi-arrow-repeat spin' : 'bi-trash'"></i></button>
                 </div>
               </td>
             </tr>
@@ -571,11 +572,24 @@ export default {
     const closeIPv6Manager = () => { showIPv6Manager.value = false; selectedDomain.value = null }
     const openFileManager = (d) => { router.push({ path: '/files', query: { domain: d.id } }) }
 
-    const deleteDomainConfirm = (domainId) => {
-      if (confirm('¿Eliminar este dominio? Se borrarán todos sus archivos.')) {
-        api.deleteDomain(domainId)
-          .then(() => { store.showNotification('Dominio eliminado', 'success'); loadDomains() })
-          .catch(e => store.showNotification('Error al eliminar: ' + e.message, 'danger'))
+    // El borrado tarda (archivos, vhost, pool PHP, DNS, correo…): mientras dura,
+    // la fila queda atenuada con «Eliminando…» y sus botones bloqueados, para que
+    // no parezca que no ha pasado nada ni se pulse dos veces.
+    const deletingIds = ref({})
+    const deleteDomainConfirm = async (domain) => {
+      if (deletingIds.value[domain.id]) return
+      if (!confirm(`¿Eliminar ${domain.domain_name}? Se borrarán todos sus archivos.`)) return
+      deletingIds.value = { ...deletingIds.value, [domain.id]: true }
+      store.showNotification(`Eliminando ${domain.domain_name}… puede tardar unos segundos`, 'info')
+      try {
+        await api.deleteDomain(domain.id)
+        store.showNotification(`Dominio ${domain.domain_name} eliminado`, 'success')
+        await loadDomains()
+      } catch (e) {
+        store.showNotification('Error al eliminar: ' + e.message, 'danger')
+      } finally {
+        const { [domain.id]: _, ...rest } = deletingIds.value
+        deletingIds.value = rest
       }
     }
 
@@ -671,7 +685,7 @@ export default {
       openSSLManager, closeSSLManager,
       openIPv6Manager, closeIPv6Manager,
       openFileManager,
-      deleteDomainConfirm, changePHP, suspendDomain, unsuspendDomain,
+      deleteDomainConfirm, deletingIds, changePHP, suspendDomain, unsuspendDomain,
       downloadingId, downloadSite,
       loadDomains, reloadDomains, getUserName,
       // Logs + disk
@@ -715,6 +729,16 @@ export default {
 .disk-refresh:hover:not(:disabled) { color: var(--text); }
 .disk-refresh:disabled { opacity: .6; cursor: default; }
 .spin { display: inline-block; animation: spin 0.8s linear infinite; }
+/* Fila en pleno borrado: atenuada y sin acciones hasta que responde el servidor */
+.svq-table tbody tr.t-row--deleting td { opacity: .55; }
+.svq-table tbody tr.t-row--deleting td:has(.deleting-chip),
+.svq-table tbody tr.t-row--deleting td.ta-end { opacity: 1; }
+.t-actions.is-busy { pointer-events: none; }
+.t-actions.is-busy .icon-act:not(.is-danger) { opacity: .35; }
+.deleting-chip {
+  display: inline-flex; align-items: center; gap: 6px; white-space: nowrap;
+  font-size: var(--fs-sm); font-weight: var(--fw-medium); color: var(--danger);
+}
 @keyframes spin { from { transform: rotate(0); } to { transform: rotate(360deg); } }
 .mono { font-family: var(--font-mono); }
 /* ===== Tabla compacta ===== */
