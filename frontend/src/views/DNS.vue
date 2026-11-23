@@ -378,7 +378,7 @@
                   <option v-for="d in domainsWithoutZone" :key="d.id" :value="d.domain_name" />
                 </datalist>
                 <div v-if="!editingZone" class="form-text">
-                  Debe ser un dominio existente de un cliente. Si no aparece, créalo primero
+                  Debe ser un dominio existente de un cliente o un alias de uno. Si no aparece, créalo primero
                   en <strong>Dominios</strong> asignándolo a su cliente.
                 </div>
               </div>
