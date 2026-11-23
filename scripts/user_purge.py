@@ -142,7 +142,7 @@ def purge_user_system(db: Session, user) -> List[str]:
 
     # ── 5. Zonas DNS (zone file + named.conf.zones + slave del cluster) ───────
     # Las zonas no tienen user_id: se asocian por nombre de dominio del usuario.
-    domain_names = {d.domain_name for d in domains}
+    domain_names = {d.domain_name for d in domains} | alias_names_of(db, [d.id for d in domains])
     purge_dns_zones(db, domain_names, warnings)
 
     # ── 6. Crontab del sistema (/var/spool/cron/crontabs/{username}) ──────────
@@ -225,6 +225,19 @@ def purge_mail_domains(db: Session, mail_domains, username: str, warnings: List[
         _rebuild_mail_tls(db)
     except Exception as e:
         warnings.append(f"mail_tls_rebuild: {e}")
+
+
+def alias_names_of(db: Session, domain_ids) -> set:
+    """Nombres de los alias de esos dominios: sus zonas DNS se van con ellos
+    (sin el dominio principal quedarían huérfanas, sin dueño que las vea)."""
+    if not domain_ids:
+        return set()
+    try:
+        from api.models.models_domain_alias import DomainAlias
+        return {a.alias_name for a in db.query(DomainAlias.alias_name)
+                .filter(DomainAlias.domain_id.in_(list(domain_ids))).all()}
+    except Exception:
+        return set()
 
 
 def purge_dns_zones(db: Session, domain_names, warnings: List[str]) -> None:

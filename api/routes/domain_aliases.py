@@ -6,6 +6,11 @@ Dominios alias: otros nombres que llevan a la web de un dominio.
   PUT    /api/domains/{id}/aliases/{alias_id}   → cambiar el modo {redirect}
   DELETE /api/domains/{id}/aliases/{alias_id}   → quitar
   POST   /api/domains/{id}/aliases/ssl          → reintentar meter en el cert los que ya apuntan
+  POST   /api/domains/{id}/aliases/{alias_id}/dns → crear la zona DNS del alias
+
+Zona DNS: si el dominio principal tiene su zona en este panel, al añadir un
+alias se le crea la suya (plantilla «web»); al quitarlo se borra si nadie la
+ha tocado. Ver api/routes/dns.py (create_alias_zone).
 
 Modo por defecto: redirigir (301) al dominio principal, lo habitual (Plesk lo
 hace así): una sola URL buena para buscadores. Con redirect=False el alias sirve
@@ -130,6 +135,20 @@ def _dns_hint(domain: Domain, db: Session) -> dict:
     return {"A": ipv4, "AAAA": domain.ipv6}
 
 
+def _zone_names(db: Session, names: list) -> set:
+    from api.models.models_dns import DnsZone
+    if not names:
+        return set()
+    return {z.domain_name for z in
+            db.query(DnsZone.domain_name).filter(DnsZone.domain_name.in_(names)).all()}
+
+
+def _main_dns_here(db: Session, domain: Domain) -> bool:
+    """¿El DNS del dominio principal lo lleva este panel? Entonces el de sus
+    alias también (mismo cliente, mismos nameservers): su zona se crea sola."""
+    return domain.domain_name in _zone_names(db, [domain.domain_name])
+
+
 @router.get("/domains/{domain_id}/aliases")
 def list_aliases(domain_id: int, current_user: User = Depends(require_auth),
                  db: Session = Depends(get_db)):
@@ -137,6 +156,7 @@ def list_aliases(domain_id: int, current_user: User = Depends(require_auth),
     rows = db.query(DomainAlias).filter(DomainAlias.domain_id == domain.id) \
                                 .order_by(DomainAlias.alias_name).all()
     in_cert = _cert_names(domain)
+    zones = _zone_names(db, [a.alias_name for a in rows])
     from scripts.ssl_manager import SSLManager
     sm = SSLManager()
     out = []
@@ -145,10 +165,11 @@ def list_aliases(domain_id: int, current_user: User = Depends(require_auth),
             "id": a.id, "alias_name": a.alias_name, "redirect": bool(a.redirect),
             "points_here": sm.points_here(a.alias_name),
             "in_certificate": covers(in_cert, a.alias_name),
+            "has_dns_zone": a.alias_name in zones,
             "created_at": a.created_at,
         })
     return {"aliases": out, "ssl_enabled": bool(domain.ssl_enabled),
-            "dns": _dns_hint(domain, db)}
+            "dns": _dns_hint(domain, db), "main_dns_here": _main_dns_here(db, domain)}
 
 
 @router.post("/domains/{domain_id}/aliases", status_code=201)
@@ -169,10 +190,37 @@ def add_alias(domain_id: int, data: AliasCreate,
         db.delete(alias)
     _regenerate_or_revert(domain, db, _revert)
 
+    # Zona DNS del alias: sola si el DNS del dominio principal ya está aquí.
+    # Va ANTES del certificado: con la zona servida, si el registrador ya
+    # delega en nuestros NS, el alias puede entrar en el cert a la primera.
+    dns_zone = {"created": False, "error": None, "skipped": True}
+    if _main_dns_here(db, domain):
+        from api.routes.dns import create_alias_zone
+        dns_zone = create_alias_zone(db, domain, name)
+
     ssl = _sync_cert(domain, add=[name, f"www.{name}"])
     return {"status": "success", "alias": {"id": alias.id, "alias_name": name,
                                            "redirect": bool(alias.redirect)},
-            "ssl": ssl, "dns": _dns_hint(domain, db)}
+            "ssl": ssl, "dns": _dns_hint(domain, db), "dns_zone": dns_zone}
+
+
+@router.post("/domains/{domain_id}/aliases/{alias_id}/dns", status_code=201)
+def create_alias_dns_zone(domain_id: int, alias_id: int,
+                          current_user: User = Depends(require_auth),
+                          db: Session = Depends(get_db)):
+    """Crea la zona DNS de un alias (para los que se añadieron sin ella)."""
+    domain = _owned(domain_id, db, current_user)
+    alias = db.query(DomainAlias).filter(DomainAlias.id == alias_id,
+                                         DomainAlias.domain_id == domain.id).first()
+    if not alias:
+        raise HTTPException(404, detail="Alias no encontrado")
+    from api.routes.dns import create_alias_zone
+    res = create_alias_zone(db, domain, alias.alias_name)
+    if res.get("exists"):
+        raise HTTPException(409, detail=f"{alias.alias_name} ya tiene zona DNS.")
+    if not res["created"]:
+        raise HTTPException(422, detail=f"No se pudo crear la zona: {res['error']}")
+    return {"status": "success", "dns": _dns_hint(domain, db)}
 
 
 @router.put("/domains/{domain_id}/aliases/{alias_id}")
@@ -212,7 +260,14 @@ def delete_alias(domain_id: int, alias_id: int,
     _regenerate_or_revert(domain, db, _revert)
 
     ssl = _sync_cert(domain, remove=[name, f"www.{name}"])
-    return {"status": "success", "ssl": ssl}
+    # Su zona DNS se va con él si nadie la ha tocado (si tiene MX, TXT… se queda)
+    zone_removed = False
+    try:
+        from api.routes.dns import remove_alias_zone_if_untouched
+        zone_removed = remove_alias_zone_if_untouched(db, domain, name)
+    except Exception as e:
+        logger.warning(f"Alias {name}: zona DNS no borrada: {e}")
+    return {"status": "success", "ssl": ssl, "dns_zone_removed": zone_removed}
 
 
 @router.post("/domains/{domain_id}/aliases/ssl")

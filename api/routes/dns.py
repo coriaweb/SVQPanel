@@ -26,12 +26,55 @@ router = APIRouter()
 
 # ──────────────────────── helpers de permisos ────────────────────────────────
 
+def zone_owner_domain(db: Session, name: str):
+    """Dominio del panel al que pertenece una zona: el propio dominio o, si el
+    nombre es un ALIAS (dominio.es → web de dominio.com), su dominio principal.
+    Sin esto un alias no podía tener zona: el alta exigía un Domain con ese
+    nombre y la pestaña Alias te mandaba a crearla igualmente."""
+    domain = db.query(Domain).filter(Domain.domain_name == name).first()
+    if domain:
+        return domain
+    from api.models.models_domain_alias import DomainAlias
+    alias = db.query(DomainAlias).filter(DomainAlias.alias_name == name).first()
+    if alias:
+        return db.query(Domain).filter(Domain.id == alias.domain_id).first()
+    return None
+
+
+def _zone_names_of_users(db: Session, user_ids) -> list:
+    """Nombres de zona que pertenecen a esos usuarios: sus dominios + sus alias."""
+    from api.models.models_domain_alias import DomainAlias
+    names = [d.domain_name for d in
+             db.query(Domain.domain_name).filter(Domain.user_id.in_(user_ids)).all()]
+    names += [a.alias_name for a in
+              db.query(DomainAlias.alias_name)
+                .join(Domain, DomainAlias.domain_id == Domain.id)
+                .filter(Domain.user_id.in_(user_ids)).all()]
+    return names
+
+
+def _zone_quota_error(db: Session, owner_domain) -> str:
+    """Mensaje si el dueño ya llegó al límite de zonas DNS de su plan (None si no).
+    Cuenta las zonas de sus dominios Y de sus alias."""
+    if not owner_domain:
+        return None
+    owner = db.query(User).filter(User.id == owner_domain.user_id).first()
+    limit = getattr(owner, "dns_zones_limit", 0) if owner else 0
+    if not limit or limit <= 0:
+        return None
+    names = _zone_names_of_users(db, [owner.id])
+    zone_count = db.query(DnsZone).filter(DnsZone.domain_name.in_(names)).count() if names else 0
+    if zone_count >= limit:
+        return f"Límite de zonas DNS del plan alcanzado ({zone_count}/{limit})."
+    return None
+
+
 def _user_can_edit_zone(zone: DnsZone, current_user, db: Session) -> bool:
     """True si el usuario puede editar esta zona: admin, el dueño del dominio o
     el reseller de ese dueño (alcance común de api/utils/scope.py)."""
     if is_admin(current_user):
         return True
-    domain = db.query(Domain).filter(Domain.domain_name == zone.domain_name).first()
+    domain = zone_owner_domain(db, zone.domain_name)
     return domain is not None and can_manage_owner(db, current_user, domain.user_id)
 
 
@@ -230,9 +273,9 @@ async def list_zones(
     if ids is None:
         zones = db.query(DnsZone).order_by(DnsZone.domain_name).all()
     else:
-        # Solo zonas de dominios del usuario (o, si es reseller, también de sus clientes)
-        user_domains = db.query(Domain.domain_name).filter(Domain.user_id.in_(ids)).all()
-        user_domain_names = [d.domain_name for d in user_domains]
+        # Solo zonas de dominios (y alias) del usuario (o, si es reseller,
+        # también de sus clientes)
+        user_domain_names = _zone_names_of_users(db, ids)
         zones = db.query(DnsZone).filter(
             DnsZone.domain_name.in_(user_domain_names)
         ).order_by(DnsZone.domain_name).all()
@@ -256,14 +299,15 @@ async def create_zone(
     admin), igual que el resto de recursos. Un admin/reseller no puede crear zonas
     "sueltas" para dominios inexistentes o de su propia cuenta de admin.
     """
-    domain = db.query(Domain).filter(Domain.domain_name == data.domain_name).first()
+    # El dominio dueño: el propio dominio o, si es un alias, su dominio principal
+    domain = zone_owner_domain(db, data.domain_name)
 
     if not is_admin(current_user):
         # Usuario: solo sus dominios. Reseller: los suyos y los de sus clientes.
         if not domain or not can_manage_owner(db, current_user, domain.user_id):
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
-                detail="Solo puedes crear zonas DNS para tus dominios (o los de tus clientes)"
+                detail="Solo puedes crear zonas DNS para tus dominios o sus alias (o los de tus clientes)"
             )
     else:
         # Admin: el dominio debe existir y pertenecer a un cliente (no a un admin)
@@ -271,7 +315,8 @@ async def create_zone(
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail=(f"No existe el dominio '{data.domain_name}' en el panel. "
-                        "Crea primero el dominio (asignado a un cliente) y luego su zona DNS. "
+                        "Crea primero el dominio (asignado a un cliente) o añádelo como alias "
+                        "de uno, y luego su zona DNS. "
                         "Si solo quieres correo/DNS y la web está en otro servidor, "
                         "crea el dominio marcando «Solo correo / DNS»."),
             )
@@ -288,24 +333,9 @@ async def create_zone(
         raise HTTPException(status_code=409, detail="La zona ya existe")
 
     # Validar límite de zonas DNS del plan (dueño = propietario del dominio)
-    owner_domain = db.query(Domain).filter(Domain.domain_name == data.domain_name).first()
-    if owner_domain:
-        owner = db.query(User).filter(User.id == owner_domain.user_id).first()
-        if owner and getattr(owner, "dns_zones_limit", 0) and owner.dns_zones_limit > 0:
-            zone_count = (
-                db.query(DnsZone)
-                .join(Domain, DnsZone.domain_name == Domain.domain_name)
-                .filter(Domain.user_id == owner.id)
-                .count()
-            )
-            if zone_count >= owner.dns_zones_limit:
-                raise HTTPException(
-                    status_code=status.HTTP_403_FORBIDDEN,
-                    detail=(
-                        f"Límite de zonas DNS del plan alcanzado "
-                        f"({zone_count}/{owner.dns_zones_limit})."
-                    ),
-                )
+    quota_err = _zone_quota_error(db, domain)
+    if quota_err:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=quota_err)
 
     from scripts.dns_manager import get_panel_nameservers
     ns1, ns2 = get_panel_nameservers(db)
@@ -314,8 +344,8 @@ async def create_zone(
     soa_ns = data.soa_ns or ns1
     ttl    = data.ttl or 14400
 
-    domain_obj = db.query(Domain).filter(Domain.domain_name == data.domain_name).first()
-    ipv6 = domain_obj.ipv6 if domain_obj else None
+    # IPv6 del dominio dueño (para un alias, la de su dominio principal: la web es la misma)
+    ipv6 = domain.ipv6 if domain else None
 
     try:
         manager = DNSManager()
@@ -406,7 +436,7 @@ def _regenerate_zone_records(zone, db, ns1, ns2):
     todo lo demás se conserva.
     """
     ipv4 = zone.ip_address or _get_server_ipv4(db)
-    domain_obj = db.query(Domain).filter(Domain.domain_name == zone.domain_name).first()
+    domain_obj = zone_owner_domain(db, zone.domain_name)
     ipv6 = domain_obj.ipv6 if domain_obj else None
 
     template = _build_template_records(zone.domain_name, ipv4, ipv6, ns1, ns2,
@@ -577,9 +607,14 @@ async def delete_zone(
         raise HTTPException(status_code=404, detail="Zona no encontrada")
 
     _require_zone_access(zone, current_user, db)
+    remove_zone(db, zone)
+    return None
 
+
+def remove_zone(db: Session, zone: DnsZone) -> None:
+    """Borra la zona de la BD y del DNS que la sirva (cluster o BIND local)."""
     domain_name = zone.domain_name
-    db.query(DnsRecord).filter(DnsRecord.zone_id == zone_id).delete()
+    db.query(DnsRecord).filter(DnsRecord.zone_id == zone.id).delete()
     db.delete(zone)
     db.commit()
 
@@ -594,7 +629,7 @@ async def delete_zone(
             DNSCluster(panel_id=cluster["panel_id"]).remove_zone(
                 cluster["master"], slave, cluster["tsig"],
                 domain_name, all_zones_meta(db))
-            return None
+            return
     except Exception as e:
         import logging
         logging.getLogger(__name__).error(f"borrado de zona en cluster falló: {e}")
@@ -604,7 +639,76 @@ async def delete_zone(
         DNSManager().delete_zone(domain_name, remaining)
     except PermissionError:
         pass
-    return None
+
+
+# ──────────────────────── Zonas de los alias ─────────────────────────────────
+# Un alias (dominio.es → web de dominio.com) necesita su propia zona si el DNS
+# lo lleva este panel: si no, no resuelve y nunca llega a la web. Se crea sola
+# al añadir el alias cuando el dominio principal YA tiene su zona aquí (señal de
+# que el cliente usa nuestros nameservers); si no, la pestaña Alias ofrece un
+# botón para crearla. Plantilla «web» (NS + A/AAAA + www): sin MX/SPF, porque
+# el alias no tiene correo propio.
+
+ALIAS_ZONE_TEMPLATE = "web"
+
+
+def create_alias_zone(db: Session, domain: Domain, alias_name: str) -> dict:
+    """Crea la zona DNS de un alias. Nunca lanza: devuelve
+    {"created": bool, "error": str|None}. Si la zona ya existe, created=False."""
+    if db.query(DnsZone).filter(DnsZone.domain_name == alias_name).first():
+        return {"created": False, "error": None, "exists": True}
+    quota_err = _zone_quota_error(db, domain)
+    if quota_err:
+        return {"created": False, "error": quota_err}
+
+    from scripts.dns_manager import get_panel_nameservers, next_serial
+    ns1, ns2 = get_panel_nameservers(db)
+    ipv4 = domain.ipv4 or _get_server_ipv4(db)
+    ipv6 = domain.ipv6 or None
+    zone = DnsZone(domain_name=alias_name, serial=next_serial(), ip_address=ipv4,
+                   soa_ns=ns1, ttl=14400, template=ALIAS_ZONE_TEMPLATE)
+    db.add(zone)
+    db.commit()
+    db.refresh(zone)
+    for r in _build_template_records(alias_name, ipv4, ipv6, ns1, ns2,
+                                     template=ALIAS_ZONE_TEMPLATE):
+        db.add(DnsRecord(zone_id=zone.id, **r))
+    db.commit()
+    try:
+        _sync_zone_to_bind(zone, db)
+    except PermissionError:
+        pass
+    except Exception as e:
+        # No dejar una zona en la BD que el DNS no sirve
+        db.query(DnsRecord).filter(DnsRecord.zone_id == zone.id).delete()
+        db.delete(zone)
+        db.commit()
+        return {"created": False, "error": str(e)}
+    return {"created": True, "error": None}
+
+
+def remove_alias_zone_if_untouched(db: Session, domain: Domain, alias_name: str) -> bool:
+    """Al quitar un alias, borra su zona SOLO si sigue tal como se creó (mismos
+    registros que la plantilla). Si alguien le añadió algo (MX, TXT…), se deja:
+    puede seguir haciendo falta aunque el nombre ya no lleve a la web."""
+    zone = db.query(DnsZone).filter(DnsZone.domain_name == alias_name).first()
+    if not zone or (zone.template or "") != ALIAS_ZONE_TEMPLATE:
+        return False
+    from scripts.dns_manager import get_panel_nameservers
+    ns1, ns2 = get_panel_nameservers(db)
+    ipv4 = zone.ip_address or domain.ipv4 or _get_server_ipv4(db)
+    expected = {(r["record_type"], r["name"], r["content"].rstrip("."))
+                for r in _build_template_records(alias_name, ipv4, domain.ipv6 or None,
+                                                 ns1, ns2, template=ALIAS_ZONE_TEMPLATE)}
+    current = {(r.record_type, r.name, (r.content or "").rstrip("."))
+               for r in db.query(DnsRecord).filter(DnsRecord.zone_id == zone.id).all()}
+    if current != expected:
+        return False
+    try:
+        remove_zone(db, zone)
+        return True
+    except Exception:
+        return False
 
 
 # ──────────────────────── Registros ──────────────────────────────────────────
@@ -1068,8 +1172,7 @@ def sync_aaaa_records_for_domain(domain_name: str, ipv6, db: Session) -> dict:
     # AAAA paralelo; los A externos (zonas importadas) no se tocan.
     own_ips = set()
     try:
-        from api.models.models_domain import Domain as _Domain
-        d = db.query(_Domain).filter(_Domain.domain_name == domain_name).first()
+        d = zone_owner_domain(db, domain_name)
         if d and d.ipv4:
             own_ips.add(d.ipv4)
     except Exception:

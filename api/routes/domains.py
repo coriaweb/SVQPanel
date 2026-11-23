@@ -933,7 +933,11 @@ async def delete_domain(
         # (misma lógica que la cascada al borrar usuario y que DELETE /dns,/mail).
         dns_warnings = []
         try:
-            from scripts.user_purge import purge_dns_zones, purge_mail_domains
+            from scripts.user_purge import purge_dns_zones, purge_mail_domains, alias_names_of
+            # Las zonas de sus alias también (sin el dominio quedarían huérfanas)
+            alias_zone_names = alias_names_of(db, [db_domain.id])
+            if alias_zone_names:
+                purge_dns_zones(db, alias_zone_names, dns_warnings)
             from api.models.models_mail import MailDomain
             mail_domains = (db.query(MailDomain)
                             .filter(MailDomain.domain_name == db_domain.domain_name)

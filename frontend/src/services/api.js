@@ -1431,6 +1431,9 @@ class APIClient {
   retryDomainAliasSsl(domainId) {
     return this.post(`/api/domains/${domainId}/aliases/ssl`, {})
   }
+  createDomainAliasDns(domainId, aliasId) {
+    return this.post(`/api/domains/${domainId}/aliases/${aliasId}/dns`, {})
+  }
   // Consumo de CPU/RAM por dominio (pool PHP-FPM)
   getDomainResources(domainId, range = '24h') {
     return this.get(`/api/domains/${domainId}/resources?range=${range}`)

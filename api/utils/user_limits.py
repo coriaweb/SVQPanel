@@ -63,10 +63,25 @@ def usage_counts(db: Session, user_id: int) -> dict:
         "mailboxes_limit": db.query(Mailbox)
                              .join(MailDomain, Mailbox.mail_domain_id == MailDomain.id)
                              .filter(MailDomain.user_id == user_id).count(),
-        "dns_zones_limit": db.query(DnsZone)
-                             .join(Domain, DnsZone.domain_name == Domain.domain_name)
-                             .filter(Domain.user_id == user_id).count(),
+        "dns_zones_limit": _dns_zone_count(db, user_id),
     }
+
+
+def _dns_zone_count(db: Session, user_id: int) -> int:
+    """Zonas del usuario: las de sus dominios + las de sus alias (igual que el
+    límite en api/routes/dns.py:_zone_quota_error)."""
+    from api.models.models_dns import DnsZone
+    from api.models.models_domain import Domain
+    from api.models.models_domain_alias import DomainAlias
+    names = [d.domain_name for d in
+             db.query(Domain.domain_name).filter(Domain.user_id == user_id).all()]
+    names += [a.alias_name for a in
+              db.query(DomainAlias.alias_name)
+                .join(Domain, DomainAlias.domain_id == Domain.id)
+                .filter(Domain.user_id == user_id).all()]
+    if not names:
+        return 0
+    return db.query(DnsZone).filter(DnsZone.domain_name.in_(names)).count()
 
 
 def raise_limits_to_usage(db: Session, user: User) -> dict:

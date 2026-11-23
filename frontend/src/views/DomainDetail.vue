@@ -618,6 +618,9 @@ define('WP_REDIS_PATH', '{{ redisStatus.socket }}');</pre>
               <StatusBadge v-if="!a.points_here" status="warning" label="No apunta aquí" />
               <StatusBadge v-else-if="aliasData.ssl_enabled" :status="a.in_certificate ? 'valid' : 'warning'"
                            :label="a.in_certificate ? 'SSL' : 'Sin SSL todavía'" />
+              <StatusBadge v-if="a.has_dns_zone" status="active" label="DNS aquí" :dot="false" />
+              <BaseButton v-else-if="!a.points_here" variant="subtle" size="sm" icon="diagram-3" :disabled="aliasBusy"
+                          @click="createAliasDns(a)" title="Crea su zona DNS en este panel (NS + A + www)">Crear zona DNS</BaseButton>
             </div>
             <select class="svq-input alias-row__mode" :value="a.redirect ? 'redirect' : 'serve'"
                     :disabled="aliasBusy" @change="setAliasMode(a, $event.target.value === 'redirect')">
@@ -643,7 +646,14 @@ define('WP_REDIS_PATH', '{{ redisStatus.socket }}');</pre>
           Para que un alias funcione, su DNS tiene que apuntar aquí:
           <span v-if="aliasData.dns.A">registro <code>A</code> → <code>{{ aliasData.dns.A }}</code></span>
           <span v-if="aliasData.dns.AAAA"> y <code>AAAA</code> → <code>{{ aliasData.dns.AAAA }}</code></span>
-          (para el alias y su <code>www</code>). Si el DNS lo gestiona este panel, créale una zona en DNS.
+          (para el alias y su <code>www</code>).
+          <template v-if="aliasData.main_dns_here">
+            La zona DNS de cada alias se crea sola en este panel; solo falta que en su registrador use
+            los mismos nameservers que <code>{{ domain.domain_name }}</code>. Puede tardar unas horas en propagarse.
+          </template>
+          <template v-else>
+            Si el DNS lo lleva este panel, pulsa «Crear zona DNS»; si lo lleva otro proveedor, añade allí esos registros.
+          </template>
         </p>
         <div v-if="aliasData.ssl_enabled && aliases.some(a => a.points_here && !a.in_certificate)" class="adv-actions">
           <BaseButton variant="subtle" size="sm" icon="shield-check" :loading="aliasBusy" @click="retryAliasSsl">
@@ -1719,7 +1729,7 @@ location @maintenance {
     }
     // ── Dominios alias ──
     const aliases = ref([])
-    const aliasData = ref({ ssl_enabled: false, dns: null })
+    const aliasData = ref({ ssl_enabled: false, dns: null, main_dns_here: false })
     const aliasLoaded = ref(false)
     const aliasBusy = ref(false)
     const aliasNew = ref('')
@@ -1739,7 +1749,7 @@ location @maintenance {
       try {
         const r = await api.getDomainAliases(domainId.value)
         aliases.value = r.aliases || []
-        aliasData.value = { ssl_enabled: !!r.ssl_enabled, dns: r.dns || null }
+        aliasData.value = { ssl_enabled: !!r.ssl_enabled, dns: r.dns || null, main_dns_here: !!r.main_dns_here }
       } catch (e) { store.showNotification('Error cargando alias: ' + e.message, 'danger') }
       finally { aliasLoaded.value = true }
     }
@@ -1749,7 +1759,11 @@ location @maintenance {
       aliasBusy.value = true
       try {
         const r = await api.addDomainAlias(domainId.value, name, aliasNewMode.value === 'redirect')
-        store.showNotification(`Alias ${r.alias.alias_name} añadido.` + _sslNote(r.ssl), r.ssl?.error ? 'warning' : 'success')
+        let dnsNote = ''
+        if (r.dns_zone?.created) dnsNote = ' Zona DNS creada.'
+        else if (r.dns_zone?.error) dnsNote = ' No se pudo crear su zona DNS: ' + r.dns_zone.error
+        const warn = r.ssl?.error || r.dns_zone?.error
+        store.showNotification(`Alias ${r.alias.alias_name} añadido.` + dnsNote + _sslNote(r.ssl), warn ? 'warning' : 'success')
         aliasNew.value = ''
         await loadAliases()
       } catch (e) { store.showNotification('Error: ' + e.message, 'danger') }
@@ -1769,7 +1783,16 @@ location @maintenance {
       aliasBusy.value = true
       try {
         const r = await api.deleteDomainAlias(domainId.value, a.id)
-        store.showNotification(`Alias ${a.alias_name} quitado.` + _sslNote(r.ssl), 'success')
+        store.showNotification(`Alias ${a.alias_name} quitado.` + (r.dns_zone_removed ? ' Su zona DNS también.' : '') + _sslNote(r.ssl), 'success')
+        await loadAliases()
+      } catch (e) { store.showNotification('Error: ' + e.message, 'danger') }
+      finally { aliasBusy.value = false }
+    }
+    const createAliasDns = async (a) => {
+      aliasBusy.value = true
+      try {
+        await api.createDomainAliasDns(domainId.value, a.id)
+        store.showNotification(`Zona DNS de ${a.alias_name} creada. Su registrador debe usar los nameservers de este panel.`, 'success')
         await loadAliases()
       } catch (e) { store.showNotification('Error: ' + e.message, 'danger') }
       finally { aliasBusy.value = false }
@@ -2667,7 +2690,7 @@ location @maintenance {
       acc, accForm, accAllowText, accBlockText, accSaving, accError, accModes, accActive, accChanged,
       accHasMyIp, addMyIp, countryName, saveAccess,
       res, resRange, resLoading, resError, setResRange, resDay, resCpu, resMem, resHasData, fmtResMB, fmtCpuTime,
-      addAlias, setAliasMode, removeAlias, retryAliasSsl,
+      addAlias, setAliasMode, removeAlias, retryAliasSsl, createAliasDns,
       showNginxEx, showApacheEx, nginxExamples, apacheExamples, insertExample,
       authEnabled, authMode, authModes, authFolders, authUser, authPass, authSaving, authError, saveHttpauth,
       statsUrl, statsLoading, statsError, loadStats,
