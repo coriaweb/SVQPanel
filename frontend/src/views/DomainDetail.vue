@@ -536,7 +536,7 @@
             <p class="dd-muted" style="margin:0">
               Socket: <code>{{ redisStatus.socket }}</code>
             </p>
-            <details style="margin-top:.5rem">
+            <details style="margin-top:.5rem" :open="!isLaravelDomain">
               <summary class="dd-muted" style="cursor:pointer">Cómo activarlo en WordPress (3 pasos)</summary>
               <ol style="margin:.6rem 0 0;padding-left:1.2rem">
                 <li style="margin-bottom:.5rem">
@@ -562,8 +562,45 @@ define('WP_REDIS_PATH', '{{ redisStatus.socket }}');</pre>
                 <i class="bi bi-info-circle"></i>
                 Si dice "Not connected": revisa que los defines estén <em>antes</em> del
                 "stop editing" y que la ruta del socket sea exactamente la de arriba.
-                Sirve igual para Laravel/Magento: mismo socket unix, esquema
-                <code>unix</code>, sin host ni puerto.
+              </p>
+            </details>
+            <details style="margin-top:.5rem" :open="isLaravelDomain">
+              <summary class="dd-muted" style="cursor:pointer">Cómo activarlo en Laravel (3 pasos)</summary>
+              <ol style="margin:.6rem 0 0;padding-left:1.2rem">
+                <li style="margin-bottom:.5rem">
+                  Comprueba que el PHP del dominio tiene la extensión <strong>redis</strong>
+                  (pestaña PHP → Extensiones). Es la que usa Laravel por defecto
+                  (<code>phpredis</code>); no hace falta instalar nada con Composer.
+                </li>
+                <li style="margin-bottom:.5rem">
+                  En el <code>.env</code> del proyecto, apunta Redis al socket (el puerto
+                  <code>0</code> indica que es un socket, no una conexión de red) y
+                  usa Redis para la caché:
+                  <pre class="adv-example__code mono" style="margin-top:.35rem">REDIS_CLIENT=phpredis
+REDIS_HOST={{ redisStatus.socket }}
+REDIS_PORT=0
+REDIS_PASSWORD=null
+
+CACHE_STORE=redis</pre>
+                  <span class="dd-muted" style="font-size:.85em">
+                    En Laravel 10 o anterior la variable es <code>CACHE_DRIVER=redis</code>.
+                    Opcional: <code>SESSION_DRIVER=redis</code> para las sesiones (si Redis
+                    se reinicia, los usuarios tendrán que volver a iniciar sesión).
+                  </span>
+                </li>
+                <li>
+                  Recarga la configuración desde la terminal, en la carpeta del proyecto:
+                  <pre class="adv-example__code mono" style="margin-top:.35rem">php artisan config:clear
+php artisan tinker --execute="Cache::put('svq', 'ok', 60); echo Cache::get('svq');"</pre>
+                  Si imprime <code>ok</code>, ya está funcionando. Si tenías la configuración
+                  cacheada en producción, vuelve a ejecutar <code>php artisan config:cache</code>.
+                </li>
+              </ol>
+              <p class="dd-muted" style="margin:.5rem 0 0;font-size:.85em">
+                <i class="bi bi-exclamation-triangle"></i>
+                No uses este Redis para las colas (<code>QUEUE_CONNECTION</code>): no guarda
+                nada en disco y los trabajos pendientes se perderían al reiniciarse. Para
+                colas usa <code>database</code>.
               </p>
             </details>
           </div>
@@ -2253,6 +2290,10 @@ location @maintenance {
     const redisLoaded = ref(false), redisSaving = ref(false)
     const redisEnabled = ref(false), redisMaxMemory = ref(64)
     const redisStatus = ref({ available: false, enabled: false, active: false })
+    // Abre la guía de Redis que toca: Laravel si lo es (plantilla o app detectada)
+    const isLaravelDomain = computed(() =>
+      /laravel/i.test(domain.value?.applied_template_name || '') ||
+      /laravel/i.test(detectedApp.value?.app || ''))
 
     const redisMemoryOptions = computed(() => {
       const cap = redisStatus.value.maxmemory_cap_mb || 256
@@ -2672,7 +2713,7 @@ location @maintenance {
       cacheSaving, toggleCache, purgeCache,
       phpLoading, phpSaving, phpDirectives, phpDefaults, phpForm, phpHasPool, savePhp, changePHP,
       fpmLoaded, fpmSaving, fpmAdvanced, fpmPresets, fpmCaps, fpmPreset, fpmManual,
-      redisLoaded, redisSaving, redisEnabled, redisMaxMemory, redisStatus,
+      redisLoaded, redisSaving, redisEnabled, redisMaxMemory, redisStatus, isLaravelDomain,
       redisMemoryOptions, saveRedis,
       selectFpmPreset, fpmEffectiveChildren, fpmEstimatedRamMb, saveFpm,
       logTab, logLines, logsLoading, logsData, loadLogs, switchLog,
