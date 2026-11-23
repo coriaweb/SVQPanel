@@ -148,10 +148,12 @@ async def assign_ipv6(
         logging.getLogger(__name__).warning(
             f"IPv6 asignada pero no se pudo sincronizar AAAA en DNS: {e}")
 
-    # 5. Cambio de IPv6: quitar la anterior del servidor (ya no la usa nadie)
+    # 5. Cambio de IPv6: quitar la anterior del servidor si ya no la usa nadie
+    #    (un subdominio puede seguir compartiéndola)
     if previous:
         try:
-            ipv6_manager.remove_ipv6(interface, previous)
+            from scripts.ipv6_manager import release_ipv6_if_unused
+            release_ipv6_if_unused(db, interface, previous, exclude_domain_ids=[domain.id])
         except Exception as e:
             import logging
             logging.getLogger(__name__).warning(
@@ -201,9 +203,10 @@ async def delete_ipv6(
     interface = _get_interface(db)
 
     if domain.ipv6:
-        # 1. Quitar IPv6 de la interfaz
+        # 1. Quitar IPv6 de la interfaz (si no la comparte otro dominio)
         try:
-            ipv6_manager.remove_ipv6(interface, domain.ipv6)
+            from scripts.ipv6_manager import release_ipv6_if_unused
+            release_ipv6_if_unused(db, interface, domain.ipv6, exclude_domain_ids=[domain.id])
         except Exception as e:
             print(f"Warning: no se pudo quitar IPv6 del sistema: {e}")
 

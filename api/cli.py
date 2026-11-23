@@ -2005,6 +2005,28 @@ def cmd_setup_auto_updates() -> int:
     return 0
 
 
+def cmd_restore_domain_ipv6() -> int:
+    """Vuelve a poner en la interfaz las IPv6 de dominios que están en la BD pero
+    faltan en el sistema. Las quitaba el borrado de un subdominio (comparte la
+    IPv6 de su padre). Solo toca las que faltan; idempotente."""
+    from api.models.database import SessionLocal, load_all_models
+    from scripts.ipv6_manager import restore_missing_domain_ipv6
+    load_all_models()
+    db = SessionLocal()
+    try:
+        restored = restore_missing_domain_ipv6(db)
+    except PermissionError:
+        logger.error("Requiere root")
+        return 1
+    finally:
+        db.close()
+    if restored:
+        for r in restored:
+            print(f"  restaurada {r}")
+    print(f"restore_domain_ipv6: {len(restored)} IPv6 restaurada(s)")
+    return 0
+
+
 def cmd_setup_ipv6_persistence() -> int:
     """Migra la persistencia de IPv6 de netplan (defectuoso) a systemd-networkd y
     asegura la ruta default IPv6 persistente. Idempotente. Arregla el bug que
@@ -3156,6 +3178,8 @@ def main():
         help="Convierte dominios que son subdominios (zona padre en el panel) al nuevo tratamiento")
     p_sub.add_argument("domains", nargs="*", help="Dominios concretos (vacío = autodetectar todos)")
     p_sub.add_argument("--dry-run", action="store_true", help="Solo listar candidatos, sin cambiar nada")
+    sub.add_parser("restore_domain_ipv6",
+        help="Vuelve a poner en la interfaz las IPv6 de dominios que faltan (las quitaba borrar un subdominio)")
     sub.add_parser("setup_ipv6_persistence",
         help="Migra IPv6 a systemd-networkd + ruta default persistente (arregla red rota al reiniciar)")
     sub.add_parser("fix_mail_folders",
@@ -3355,6 +3379,8 @@ def main():
     if args.cmd == "convert_subdomains":
         sys.exit(cmd_convert_subdomains(domains=args.domains or None,
                                         dry_run=getattr(args, "dry_run", False)))
+    if args.cmd == "restore_domain_ipv6":
+        sys.exit(cmd_restore_domain_ipv6())
     if args.cmd == "setup_ipv6_persistence":
         sys.exit(cmd_setup_ipv6_persistence())
     if args.cmd == "fix_mail_folders":

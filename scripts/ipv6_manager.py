@@ -126,6 +126,83 @@ def _netplan_apply():
         logger.error(f"networkctl reload falló: {e}")
 
 
+def ipv6_users(db, ipv6_address: str, exclude_domain_ids=()) -> list:
+    """Dominios (aparte de los excluidos) que usan esta IPv6.
+
+    Un subdominio hereda la IPv6 de su dominio padre: es la MISMA dirección. Al
+    borrar el subdominio se quitaba de la interfaz y el padre se quedaba sin IPv6
+    (la web dejaba de responder por IPv6 y Let's Encrypt fallaba). Antes de
+    quitar una IPv6 de la interfaz hay que mirar que no la use nadie más."""
+    from api.models.models_domain import Domain
+    try:
+        target = ipaddress.IPv6Address(ipv6_address.split("/")[0])
+    except Exception:
+        return []
+    exclude = set(exclude_domain_ids or ())
+    users = []
+    for d in db.query(Domain).filter(Domain.ipv6.isnot(None)).all():
+        if d.id in exclude or not d.ipv6:
+            continue
+        try:
+            if ipaddress.IPv6Address(d.ipv6.split("/")[0]) == target:
+                users.append(d.domain_name)
+        except Exception:
+            continue
+    return users
+
+
+def release_ipv6_if_unused(db, interface: str, ipv6_address: str,
+                           exclude_domain_ids=()) -> bool:
+    """Quita la IPv6 de la interfaz SOLO si ningún otro dominio la usa.
+    Devuelve True si la ha quitado."""
+    others = ipv6_users(db, ipv6_address, exclude_domain_ids)
+    if others:
+        logger.info(f"IPv6 {ipv6_address} se conserva en {interface}: la usa {', '.join(others)}")
+        return False
+    IPv6Manager().remove_ipv6(interface, ipv6_address)
+    return True
+
+
+def restore_missing_domain_ipv6(db, interface: str = None) -> list:
+    """Vuelve a poner en la interfaz las IPv6 de dominios que están en la BD pero
+    no en el sistema (las que quitó el bug del subdominio). Idempotente: solo
+    toca las que faltan. Devuelve las restauradas."""
+    from api.models.models_domain import Domain
+    from api.models.models_settings import Settings
+    s = db.query(Settings).filter(Settings.id == 1).first()
+    interface = interface or (s.network_interface if s and s.network_interface else "eth0")
+    prefix = s.ipv6_range.split("/")[1] if s and s.ipv6_range and "/" in s.ipv6_range else "64"
+    present = set()
+    for line in IPv6Manager.list_ipv6_addresses():   # "inet6 2001:db8::1/64 scope global"
+        parts = line.split()
+        if len(parts) < 2:
+            continue
+        try:
+            present.add(ipaddress.IPv6Address(parts[1].split("/")[0]))
+        except Exception:
+            continue
+    if not present:
+        return []   # no se pudo leer la interfaz: no tocar nada a ciegas
+    restored, seen = [], set()
+    mgr = IPv6Manager()
+    for d in db.query(Domain).filter(Domain.ipv6.isnot(None)).all():
+        if not d.ipv6:
+            continue
+        try:
+            ip = ipaddress.IPv6Address(d.ipv6.split("/")[0])
+        except Exception:
+            continue
+        if ip in present or ip in seen:
+            continue
+        seen.add(ip)
+        try:
+            mgr.assign_ipv6(interface, f"{ip}/{prefix}")
+            restored.append(f"{ip} ({d.domain_name})")
+        except Exception as e:
+            logger.warning(f"No se pudo restaurar la IPv6 {ip} de {d.domain_name}: {e}")
+    return restored
+
+
 class IPv6Manager(SystemManager):
     """Manage IPv6 addresses"""
 

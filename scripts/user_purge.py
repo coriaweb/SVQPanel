@@ -113,12 +113,14 @@ def purge_user_system(db: Session, user) -> List[str]:
         # IPv6 fuera de la interfaz
         if d.ipv6:
             try:
-                from scripts.ipv6_manager import IPv6Manager
+                from scripts.ipv6_manager import release_ipv6_if_unused
                 from api.models.models_settings import Settings
                 settings = db.query(Settings).filter(Settings.id == 1).first()
                 interface = (settings.network_interface
                              if settings and settings.network_interface else "eth0")
-                IPv6Manager().remove_ipv6(interface, d.ipv6)
+                # Fuera solo si no la usa un dominio de OTRO cliente
+                release_ipv6_if_unused(db, interface, d.ipv6,
+                                       exclude_domain_ids=[x.id for x in domains])
             except Exception as e:
                 warnings.append(f"ipv6[{d.domain_name}]: {e}")
         # vhost (nginx + Apache), directorio, pool PHP-FPM
