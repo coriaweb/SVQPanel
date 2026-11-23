@@ -45,7 +45,7 @@ from typing import Dict, List, Optional
 
 from scripts.app_installer import _run
 from scripts.wp_staging import (_wp, _wp_config_get, _dump_db, _import_db,
-                                _sync_files, StagingError)
+                                _sync_files, _tar_docroot, StagingError)
 
 logger = logging.getLogger(__name__)
 
@@ -180,9 +180,8 @@ def create_checkpoint(domain_name: str, docroot: str, db_name: str) -> str:
     stamp = datetime.utcnow().strftime("%Y%m%d-%H%M%S")
     cdir = os.path.join(CHECKPOINT_DIR, domain_name, stamp)
     os.makedirs(cdir, mode=0o700, exist_ok=True)
-    rc, _out, err = _run(["tar", "-czf", os.path.join(cdir, "files.tar.gz"),
-                          "-C", docroot, "."], timeout=3600)
-    if rc != 0:
+    ok, err = _tar_docroot(docroot, os.path.join(cdir, "files.tar.gz"))
+    if not ok:
         shutil.rmtree(cdir, ignore_errors=True)
         raise SafeUpdateError(f"No pude crear el checkpoint de archivos: {(err or '')[:300]}")
     sql = os.path.join(cdir, "database.sql")

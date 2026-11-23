@@ -157,6 +157,18 @@ def _mariadb_env() -> dict:
     return {**os.environ, "MYSQL_PWD": MARIADB_PANEL_PASSWORD or ""}
 
 
+def _tar_docroot(docroot: str, dest_tar_gz: str):
+    """tar.gz del docroot de una web VIVA. GNU tar sale con 1 cuando un fichero
+    cambia o desaparece mientras lo lee (cachés, logs, sesiones que WordPress
+    escribe en ese instante): es un aviso y el archivo es válido. Solo el 2+
+    es error de verdad. Devuelve (ok, err)."""
+    rc, _out, err = _run(["tar", "--warning=no-file-changed",
+                          "--warning=no-file-removed", "--ignore-failed-read",
+                          "-czf", dest_tar_gz, "-C", docroot, "."], timeout=3600)
+    ok = rc in (0, 1) and os.path.exists(dest_tar_gz)
+    return ok, err
+
+
 def _dump_db(db_name: str, dest_path: str) -> None:
     """mysqldump de una BD a un .sql (con el admin MariaDB del panel)."""
     from scripts.backup_manager import _mysqldump_binary
@@ -568,9 +580,8 @@ def _do_push(db, live_domain_id: int) -> None:
     stamp = datetime.utcnow().strftime("%Y%m%d-%H%M%S")
     bdir = os.path.join(BACKUP_DIR, live.domain_name, stamp)
     os.makedirs(bdir, mode=0o700, exist_ok=True)
-    rc, _out, err = _run(["tar", "-czf", os.path.join(bdir, "files.tar.gz"),
-                          "-C", live_docroot, "."], timeout=3600)
-    if rc != 0:
+    ok, err = _tar_docroot(live_docroot, os.path.join(bdir, "files.tar.gz"))
+    if not ok:
         raise StagingError(f"Backup de archivos del live falló: {(err or '')[:300]}")
     _dump_db(live_db_name, os.path.join(bdir, "database.sql"))
     _run(["gzip", "-f", os.path.join(bdir, "database.sql")], timeout=1800)
