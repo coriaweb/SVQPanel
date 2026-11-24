@@ -265,6 +265,14 @@ async def startup():
     except Exception as e:
         print(f"⚠ No se pudo arrancar el scheduler de WP auto-update: {e}")
 
+    # Workers de cola de Laravel: rehacer las unidades systemd desde la BD
+    # (servidor migrado/restaurado) y borrar las de dominios que ya no existen.
+    try:
+        from scripts.laravel_workers import start_reconcile_thread
+        start_reconcile_thread()
+    except Exception as e:
+        print(f"⚠ No se pudo reconciliar los workers de Laravel: {e}")
+
     # Migraciones zombie: un job en 'running' tras arrancar significa que el
     # proceso que lo ejecutaba murió a media importación (p.ej. OOM → systemd
     # reinició svqpanel). El background task vive DENTRO de este proceso, así que
@@ -987,6 +995,8 @@ def _run_migrations():
         "CREATE INDEX IF NOT EXISTS ix_domains_staging_of_domain_id ON domains(staging_of_domain_id)",
         # Actualizaciones automáticas seguras de WordPress (checkpoint + rollback)
         "ALTER TABLE domains ADD COLUMN IF NOT EXISTS wp_auto_update BOOLEAN NOT NULL DEFAULT FALSE",
+        # Workers de cola de Laravel (JSON; scripts/laravel_workers.py)
+        "ALTER TABLE domains ADD COLUMN IF NOT EXISTS laravel_queue TEXT",
         # Acceso por país/IP por dominio (scripts/geo_access.py). NULL = sin reglas
         "ALTER TABLE domains ADD COLUMN IF NOT EXISTS access_rules TEXT",
         # Contraseña en carpetas concretas (JSON [{path,user,hash}])

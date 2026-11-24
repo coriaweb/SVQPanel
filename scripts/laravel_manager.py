@@ -380,7 +380,12 @@ def info(root: str, owner: str, php_version: Optional[str], domain_name: str,
         if q and q not in ("sync", "null"):
             add("queue", "info", f"Colas con QUEUE_CONNECTION={q}",
                 "Los trabajos en cola necesitan un proceso que los ejecute; si no, se "
-                "quedan pendientes. Actívalo en «Tareas programadas» (cron cada minuto).")
+                "quedan pendientes. Activa los workers de cola (o el cron de la cola).")
+        if q == "redis":
+            add("queue_redis", "warning", "La cola usa Redis",
+                "El Redis de un dominio no guarda los datos en disco: si se reinicia, "
+                "se pierden los trabajos pendientes. Para colas es más seguro "
+                "QUEUE_CONNECTION=database (tabla jobs: php artisan make:queue-table y migrate).")
 
     # 5) Permisos
     if has_vendor or os.path.isdir(os.path.join(root, "storage")):
@@ -652,6 +657,13 @@ def sync_cron_php(domain, db, owner_username: Optional[str] = None) -> int:
             cm.add_cron(username=owner_username, cron_id=job.id, minute=job.minute,
                         hour=job.hour, day=job.day, month=job.month, weekday=job.weekday,
                         command=job.command, comment=job.comment or "")
+            changed += 1
+    except Exception:
+        pass
+    # Los workers de cola (systemd) llevan también el PHP en su ExecStart.
+    try:
+        from scripts.laravel_workers import sync_domain
+        if sync_domain(domain, db, owner_username):
             changed += 1
     except Exception:
         pass

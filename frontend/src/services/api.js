@@ -1021,6 +1021,10 @@ class APIClient {
     return this.get(`/api/domains/${domainId}/laravel/logs?${q}`)
   }
   clearLaravelLog(domainId, file)  { return this.post(`/api/domains/${domainId}/laravel/logs/clear`, { file }) }
+  getLaravelWorkers(domainId)      { return this.get(`/api/domains/${domainId}/laravel/workers`) }
+  saveLaravelWorkers(domainId, cfg) { return this.put(`/api/domains/${domainId}/laravel/workers`, cfg) }
+  laravelWorkersOp(domainId, op)   { return this.post(`/api/domains/${domainId}/laravel/workers/${op}`, {}) }
+  getLaravelWorkersLog(domainId, lines = 200) { return this.get(`/api/domains/${domainId}/laravel/workers-log?lines=${lines}`) }
   laravelCron(domainId, kind, enable) { return this.post(`/api/domains/${domainId}/laravel/cron/${kind}`, { enable }) }
 
   // ── Composer (dependencias PHP del proyecto del dominio) ──

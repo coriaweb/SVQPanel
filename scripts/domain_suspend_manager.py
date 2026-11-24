@@ -173,6 +173,12 @@ class DomainSuspendManager(SystemManager):
 
     def suspend_domain(self, domain: str) -> dict:
         self._ensure_suspended_page()
+        # Un dominio suspendido tampoco procesa su cola de Laravel.
+        try:
+            from scripts.laravel_workers import stop_domain
+            stop_domain(domain)
+        except Exception:
+            pass
 
         available    = Path(SITES_AVAILABLE) / domain
         active_backup = Path(SITES_AVAILABLE) / f"{domain}.active"
@@ -197,6 +203,12 @@ class DomainSuspendManager(SystemManager):
         available     = Path(SITES_AVAILABLE) / domain
         active_backup = Path(SITES_AVAILABLE) / f"{domain}.active"
         enabled_link  = Path(SITES_ENABLED) / domain
+
+        try:   # vuelve a levantar sus workers de Laravel (si tiene)
+            from scripts.laravel_workers import start_domain
+            start_domain(domain)
+        except Exception:
+            pass
 
         if active_backup.exists():
             self.execute_command(["cp", str(active_backup), str(available)], check=False)

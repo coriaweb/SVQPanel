@@ -170,6 +170,11 @@ class Domain(Base):
     # verificación y rollback automático si el sitio se rompe.
     wp_auto_update = Column(Boolean, default=False, nullable=False)
 
+    # Workers de cola de Laravel (scripts/laravel_workers.py): JSON
+    # {"workers","queue","connection","memory","timeout","tries"}. NULL = ninguno.
+    # Es la fuente de verdad: las unidades systemd se regeneran desde aquí.
+    laravel_queue = Column(Text, nullable=True)
+
     # Cache del análisis de ataque (lo actualiza un cron cada ~3h, ventana 24h).
     # Evita escanear los access.log en vivo cada vez que se abre la vista admin.
     wp_xmlrpc_hits       = Column(Integer, default=0, nullable=False)   # hits a xmlrpc.php

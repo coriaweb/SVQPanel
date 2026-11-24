@@ -137,6 +137,11 @@ def laravel_info(domain_id: int,
     except Exception as e:
         _err(e)
     data["crons"] = _cron_state(domain, db)
+    from scripts.laravel_workers import get_config as _wcfg
+    data["workers"] = _wcfg(domain).get("workers") or 0
+    # Aviso de colas: sobra si ya hay quien las procese (workers o cron).
+    if data["workers"] or data["crons"]["queue"]["enabled"] or data["crons"]["queue"]["manual_ids"]:
+        data["checks"] = [c for c in data["checks"] if c["id"] != "queue"]
     # El planificador solo es un aviso si el proyecto define tareas y no hay cron.
     c = data["crons"]["scheduler"]
     if data.get("uses_scheduler") and not c["enabled"] and not c["manual_ids"]:
@@ -338,6 +343,112 @@ def laravel_logs_clear(domain_id: int, payload: LogClearRequest,
         _err(e)
 
 
+# ── Workers de cola (systemd) ────────────────────────────────────────────────
+class WorkersConfig(BaseModel):
+    workers:    int = Field(0, ge=0, le=16)
+    queue:      str = Field("default", max_length=200)
+    connection: Optional[str] = Field("", max_length=40)
+    memory:     int = 256
+    timeout:    int = 60
+    tries:      int = 3
+
+
+def _workers_payload(domain, current_user: User, db: Session) -> dict:
+    from scripts import laravel_workers as lw
+    is_admin = bool(getattr(current_user, "is_admin", False))
+    return {
+        "config": lw.get_config(domain),
+        "status": lw.status(domain.domain_name),
+        "limits": {
+            "max_workers": lw.MAX_WORKERS_ADMIN if is_admin else lw.MAX_WORKERS_CLIENT,
+            "max_user": None if is_admin else lw.MAX_WORKERS_USER_CLIENT,
+            "memory_options": [m for m in lw.MEMORY_OPTIONS
+                               if is_admin or m <= lw.MAX_MEMORY_CLIENT],
+            "timeout_options": list(lw.TIMEOUT_OPTIONS),
+        },
+    }
+
+
+@router.get("/domains/{domain_id}/laravel/workers")
+def laravel_workers_get(domain_id: int,
+                        current_user: User = Depends(require_auth),
+                        db: Session = Depends(get_db)):
+    domain, _owner, _docroot, _root = _ctx(domain_id, db, current_user)
+    return {"status": "success", "data": _workers_payload(domain, current_user, db)}
+
+
+@router.put("/domains/{domain_id}/laravel/workers")
+def laravel_workers_put(domain_id: int, payload: WorkersConfig, request: Request,
+                        current_user: User = Depends(require_auth),
+                        db: Session = Depends(get_db)):
+    """Guarda la config y deja exactamente N workers (0 = quitarlos todos).
+    Al activar workers se quita el cron de la cola: harían el mismo trabajo."""
+    from api.models.models_domain import Domain
+    from scripts import laravel_workers as lw
+    from api.utils.security_audit import log_audit
+    domain, owner, _docroot, root = _ctx(domain_id, db, current_user)
+    if domain.is_suspended and payload.workers:
+        raise HTTPException(status_code=409, detail="El dominio está suspendido.")
+    others = sum(lw.get_config(d).get("workers") or 0
+                 for d in db.query(Domain).filter(Domain.user_id == domain.user_id,
+                                                  Domain.id != domain.id,
+                                                  Domain.laravel_queue.isnot(None)).all())
+    try:
+        cfg = lw.validate_config(payload.dict(), bool(getattr(current_user, "is_admin", False)), others)
+        prev = domain.laravel_queue
+        domain.laravel_queue = json.dumps(cfg) if cfg["workers"] else None
+        db.commit()
+        try:
+            lw.apply(domain.domain_name, owner, root, domain.php_version, cfg, start=True)
+        except Exception:
+            domain.laravel_queue = prev
+            db.commit()
+            lw.apply(domain.domain_name, owner, root, domain.php_version,
+                     lw.get_config(domain), start=True)
+            raise
+        if cfg["workers"]:
+            _set_cron(domain, owner, root, "queue", False, db)
+    except Exception as e:
+        if isinstance(e, lw.WorkerError):
+            raise HTTPException(status_code=422, detail=str(e))
+        _err(e)
+    log_audit(db, user=current_user, category="laravel", action="workers",
+              target=domain.domain_name, after=cfg, request=request, success=True)
+    data = _workers_payload(domain, current_user, db)
+    data["output"] = (f"{cfg['workers']} worker(s) en marcha." if cfg["workers"]
+                      else "Workers quitados.")
+    return {"status": "success", "data": data}
+
+
+@router.post("/domains/{domain_id}/laravel/workers/{op}")
+def laravel_workers_op(domain_id: int, op: str, request: Request,
+                       current_user: User = Depends(require_auth),
+                       db: Session = Depends(get_db)):
+    from scripts import laravel_workers as lw
+    from api.utils.security_audit import log_audit
+    domain, _owner, _docroot, _root = _ctx(domain_id, db, current_user)
+    if domain.is_suspended and op != "stop":
+        raise HTTPException(status_code=409, detail="El dominio está suspendido.")
+    try:
+        out = lw.control(domain.domain_name, op)
+    except lw.WorkerError as e:
+        raise HTTPException(status_code=422, detail=str(e))
+    log_audit(db, user=current_user, category="laravel", action=f"workers-{op}",
+              target=domain.domain_name, request=request, success=True)
+    data = _workers_payload(domain, current_user, db)
+    data["output"] = out["output"]
+    return {"status": "success", "data": data}
+
+
+@router.get("/domains/{domain_id}/laravel/workers-log")
+def laravel_workers_log(domain_id: int, lines: int = 200,
+                        current_user: User = Depends(require_auth),
+                        db: Session = Depends(get_db)):
+    from scripts import laravel_workers as lw
+    domain, _owner, _docroot, _root = _ctx(domain_id, db, current_user)
+    return {"status": "success", "data": {"content": lw.logs(domain.domain_name, lines)}}
+
+
 # ── Crons ────────────────────────────────────────────────────────────────────
 class CronToggle(BaseModel):
     enable: bool
@@ -352,6 +463,11 @@ def laravel_cron(domain_id: int, kind: str, payload: CronToggle, request: Reques
     if kind not in CRON_KINDS:
         raise HTTPException(status_code=400, detail="Tipo no soportado")
     domain, owner, _docroot, root = _ctx(domain_id, db, current_user)
+    if kind == "queue" and payload.enable:
+        from scripts.laravel_workers import get_config as _wcfg
+        if _wcfg(domain).get("workers"):
+            raise HTTPException(status_code=409,
+                                detail="La cola ya la procesan los workers; quítalos antes de usar el cron.")
     try:
         data = _set_cron(domain, owner, root, kind, payload.enable, db)
     except Exception as e:

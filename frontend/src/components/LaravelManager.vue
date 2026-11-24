@@ -75,19 +75,105 @@
             <BaseButton :variant="info.crons.scheduler.enabled ? 'danger' : 'subtle'" size="sm" :loading="busy === 'cron:scheduler'"
                         :disabled="!!busy" @click="toggleCron('scheduler')">{{ info.crons.scheduler.enabled ? 'Desactivar' : 'Activar' }}</BaseButton>
           </div>
-          <div class="lv-cron__row">
+          <div v-if="info.workers" class="lv-cron__row">
+            <div>
+              <div class="lv-cron__title">Cola</div>
+              <div class="dd-muted lv-cron__desc">La procesan {{ info.workers }} worker(s) permanentes (pestaña Colas).</div>
+            </div>
+            <BaseButton variant="subtle" size="sm" icon="cpu" @click="tab = 'queue'">Ver workers</BaseButton>
+          </div>
+          <div v-else class="lv-cron__row">
             <div>
               <div class="lv-cron__title">Cola (<code>queue:work --stop-when-empty</code> cada minuto)</div>
               <div class="dd-muted lv-cron__desc">
                 Procesa los trabajos en cola (correos, notificaciones…) si usas
                 <code>QUEUE_CONNECTION={{ info.env.QUEUE_CONNECTION || 'database' }}</code>. Pueden tardar hasta un minuto en salir.
                 <template v-if="info.crons.queue.manual_ids.length"> Ya tienes un cron puesto a mano con queue:work.</template>
+                Si necesitas que salgan al momento, usa mejor los <a href="#" @click.prevent="tab = 'queue'">workers permanentes</a>.
               </div>
             </div>
             <BaseButton :variant="info.crons.queue.enabled ? 'danger' : 'subtle'" size="sm" :loading="busy === 'cron:queue'"
                         :disabled="!!busy" @click="toggleCron('queue')">{{ info.crons.queue.enabled ? 'Desactivar' : 'Activar' }}</BaseButton>
           </div>
         </div>
+      </div>
+
+      <!-- ── Colas (workers systemd) ── -->
+      <div v-else-if="tab === 'queue'" class="lv-pane">
+        <p class="dd-muted lv-intro">
+          Un <b>worker</b> es un <code>php artisan queue:work</code> que se queda siempre en marcha procesando
+          la cola al momento (correos, notificaciones, PDFs…). Corre como tu usuario, con el PHP del dominio y
+          un límite de memoria; si se cae, vuelve a arrancar solo. Tras desplegar código nuevo, pulsa
+          «Reiniciar» para que lo carguen.
+        </p>
+        <div v-if="!wk" class="lv-loading"><span class="spinner"></span> Cargando…</div>
+        <template v-else>
+          <div class="lv-wform">
+            <label class="app-field"><span>Workers</span>
+              <select class="svq-input" v-model.number="wForm.workers">
+                <option v-for="n in wk.limits.max_workers + 1" :key="n - 1" :value="n - 1">{{ n - 1 === 0 ? 'Ninguno' : n - 1 }}</option>
+              </select></label>
+            <label class="app-field"><span>Colas</span>
+              <input class="svq-input mono" v-model.trim="wForm.queue" placeholder="default" /></label>
+            <label class="app-field"><span>Conexión</span>
+              <input class="svq-input mono" v-model.trim="wForm.connection" :placeholder="'(la del .env: ' + (info.env.QUEUE_CONNECTION || 'sync') + ')'" /></label>
+            <label class="app-field"><span>Memoria por worker</span>
+              <select class="svq-input" v-model.number="wForm.memory">
+                <option v-for="m in wk.limits.memory_options" :key="m" :value="m">{{ m }} MB</option>
+              </select></label>
+            <label class="app-field"><span>Tiempo máx. por trabajo</span>
+              <select class="svq-input" v-model.number="wForm.timeout">
+                <option v-for="t in wk.limits.timeout_options" :key="t" :value="t">{{ t < 120 ? t + ' s' : t / 60 + ' min' }}</option>
+              </select></label>
+            <label class="app-field"><span>Reintentos</span>
+              <select class="svq-input" v-model.number="wForm.tries">
+                <option v-for="t in 10" :key="t" :value="t">{{ t }}</option>
+              </select></label>
+          </div>
+          <small class="dd-muted lv-whint">
+            Varias colas por prioridad: <code>high,default</code>. El tiempo máximo debe ser menor que el
+            <code>retry_after</code> de <code>config/queue.php</code> (90 s por defecto) o un trabajo largo se ejecutaría dos veces.
+            <template v-if="wk.limits.max_user"> Máximo {{ wk.limits.max_user }} workers entre todos tus dominios.</template>
+          </small>
+          <div v-if="['sync', 'null', ''].includes(info.env.QUEUE_CONNECTION || '') && !wForm.connection && wForm.workers" class="lv-check lv-check--warning" style="margin-top:.6rem">
+            <i class="bi bi-exclamation-triangle-fill"></i>
+            <div class="lv-check__body"><div class="lv-check__detail">
+              Tu .env tiene <code>QUEUE_CONNECTION={{ info.env.QUEUE_CONNECTION || '(vacío)' }}</code>: los trabajos se ejecutan
+              al momento dentro de la petición y los workers no tendrán nada que hacer. Usa <code>database</code> o <code>redis</code>.
+            </div></div>
+          </div>
+          <div class="lv-actions">
+            <BaseButton variant="primary" size="sm" icon="save" :loading="busy === 'wsave'" :disabled="!!busy || !wDirty" @click="saveWorkers">
+              {{ wForm.workers ? 'Guardar y arrancar' : 'Quitar workers' }}</BaseButton>
+          </div>
+
+          <template v-if="wk.status.length">
+            <div class="lv-section-title">Estado</div>
+            <table class="lv-wtable">
+              <thead><tr><th>Worker</th><th>Estado</th><th>Memoria</th><th>Reinicios</th><th>Desde</th></tr></thead>
+              <tbody>
+                <tr v-for="s in wk.status" :key="s.unit">
+                  <td class="mono">{{ s.unit.replace(/^svqpanel-laravel-/, '').replace(/\.service$/, '') }}</td>
+                  <td><span class="lv-badge" :class="'lv-badge--' + wState(s).cls">{{ wState(s).label }}</span></td>
+                  <td class="mono">{{ s.memory_mb != null ? s.memory_mb + ' MB' : '—' }}</td>
+                  <td class="mono">{{ s.restarts }}</td>
+                  <td class="dd-muted">{{ s.active === 'active' ? s.since : '—' }}</td>
+                </tr>
+              </tbody>
+            </table>
+            <div class="lv-actions">
+              <BaseButton variant="ghost" size="sm" icon="play-fill" :disabled="!!busy" :loading="busy === 'w:start'" @click="workersOp('start')">Arrancar</BaseButton>
+              <BaseButton variant="ghost" size="sm" icon="arrow-repeat" :disabled="!!busy" :loading="busy === 'w:restart'" @click="workersOp('restart')">Reiniciar</BaseButton>
+              <BaseButton variant="ghost" size="sm" icon="stop-fill" :disabled="!!busy" :loading="busy === 'w:stop'" @click="workersOp('stop')">Parar</BaseButton>
+              <BaseButton variant="ghost" size="sm" icon="arrow-clockwise" :disabled="!!busy" @click="loadWorkers">Actualizar</BaseButton>
+            </div>
+            <div class="lv-section-title">Salida de los workers</div>
+            <div class="lv-logbar">
+              <BaseButton variant="ghost" size="sm" icon="journal-text" :loading="wLogLoading" @click="loadWorkersLog">{{ wLog === null ? 'Ver salida' : 'Recargar' }}</BaseButton>
+            </div>
+            <pre v-if="wLog !== null" class="lv-log mono">{{ wLog || 'Sin salida todavía.' }}</pre>
+          </template>
+        </template>
       </div>
 
       <!-- ── Consola artisan ── -->
@@ -167,8 +253,8 @@
             <BaseButton variant="ghost" size="sm" icon="trash" :disabled="!!busy" @click="clearLog">Vaciar</BaseButton>
           </div>
           <div v-if="logData" class="dd-muted lv-logmeta">{{ logData.errors }} error(es) en las últimas {{ logData.lines }} líneas</div>
-          <pre class="lv-log mono"><template v-for="(l, i) in logView" :key="i"><span :class="lineClass(l)">{{ l }}
-</span></template></pre>
+          <pre class="lv-log mono"><span v-for="(l, i) in logView" :key="i" :class="lineClass(l)">{{ l }}
+</span></pre>
         </template>
       </div>
 
@@ -213,6 +299,7 @@ export default {
     const tab = ref('status')
     const tabs = [
       { key: 'status',  label: 'Estado',  icon: 'clipboard-check' },
+      { key: 'queue',   label: 'Colas',   icon: 'cpu' },
       { key: 'console', label: 'Consola artisan', icon: 'terminal' },
       { key: 'env',     label: '.env',    icon: 'file-earmark-lock' },
       { key: 'logs',    label: 'Logs',    icon: 'journal-text' },
@@ -373,7 +460,54 @@ export default {
     }
     const fmtSize = (b) => b >= 1048576 ? (b / 1048576).toFixed(1) + ' MB' : b >= 1024 ? Math.round(b / 1024) + ' KB' : b + ' B'
 
+    // ── Workers de cola ──
+    const wk = ref(null)
+    const wForm = ref({ workers: 0, queue: 'default', connection: '', memory: 256, timeout: 60, tries: 3 })
+    const wOrig = ref('')
+    const wDirty = computed(() => JSON.stringify(wForm.value) !== wOrig.value)
+    const wLog = ref(null)
+    const wLogLoading = ref(false)
+    const setWk = (d) => {
+      wk.value = d
+      const c = d.config || {}
+      wForm.value = { workers: c.workers || 0, queue: c.queue || 'default', connection: c.connection || '',
+                      memory: c.memory || 256, timeout: c.timeout || 60, tries: c.tries || 3 }
+      wOrig.value = JSON.stringify(wForm.value)
+    }
+    const loadWorkers = async () => {
+      try { const r = await api.getLaravelWorkers(did.value); setWk(r.data) } catch (e) { failed(e) }
+    }
+    const saveWorkers = async () => {
+      if (!wForm.value.workers && !confirm('Se pararán y quitarán todos los workers de este dominio. ¿Continuar?')) return
+      busy.value = 'wsave'
+      try {
+        const r = await api.saveLaravelWorkers(did.value, wForm.value)
+        setWk(r.data)
+        await done(r, r.data?.output || 'Workers guardados')
+      } catch (e) { failed(e) } finally { busy.value = '' }
+    }
+    const workersOp = async (op) => {
+      busy.value = 'w:' + op
+      try {
+        const r = await api.laravelWorkersOp(did.value, op)
+        setWk(r.data)
+        store.showNotification(r.data?.output || 'Hecho', 'success')
+      } catch (e) { failed(e) } finally { busy.value = '' }
+    }
+    const loadWorkersLog = async () => {
+      wLogLoading.value = true
+      try { const r = await api.getLaravelWorkersLog(did.value); wLog.value = r.data?.content || '' }
+      catch (e) { failed(e) } finally { wLogLoading.value = false }
+    }
+    const wState = (s) => {
+      if (s.active === 'active') return { cls: 'ok', label: 'En marcha' }
+      if (s.active === 'activating') return { cls: 'warn', label: 'Arrancando' }
+      if (s.active === 'failed') return { cls: 'bad', label: 'Fallando' }
+      return { cls: 'off', label: 'Parado' }
+    }
+
     watch(tab, (t) => {
+      if (t === 'queue') loadWorkers()
       if (t === 'console' && !history.value.length) loadHistory()
       if (t === 'env' && !envOrig.value && !envLoading.value) loadEnv()
       if (t === 'logs') loadLogs()
@@ -385,6 +519,7 @@ export default {
       loadInfo, levelIcon, fix, action, confirmMigrate, toggleDown, toggleCron,
       quickCmds, quickSel, applyQuick, cliInput, cliRunning, cliLog, history, runCli, histPrev, histNext,
       envText, envOrig, envLoading, envRevealed, saveEnv,
+      wk, wForm, wDirty, wLog, wLogLoading, loadWorkers, saveWorkers, workersOp, loadWorkersLog, wState,
       logFiles, logFile, logLines, logData, logLoading, onlyErrors, loadLogs, logView, lineClass, clearLog, fmtSize,
     }
   },
@@ -443,6 +578,18 @@ code { background: var(--surface-inset); padding:.05rem .3rem; border-radius:4px
 .lv-onlyerr { display:inline-flex; gap:.3rem; align-items:center; font-size:.84rem; }
 .lv-logmeta { font-size:.8rem; margin-bottom:.4rem; }
 .lv-log { margin:0; max-height:520px; overflow:auto; font-size:.76rem; line-height:1.4; background: var(--surface-inset); border:1px solid var(--border); border-radius: var(--radius-md); padding:.6rem .75rem; white-space:pre-wrap; word-break:break-word; }
+.lv-wform { display:grid; grid-template-columns: repeat(auto-fit, minmax(150px,1fr)); gap:.6rem; }
+.lv-wform .app-field span { display:block; font-size:.8rem; font-weight:600; margin-bottom:.25rem; }
+.lv-wform .svq-input { width:100%; }
+.lv-whint { display:block; margin-top:.5rem; font-size:.8rem; line-height:1.45; }
+.lv-wtable { width:100%; border-collapse:collapse; font-size:.84rem; }
+.lv-wtable th { text-align:left; font-size:.72rem; text-transform:uppercase; color: var(--text-muted); padding:.4rem .5rem; border-bottom:1px solid var(--border); }
+.lv-wtable td { padding:.45rem .5rem; border-bottom:1px solid var(--border); }
+.lv-badge { font-size:.75rem; padding:.1rem .45rem; border-radius:999px; font-weight:600; }
+.lv-badge--ok { background: color-mix(in srgb, var(--success, #16a34a) 15%, transparent); color: var(--success, #16a34a); }
+.lv-badge--warn { background: color-mix(in srgb, var(--warning, #d97706) 15%, transparent); color: var(--warning, #d97706); }
+.lv-badge--bad { background: color-mix(in srgb, var(--danger) 15%, transparent); color: var(--danger); }
+.lv-badge--off { background: var(--surface-inset); color: var(--text-muted); }
 .lv-bad { color: var(--danger); }
 .lv-warnc { color: var(--warning, #d97706); }
 .lv-okc { color: var(--success, #16a34a); }

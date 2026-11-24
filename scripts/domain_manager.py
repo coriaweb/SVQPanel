@@ -317,6 +317,14 @@ class DomainManager(SystemManager):
         try:
             logger.info(f"Deleting domain: {domain_name}")
 
+            # Workers de cola de Laravel: pararlos y borrar sus unidades systemd
+            # ANTES de borrar los archivos (si no, se quedan reiniciando sin fin).
+            try:
+                from scripts.laravel_workers import remove_units
+                remove_units(domain_name, keep=0)
+            except Exception as e:
+                logger.warning(f"Workers Laravel de {domain_name}: {e}")
+
             # Desactivar y eliminar config Nginx
             if self.file_exists(enabled_link):
                 self.execute_command(["rm", "-f", enabled_link])
