@@ -15,6 +15,7 @@ from config.config import PANEL_NAME, PANEL_VERSION
 
 from api.routes import domain_aliases, domain_resources, domain_access, malware, db_import
 from api.routes import svq_migrations
+from api.routes import laravel as laravel_routes
 from api.routes import users, domains, php, ssl, ipv6, auth, settings, dns, system, mail, databases, firewall, fail2ban, security_monitor, ip_lists, file_manager, crowdsec, plans, sftp, crons, server_ips, backups, templates, notifications, dns_cluster, git, git_webhook, monitoring, db_tuner, migrations, migration_sources, terminal, license, api_tokens, mail_queue, process_manager, outbound_mail, antispam, branding
 
 # ── Descripción de la API (se muestra en /docs y /redoc) ──────────────────────
@@ -1120,6 +1121,7 @@ app.include_router(php.router, prefix="/api", tags=["PHP"])
 app.include_router(ssl.router, prefix="/api", tags=["SSL"])
 app.include_router(ipv6.router, prefix="/api", tags=["IPv6"])
 app.include_router(domain_aliases.router, prefix="/api", tags=["Domain aliases"])
+app.include_router(laravel_routes.router, prefix="/api", tags=["Laravel"])
 app.include_router(domain_resources.router, prefix="/api", tags=["Domain resources"])
 app.include_router(domain_access.router, prefix="/api", tags=["Domain access"])
 app.include_router(malware.router, prefix="/api", tags=["Malware"])

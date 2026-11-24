@@ -714,6 +714,8 @@ async def update_domain(
         if php_changed:
             from scripts import wp_manager as _wpm
             _wpm.sync_wp_cron_php(db_domain, db)
+            from scripts import laravel_manager as _lm
+            _lm.sync_cron_php(db_domain, db)
 
         # Regenerar vhost si cambió algún parámetro que afecta a nginx. Los
         # dominios solo correo/DNS no tienen vhost → nunca se regenera.

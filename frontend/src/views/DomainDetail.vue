@@ -250,7 +250,21 @@
           <BaseButton variant="subtle" size="sm" icon="wordpress" @click="tab = 'wp'">Abrir WP Toolkit</BaseButton>
         </BaseCard>
 
-        <!-- App no gestionable ya instalada (Laravel/Nextcloud/PrestaShop/otro) -->
+        <!-- Laravel detectado → tarjeta-resumen; la gestión va en su pestaña -->
+        <BaseCard
+          v-else-if="detectedApp.app === 'laravel'"
+          title="Laravel" icon="box-seam" class="dd-span2">
+          <div class="app-detected">
+            <i class="bi bi-box-seam app-detected__icon"></i>
+            <div>
+              <p class="app-detected__title">Laravel detectado</p>
+              <p class="dd-muted">Diagnóstico, comandos artisan, .env, logs y tareas programadas desde la pestaña Laravel.</p>
+            </div>
+          </div>
+          <BaseButton variant="subtle" size="sm" icon="box-seam" @click="tab = 'laravel'">Abrir Laravel</BaseButton>
+        </BaseCard>
+
+        <!-- App no gestionable ya instalada (Nextcloud/PrestaShop/otro) -->
         <BaseCard
           v-else-if="detectedApp.app && !['empty','wordpress'].includes(detectedApp.app)"
           title="Aplicación instalada" icon="box-seam" class="dd-span2">
@@ -336,6 +350,15 @@
         v-if="tab === 'wp' && detectedApp.app === 'wordpress'"
         :domain-id="domainId"
         :domain-name="domain.domain_name"
+      />
+
+      <!-- ===== Laravel ===== -->
+      <!-- v-if: artisan se lanza como el usuario; solo al abrir la pestaña. -->
+      <LaravelManager
+        v-if="tab === 'laravel' && detectedApp.app === 'laravel'"
+        :domain-id="domainId"
+        :domain-name="domain.domain_name"
+        @changed="reloadDomain"
       />
 
       <!-- ===== Composer (dependencias PHP del proyecto) ===== -->
@@ -1464,12 +1487,13 @@ import SSLManager from '../components/SSLManager.vue'
 import IPv6Manager from '../components/IPv6Manager.vue'
 import WpManager from '../components/WpManager.vue'
 import ComposerManager from '../components/ComposerManager.vue'
+import LaravelManager from '../components/LaravelManager.vue'
 import MetricChart from '../components/ui/MetricChart.vue'
 import CountryPicker from '../components/CountryPicker.vue'
 
 export default {
   name: 'DomainDetail',
-  components: { BaseCard, BaseButton, BaseTabs, StatusBadge, EmptyState, SSLManager, IPv6Manager, WpManager, ComposerManager, MetricChart, CountryPicker },
+  components: { BaseCard, BaseButton, BaseTabs, StatusBadge, EmptyState, SSLManager, IPv6Manager, WpManager, ComposerManager, LaravelManager, MetricChart, CountryPicker },
   setup() {
     const route = useRoute()
     const router = useRouter()
@@ -1507,6 +1531,8 @@ export default {
       // que solo se carga al abrir la pestaña, no al entrar al dominio.
       if (detectedApp.value?.app === 'wordpress') {
         tabs.splice(1, 0, { key: 'wp', label: 'WordPress', icon: 'wordpress' })
+      } else if (detectedApp.value?.app === 'laravel') {
+        tabs.splice(1, 0, { key: 'laravel', label: 'Laravel', icon: 'box-seam' })
       }
       return tabs
     })

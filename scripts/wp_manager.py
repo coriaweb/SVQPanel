@@ -71,8 +71,9 @@ def detect_app(docroot: str, owner: str) -> Dict:
     Detecta qué aplicación hay instalada en el docroot.
 
     Devuelve {"app": "wordpress"|"laravel"|"nextcloud"|"prestashop"|"unknown"|
-    "empty", "managed": bool, ...}. Solo WordPress es "managed" (tiene panel de
-    gestión); el resto solo se reportan como "ocupado" para no instalar encima.
+    "empty", "managed": bool, ...}. WordPress y Laravel son "managed" (tienen
+    pestaña de gestión); el resto solo se reportan como "ocupado" para no
+    instalar encima.
     """
     if not docroot or not os.path.isdir(docroot):
         return {"app": "empty", "managed": False}
@@ -84,7 +85,13 @@ def detect_app(docroot: str, owner: str) -> Dict:
         return {"app": "wordpress", "managed": True}
     # Laravel: artisan + composer.json
     if has("artisan") and has("composer.json"):
-        return {"app": "laravel", "managed": False}
+        return {"app": "laravel", "managed": True}
+    # Laravel con el docroot apuntando ya a su /public (artisan en la carpeta padre)
+    parent = os.path.dirname(os.path.realpath(docroot))
+    if os.path.basename(os.path.realpath(docroot)) == "public" and \
+            os.path.isfile(os.path.join(parent, "artisan")) and \
+            os.path.isfile(os.path.join(parent, "composer.json")):
+        return {"app": "laravel", "managed": True}
     # Nextcloud: occ, o version.php junto a config/config.php
     if has("occ") or (has("version.php") and has("config", "config.php")):
         return {"app": "nextcloud", "managed": False}

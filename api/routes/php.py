@@ -547,6 +547,8 @@ async def update_domain_php(
     # (con DISABLE_WP_CRON=true tampoco dispara por visitas).
     from scripts import wp_manager as _wpm
     _wpm.sync_wp_cron_php(domain, db)
+    from scripts import laravel_manager as _lm
+    _lm.sync_cron_php(domain, db)   # planificador/cola de Laravel: mismo problema
 
     return {
         "status": "success",

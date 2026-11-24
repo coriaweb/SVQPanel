@@ -1007,6 +1007,22 @@ class APIClient {
     return this.post(`/api/domains/${domainId}/wp/safe-update/auto`, { enable })
   }
 
+  // ── Laravel (pestaña Laravel del dominio) ──
+  getLaravelInfo(domainId)         { return this.get(`/api/domains/${domainId}/laravel/info`) }
+  laravelFix(domainId, check)      { return this.post(`/api/domains/${domainId}/laravel/fix/${check}`, {}) }
+  laravelAction(domainId, action)  { return this.post(`/api/domains/${domainId}/laravel/action/${action}`, {}) }
+  laravelArtisan(domainId, command) { return this.post(`/api/domains/${domainId}/laravel/artisan`, { command }) }
+  laravelArtisanHistory(domainId)  { return this.get(`/api/domains/${domainId}/laravel/artisan-history`) }
+  getLaravelEnv(domainId)          { return this.get(`/api/domains/${domainId}/laravel/env`) }
+  saveLaravelEnv(domainId, content) { return this.put(`/api/domains/${domainId}/laravel/env`, { content }) }
+  getLaravelLogs(domainId, file = '', lines = 300) {
+    const q = new URLSearchParams({ lines: String(lines) })
+    if (file) q.set('file', file)
+    return this.get(`/api/domains/${domainId}/laravel/logs?${q}`)
+  }
+  clearLaravelLog(domainId, file)  { return this.post(`/api/domains/${domainId}/laravel/logs/clear`, { file }) }
+  laravelCron(domainId, kind, enable) { return this.post(`/api/domains/${domainId}/laravel/cron/${kind}`, { enable }) }
+
   // ── Composer (dependencias PHP del proyecto del dominio) ──
   // dir = carpeta de trabajo relativa a la raíz del dominio (public_html, private…)
   getComposerLocations(domainId) { return this.get(`/api/domains/${domainId}/composer/locations`) }
