@@ -185,6 +185,7 @@
 
 <script>
 import { ref, computed, onMounted, watch } from 'vue'
+import { useRoute } from 'vue-router'
 import api from '../services/api'
 import { useMainStore } from '../stores/useMainStore'
 import BaseCard from './ui/BaseCard.vue'
@@ -195,13 +196,19 @@ export default {
   name: 'LaravelManager',
   components: { BaseCard, BaseButton, BaseTabs },
   props: {
-    domainId:   { type: [Number, String], required: true },
+    domainId:   { type: [Number, String], default: null },
     domainName: { type: String, default: '' },
   },
   emits: ['changed'],
   setup(props, { emit }) {
     const store = useMainStore()
-    const did = computed(() => parseInt(props.domainId, 10))
+    const route = useRoute()
+    // DomainDetail no expone domainId a su template (llega undefined → NaN):
+    // igual que WpManager/ComposerManager, se cae al id de la ruta.
+    const did = computed(() => {
+      const n = parseInt(props.domainId, 10)
+      return Number.isInteger(n) ? n : parseInt(route.params.id, 10)
+    })
 
     const tab = ref('status')
     const tabs = [
